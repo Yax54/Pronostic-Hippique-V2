@@ -4434,18 +4434,26 @@ class RapportJournalier {
 
 // ── Extension IaMemoryService : méthodes rapport hebdo ★ v9.87 ───────────────
 extension IaMemoryServiceRapportHebdo on IaMemoryService {
-  /// Calcule un bilan sur les 7 derniers jours depuis les rapports journaliers.
-  /// Retourne null si moins de 2 jours analysés dans la semaine.
+  /// Calcule un bilan sur la semaine en cours depuis les rapports journaliers.
+  /// Retourne null si aucun rapport disponible cette semaine.
+  /// ★ Fix v9.94 : seuil abaissé à 1 rapport (était < 2 → bilan invisible
+  ///   en début de semaine ou quand un seul jour a été analysé).
   Map<String, dynamic>? calculerRapportHebdo() {
     final maintenant = DateTime.now();
     final lundi = maintenant.subtract(Duration(days: maintenant.weekday - 1));
     final debutSemaine = DateTime(lundi.year, lundi.month, lundi.day);
 
-    final rapportsSemaine = rapports
-        .where((r) => !r.date.isBefore(debutSemaine))
-        .toList();
+    // ★ Fix v9.94 : exclure les rapports déjà archivés dans un BilanSemaine
+    // pour éviter le doublon avec les semaines passées.
+    final archivesLundis = bilansSemaine.map((bs) => bs.lundi).toSet();
+    final rapportsSemaine = rapports.where((r) {
+      if (r.date.isBefore(debutSemaine)) return false;
+      final rLundi = DateTime(r.date.year, r.date.month, r.date.day)
+          .subtract(Duration(days: r.date.weekday - 1));
+      return !archivesLundis.contains(rLundi);
+    }).toList();
 
-    if (rapportsSemaine.length < 2) return null;
+    if (rapportsSemaine.isEmpty) return null;
 
     int totalCourses   = 0;
     int totalResultats = 0;
