@@ -649,6 +649,8 @@ class IaPoidsAdaptatifs {
     'divergence': divergence, // ★ v9.0
     'poidsRel': poidsRel,     // ★ v9.0
     'progression': progression, // ★ v9.0
+    'mouvCote': mouvCote,       // ★ v9.92 — corrigé : était absent de toJson
+    'placeDepart': placeDepart, // ★ v9.93 — corrigé : était absent de toJson
     'nbMisesAJour': nbMisesAJour,
     'calibrationScore': calibrationScore,
     'poidsParDiscipline': poidsParDiscipline,
