@@ -481,10 +481,11 @@ class IaPoidsAdaptatifs {
       };
     }
     // Si la map discipline n'a pas toutes les clés (ancien format), compléter avec les globaux
+    // ★ v9.95 audit : mouvCote (R) et placeDepart (S) ajoutés — 12 critères complétés
     final result = Map<String, double>.from(ppd);
-    result['distSpec'] ??= distSpec;
-    result['jockey']   ??= jockey;
-    result['repos']    ??= repos;
+    result['distSpec']   ??= distSpec;
+    result['jockey']     ??= jockey;
+    result['repos']      ??= repos;
     result['hippo']      ??= hippo;
     result['entraineur'] ??= entraineur; // ★ v8.0
     result['elo']        ??= elo;        // ★ v8.0
@@ -492,6 +493,8 @@ class IaPoidsAdaptatifs {
     result['divergence'] ??= divergence; // ★ v9.0
     result['poidsRel']   ??= poidsRel;   // ★ v9.0
     result['progression']??= progression;// ★ v9.0
+    result['mouvCote']   ??= mouvCote;   // ★ v9.92
+    result['placeDepart']??= placeDepart;// ★ v9.93
     return result;
   }
 
@@ -897,20 +900,27 @@ class JournalEntree {
   }
 
   static String _labelCritere(String k) {
+    // ★ v9.95 audit : 19 critères A→S complets (terrain/divergence/poidsRel/progression/mouvCote/placeDepart manquaient)
     const labels = {
-      'forme':      'Forme récente',
-      'gains':      'Gains carrière',
-      'record':     'Record/Vitesse',
-      'cote':       'Cote marché',
-      'constance':  'Régularité',
-      'victoires':  'Victoires',
-      'discipline': 'Spécialisation',
-      'distSpec':   'Dist. spécialisée',
-      'jockey':     'Jockey/Driver',
-      'repos':      'Repos physique',
-      'hippo':      'Spéc. Hippodrome',
-      'entraineur': 'Entraîneur',        // ★ v8.0
-      'elo':        'ELO dynamique',     // ★ v8.0
+      'forme':       'Forme récente',
+      'gains':       'Gains carrière',
+      'record':      'Record/Vitesse',
+      'cote':        'Cote marché',
+      'constance':   'Régularité',
+      'victoires':   'Victoires',
+      'discipline':  'Spécialisation',
+      'distSpec':    'Dist. spécialisée',
+      'jockey':      'Jockey/Driver',
+      'repos':       'Repos physique',
+      'hippo':       'Spéc. Hippodrome',
+      'entraineur':  'Entraîneur',       // ★ v8.0
+      'elo':         'ELO dynamique',    // ★ v8.0
+      'terrain':     'Terrain',          // ★ v9.0
+      'divergence':  'Coup préparé',     // ★ v9.0
+      'poidsRel':    'Poids porté',      // ★ v9.0
+      'progression': 'Progression',      // ★ v9.0
+      'mouvCote':    'Mouvement cote',   // ★ v9.92
+      'placeDepart': 'Place départ',     // ★ v9.93
     };
     return labels[k] ?? k;
   }

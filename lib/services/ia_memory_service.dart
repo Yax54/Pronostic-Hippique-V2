@@ -1917,13 +1917,28 @@ class IaMemoryService extends ChangeNotifier {
     double moy(List<double> list) =>
         list.isEmpty ? 50.0 : list.reduce((a, b) => a + b) / list.length;
 
-    // Récupérer ou créer les poids pour cette discipline — 10 critères complets
+    // Récupérer ou créer les poids pour cette discipline — 19 critères complets A→S
+    // ★ v9.95 audit : init complétée à 19 critères (était 11, manquaient entraineur→placeDepart)
     final poidsDisc = _poids.poidsParDiscipline[discNorm] ?? {
-      'forme': _poids.forme, 'gains': _poids.gains, 'record': _poids.record,
-      'cote': _poids.cote, 'constance': _poids.constance,
-      'victoires': _poids.victoires, 'discipline': _poids.discipline,
-      'distSpec': _poids.distSpec, 'jockey': _poids.jockey, 'repos': _poids.repos,
-      'hippo': _poids.hippo,
+      'forme':       _poids.forme,
+      'gains':       _poids.gains,
+      'record':      _poids.record,
+      'cote':        _poids.cote,
+      'constance':   _poids.constance,
+      'victoires':   _poids.victoires,
+      'discipline':  _poids.discipline,
+      'distSpec':    _poids.distSpec,
+      'jockey':      _poids.jockey,
+      'repos':       _poids.repos,
+      'hippo':       _poids.hippo,
+      'entraineur':  _poids.entraineur, // ★ v8.0
+      'elo':         _poids.elo,        // ★ v8.0
+      'terrain':     _poids.terrain,    // ★ v9.0
+      'divergence':  _poids.divergence, // ★ v9.0
+      'poidsRel':    _poids.poidsRel,   // ★ v9.0
+      'progression': _poids.progression,// ★ v9.0
+      'mouvCote':    _poids.mouvCote,   // ★ v9.92
+      'placeDepart': _poids.placeDepart,// ★ v9.93
     };
 
     final nb = nbDisc;
@@ -2135,18 +2150,21 @@ class IaMemoryService extends ChangeNotifier {
     const lr = 0.06;
     // ★ v82 : inclure les 10 critères dans poidsAvant (audit : 7 critères manquaient distSpec/jockey/repos)
     // ★ v9.0 audit : ajouter entraineur, elo, terrain, divergence, poidsRel, progression
+    // ★ v9.95 audit : ajouter mouvCote (R) et placeDepart (S) — 19 critères complets
     final poidsAvant = {
       'forme': _poids.forme, 'gains': _poids.gains, 'record': _poids.record,
       'cote': _poids.cote, 'constance': _poids.constance,
       'victoires': _poids.victoires, 'discipline': _poids.discipline,
       'distSpec': _poids.distSpec, 'jockey': _poids.jockey, 'repos': _poids.repos,
-      'hippo':      _poids.hippo,
-      'entraineur': _poids.entraineur, // ★ v8.0
-      'elo':        _poids.elo,        // ★ v8.0
-      'terrain':    _poids.terrain,    // ★ v9.0
-      'divergence': _poids.divergence, // ★ v9.0
-      'poidsRel':   _poids.poidsRel,   // ★ v9.0
-      'progression':_poids.progression,// ★ v9.0
+      'hippo':       _poids.hippo,
+      'entraineur':  _poids.entraineur, // ★ v8.0
+      'elo':         _poids.elo,        // ★ v8.0
+      'terrain':     _poids.terrain,    // ★ v9.0
+      'divergence':  _poids.divergence, // ★ v9.0
+      'poidsRel':    _poids.poidsRel,   // ★ v9.0
+      'progression': _poids.progression,// ★ v9.0
+      'mouvCote':    _poids.mouvCote,   // ★ v9.92
+      'placeDepart': _poids.placeDepart,// ★ v9.93
     };
 
     if (tauxGagne > 0.38) {
@@ -2184,18 +2202,21 @@ class IaMemoryService extends ChangeNotifier {
 
     // ★ v82 : poidsApres complet sur 10 critères
     // ★ v9.0 audit : ajouter entraineur, elo, terrain, divergence, poidsRel, progression
+    // ★ v9.95 audit : ajouter mouvCote (R) et placeDepart (S) — 19 critères complets
     final poidsApres = {
       'forme': _poids.forme, 'gains': _poids.gains, 'record': _poids.record,
       'cote': _poids.cote, 'constance': _poids.constance,
       'victoires': _poids.victoires, 'discipline': _poids.discipline,
       'distSpec': _poids.distSpec, 'jockey': _poids.jockey, 'repos': _poids.repos,
-      'hippo':      _poids.hippo,
-      'entraineur': _poids.entraineur, // ★ v8.0
-      'elo':        _poids.elo,        // ★ v8.0
-      'terrain':    _poids.terrain,    // ★ v9.0
-      'divergence': _poids.divergence, // ★ v9.0
-      'poidsRel':   _poids.poidsRel,   // ★ v9.0
-      'progression':_poids.progression,// ★ v9.0
+      'hippo':       _poids.hippo,
+      'entraineur':  _poids.entraineur, // ★ v8.0
+      'elo':         _poids.elo,        // ★ v8.0
+      'terrain':     _poids.terrain,    // ★ v9.0
+      'divergence':  _poids.divergence, // ★ v9.0
+      'poidsRel':    _poids.poidsRel,   // ★ v9.0
+      'progression': _poids.progression,// ★ v9.0
+      'mouvCote':    _poids.mouvCote,   // ★ v9.92
+      'placeDepart': _poids.placeDepart,// ★ v9.93
     };
 
     // Calcul du taux de réussite par type pour le diagnostic
@@ -2778,18 +2799,27 @@ class IaMemoryService extends ChangeNotifier {
 
       // ★ v5.0 : poidsFinaux inclut les 10 critères adaptatifs
       // ★ v9.0 audit : complet sur 17 critères (terrain/divergence/poidsRel/progression manquaient)
+      // ★ v9.95 audit : complet sur 19 critères (mouvCote R + placeDepart S manquaient)
       final poidsFinaux = {
-        'forme': _poids.forme, 'gains': _poids.gains, 'record': _poids.record,
-        'cote': _poids.cote, 'constance': _poids.constance,
-        'victoires': _poids.victoires, 'discipline': _poids.discipline,
-        'distSpec': _poids.distSpec, 'jockey': _poids.jockey, 'repos': _poids.repos,
-        'hippo':      _poids.hippo,       // ★ v7.0 : 11e critère
-        'entraineur': _poids.entraineur,  // ★ v8.0
-        'elo':        _poids.elo,         // ★ v8.0
-        'terrain':    _poids.terrain,     // ★ v9.0
-        'divergence': _poids.divergence,  // ★ v9.0
-        'poidsRel':   _poids.poidsRel,    // ★ v9.0
-        'progression':_poids.progression, // ★ v9.0
+        'forme':       _poids.forme,
+        'gains':       _poids.gains,
+        'record':      _poids.record,
+        'cote':        _poids.cote,
+        'constance':   _poids.constance,
+        'victoires':   _poids.victoires,
+        'discipline':  _poids.discipline,
+        'distSpec':    _poids.distSpec,
+        'jockey':      _poids.jockey,
+        'repos':       _poids.repos,
+        'hippo':       _poids.hippo,       // ★ v7.0
+        'entraineur':  _poids.entraineur,  // ★ v8.0
+        'elo':         _poids.elo,         // ★ v8.0
+        'terrain':     _poids.terrain,     // ★ v9.0
+        'divergence':  _poids.divergence,  // ★ v9.0
+        'poidsRel':    _poids.poidsRel,    // ★ v9.0
+        'progression': _poids.progression, // ★ v9.0
+        'mouvCote':    _poids.mouvCote,    // ★ v9.92
+        'placeDepart': _poids.placeDepart, // ★ v9.93
       };
 
       // Message résumé
@@ -2961,19 +2991,27 @@ class IaMemoryService extends ChangeNotifier {
       parTypePari:         parTypePari,
       // ★ v87 audit : inclure les 11 critères dans le rapport (hippo manquait)
       // ★ v9.0 audit : complet sur 17 critères (entraineur/elo/terrain/divergence/poidsRel/progression manquaient)
+      // ★ v9.95 audit : complet sur 19 critères (mouvCote R + placeDepart S manquaient)
       poidsApres: {
-        'forme': _poids.forme, 'gains': _poids.gains,
-        'record': _poids.record, 'cote': _poids.cote,
-        'constance': _poids.constance, 'victoires': _poids.victoires,
-        'discipline': _poids.discipline,
-        'distSpec': _poids.distSpec, 'jockey': _poids.jockey, 'repos': _poids.repos,
-        'hippo':      _poids.hippo,       // ★ v7.0 : 11e critère
-        'entraineur': _poids.entraineur,  // ★ v8.0
-        'elo':        _poids.elo,         // ★ v8.0
-        'terrain':    _poids.terrain,     // ★ v9.0
-        'divergence': _poids.divergence,  // ★ v9.0
-        'poidsRel':   _poids.poidsRel,    // ★ v9.0
-        'progression':_poids.progression, // ★ v9.0
+        'forme':       _poids.forme,
+        'gains':       _poids.gains,
+        'record':      _poids.record,
+        'cote':        _poids.cote,
+        'constance':   _poids.constance,
+        'victoires':   _poids.victoires,
+        'discipline':  _poids.discipline,
+        'distSpec':    _poids.distSpec,
+        'jockey':      _poids.jockey,
+        'repos':       _poids.repos,
+        'hippo':       _poids.hippo,       // ★ v7.0
+        'entraineur':  _poids.entraineur,  // ★ v8.0
+        'elo':         _poids.elo,         // ★ v8.0
+        'terrain':     _poids.terrain,     // ★ v9.0
+        'divergence':  _poids.divergence,  // ★ v9.0
+        'poidsRel':    _poids.poidsRel,    // ★ v9.0
+        'progression': _poids.progression, // ★ v9.0
+        'mouvCote':    _poids.mouvCote,    // ★ v9.92
+        'placeDepart': _poids.placeDepart, // ★ v9.93
       },
       nbCoursesEchouees:   nbEchouees,
       noteJournee:         note,

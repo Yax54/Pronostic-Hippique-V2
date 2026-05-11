@@ -179,14 +179,27 @@ Widget buildTabMethodologie(BuildContext context) {
               .toList()
             ..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
           if (hautes.isEmpty) return const SizedBox.shrink();
+          // ★ v9.95 audit : 19 critères A→S complets (placeDepart S manquait)
           const labels = {
-            'forme': 'Forme', 'gains': 'Gains', 'record': 'Record',
-            'cote': 'Cote', 'constance': 'Régularité', 'victoires': 'Victoires',
-            'discipline': 'Discipline', 'distSpec': 'Dist. spéc.',
-            'jockey': 'Jockey', 'repos': 'Fraîcheur', 'hippo': 'Hippodrome',
-            'entraineur': 'Entraîneur', 'elo': 'ELO', 'terrain': 'Terrain',
-            'divergence': 'Divergence', 'poidsRel': 'Poids rel.',
-            'progression': 'Progression', 'mouvCote': 'Mouv. cote',
+            'forme':       'Forme',
+            'gains':       'Gains',
+            'record':      'Record',
+            'cote':        'Cote',
+            'constance':   'Régularité',
+            'victoires':   'Victoires',
+            'discipline':  'Discipline',
+            'distSpec':    'Dist. spéc.',
+            'jockey':      'Jockey',
+            'repos':       'Fraîcheur',
+            'hippo':       'Hippodrome',
+            'entraineur':  'Entraîneur',
+            'elo':         'ELO',
+            'terrain':     'Terrain',
+            'divergence':  'Divergence',
+            'poidsRel':    'Poids rel.',
+            'progression': 'Progression',
+            'mouvCote':    'Mouv. cote',  // ★ v9.92
+            'placeDepart': 'Place départ',// ★ v9.93
           };
           return Container(
             padding: const EdgeInsets.all(14),
