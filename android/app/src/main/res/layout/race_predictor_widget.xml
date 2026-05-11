@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_background"
+    android:padding="12dp"
+    android:gravity="center_vertical">
+
+    <!-- ══ HEADER : logo + titre ══ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/widget_logo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🏇"
+            android:textSize="18sp"
+            android:layout_marginEnd="6dp"/>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pronostic Hippique"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/widget_last_update"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Mise à jour…"
+                android:textColor="#66FFFFFF"
+                android:textSize="9sp"/>
+        </LinearLayout>
+
+        <!-- Confiance globale -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:id="@+id/widget_top_confiance"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--"
+                android:textColor="#FFD700"
+                android:textSize="20sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="confiance"
+                android:textColor="#AAD700"
+                android:textSize="8sp"
+                android:gravity="center"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ══ DIVIDER ══ -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#1A4731"
+        android:layout_marginBottom="8dp"/>
+
+    <!-- ══ MEILLEUR PARI DU JOUR ══ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_course_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🥇 Meilleur pari du jour"
+                android:textColor="#4CAF7D"
+                android:textSize="9sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/widget_course_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Chargement…"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:ellipsize="end"
+                android:maxLines="1"/>
+
+            <TextView
+                android:id="@+id/widget_horse_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="N° ? — Cheval"
+                android:textColor="#AAFFFFFF"
+                android:textSize="10sp"
+                android:ellipsize="end"
+                android:maxLines="1"/>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="3dp">
+
+                <TextView
+                    android:id="@+id/widget_hippodrome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textColor="#66FFFFFF"
+                    android:textSize="8sp"
+                    android:background="@drawable/widget_badge_bg"
+                    android:paddingStart="5dp"
+                    android:paddingEnd="5dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
+                    android:layout_marginEnd="4dp"/>
+
+                <TextView
+                    android:id="@+id/widget_heure"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="--:--"
+                    android:textColor="#FFD700"
+                    android:textSize="8sp"
+                    android:background="@drawable/widget_badge_gold_bg"
+                    android:paddingStart="5dp"
+                    android:paddingEnd="5dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Gain potentiel -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginStart="8dp">
+
+            <TextView
+                android:id="@+id/widget_gain"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--€"
+                android:textColor="#4CAF7D"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:gravity="center"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="pour 10€"
+                android:textColor="#664CAF7D"
+                android:textSize="8sp"
+                android:gravity="center"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ══ RÉSUMÉ RAPIDE : nb courses / profil ══ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_nb_courses"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="— courses analysées"
+            android:textColor="#66FFFFFF"
+            android:textSize="8sp"/>
+
+        <!-- Bouton ouvrir l'app -->
+        <TextView
+            android:id="@+id/widget_open_btn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Ouvrir ›"
+            android:textColor="#4CAF7D"
+            android:textSize="9sp"
+            android:textStyle="bold"/>
+    </LinearLayout>
+
+</LinearLayout>

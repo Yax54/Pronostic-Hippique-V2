@@ -1,0 +1,29 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ANDROID SIGNING CONFIG — key.properties                        ║
+# ║                                                                  ║
+# ║  ⚠️  NE JAMAIS COMMITTER ce fichier dans Git !                  ║
+# ║      Il est listé dans .gitignore.                              ║
+# ║                                                                  ║
+# ║  INSTRUCTIONS :                                                  ║
+# ║  1. Copier ce fichier : cp key.properties.template key.properties║
+# ║  2. Remplir les valeurs ci-dessous avec vos vraies infos        ║
+# ║  3. Placer votre fichier .jks dans android/app/                 ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# Chemin vers le fichier keystore (relatif à android/)
+storeFile=app/pronostic_hippique.jks
+
+# Mot de passe du keystore
+storePassword=VOTRE_MOT_DE_PASSE_KEYSTORE
+
+# Alias de la clé
+keyAlias=VOTRE_ALIAS
+
+# Mot de passe de la clé
+keyPassword=VOTRE_MOT_DE_PASSE_CLE
+
+# ── Générer un nouveau keystore (si vous n'en avez pas) ─────────────
+# keytool -genkey -v \
+#   -keystore android/app/pronostic_hippique.jks \
+#   -keyalg RSA -keysize 2048 -validity 10000 \
+#   -alias pronostic_hippique
