@@ -708,6 +708,19 @@ class IaPronosticEngine {
     final score4  = sorted.length >= 4        ? sorted[3].scoreIA : 0.0;
     final ecart12 = score1 - score2;
 
+    // ★ v9.93 : Course classique sans Quarté/Quinté → limiter au Tiercé max
+    if (course.isClassiqueSansMultiple) {
+      if (score1 >= 75 && score2 >= 55 && score3 >= 45)
+        return 'Tiercé — grande course classique, Quarté/Quinté non disponibles';
+      if (score1 >= 80 && ecart12 >= 25)
+        return 'Simple gagnant — favori IA très dominant (N°${sorted[0].numero}) — grande course classique';
+      if (score1 >= 65 && score2 >= 52)
+        return 'Couplé gagnant N°${sorted[0].numero}–N°${sorted[1].numero} — grande course classique';
+      if (score1 >= 65)
+        return 'Simple gagnant N°${sorted[0].numero} — grande course classique';
+      return 'Simple placé N°${sorted[0].numero} — grande course classique, jouer la sécurité';
+    }
+
     if (course.isQuinte) {
       // ★ v9.2 : seuils +5 pts après normalisation min/max
       if (score1 >= 80 && score2 >= 65 && score3 >= 58)

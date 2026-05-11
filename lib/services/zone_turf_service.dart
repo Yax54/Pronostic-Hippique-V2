@@ -111,24 +111,27 @@ class ZoneTurfService {
           final distanceM = c['distance'] as int? ?? 0;
           final montant = c['montantPrix'] as int? ?? 0;
           final disc = _pmuDisciplineToZt(c['discipline'] as String? ?? '');
-          // ★ SOURCE DE VÉRITÉ DIRECTE : lire le champ 'paris' retourné par l'API PMU
-          // L'API retourne la liste exacte des paris disponibles sur chaque course.
-          // Vérifiée sur données réelles PMU du 11/05/2025 :
-          //   GROUPE_I  Poule d'Essai (650 000€) → paris = [Simple, Couplé, Trio] uniquement
-          //   GROUPE_II Saint-Alary   (130 000€) → paris = [Simple, Couplé, Trio] uniquement
-          //   GROUPE_III St-Georges    (80 000€) → paris = [Simple, Couplé, Trio, SuperQuatre]
-          //   HANDICAP  SuperHandicap (100 000€) → paris = [Simple, Couplé, Quinté, Quarté]
-          // → categorieSpeciale est VIDE sur toutes les courses (pas un indicateur fiable)
-          // → seul le champ 'paris' dit la vérité
-          final parisList = (c['paris'] as List<dynamic>? ?? []);
-          final typesPariDispo = parisList
-              .map((p) => (p as Map<String, dynamic>)['typePari'] as String? ?? '')
-              .toSet();
+          final isQuinte = (c['categorieSpeciale'] as String? ?? '').contains('QUINTE');
+          final isQuarte = (c['categorieSpeciale'] as String? ?? '').contains('QUARTE') && !isQuinte;
 
-          final isQuinte = typesPariDispo.any((t) => t.contains('QUINTE'));
-          final isQuarte = typesPariDispo.any((t) => t.contains('QUARTE') || t.contains('SUPER_QUATRE')) && !isQuinte;
-          // Une course est "classique sans multiple" si PMU ne propose ni Quarté ni Quinté dessus
-          final isClassiqueSansMultiple = !isQuinte && !isQuarte;
+          // ★ v9.93 : Détecter les courses classiques sans Quarté/Quinté
+          // (Groupe 1/2/3, Poule d'Essai, etc.) — PMU ne publie que le Tiercé
+          final catSpec  = (c['categorieSpeciale'] as String? ?? '').toUpperCase();
+          final nomUpper = nomCourse.toUpperCase();
+          final isClassiqueSansMultiple = !isQuinte && !isQuarte &&
+              (disc == 'Plat' || disc == 'PLAT') && montant >= 80000 &&
+              // Pas de categorieSpeciale QUARTE/QUINTE = confirmation pas de paris multiples
+              !catSpec.contains('QUARTE') && !catSpec.contains('QUINTE') &&
+              // Mots-clés des grandes courses classiques françaises
+              (nomUpper.contains('GROUPE') || nomUpper.contains('GROUP') ||
+               nomUpper.contains('POULE') || nomUpper.contains("ARC DE") ||
+               nomUpper.contains('JOCKEY CLUB') || nomUpper.contains('DIANE') ||
+               nomUpper.contains('VERMEILLE') || nomUpper.contains('CADRAN') ||
+               nomUpper.contains('ROYAL OAK') || nomUpper.contains('MORNY') ||
+               nomUpper.contains('JEAN-LUC LAG') || nomUpper.contains('GANAY') ||
+               nomUpper.contains('OPÉRA') || nomUpper.contains('OPERA') ||
+               nomUpper.contains('CHAMPION') || nomUpper.contains('DERBY') ||
+               (montant >= 200000)); // Dotation très élevée = grande course classique
 
           // Heure de départ
           // ⚠️ .toLocal() obligatoire : l'API PMU retourne des timestamps UTC.
@@ -507,10 +510,7 @@ class ZoneTurfService {
         numCourse: numC, anchor: course.anchor, nom: course.nom,
         heure: course.heure, distance: course.distance, prix: course.prix,
         type: course.type, piste: course.piste, categorie: course.categorie,
-        isQuinte: course.isQuinte,
-        isQuarte: course.isQuarte,                           // ★ B2 fix v9.93
-        isClassiqueSansMultiple: course.isClassiqueSansMultiple, // ★ B2 fix v9.93
-        pronosticZt: course.pronosticZt,
+        isQuinte: course.isQuinte, pronosticZt: course.pronosticZt,
         partants: partants, dateStr: dateStr,
       );
       final avecIA = IaPronosticEngine.analyserCourse(courseTmp);
@@ -757,7 +757,6 @@ class ZoneTurfService {
         if (course.partants.isNotEmpty) {
           final partantsAvecIA = IaPronosticEngine.analyserCourse(course);
           // ★ Fix: conserver dateStr pour heureDateTime correct après re-création
-          // ★ B1 v9.93 : propager isQuarte et isClassiqueSansMultiple
           return ZtCourse(
             numCourse: course.numCourse,
             anchor: course.anchor,
@@ -769,8 +768,6 @@ class ZoneTurfService {
             piste: course.piste,
             categorie: course.categorie,
             isQuinte: course.isQuinte,
-            isQuarte: course.isQuarte,                           // ★ B1 fix
-            isClassiqueSansMultiple: course.isClassiqueSansMultiple, // ★ B1 fix
             pronosticZt: course.pronosticZt,
             partants: partantsAvecIA,
             dateStr: course.dateStr,  // ← propagation obligatoire

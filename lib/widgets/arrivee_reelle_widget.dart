@@ -45,6 +45,9 @@ class ArriveReelleWidget extends StatefulWidget {
   final DateTime? heureDepart;
   final List<String> selectionIA;
   final bool compact;
+  /// ★ v9.93 : true si grande course classique (Groupe 1/2, Poule, etc.)
+  /// → afficher message explicatif quand PMU retourne seulement 3 arrivants
+  final bool isClassiqueSansMultiple;
 
   const ArriveReelleWidget({
     super.key,
@@ -53,6 +56,7 @@ class ArriveReelleWidget extends StatefulWidget {
     this.heureDepart,
     this.selectionIA = const [],
     this.compact = true,
+    this.isClassiqueSansMultiple = false, // ★ v9.93
   });
 
   @override
@@ -202,6 +206,32 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
                 color: Colors.white.withValues(alpha: 0.3),
                 fontSize: 11,
               ),
+            ),
+          ],
+          // ★ v9.93 : message explicatif si grande course classique (PMU limite au Tiercé)
+          if (widget.isClassiqueSansMultiple && arrivee != null && arrivee.length <= 3) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.info_outline, color: Colors.orange, size: 13),
+                SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Grande course classique — Quarté/Quinté non disponibles sur PMU. '
+                    'Résultat limité au Tiercé officiel.',
+                    style: TextStyle(
+                        color: Colors.orange,
+                        fontSize: 10,
+                        height: 1.4),
+                  ),
+                ),
+              ]),
             ),
           ],
         ],

@@ -539,6 +539,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 heureDepart: widget.course.heureDateTime, // ★ v9.6
                 selectionIA: selIA,
                 compact: false,
+                isClassiqueSansMultiple: widget.course.isClassiqueSansMultiple, // ★ v9.93
               ),
             );
           }),

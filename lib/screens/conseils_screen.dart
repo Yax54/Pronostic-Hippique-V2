@@ -287,6 +287,18 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
     final estEquilibre = !course.isQuinte && ecart12 <= 15 && score >= 60 && score2 >= 50;
     final cote = sorted.first.coteDecimale;
 
+    // ★ v9.93 : Grande course classique sans Quarté/Quinté → limiter au Tiercé max
+    if (course.isClassiqueSansMultiple) {
+      if (score >= 75 && score2 >= 55 && score3 >= 45) return 'Tiercé';
+      if (estEquilibre && score >= 75) return 'Couplé Gagnant';
+      if (estEquilibre && score >= 60) return 'Couplé Placé';
+      if (score >= 80 && cote <= 8.0)  return 'Simple Gagnant';
+      if (score >= 80)                  return 'Gagnant+Placé';
+      if (score >= 65)                  return 'Simple Placé';
+      if (score >= 50)                  return 'Gagnant+Placé';
+      return 'À surveiller';
+    }
+
     if (course.isQuinte) {
       if (score >= 75 && score2 >= 60 && score3 >= 55) return 'Quinté+';
       if (score >= 65 && score2 >= 55) return 'Quarté+';

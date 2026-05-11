@@ -150,8 +150,10 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       } else if (partants.isNotEmpty) {
         _chevalSelectionne = partants.first;
       }
-      // Le type de pari est déterminé par _conseilIA (basé sur les scores IA)
-      // initState ne force aucun type — index 0 (Simple Gagnant) par défaut
+      // Adapter le type de pari selon la course
+      if (widget.course.isQuinte && _typesPari.length > 7) {
+        _typePariIndex = 7; // Quinté+
+      }
       // Mise conseillée selon le score IA du favori
       if (_chevalSelectionne != null) {
         final score = _chevalSelectionne!.scoreIA;
@@ -181,14 +183,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     return widget.course.partants.every((p) => p.coteDecimale >= 99);
   }
 
-  // ★ v9.93 : nombre réel de partants chargés par PMU (pas de clamp artificiel à 5)
-  // Utilisé pour les calculs de gains (GainCalculator)
-  int get _nbPartants => widget.course.partants.length.clamp(1, 30);
-
-  // ★ v9.93 : gardes PMU — un pari n'est proposable que si PMU a chargé assez de partants
-  bool get _peutTierce  => widget.course.partants.length >= 3;
-  bool get _peutQuarte  => widget.course.partants.length >= 4 && widget.course.isQuarte;
-  bool get _peutQuinte  => widget.course.partants.length >= 5 && widget.course.isQuinte;
+  int get _nbPartants => widget.course.partants.length.clamp(5, 30);
 
   /// Vrai si le type de pari actuel est un combiné multi-chevaux
   bool get _estPariCombi {
@@ -392,14 +387,12 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     if (isClassique) {
       final top3 = widget.course.partantsParRangIA.take(3).toList();
       final s3 = top3.length >= 3 ? top3[2].scoreIA : 0.0;
-
-      // Cas 1 : 3 chevaux solides → Tiercé (meilleure espérance sur classique)
       if (score >= 75 && score2 >= 55 && s3 >= 45) {
         return {
           'index': 5, 'emoji': '📋', 'label': 'Tiercé',
           'risque': 'Risque modéré',
           'risqueColor': const Color(0xFFAB47BC),
-          'raison': 'Grande course classique (Groupe 1/2) — Simple, Couplé et Tiercé disponibles sur PMU. '
+          'raison': 'Grande course classique (Groupe 1/2) — seuls Simple, Couplé et Tiercé sont disponibles sur PMU. '
               'L\'IA conseille le Tiercé avec N°${top3.isNotEmpty ? top3[0].numero : "?"}, '
               '${top3.length > 1 ? "N°${top3[1].numero}" : ""}, '
               '${top3.length > 2 ? "N°${top3[2].numero}" : ""}.',
@@ -407,27 +400,6 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           'gainEstime': GainCalculator.tierce(_mise, _getCotes3(), nb).gainNet,
         };
       }
-
-      // ★ Correction incohérence v9.93 : Cas 2 — 2 favoris très proches → Couplé Gagnant
-      // (course équilibrée sur classique : Simple, Couplé et Tiercé sont disponibles)
-      final ecartClassique = (score - score2).abs();
-      if (score >= 75 && score2 >= 55 && ecartClassique <= 15) {
-        return {
-          'index': 3, 'emoji': '💑', 'label': 'Couplé Gagnant',
-          'risque': 'Risque modéré',
-          'risqueColor': const Color(0xFF4CAF7D),
-          'raison': 'Grande course classique — 2 favoris IA très proches '
-              '(${score.round()} vs ${score2.round()}/100). '
-              'Simple, Couplé et Tiercé disponibles sur PMU. '
-              'Le Couplé Gagnant couvre les 2 issues : '
-              '${top2.isNotEmpty ? "N°${top2[0].numero} ${top2[0].nom}" : "favori 1"} '
-              'et ${top2.length > 1 ? "N°${top2[1].numero} ${top2[1].nom}" : "favori 2"}.',
-          'probabilite': (_coteToProbaPct(coteG) * 1.8).clamp(5.0, 80.0),
-          'gainEstime': _mise * _getCoupleGagnantEstime() - _mise,
-        };
-      }
-
-      // Cas 3 : favori dominant et cote basse → Simple Gagnant
       if (score >= 80 && coteG <= 8.0) {
         return {
           'index': 0, 'emoji': '🏆', 'label': 'Simple Gagnant',
@@ -439,14 +411,12 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           'gainEstime': _mise * coteG - _mise,
         };
       }
-
-      // Cas 4 (fallback) : profil incertain → Simple Placé pour limiter le risque
       return {
         'index': 1, 'emoji': '🎯', 'label': 'Simple Placé',
         'risque': 'Risque faible',
         'risqueColor': const Color(0xFF4CAF7D),
-        'raison': 'Grande course classique — Simple, Couplé et Tiercé disponibles sur PMU. '
-            'Simple Placé conseillé pour limiter le risque sur cette course de prestige.',
+        'raison': 'Grande course classique — Paris Classiques uniquement (pas de Quarté/Quinté). '
+            'Simple Placé pour limiter le risque sur cette course de prestige.',
         'probabilite': (_coteToProbaPct(coteG) * 2.5).clamp(5, 85),
         'gainEstime': _mise * _cotePlacee - _mise,
       };
@@ -564,52 +534,24 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       };
     }
 
-    // ★ v9.93 : Quinté+ — seulement si PMU a réellement chargé ≥5 partants
-    if (_peutQuinte) {
+    // Score faible (<50) + course Quinté → Quinté+
+    if (isQ || (score < 50 && nb >= 10)) {
       return {
         'index': 7, // Quinté+
         'emoji': '🌟',
         'label': 'Quinté+',
         'risque': 'Risque élevé / Gros gains',
         'risqueColor': const Color(0xFFEF5350),
-        'raison': 'Course Quinté+ officielle (${nb} partants chargés par PMU) — '
-            'pari phare de la journée. L\'IA a sélectionné les 5 meilleurs chevaux. '
-            'Dividende fixé par PMU après la course.',
-        'probabilite': GainCalculator.quinte(_mise, _getCotes5(), nb).probabiliteEstimee,
+        'raison':
+            isQ
+            ? 'Course Quinté+ officielle — c\'est le pari phare de la journée. '
+              'L\'IA a sélectionné les 5 meilleurs chevaux pour maximiser vos '
+              'chances. Dividende fixé par PMU après la course.'
+            : 'Score IA faible (${score.round()}/100) — cheval incertain en '
+              'Simple. Le Quinté+ avec la sélection IA complète (5 chevaux) '
+              'offre des gains bien supérieurs pour une mise identique.',
+        'probabilite': (GainCalculator.quinte(_mise, _getCotes5(), nb).probabiliteEstimee),
         'gainEstime': GainCalculator.quinte(_mise, _getCotes5(), nb).gainNet,
-      };
-    }
-
-    // ★ v9.93 : Quarté+ — seulement si PMU a réellement chargé ≥4 partants
-    if (_peutQuarte && score < 50) {
-      return {
-        'index': 6, // Quarté+
-        'emoji': '🎰',
-        'label': 'Quarté+',
-        'risque': 'Risque élevé / Gros gains',
-        'risqueColor': const Color(0xFFEF5350),
-        'raison': 'Course Quarté+ (${nb} partants chargés par PMU) — '
-            'score IA faible (${score.round()}/100) sur le favori. '
-            'Le Quarté+ offre un meilleur rapport gain/risque.',
-        'probabilite': GainCalculator.quarte(_mise, _getCotes4(), nb).probabiliteEstimee,
-        'gainEstime': GainCalculator.quarte(_mise, _getCotes4(), nb).gainNet,
-      };
-    }
-
-    // ★ v9.93 : Tiercé — seulement si PMU a réellement chargé ≥3 partants
-    // (fallback si score faible et pas assez de partants pour Quinté/Quarté)
-    if (!_peutQuinte && !_peutQuarte && score < 50 && _peutTierce) {
-      return {
-        'index': 5, // Tiercé
-        'emoji': '📋',
-        'label': 'Tiercé',
-        'risque': 'Risque élevé',
-        'risqueColor': const Color(0xFFEF5350),
-        'raison': 'Score IA faible (${score.round()}/100) — '
-            'PMU a chargé ${nb} partants. Tiercé conseillé '
-            'pour un meilleur rapport gain/probabilité que le Simple.',
-        'probabilite': GainCalculator.tierce(_mise, _getCotes3(), nb).probabiliteEstimee,
-        'gainEstime': GainCalculator.tierce(_mise, _getCotes3(), nb).gainNet,
       };
     }
 
@@ -2102,58 +2044,28 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       }
     }
 
-    // ★ v9.93 : garde PMU — un type de pari est disponible selon les partants réels chargés
-    bool _estTypeDisponible(String type) {
-      final nb = widget.course.partants.length;
-      switch (type) {
-        case 'Quinté+':      return nb >= 5 && widget.course.isQuinte;
-        case 'Quarté+':      return nb >= 4 && widget.course.isQuarte;
-        case 'Tiercé':       return nb >= 3 && !widget.course.isClassiqueSansMultiple;
-        case 'Couplé Gagnant':
-        case 'Couplé Placé': return nb >= 3;
-        default:             return true; // Simple Gagnant, Simple Placé, Gagnant+Placé
-      }
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Type de pari', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        // ★ v9.93 : info partants chargés si course incomplète
-        if (widget.course.partants.length < 5 && widget.course.isQuinte)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              '⚠️ PMU a chargé ${widget.course.partants.length} partant(s) — certains paris indisponibles',
-              style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 11),
-            ),
-          ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
             children: List.generate(_typesPari.length, (i) {
-              final type = _typesPari[i];
-              final disponible = _estTypeDisponible(type);
               final sel = i == _typePariIndex;
-              final coteLabel = _coteLabelForType(type);
+              final coteLabel = _coteLabelForType(_typesPari[i]);
               return GestureDetector(
-                // ★ v9.93 : bloquer le tap si le type n'est pas disponible PMU
-                onTap: disponible ? () => setState(() => _typePariIndex = i) : null,
+                onTap: () => setState(() => _typePariIndex = i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   margin: const EdgeInsets.only(right: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                   decoration: BoxDecoration(
-                    color: !disponible
-                        ? _card.withValues(alpha: 0.4)          // grisé si indisponible
-                        : sel ? _dgreen.withValues(alpha: 0.25) : _card,
+                    color: sel ? _dgreen.withValues(alpha: 0.25) : _card,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: !disponible
-                          ? Colors.white.withValues(alpha: 0.08) // bordure très discrète
-                          : sel ? _green : Colors.white.withValues(alpha: 0.15),
+                      color: sel ? _green : Colors.white.withValues(alpha: 0.15),
                       width: sel ? 1.5 : 1.0,
                     ),
                   ),
@@ -2161,20 +2073,14 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        type,
+                        _typesPari[i],
                         style: TextStyle(
-                          color: !disponible
-                              ? Colors.white24                   // texte grisé
-                              : sel ? _green : Colors.white54,
+                          color: sel ? _green : Colors.white54,
                           fontWeight: sel ? FontWeight.bold : FontWeight.normal,
                           fontSize: 13,
                         ),
                       ),
-                      // ★ v9.93 : afficher "N/A" sous les types bloqués
-                      if (!disponible) ...[
-                        const SizedBox(height: 2),
-                        const Text('N/A', style: TextStyle(color: Colors.white24, fontSize: 10)),
-                      ] else if (coteLabel.isNotEmpty) ...[
+                      if (coteLabel.isNotEmpty) ...[
                         const SizedBox(height: 2),
                         Text(
                           coteLabel,
