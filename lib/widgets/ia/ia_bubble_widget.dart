@@ -85,6 +85,7 @@ class IaBubbleOverlayState extends State<IaBubbleOverlay> {
     if (type == 'badge')                          { nav.goTo(7); return; } // ★ v9.93 badge → Profil
     if (type == 'analyse')                        { nav.goTo(5); return; } // ★ v9.93 après analyse → IA Stats
     if (type == 'nonPartant')                     { nav.goTo(3); return; } // ★ v9.93 retrait → Courses
+    if (type == 'hebdo')                          { nav.goTo(5); return; } // ★ v9.93 résumé hebdo → IA Stats
 
     final msg = message.toLowerCase();
 
@@ -182,6 +183,7 @@ class _IaBubbleState extends State<_IaBubble>
     if (widget.type == 'badge')       return '👉 Voir mes badges';
     if (widget.type == 'analyse')     return '👉 Voir IA Stats';
     if (widget.type == 'nonPartant')  return '👉 Voir les courses';  // ★ v9.93
+    if (widget.type == 'hebdo')       return '👉 Voir le journal';   // ★ v9.93
 
     final msg = widget.message.toLowerCase();
 

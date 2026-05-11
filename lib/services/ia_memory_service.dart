@@ -78,6 +78,7 @@ class IaMemoryService extends ChangeNotifier {
   final List<RapportJournalier>    _rapports      = [];
   // ★ v9.91 : structure hiérarchique du journal
   final List<BilanSemaine>         _bilansSemaine = [];
+  BilanSemaine? _pendingBilanHebdo; // ★ v9.93 : bilan semaine en attente pour bulle
   final List<BilanMois>            _bilansMois    = [];
   final Map<String, StatsTypePari>    _statsTypes    = {}; // ★ clé = typePari
   // ★ Précision IA par type de pari (clé = typePari, ex: 'Quinté+', 'Simple Gagnant'...)
@@ -102,6 +103,14 @@ class IaMemoryService extends ChangeNotifier {
   /// ★ v9.91 : Bilans de semaine archivés (du plus récent au plus ancien)
   List<BilanSemaine>      get bilansSemaine =>
       List.unmodifiable(_bilansSemaine.reversed.toList());
+
+  /// ★ v9.93 : Retourne le bilan semaine en attente d'affichage (bulle hebdo)
+  /// et remet à null après lecture.
+  BilanSemaine? consommerBilanHebdo() {
+    final b = _pendingBilanHebdo;
+    _pendingBilanHebdo = null;
+    return b;
+  }
   /// ★ v9.91 : Bilans de mois archivés (du plus récent au plus ancien)
   List<BilanMois>         get bilansMois =>
       List.unmodifiable(_bilansMois.reversed.toList());
@@ -910,7 +919,7 @@ class IaMemoryService extends ChangeNotifier {
         }
       });
 
-      _bilansSemaine.add(BilanSemaine(
+      final newBilan = BilanSemaine(
         lundi:          lundi,
         dimanche:       dimanche,
         rapportsJson:   rjs.map((r) => json.encode(r.toJson())).toList(),
@@ -921,7 +930,10 @@ class IaMemoryService extends ChangeNotifier {
         scoreMoyen:     rjs.isNotEmpty ? sm / rjs.length : 0,
         meilleureDisc:  md,
         meilleurTaux:   mt < 0 ? 0 : mt,
-      ));
+      );
+      _bilansSemaine.add(newBilan);
+      // ★ v9.93 : Mémoriser pour bulle hebdo au prochain démarrage
+      _pendingBilanHebdo = newBilan;
     }
 
     // Trier par date

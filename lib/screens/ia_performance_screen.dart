@@ -604,6 +604,25 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         }
       };
 
+      // ★ v9.93 : Bulle résumé hebdomadaire (lundi matin seulement)
+      final bilanHebdo = IaMemoryService.instance.consommerBilanHebdo();
+      if (mounted && bilanHebdo != null) {
+        final taux  = bilanHebdo.tauxGagnant.toStringAsFixed(0);
+        final nb    = bilanHebdo.totalResultats;
+        final disc  = bilanHebdo.meilleureDisc.isNotEmpty
+            ? ' Meilleure discipline : ${bilanHebdo.meilleureDisc} (${bilanHebdo.meilleurTaux.toStringAsFixed(0)}%).'
+            : '';
+        final emoji = bilanHebdo.tauxGagnant >= 40 ? '🔥'
+            : bilanHebdo.tauxGagnant >= 28 ? '📊' : '📉';
+        Future.delayed(const Duration(seconds: 7), () {
+          if (mounted) IaBubbleOverlayState.afficher(
+            '$emoji Bilan de la semaine — $taux% de réussite sur $nb courses.$disc\n'
+            'Consulte le journal pour tous les détails.',
+            type: 'hebdo',
+          );
+        });
+      }
+
       // Sync préférences utilisateur
       await IaUserPrefsService.instance.analyserDepuisParis(preds);
     }
