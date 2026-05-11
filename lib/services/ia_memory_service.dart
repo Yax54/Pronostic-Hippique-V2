@@ -817,6 +817,18 @@ class IaMemoryService extends ChangeNotifier {
       // ★ v6.0 : synchroniser IaCalibrationRegistry au chargement
       IaCalibrationRegistry.update(_poids.calibrationScore);
 
+      // ★ v9.95 : migration one-shot — recalcul de _precisionParType depuis
+      // les pronostics bruts pour corriger le double-comptage historique.
+      // Exécutée UNE SEULE FOIS grâce au flag 'ia_precision_migrated_v2'.
+      final flagMigration = prefs.getBool('ia_precision_migrated_v2') ?? false;
+      if (!flagMigration && _pronostics.any((p) => p.resultatsReels)) {
+        await _recalculerPrecisionParTypeDepuisPronostics();
+        await prefs.setBool('ia_precision_migrated_v2', true);
+        if (kDebugMode) {
+          debugPrint('[IaMemory] ✅ Flag ia_precision_migrated_v2 posé.');
+        }
+      }
+
       _loaded = true;
       _loadCompleter!.complete();
       _loadCompleter = null;
@@ -1393,8 +1405,11 @@ class IaMemoryService extends ChangeNotifier {
     await _apprendreParGradient();
     await _apprendreParDiscipline(p.discipline);
     await _mettreAJourCalibration();
-    // ★ v82 : mettre à jour la précision par type après résultat manuel
-    await _mettreAJourPrecisionIA([_pronostics[idx]], DateTime.now());
+    // ★ v9.95 : suppression de l'appel _mettreAJourPrecisionIA ici.
+    // analyseJourneeComplete() est la source UNIQUE de mise à jour de
+    // _precisionParType via _mettreAJourPrecisionIA (uniquement les
+    // pronostics nouvellement résolus). Appeler ici causait un
+    // double-comptage pour tous les types de paris (×2 dans historiqueComplet).
     notifyListeners();
   }
 
@@ -2451,6 +2466,10 @@ class IaMemoryService extends ChangeNotifier {
           '📋 Trouvé ${pronosticsJour.length} pronostics (date: $dateRefLog) — '
           '${aTraiter.length} à analyser, $dejaResultat déjà traités');
 
+      // ★ v9.95 : liste des pronostics résolus UNIQUEMENT dans cette passe
+      // (évite le double-comptage avec les passesprécédentes dans historiqueComplet)
+      final List<IaPronostic> nouveauxResolusParPasse = [];
+
       if (aTraiter.isEmpty) {
         // Tout est déjà traité → re-déclencher l'apprentissage + rapport
         onProgress?.call(++etape, 4,
@@ -2651,6 +2670,8 @@ class IaMemoryService extends ChangeNotifier {
                 // ★ v9.94 : diagnostic lisible par course
                 diagnosticApprentissage: diagJ,
               );
+              // ★ v9.95 : tracker CE pronostic comme nouvellement résolu dans cette passe
+              nouveauxResolusParPasse.add(_pronostics[idx]);
               nbNouveauxResultats++;
             }
 
@@ -2724,31 +2745,17 @@ class IaMemoryService extends ChangeNotifier {
         await mettreAJourStatsTypes(statsFusionnees);
       }
 
-      // ★ v6.0 : Précision IA globale + signaux d'apprentissage complémentaires
-      // On relit directement _pronostics (source de vérité) pour avoir les
-      // valeurs mises à jour (rangFavori, nbTop3, nbTop5) après le gradient.
-      // Même logique élargie (48h) que l'étape 1 pour couvrir le cas
-      // "analyse lancée le matin pour les courses de la veille".
-      final dateDebut2     = DateTime(now.year, now.month, now.day, 0, 0);
-      final dateFin2       = dateDebut2.add(const Duration(days: 1));
-      final dateDebut2Elargi = dateDebut2.subtract(const Duration(hours: 48));
-      var pronosticsJourResolus = _pronostics.where((p) =>
-          p.resultatsReels &&
-          p.datePronostic.isAfter(dateDebut2.subtract(const Duration(hours: 1))) &&
-          p.datePronostic.isBefore(dateFin2)).toList();
-      // Élargir à 48h si rien aujourd'hui
-      if (pronosticsJourResolus.isEmpty) {
-        pronosticsJourResolus = _pronostics.where((p) =>
-            p.resultatsReels &&
-            p.datePronostic.isAfter(dateDebut2Elargi) &&
-            p.datePronostic.isBefore(dateFin2)).toList();
-      }
-      // Fallback absolu : 20 derniers résolus
-      final sourceResolus = pronosticsJourResolus.isNotEmpty
-          ? pronosticsJourResolus
-          : _pronostics.where((p) => p.resultatsReels).take(20).toList();
-      if (sourceResolus.isNotEmpty) {
-        await _mettreAJourPrecisionIA(sourceResolus, now);
+      // ★ v9.95 : Précision IA par type — SOURCE UNIQUE, SANS DOUBLE-COMPTAGE
+      // On passe UNIQUEMENT les pronostics nouvellement résolus dans CETTE passe
+      // (nouveauxResolusParPasse). L'ancien code utilisait sourceResolus = tous
+      // les résolus du jour, ce qui recomptait les résultats déjà comptés lors
+      // des passes précédentes (via enregistrerResultat ou une passe antérieure
+      // d'analyseJourneeComplete), gonflant les compteurs ×2 ou plus dans
+      // historiqueComplet pour tous les types de paris.
+      // Si aucun nouveau résultat dans cette passe, on n'appelle pas
+      // _mettreAJourPrecisionIA → pas de double-comptage.
+      if (nouveauxResolusParPasse.isNotEmpty) {
+        await _mettreAJourPrecisionIA(nouveauxResolusParPasse, now);
       }
 
       // ★ v9.6 : Sauvegarder la date de la dernière analyse pour le Worker Kotlin
@@ -3257,6 +3264,74 @@ class IaMemoryService extends ChangeNotifier {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ v9.95 : RECALCUL COMPLET DE _precisionParType DEPUIS LES PRONOSTICS BRUTS
+  //
+  //  Appelée UNE SEULE FOIS au chargement (flag ia_precision_migrated_v2).
+  //  Remet à zéro les compteurs gonflés par le double-comptage historique
+  //  (analyseJourneeComplete + enregistrerResultat appelaient tous deux
+  //  _mettreAJourPrecisionIA → ajouterJournee cumulait → ×2 ou plus).
+  //
+  //  Principe : on regroupe les IaPronostic résolus par date et par type de
+  //  pari, puis on recalcule chaque entrée de historiqueComplet proprement,
+  //  sans aucune accumulation. Les compteurs permanents (nbTotalAll, nbBonsAll)
+  //  et la fenêtre 60j sont recalculés en conséquence.
+  //
+  //  NE TOUCHE PAS à : _apprendreParGradient, _apprendreParDiscipline,
+  //  _statsLabels, _statsTypes, _seuils, _poids — apprentissage intact.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> _recalculerPrecisionParTypeDepuisPronostics() async {
+    // Regrouper les pronostics résolus par date (YYYY-MM-DD) et par type
+    final Map<String, Map<String, _AgregJour>> parDateType = {};
+    // _AgregJour est une micro-structure locale : {nb, bon, ord, des}
+
+    for (final p in _pronostics) {
+      if (!p.resultatsReels) continue;
+      final type = p.typePariConseille ?? 'Inconnu';
+      if (type == 'Inconnu' || type == 'À surveiller' || type.isEmpty) continue;
+
+      final d = p.datePronostic;
+      final dateStr = '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+
+      parDateType[dateStr] ??= {};
+      parDateType[dateStr]![type] ??= _AgregJour();
+      final agg = parDateType[dateStr]![type]!;
+      agg.nb++;
+      if (_estBonConseilParType(p, type)) {
+        agg.bon++;
+        final estOrdre = _estOrdreExact(p, type);
+        if (estOrdre == true)  agg.ord++;
+        if (estOrdre == false) agg.des++;
+      }
+    }
+
+    // Reconstruire _precisionParType depuis zéro
+    _precisionParType.clear();
+
+    for (final dateStr in parDateType.keys) {
+      final parts = dateStr.split('-');
+      final date  = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      final typesJour = parDateType[dateStr]!;
+
+      for (final type in typesJour.keys) {
+        final agg = typesJour[type]!;
+        if (agg.nb == 0) continue;
+
+        _precisionParType[type] ??= StatsPrecisionParType(typePari: type);
+        _precisionParType[type]!.ajouterJournee(date, agg.nb, agg.bon,
+            ordre: agg.ord, desordre: agg.des);
+      }
+    }
+
+    // Sauvegarder le résultat recalculé
+    await _save();
+    if (kDebugMode) {
+      debugPrint('[IaMemory] ✅ Migration v9.95 : _precisionParType recalculé '
+          'depuis ${_pronostics.where((p) => p.resultatsReels).length} pronostics bruts. '
+          'Types : ${_precisionParType.keys.join(', ')}');
+    }
+  }
+
   /// Met à jour la précision par type de pari et ajuste les seuils.
   /// Appelée par analyseJourneeComplete APRÈS le gradient standard.
   Future<void> _mettreAJourPrecisionIA(
@@ -3734,6 +3809,11 @@ class IaMemoryService extends ChangeNotifier {
       };
     } catch (_) { return {}; }
   }
+}
+
+// ─── Classe interne : agrégat jour/type pour la migration v9.95 ───────────────
+class _AgregJour {
+  int nb = 0, bon = 0, ord = 0, des = 0;
 }
 
 // ─── Classe interne : stats par discipline pour le rapport journalier ─────────
