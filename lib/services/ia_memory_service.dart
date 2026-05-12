@@ -189,10 +189,10 @@ class IaMemoryService extends ChangeNotifier {
   ///
   /// Paliers :
   ///  OR      : ≥ 1 pronostic correct sur Quinté+, Quarté+ ou Tiercé (ordre ou désordre)
-  ///  VERT    : taux ≥ 40%
-  ///  JAUNE   : taux ≥ 25%
-  ///  ORANGE  : au moins 1 bon conseil (taux < 25%)
-  ///  ROUGE   : courses mais 0 bon conseil
+  ///  VERT    : taux ≥ 30%
+  ///  JAUNE   : taux 25–29%
+  ///  ORANGE  : taux 20–24%
+  ///  ROUGE   : taux < 20%
   ///  GRIS    : aucune course ce jour
   ///
   /// Retourne Map<jourDuMois, DonneeJourCalendrier>
@@ -238,24 +238,24 @@ class IaMemoryService extends ChangeNotifier {
 
       // ★ v10.26 : Seuils calibrés sur les données réelles (271 analyses)
       //  OR     : ≥ 1 Tiercé/Quarté+/Quinté+ réussi (ordre ou désordre) — exploit rare
-      //  VERT   : taux ≥ 35% — au-dessus de la moyenne actuelle (~26-31%)
-      //  JAUNE  : taux 25-34% — dans la norme attendue
-      //  ORANGE : taux 15-24% — en dessous de la norme
-      //  ROUGE  : taux < 15% — journée ratée
+      //  VERT   : taux ≥ 30%
+      //  JAUNE  : taux 25-29%
+      //  ORANGE : taux 20-24%
+      //  ROUGE  : taux < 20%
       //  GRIS   : aucune course ce jour
       final PalierCalendrier palier;
       if (ag.nbCourses == 0) {
         palier = PalierCalendrier.gris;
       } else if (aUnNobleReussi) {
         palier = PalierCalendrier.or;
-      } else if (ag.nbBons == 0 || taux < 0.15) {
+      } else if (ag.nbBons == 0 || taux < 0.20) {
         palier = PalierCalendrier.rouge;
-      } else if (taux >= 0.35) {
+      } else if (taux >= 0.30) {
         palier = PalierCalendrier.vert;
       } else if (taux >= 0.25) {
         palier = PalierCalendrier.jaune;
       } else {
-        // taux >= 0.15 et < 0.25
+        // taux >= 0.20 et < 0.25
         palier = PalierCalendrier.orange;
       }
       result[entry.key] = DonneeJourCalendrier(
@@ -4811,10 +4811,10 @@ extension IaMemoryServiceRapportHebdo on IaMemoryService {
 /// Palier de couleur du calendrier — basé sur typePariConseille (pas "favori 1er")
 enum PalierCalendrier {
   or,       // ≥ 1 Tiercé/Quarté+/Quinté+ réussi → dorée  🥇
-  vert,     // taux ≥ 35%          → vert foncé
-  jaune,    // taux 25-34%         → jaune/ambre
-  orange,   // taux 15-24%         → orange
-  rouge,    // taux < 15% ou 0 bon → rouge
+  vert,     // taux ≥ 30%          → vert foncé
+  jaune,    // taux 25-29%         → jaune/ambre
+  orange,   // taux 20-24%         → orange
+  rouge,    // taux < 20% ou 0 bon → rouge
   gris,     // aucune course       → gris neutre
 }
 

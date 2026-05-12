@@ -4,10 +4,10 @@
 //
 //  Logique paliers calibrée sur données réelles (271 analyses, ~26-31% moy.) :
 //   🥇 OR      : ≥ 1 Tiercé/Quarté+/Quinté+ réussi (ordre ou désordre)
-//   🟢 VERT    : taux ≥ 35%   (au-dessus de la moyenne IA)
-//   🟡 JAUNE   : taux 25–34%  (dans la norme)
-//   🟠 ORANGE  : taux 15–24%  (en dessous de la norme)
-//   🔴 ROUGE   : taux < 15%   (journée difficile)
+//   🟢 VERT    : taux ≥ 30%
+//   🟡 JAUNE   : taux 25–29%
+//   🟠 ORANGE  : taux 20–24%
+//   🔴 ROUGE   : taux < 20%
 //   ⬜ GRIS    : aucune course ce jour
 //
 //  Navigation : 24 mois max en arrière, vue mensuelle + annuelle.
@@ -85,10 +85,10 @@ extension PalierExt on PalierCalendrier {
   String get label {
     switch (this) {
       case PalierCalendrier.or:     return '🥇 Tiercé/Quarté/Quinté réussi';
-      case PalierCalendrier.vert:   return '✅ Bonne journée (≥35%)';
-      case PalierCalendrier.jaune:  return '📊 Dans la norme (25-34%)';
-      case PalierCalendrier.orange: return '⚠️ En dessous (15-24%)';
-      case PalierCalendrier.rouge:  return '❌ Journée ratée (<15%)';
+      case PalierCalendrier.vert:   return '✅ Bonne journée (≥30%)';
+      case PalierCalendrier.jaune:  return '📊 Dans la norme (25-29%)';
+      case PalierCalendrier.orange: return '⚠️ En dessous (20-24%)';
+      case PalierCalendrier.rouge:  return '❌ Journée ratée (<20%)';
       case PalierCalendrier.gris:   return '💤 Aucune course';
     }
   }
@@ -539,9 +539,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     }
     final joursActifs = data.values.where((d) => d.nbCourses > 0).length;
     final taux        = totalC > 0 ? (totalB / totalC * 100) : 0.0;
-    final tauxColor   = taux >= 40 ? _cGreen
+    final tauxColor   = taux >= 30 ? _cGreen
                        : taux >= 25 ? _cYellow
-                       : taux >= 10 ? _cOrange
+                       : taux >= 20 ? _cOrange
                        : _cRed;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -630,9 +630,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     String emoji;
 
     // ★ v10.26 : Commentaire aligné sur les nouveaux seuils calibrés
-    // VERT≥35% | JAUNE 25-34% | ORANGE 15-24% | ROUGE<15%
-    // Taux moyen actuel IA : ~26-31% après 45j d'apprentissage
-    if (joursOr >= 1 && taux >= 35) {
+    // VERT≥30% | JAUNE 25-29% | ORANGE 20-24% | ROUGE<20%
+    if (joursOr >= 1 && taux >= 30) {
       commentaire = 'Mois exceptionnel 🔥 — Tiercé/Quarté/Quinté réussis + excellente précision !';
       couleurComm = _cGold;
       emoji       = '🏆';
@@ -640,16 +639,16 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       commentaire = 'Bon mois — Au moins un pari noble réussi (Tiercé/Quarté+/Quinté+).';
       couleurComm = _cGold;
       emoji       = '🥇';
-    } else if (taux >= 35) {
-      commentaire = 'Très bon mois — L\'IA dépasse sa moyenne habituelle (≥35%). Continue !';
+    } else if (taux >= 30) {
+      commentaire = 'Très bon mois — L\'IA dépasse 30% de réussite. Continue !';
       couleurComm = _cGreen;
       emoji       = '✅';
     } else if (taux >= 25) {
-      commentaire = 'Mois dans la norme — Performance attendue à ce stade (25–34%). L\'IA apprend.';
+      commentaire = 'Mois dans la norme — Performance attendue (25–29%).';
       couleurComm = _cYellow;
       emoji       = '📊';
-    } else if (taux >= 15) {
-      commentaire = 'Mois en dessous — Taux 15–24%, l\'IA accumule encore des données.';
+    } else if (taux >= 20) {
+      commentaire = 'Mois en dessous — Taux 20–24%, l\'IA accumule encore des données.';
       couleurComm = _cOrange;
       emoji       = '⚠️';
     } else if (joursRouge > joursActifs * 0.5) {
@@ -657,7 +656,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       couleurComm = _cRed;
       emoji       = '📉';
     } else {
-      commentaire = 'Mois faible — Taux < 15%. L\'IA a besoin de plus d\'analyses pour progresser.';
+      commentaire = 'Mois faible — Taux < 20%. L\'IA a besoin de plus d\'analyses pour progresser.';
       couleurComm = _cRed;
       emoji       = '❌';
     }
@@ -720,9 +719,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             final nb   = nbByType[t]   ?? 0;
             final bons = bonsbyType[t] ?? 0;
             final tx   = nb > 0 ? bons / nb : 0.0;
-            final col  = tx >= 0.40 ? _cGreen
+            final col  = tx >= 0.30 ? _cGreen
                        : tx >= 0.25 ? _cYellow
-                       : tx >= 0.10 ? _cOrange
+                       : tx >= 0.20 ? _cOrange
                        : _cRed;
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -889,9 +888,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     for (final d in data.values) { tc += d.nbCourses; tb += d.nbBons; }
     final taux   = tc > 0 ? tb / tc : 0.0;
     final col    = tc == 0 ? Colors.white12
-                 : taux >= 0.40 ? _cGreen
+                 : taux >= 0.30 ? _cGreen
                  : taux >= 0.25 ? _cYellow
-                 : taux >= 0.10 ? _cOrange
+                 : taux >= 0.20 ? _cOrange
                  : _cRed;
     final estSel = annee == _moisRef.year && mois == _moisRef.month
                    && _modeTabs.index == 0;
@@ -964,10 +963,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   Widget _buildLegende() {
     final paliers = [
       (PalierCalendrier.or,     '🥇 ≥1 Tiercé/Quarté/Quinté réussi'),
-      (PalierCalendrier.vert,   '✅ Taux ≥ 35%'),
-      (PalierCalendrier.jaune,  '📊 Taux 25–34%'),
-      (PalierCalendrier.orange, '⚠️ Taux 15–24%'),
-      (PalierCalendrier.rouge,  '❌ Taux < 15%'),
+      (PalierCalendrier.vert,   '✅ Taux ≥ 30%'),
+      (PalierCalendrier.jaune,  '📊 Taux 25–29%'),
+      (PalierCalendrier.orange, '⚠️ Taux 20–24%'),
+      (PalierCalendrier.rouge,  '❌ Taux < 20%'),
       (PalierCalendrier.gris,   '💤 Aucune course'),
     ];
 
@@ -1268,13 +1267,13 @@ class _DetailJourSheet extends StatelessWidget {
     if (palier == PalierCalendrier.gris)
       return 'Aucune course analysée ce jour.';
     final pct = (taux * 100).toStringAsFixed(0);
-    if (taux >= 0.35)
-      return '$pct% de pronostics corrects — au-dessus de la moyenne de l\'IA (norme : 25–34%).';
+    if (taux >= 0.30)
+      return '$pct% de pronostics corrects — au-dessus de la norme (≥30%).';
     if (taux >= 0.25)
-      return '$pct% de pronostics corrects — dans la norme attendue à ce stade d\'apprentissage.';
-    if (taux >= 0.15)
-      return '$pct% de pronostics corrects — en dessous de la norme. L\'IA continue d\'apprendre.';
-    return '$pct% de pronostics corrects — journée difficile. Normal en phase d\'apprentissage précoce.';
+      return '$pct% de pronostics corrects — dans la norme (25–29%).';
+    if (taux >= 0.20)
+      return '$pct% de pronostics corrects — en dessous de la norme (20–24%). L\'IA continue d\'apprendre.';
+    return '$pct% de pronostics corrects — journée difficile (<20%).';
   }
 
   Widget _buildPronosticCard(IaPronostic p, {required bool vainqueur}) {
