@@ -128,6 +128,62 @@ class IaMemoryService extends ChangeNotifier {
     list.sort((a, b) => a.ordreAffichage.compareTo(b.ordreAffichage));
     return list;
   }
+
+  /// ★ v9.99 : Précision "Aujourd'hui" calculée directement depuis _pronostics
+  /// (source de vérité temps réel) sans passer par historiqueComplet.
+  /// historiqueComplet n'est mis à jour qu'après analyseJourneeComplete()
+  /// → affichage 0/0 toute la journée avant l'analyse. Ce getter corrige ça :
+  /// dès qu'un résultat est enregistré via enregistrerResultat(), il est
+  /// immédiatement visible dans le filtre "Aujourd'hui".
+  Map<String, Map<String, int>> get precisionAujourdhuiDepuisPronostics {
+    final now = DateTime.now();
+    final debutJour = DateTime(now.year, now.month, now.day);
+    final finJour   = debutJour.add(const Duration(days: 1));
+
+    // Collecter les pronostics résolus AUJOURD'HUI
+    final pronosDuJour = _pronostics.where((p) =>
+        p.resultatsReels &&
+        p.datePronostic.isAfter(debutJour.subtract(const Duration(hours: 1))) &&
+        p.datePronostic.isBefore(finJour)).toList();
+
+    // Si rien aujourd'hui → essayer sur les dernières 48h (courses tardives)
+    final source = pronosDuJour.isNotEmpty
+        ? pronosDuJour
+        : _pronostics.where((p) =>
+            p.resultatsReels &&
+            p.datePronostic.isAfter(now.subtract(const Duration(hours: 48))) &&
+            p.datePronostic.isBefore(finJour)).toList();
+
+    // Agréger par type de pari
+    final Map<String, int> nb      = {};
+    final Map<String, int> bons    = {};
+    final Map<String, int> ordre   = {};
+    final Map<String, int> desord  = {};
+
+    for (final p in source) {
+      final type = p.typePariConseille ?? '';
+      if (type.isEmpty || type == 'Inconnu' || type == 'À surveiller') continue;
+      nb[type]     = (nb[type]     ?? 0) + 1;
+      if (_estBonConseilParType(p, type)) {
+        bons[type] = (bons[type]   ?? 0) + 1;
+        final ord  = _estOrdreExact(p, type);
+        if (ord == true)  ordre[type]  = (ordre[type]  ?? 0) + 1;
+        if (ord == false) desord[type] = (desord[type] ?? 0) + 1;
+      }
+    }
+
+    // Construire le résultat { typePari → {nb, bons, ordre, desordre} }
+    final result = <String, Map<String, int>>{};
+    for (final type in nb.keys) {
+      result[type] = {
+        'nb':      nb[type]     ?? 0,
+        'bons':    bons[type]   ?? 0,
+        'ordre':   ordre[type]  ?? 0,
+        'desordre':desord[type] ?? 0,
+      };
+    }
+    return result;
+  }
   /// ★ v9.0 : Stats par label IA (triées par nb décroissant)
   List<StatsParLabel> get statsParLabel {
     final list = _statsLabels.values.toList()

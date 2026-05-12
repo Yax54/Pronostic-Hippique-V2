@@ -3531,10 +3531,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       final debut = fin.subtract(const Duration(days: 7));
       return p.statsPourPeriode(debut, fin);
     } else if (_filtrePeriode == 'today') {
-      // Aujourd'hui uniquement
-      final now = DateTime.now();
-      final jour = DateTime(now.year, now.month, now.day);
-      return p.statsPourPeriode(jour, jour);
+      // ★ v9.99 : Aujourd'hui — lecture directe depuis _pronostics (source temps réel)
+      // statsPourPeriode() lisait historiqueComplet, mis à jour seulement après
+      // analyseJourneeComplete() → affichait 0/0 toute la journée.
+      // precisionAujourdhuiDepuisPronostics calcule en temps réel depuis les pronostics bruts.
+      final aujodhui = IaMemoryService.instance.precisionAujourdhuiDepuisPronostics;
+      return aujodhui[p.typePari] ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
     } else if (_filtrePeriode == 'custom' && _filtreDebut != null && _filtreFin != null) {
       // Période personnalisée date à date
       return p.statsPourPeriode(_filtreDebut!, _filtreFin!);

@@ -20,15 +20,10 @@ class AlertesTab extends StatefulWidget {
 }
 
 class _AlertesTabState extends State<AlertesTab> {
-  @override
-  void initState() {
-    super.initState();
-    // ★ v10.1 : Marquer toutes les alertes lues dès que l'onglet est ouvert
-    // → le badge rouge disparaît automatiquement
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.alertSvc.markAllRead();
-    });
-  }
+  // ★ v9.99 : suppression du markAllRead() automatique dans initState —
+  // il marquait toutes les alertes lues dès l'ouverture de l'onglet,
+  // avant tout tap utilisateur. Les alertes se marquent lues uniquement
+  // au tap individuel (markRead) ou via le bouton "Tout marquer lu".
 
   @override
   Widget build(BuildContext context) {
