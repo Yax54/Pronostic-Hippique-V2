@@ -188,10 +188,10 @@ class IaMemoryService extends ChangeNotifier {
   /// par jour, et calcule le palier de couleur selon la logique typePariConseille.
   ///
   /// Paliers :
-  ///  OR      : taux ≥ 60% ET ≥ 3 courses
+  ///  OR      : ≥ 1 pronostic correct sur Quinté+, Quarté+ ou Tiercé (ordre ou désordre)
   ///  VERT    : taux ≥ 40%
   ///  JAUNE   : taux ≥ 25%
-  ///  ORANGE  : taux ≥ 10% (au moins 1 bon)
+  ///  ORANGE  : au moins 1 bon conseil (taux < 25%)
   ///  ROUGE   : courses mais 0 bon conseil
   ///  GRIS    : aucune course ce jour
   ///
@@ -224,13 +224,25 @@ class IaMemoryService extends ChangeNotifier {
     for (final entry in aggr.entries) {
       final ag  = entry.value;
       final taux = ag.nbCourses > 0 ? ag.nbBons / ag.nbCourses : 0.0;
+
+      // OR : ≥ 1 pronostic correct sur Quinté+, Quarté+ ou Tiercé (ordre ou désordre)
+      const typesNoblesOr = {
+        'Quinté+', 'Quinté+ Ordre', 'Quinté+ Désordre',
+        'Quarté+', 'Quarté+ Ordre', 'Quarté+ Désordre',
+        'Tiercé',  'Tiercé Ordre',  'Tiercé Désordre',
+      };
+      final bool aUnNobleReussi = ag.pronostics.any((p) {
+        final t = p.typePariConseille ?? '';
+        return typesNoblesOr.contains(t) && _estBonConseilParType(p, t);
+      });
+
       final PalierCalendrier palier;
       if (ag.nbCourses == 0) {
         palier = PalierCalendrier.gris;
+      } else if (aUnNobleReussi) {
+        palier = PalierCalendrier.or;
       } else if (ag.nbBons == 0) {
         palier = PalierCalendrier.rouge;
-      } else if (taux >= 0.60 && ag.nbCourses >= 3) {
-        palier = PalierCalendrier.or;
       } else if (taux >= 0.40) {
         palier = PalierCalendrier.vert;
       } else if (taux >= 0.25) {

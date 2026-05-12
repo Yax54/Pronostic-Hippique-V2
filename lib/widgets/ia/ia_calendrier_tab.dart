@@ -2,11 +2,11 @@
 //  IA CALENDRIER TAB — ★ v10.25
 //  Onglet autonome "📅 Calendrier" dans IaPerformanceScreen.
 //
-//  Logique paliers basée sur typePariConseille (pas "favori 1er") :
-//   🥇 OR      : taux ≥ 60% ET ≥ 3 courses
+//  Logique paliers basée sur typePariConseille :
+//   🥇 OR      : ≥ 1 pronostic correct sur Quinté+, Quarté+ ou Tiercé (ordre ou désordre)
 //   🟢 VERT    : taux ≥ 40%
 //   🟡 JAUNE   : taux ≥ 25%
-//   🟠 ORANGE  : taux ≥ 10% (au moins 1 bon)
+//   🟠 ORANGE  : au moins 1 bon conseil (taux < 25%)
 //   🔴 ROUGE   : courses mais 0 bon conseil
 //   ⬜ GRIS    : aucune course ce jour
 //
@@ -84,7 +84,7 @@ extension PalierExt on PalierCalendrier {
 
   String get label {
     switch (this) {
-      case PalierCalendrier.or:     return 'Excellence';
+      case PalierCalendrier.or:     return 'Tiercé/Quarté/Quinté réussi';
       case PalierCalendrier.vert:   return 'Bon';
       case PalierCalendrier.jaune:  return 'Moyen';
       case PalierCalendrier.orange: return 'Faible';
@@ -916,7 +916,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   Widget _buildLegende() {
     final paliers = [
-      (PalierCalendrier.or,     '≥ 60% + 3 courses'),
+      (PalierCalendrier.or,     '≥ 1 Tiercé/Quarté/Quinté réussi'),
       (PalierCalendrier.vert,   '≥ 40%'),
       (PalierCalendrier.jaune,  '≥ 25%'),
       (PalierCalendrier.orange, '≥ 10%'),
