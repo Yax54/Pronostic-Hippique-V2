@@ -4819,12 +4819,6 @@ class DonneeJourCalendrier {
   });
 
   double get taux => nbCourses > 0 ? nbBons / nbCourses : 0.0;
-
-  List<IaPronostic> get pronosticsGagnants =>
-      pronostics.where((p) {
-        final t = p.typePariConseille ?? '';
-        return t.isNotEmpty;
-      }).toList();
 }
 
 /// Agrégateur interne (usage privé dans donneesCalendrierJour)

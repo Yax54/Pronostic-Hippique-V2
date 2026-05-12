@@ -14,6 +14,7 @@
 //  Tap case → liste pronostics gagnants → dialog détail IA custom.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
@@ -109,7 +110,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
   // ── State ─────────────────────────────────────────────────────────────
   late DateTime _moisRef;          // mois actuellement affiché
-  bool          _vueAnnuelle = false;
   late final TabController _modeTabs;
 
   static const int _maxMoisArriere = 24;
@@ -170,14 +170,20 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   void _allerAujourdhui() {
     final now = DateTime.now();
     setState(() {
-      _moisRef     = DateTime(now.year, now.month, 1);
-      _vueAnnuelle = false;
+      _moisRef = DateTime(now.year, now.month, 1);
     });
+    _modeTabs.animateTo(0); // revient en vue mensuelle
   }
 
   // ── Build racine ──────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    // Calcul unique : évite 4 appels séparés dans les sous-widgets (★ a2)
+    final data = _modeTabs.index == 0
+        ? IaMemoryService.instance
+            .donneesCalendrierJour(_moisRef.year, _moisRef.month)
+        : const <int, DonneeJourCalendrier>{};
+
     return Container(
       color: _cDark,
       child: ListView(
@@ -188,13 +194,13 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           _buildModeSelector(),
           const SizedBox(height: 16),
           if (_modeTabs.index == 0) ...[
-            _buildCalendrierMensuel(),
+            _buildCalendrierMensuel(data),
             const SizedBox(height: 20),
-            _buildBilanMois(),
+            _buildBilanMois(data),
             const SizedBox(height: 20),
-            _buildStatsByType(),
+            _buildStatsByType(data),
             const SizedBox(height: 20),
-            _buildTendanceJours(),
+            _buildTendanceJours(data),
           ] else ...[
             _buildVueAnnuelle(),
           ],
@@ -236,7 +242,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                   letterSpacing: 0.3,
                 ),
               ),
-              if (!estMoisCourant)
+              if (!estMoisCourant) ...[
+                const SizedBox(height: 2),
                 Text(
                   'Tap → mois courant',
                   style: TextStyle(
@@ -244,6 +251,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                     fontSize: 10,
                   ),
                 ),
+              ],
             ]),
           ),
         ),
@@ -307,9 +315,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   //  CALENDRIER MENSUEL — grille 7 colonnes
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildCalendrierMensuel() {
-    final data      = IaMemoryService.instance
-        .donneesCalendrierJour(_moisRef.year, _moisRef.month);
+  Widget _buildCalendrierMensuel(Map<int, DonneeJourCalendrier> data) {
     final now       = DateTime.now();
     final dernierJ  = DateTime(_moisRef.year, _moisRef.month + 1, 0).day;
     final premierWd = DateTime(_moisRef.year, _moisRef.month, 1).weekday; // 1=Lun
@@ -446,7 +452,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                   : FontWeight.normal,
             ),
           ),
-          if (hasCourses && dd!.nbCourses > 0)
+          if (hasCourses && dd.nbCourses > 0)
             Text(
               '${dd.nbBons}/${dd.nbCourses}',
               style: TextStyle(
@@ -476,10 +482,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   //  BILAN DU MOIS
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildBilanMois() {
-    final data = IaMemoryService.instance
-        .donneesCalendrierJour(_moisRef.year, _moisRef.month);
-
+  Widget _buildBilanMois(Map<int, DonneeJourCalendrier> data) {
     if (data.isEmpty) {
       return _emptyState('Aucune donnée pour ce mois');
     }
@@ -633,10 +636,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   //  STATS PAR TYPE DE PARI — barres visuelles
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildStatsByType() {
-    final data = IaMemoryService.instance
-        .donneesCalendrierJour(_moisRef.year, _moisRef.month);
-
+  Widget _buildStatsByType(Map<int, DonneeJourCalendrier> data) {
     // Agréger par type de pari
     final Map<String, int> nbByType   = {};
     final Map<String, int> bonsbyType = {};
@@ -720,10 +720,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   //  TENDANCE JOUR PAR JOUR — sparkline textuel
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildTendanceJours() {
-    final data = IaMemoryService.instance
-        .donneesCalendrierJour(_moisRef.year, _moisRef.month);
-
+  Widget _buildTendanceJours(Map<int, DonneeJourCalendrier> data) {
     final joursActifs = data.entries
         .where((e) => e.value.nbCourses > 0)
         .toList()
@@ -1082,7 +1079,7 @@ class _SparklinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SparklinePainter old) =>
-      old.values != values || old.color != color;
+      !listEquals(old.values, values) || old.color != color;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1220,8 +1217,8 @@ class _DetailJourSheet extends StatelessWidget {
     final rang     = p.rangFavoriIaDansArrivee;
     final score    = p.scorePerformance;
     final conf     = p.confiancePredite;
-    final hip      = p.hippodrome ?? '';
-    final disc     = p.discipline ?? '';
+    final hip      = p.hippodrome;
+    final disc     = p.discipline;
     final topIA    = p.topNIA.take(3).map((e) => 'N°$e').join(' · ');
     final arriv    = p.arriveeReelle != null
         ? p.arriveeReelle!.take(3).map((e) => 'N°$e').join('-')
@@ -1242,7 +1239,7 @@ class _DetailJourSheet extends StatelessWidget {
         // Titre course
         Row(children: [
           Expanded(
-            child: Text(p.nomCourse ?? 'Course',
+            child: Text(p.nomCourse.isEmpty ? 'Course' : p.nomCourse,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,

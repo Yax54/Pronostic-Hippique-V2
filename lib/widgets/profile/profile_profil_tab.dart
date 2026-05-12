@@ -344,7 +344,9 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
     if (pronos.isEmpty) return const SizedBox();
 
     // ── Totaux globaux ────────────────────────────────────────────────────
-    int totalCourses = pronos.length;
+    // Seuls les pronostics avec type connu sont comptés (dénominateur aligné
+    // sur le numérateur — évite le biais sur les types inconnus/vides). ★ a3
+    int totalCourses = 0;
     int totalBons    = 0;
     final Map<String, int> nbParType   = {};
     final Map<String, int> bonsParType = {};
@@ -352,6 +354,7 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
     for (final p in pronos) {
       final t = p.typePariConseille ?? '';
       if (t.isEmpty || t == 'Inconnu' || t == 'À surveiller') continue;
+      totalCourses++;
       nbParType[t]   = (nbParType[t]   ?? 0) + 1;
       if (mem.estBonConseil(p, t)) {
         bonsParType[t] = (bonsParType[t] ?? 0) + 1;
@@ -359,7 +362,9 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
       }
     }
 
-    final tauxGlobal = totalCourses > 0 ? totalBons / totalCourses : 0.0;
+    if (totalCourses == 0) return const SizedBox();
+
+    final tauxGlobal = totalBons / totalCourses;
     final Color tauxColor = tauxGlobal >= 0.40
         ? const Color(0xFF4CAF7D)
         : tauxGlobal >= 0.25
@@ -581,7 +586,7 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
         Text(label,
           style: const TextStyle(color: Colors.white54, fontSize: 10)),
         Text(sub,
-          style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 9),
+          style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 10),
           textAlign: TextAlign.center),
       ]),
     );
