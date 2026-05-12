@@ -11,13 +11,18 @@ const Color _kGold   = Color(0xFFFFD700);
 const Color _kPurple = Color(0xFF7C4DFF);
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  Onglet ⚙️ Algorithme et 💡 Conseils — extraits de IaPerformanceScreen
-//  Usage : buildTabMethodologie(context) / buildTabConseils(context)
+//  ia_tab_algo_conseils.dart — fonctions top-level (code historique)
+//  ★ v10.26d AUDIT : buildTabMethodologie() supprimé (code mort — 10 critères
+//  seulement, jamais appelé). Seule la section corrélations (buildTabConseils)
+//  et les helpers partagés sont conservés.
+//  La classe IaTabMethodologie (ia_tab_methodologie.dart, 19 critères A→S)
+//  est l'unique implémentation active.
 // ══════════════════════════════════════════════════════════════════════════════
 
-  // ── Onglet 2 : Algorithme ────────────────────────────────────────────────────
+  // ── [SUPPRIMÉ v10.26d] buildTabMethodologie() — code mort (10 critères A→J) ─
+  // Remplacé par IaTabMethodologie dans ia_tab_methodologie.dart (19 critères A→S)
 
-Widget buildTabMethodologie(BuildContext context) {
+Widget _buildTabMethodologieLegacy(BuildContext context) {
     final poids = IaMemoryService.instance.poids;
 
     return ListView(

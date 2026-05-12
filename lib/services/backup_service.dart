@@ -102,6 +102,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
+import 'alert_service.dart'; // ★ v10.26d
 import 'elo_service.dart'; // ★ v8.0
 import 'ia_memory_service.dart'; // ★ v10.26c
 
@@ -674,6 +675,10 @@ class BackupService {
       // Indispensable si la restauration est appelée hors UI (appel direct au service)
       await IaMemoryService.instance.recharger();
       if (kDebugMode) debugPrint('[Backup] IaMemoryService rechargé depuis SharedPreferences');
+
+      // ★ v10.26d — Recharger AlertService (alertes, courses suivies, anti-doublons)
+      await AlertService.instance.recharger();
+      if (kDebugMode) debugPrint('[Backup] AlertService rechargé depuis SharedPreferences');
 
       return ImportResult(
         succes             : true,
