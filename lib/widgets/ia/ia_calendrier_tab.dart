@@ -115,9 +115,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   static const int _maxMoisArriere = 24;
 
   // ★ v10.26 : Indicateur de rafraîchissement temps réel
-  final GlobalKey _flashKey = GlobalKey();
-  DateTime?       _dernierRefresh;
-  bool            _showRefreshFlash = false;
+  bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
 
   // ── Noms mois / jours ─────────────────────────────────────────────────
   static const _nomsMois = [
@@ -146,7 +144,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   void _onMemChange() {
     if (!mounted) return;
     setState(() {
-      _dernierRefresh   = DateTime.now();
       _showRefreshFlash = true;
     });
     // Flash disparaît après 800ms
