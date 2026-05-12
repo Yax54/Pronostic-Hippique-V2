@@ -336,6 +336,263 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
     );
   }
 
+  // ── ★ v10.25 : Section Précision IA temps réel ───────────────────────────
+  Widget _buildSectionPrecisionIA() {
+    final mem    = IaMemoryService.instance;
+    final pronos = mem.pronosticsAvecResultat;
+
+    if (pronos.isEmpty) return const SizedBox();
+
+    // ── Totaux globaux ────────────────────────────────────────────────────
+    int totalCourses = pronos.length;
+    int totalBons    = 0;
+    final Map<String, int> nbParType   = {};
+    final Map<String, int> bonsParType = {};
+
+    for (final p in pronos) {
+      final t = p.typePariConseille ?? '';
+      if (t.isEmpty || t == 'Inconnu' || t == 'À surveiller') continue;
+      nbParType[t]   = (nbParType[t]   ?? 0) + 1;
+      if (mem.estBonConseil(p, t)) {
+        bonsParType[t] = (bonsParType[t] ?? 0) + 1;
+        totalBons++;
+      }
+    }
+
+    final tauxGlobal = totalCourses > 0 ? totalBons / totalCourses : 0.0;
+    final Color tauxColor = tauxGlobal >= 0.40
+        ? const Color(0xFF4CAF7D)
+        : tauxGlobal >= 0.25
+            ? const Color(0xFFFFB74D)
+            : tauxGlobal >= 0.10
+                ? const Color(0xFFFF7043)
+                : const Color(0xFFEF5350);
+
+    // Mois courant
+    final now      = DateTime.now();
+    final pronosMois = pronos.where((p) =>
+        p.datePronostic.year  == now.year &&
+        p.datePronostic.month == now.month).toList();
+    int bonsMois = 0;
+    for (final p in pronosMois) {
+      final t = p.typePariConseille ?? '';
+      if (t.isNotEmpty && mem.estBonConseil(p, t)) bonsMois++;
+    }
+    final tauxMois = pronosMois.isNotEmpty
+        ? bonsMois / pronosMois.length : 0.0;
+
+    // Aujourd'hui (depuis getter temps réel v9.99)
+    final aujodhui  = mem.precisionAujourdhuiDepuisPronostics;
+    int nbAuj       = 0, bonsAuj = 0;
+    for (final v in aujodhui.values) {
+      nbAuj   += v['nb']   ?? 0;
+      bonsAuj += v['bons'] ?? 0;
+    }
+
+    // Types triés par volume
+    final typesTries = nbParType.keys.toList()
+      ..sort((a, b) => (nbParType[b] ?? 0).compareTo(nbParType[a] ?? 0));
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F2A1A), Color(0xFF0D1B2A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+        // ── En-tête ────────────────────────────────────────────────────────
+        Row(children: [
+          const Icon(Icons.track_changes, color: Color(0xFF4CAF7D), size: 20),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('Précision IA',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: tauxColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: tauxColor.withValues(alpha: 0.4)),
+            ),
+            child: Text(
+              '${(tauxGlobal * 100).toStringAsFixed(0)}% global',
+              style: TextStyle(color: tauxColor, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 14),
+
+        // ── 3 compteurs : Aujourd'hui / Ce mois / Total ───────────────────
+        Row(children: [
+          _iaStatTile(
+            label:     "Aujourd'hui",
+            value:     nbAuj == 0 ? '—' : '$bonsAuj/$nbAuj',
+            sub:       nbAuj == 0
+                ? 'Aucun résultat'
+                : '${(bonsAuj / nbAuj * 100).toStringAsFixed(0)}% réussite',
+            color:     nbAuj == 0
+                ? Colors.white24
+                : (bonsAuj / nbAuj >= 0.40
+                    ? const Color(0xFF4CAF7D)
+                    : const Color(0xFFFFB74D)),
+            icon:      Icons.today,
+          ),
+          _iaDivider(),
+          _iaStatTile(
+            label:     'Ce mois',
+            value:     pronosMois.isEmpty ? '—' : '$bonsMois/${pronosMois.length}',
+            sub:       pronosMois.isEmpty
+                ? 'Aucune course'
+                : '${(tauxMois * 100).toStringAsFixed(0)}% réussite',
+            color:     pronosMois.isEmpty
+                ? Colors.white24
+                : (tauxMois >= 0.40
+                    ? const Color(0xFF4CAF7D)
+                    : tauxMois >= 0.25
+                        ? const Color(0xFFFFB74D)
+                        : const Color(0xFFFF7043)),
+            icon:      Icons.calendar_month,
+          ),
+          _iaDivider(),
+          _iaStatTile(
+            label:     'Total',
+            value:     '$totalBons/$totalCourses',
+            sub:       '${(tauxGlobal * 100).toStringAsFixed(0)}% réussite',
+            color:     tauxColor,
+            icon:      Icons.history,
+          ),
+        ]),
+        const SizedBox(height: 14),
+
+        // ── Barre globale ─────────────────────────────────────────────────
+        Row(children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: tauxGlobal.clamp(0.0, 1.0),
+                minHeight: 6,
+                backgroundColor: Colors.white.withValues(alpha: 0.07),
+                valueColor: AlwaysStoppedAnimation<Color>(tauxColor),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text('$totalBons bons conseils',
+            style: TextStyle(color: tauxColor, fontSize: 11, fontWeight: FontWeight.bold)),
+        ]),
+
+        // ── Détail par type de pari ───────────────────────────────────────
+        if (typesTries.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          const Divider(color: Colors.white12, height: 1),
+          const SizedBox(height: 12),
+          const Text('Par type de pari',
+            style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          ...typesTries.take(5).map((t) {
+            final nb   = nbParType[t]   ?? 0;
+            final bons = bonsParType[t] ?? 0;
+            final tx   = nb > 0 ? bons / nb : 0.0;
+            final col  = tx >= 0.40
+                ? const Color(0xFF4CAF7D)
+                : tx >= 0.25
+                    ? const Color(0xFFFFB74D)
+                    : tx >= 0.10
+                        ? const Color(0xFFFF7043)
+                        : const Color(0xFFEF5350);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(t,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 4,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: tx.clamp(0.0, 1.0),
+                      minHeight: 5,
+                      backgroundColor: Colors.white.withValues(alpha: 0.07),
+                      valueColor: AlwaysStoppedAnimation<Color>(col),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 52,
+                  child: Text('$bons/$nb',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(color: col, fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              ]),
+            );
+          }),
+        ],
+
+        // ── Note de mise à jour temps réel ───────────────────────────────
+        const SizedBox(height: 8),
+        Row(children: [
+          Container(width: 6, height: 6,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4CAF7D),
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(
+                color: const Color(0xFF4CAF7D).withValues(alpha: 0.6),
+                blurRadius: 4,
+              )],
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Text('Mis à jour en temps réel',
+            style: TextStyle(color: Colors.white24, fontSize: 10)),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Helpers section Précision IA ──────────────────────────────────────────
+  Widget _iaStatTile({
+    required String  label,
+    required String  value,
+    required String  sub,
+    required Color   color,
+    required IconData icon,
+  }) {
+    return Expanded(
+      child: Column(children: [
+        Icon(icon, color: color, size: 16),
+        const SizedBox(height: 4),
+        Text(value,
+          style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(label,
+          style: const TextStyle(color: Colors.white54, fontSize: 10)),
+        Text(sub,
+          style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 9),
+          textAlign: TextAlign.center),
+      ]),
+    );
+  }
+
+  Widget _iaDivider() => Container(
+    width: 1, height: 50,
+    margin: const EdgeInsets.symmetric(horizontal: 4),
+    color: Colors.white.withValues(alpha: 0.07),
+  );
+
   // ── ★ v9.85 : Section Badges ─────────────────────────────────────────────
   Widget _buildSectionBadges() {
     final badges       = IaBadgesService.instance;
@@ -753,6 +1010,10 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
 
         // ── ★ v9.85 : Section Identité de l'IA ──────────────────────────
         _buildSectionIa(),
+        const SizedBox(height: 16),
+
+        // ── ★ v10.25 : Précision IA temps réel ───────────────────────────
+        _buildSectionPrecisionIA(),
         const SizedBox(height: 16),
 
         // ── ★ v9.85 : Section Badges ─────────────────────────────────────
