@@ -236,18 +236,26 @@ class IaMemoryService extends ChangeNotifier {
         return typesNoblesOr.contains(t) && _estBonConseilParType(p, t);
       });
 
+      // ★ v10.26 : Seuils calibrés sur les données réelles (271 analyses)
+      //  OR     : ≥ 1 Tiercé/Quarté+/Quinté+ réussi (ordre ou désordre) — exploit rare
+      //  VERT   : taux ≥ 35% — au-dessus de la moyenne actuelle (~26-31%)
+      //  JAUNE  : taux 25-34% — dans la norme attendue
+      //  ORANGE : taux 15-24% — en dessous de la norme
+      //  ROUGE  : taux < 15% — journée ratée
+      //  GRIS   : aucune course ce jour
       final PalierCalendrier palier;
       if (ag.nbCourses == 0) {
         palier = PalierCalendrier.gris;
       } else if (aUnNobleReussi) {
         palier = PalierCalendrier.or;
-      } else if (ag.nbBons == 0) {
+      } else if (ag.nbBons == 0 || taux < 0.15) {
         palier = PalierCalendrier.rouge;
-      } else if (taux >= 0.40) {
+      } else if (taux >= 0.35) {
         palier = PalierCalendrier.vert;
       } else if (taux >= 0.25) {
         palier = PalierCalendrier.jaune;
       } else {
+        // taux >= 0.15 et < 0.25
         palier = PalierCalendrier.orange;
       }
       result[entry.key] = DonneeJourCalendrier(
@@ -4802,11 +4810,11 @@ extension IaMemoryServiceRapportHebdo on IaMemoryService {
 
 /// Palier de couleur du calendrier — basé sur typePariConseille (pas "favori 1er")
 enum PalierCalendrier {
-  or,       // ≥60% ET ≥3 courses  → dorée  🥇
-  vert,     // ≥40%                → vert foncé
-  jaune,    // ≥25%                → jaune/ambre
-  orange,   // ≥10% (≥1 bon)      → orange
-  rouge,    // courses mais 0 bon  → rouge
+  or,       // ≥ 1 Tiercé/Quarté+/Quinté+ réussi → dorée  🥇
+  vert,     // taux ≥ 35%          → vert foncé
+  jaune,    // taux 25-34%         → jaune/ambre
+  orange,   // taux 15-24%         → orange
+  rouge,    // taux < 15% ou 0 bon → rouge
   gris,     // aucune course       → gris neutre
 }
 

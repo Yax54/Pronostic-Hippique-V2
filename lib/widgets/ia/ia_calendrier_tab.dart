@@ -1,13 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA CALENDRIER TAB — ★ v10.25
+//  IA CALENDRIER TAB — ★ v10.26
 //  Onglet autonome "📅 Calendrier" dans IaPerformanceScreen.
 //
-//  Logique paliers basée sur typePariConseille :
-//   🥇 OR      : ≥ 1 pronostic correct sur Quinté+, Quarté+ ou Tiercé (ordre ou désordre)
-//   🟢 VERT    : taux ≥ 40%
-//   🟡 JAUNE   : taux ≥ 25%
-//   🟠 ORANGE  : au moins 1 bon conseil (taux < 25%)
-//   🔴 ROUGE   : courses mais 0 bon conseil
+//  Logique paliers calibrée sur données réelles (271 analyses, ~26-31% moy.) :
+//   🥇 OR      : ≥ 1 Tiercé/Quarté+/Quinté+ réussi (ordre ou désordre)
+//   🟢 VERT    : taux ≥ 35%   (au-dessus de la moyenne IA)
+//   🟡 JAUNE   : taux 25–34%  (dans la norme)
+//   🟠 ORANGE  : taux 15–24%  (en dessous de la norme)
+//   🔴 ROUGE   : taux < 15%   (journée difficile)
 //   ⬜ GRIS    : aucune course ce jour
 //
 //  Navigation : 24 mois max en arrière, vue mensuelle + annuelle.
@@ -84,12 +84,12 @@ extension PalierExt on PalierCalendrier {
 
   String get label {
     switch (this) {
-      case PalierCalendrier.or:     return 'Tiercé/Quarté/Quinté réussi';
-      case PalierCalendrier.vert:   return 'Bon';
-      case PalierCalendrier.jaune:  return 'Moyen';
-      case PalierCalendrier.orange: return 'Faible';
-      case PalierCalendrier.rouge:  return 'Raté';
-      case PalierCalendrier.gris:   return 'Repos';
+      case PalierCalendrier.or:     return '🥇 Tiercé/Quarté/Quinté réussi';
+      case PalierCalendrier.vert:   return '✅ Bonne journée (≥35%)';
+      case PalierCalendrier.jaune:  return '📊 Dans la norme (25-34%)';
+      case PalierCalendrier.orange: return '⚠️ En dessous (15-24%)';
+      case PalierCalendrier.rouge:  return '❌ Journée ratée (<15%)';
+      case PalierCalendrier.gris:   return '💤 Aucune course';
     }
   }
 }
@@ -113,6 +113,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   late final TabController _modeTabs;
 
   static const int _maxMoisArriere = 24;
+
+  // ★ v10.26 : Indicateur de rafraîchissement temps réel
+  final GlobalKey _flashKey = GlobalKey();
+  DateTime?       _dernierRefresh;
+  bool            _showRefreshFlash = false;
 
   // ── Noms mois / jours ─────────────────────────────────────────────────
   static const _nomsMois = [
@@ -139,7 +144,15 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   void _onMemChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {
+      _dernierRefresh   = DateTime.now();
+      _showRefreshFlash = true;
+    });
+    // Flash disparaît après 800ms
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) setState(() => _showRefreshFlash = false);
+    });
   }
 
   // ── Navigation mois ───────────────────────────────────────────────────
@@ -258,6 +271,28 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
         // ▶ Suivant
         _navBtn(Icons.chevron_right, _peutAvancer ? _avancer : null),
+
+        // ★ v10.26 : Badge "Mis à jour" — flash 800ms après rafraîchissement
+        const SizedBox(width: 6),
+        AnimatedOpacity(
+          duration: const Duration(milliseconds: 400),
+          opacity: _showRefreshFlash ? 1.0 : 0.0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: _cGreen.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _cGreen.withValues(alpha: 0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.refresh, color: _cGreen, size: 11),
+              const SizedBox(width: 4),
+              Text('Mis à jour',
+                style: TextStyle(color: _cGreen, fontSize: 10,
+                    fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
       ]),
     );
   }
@@ -426,7 +461,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         : (hasCourses ? palier.border : Colors.transparent);
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 350), // ★ v10.26 : 350ms pour voir la transition
+      curve: Curves.easeInOut,
       height: 42,
       decoration: BoxDecoration(
         color: bgColor,
@@ -593,26 +629,37 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     Color  couleurComm;
     String emoji;
 
-    if (taux >= 50 && joursOr >= 3) {
-      commentaire = 'Mois exceptionnel 🔥 — L\'IA performe au niveau expert.';
+    // ★ v10.26 : Commentaire aligné sur les nouveaux seuils calibrés
+    // VERT≥35% | JAUNE 25-34% | ORANGE 15-24% | ROUGE<15%
+    // Taux moyen actuel IA : ~26-31% après 45j d'apprentissage
+    if (joursOr >= 1 && taux >= 35) {
+      commentaire = 'Mois exceptionnel 🔥 — Tiercé/Quarté/Quinté réussis + excellente précision !';
       couleurComm = _cGold;
       emoji       = '🏆';
-    } else if (taux >= 40) {
-      commentaire = 'Très bon mois — Les conseils IA sont fiables.';
+    } else if (joursOr >= 1) {
+      commentaire = 'Bon mois — Au moins un pari noble réussi (Tiercé/Quarté+/Quinté+).';
+      couleurComm = _cGold;
+      emoji       = '🥇';
+    } else if (taux >= 35) {
+      commentaire = 'Très bon mois — L\'IA dépasse sa moyenne habituelle (≥35%). Continue !';
       couleurComm = _cGreen;
       emoji       = '✅';
     } else if (taux >= 25) {
-      commentaire = 'Mois correct — Performance dans la moyenne attendue.';
+      commentaire = 'Mois dans la norme — Performance attendue à ce stade (25–34%). L\'IA apprend.';
       couleurComm = _cYellow;
       emoji       = '📊';
+    } else if (taux >= 15) {
+      commentaire = 'Mois en dessous — Taux 15–24%, l\'IA accumule encore des données.';
+      couleurComm = _cOrange;
+      emoji       = '⚠️';
     } else if (joursRouge > joursActifs * 0.5) {
-      commentaire = 'Mois difficile — Revoir les critères ou attendre l\'apprentissage.';
+      commentaire = 'Mois difficile — Plus de 50% de journées ratées. Normal en phase d\'apprentissage.';
       couleurComm = _cRed;
       emoji       = '📉';
     } else {
-      commentaire = 'Mois en dessous — L\'IA accumule encore des données.';
-      couleurComm = _cOrange;
-      emoji       = '⚠️';
+      commentaire = 'Mois faible — Taux < 15%. L\'IA a besoin de plus d\'analyses pour progresser.';
+      couleurComm = _cRed;
+      emoji       = '❌';
     }
 
     return Container(
@@ -916,12 +963,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ══════════════════════════════════════════════════════════════════════
   Widget _buildLegende() {
     final paliers = [
-      (PalierCalendrier.or,     '≥ 1 Tiercé/Quarté/Quinté réussi'),
-      (PalierCalendrier.vert,   '≥ 40%'),
-      (PalierCalendrier.jaune,  '≥ 25%'),
-      (PalierCalendrier.orange, '≥ 10%'),
-      (PalierCalendrier.rouge,  '0 bon'),
-      (PalierCalendrier.gris,   'Sans course'),
+      (PalierCalendrier.or,     '🥇 ≥1 Tiercé/Quarté/Quinté réussi'),
+      (PalierCalendrier.vert,   '✅ Taux ≥ 35%'),
+      (PalierCalendrier.jaune,  '📊 Taux 25–34%'),
+      (PalierCalendrier.orange, '⚠️ Taux 15–24%'),
+      (PalierCalendrier.rouge,  '❌ Taux < 15%'),
+      (PalierCalendrier.gris,   '💤 Aucune course'),
     ];
 
     return Container(
@@ -1155,6 +1202,9 @@ class _DetailJourSheet extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text('${dd.nbBons}/${dd.nbCourses} bons conseils · $tauxPct · ${palier.label}',
                   style: TextStyle(color: palier.fg, fontSize: 12)),
+                const SizedBox(height: 3),
+                Text(_descriptifTaux(taux, dd.palier),
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
               ])),
             ]),
           ),
@@ -1209,6 +1259,22 @@ class _DetailJourSheet extends StatelessWidget {
         ]),
       ),
     );
+  }
+
+  /// ★ v10.26 : Descriptif dynamique du taux affiché dans le BottomSheet
+  static String _descriptifTaux(double taux, PalierCalendrier palier) {
+    if (palier == PalierCalendrier.or)
+      return 'Tiercé, Quarté+ ou Quinté+ réussi — exploit rare et précieux !';
+    if (palier == PalierCalendrier.gris)
+      return 'Aucune course analysée ce jour.';
+    final pct = (taux * 100).toStringAsFixed(0);
+    if (taux >= 0.35)
+      return '$pct% de pronostics corrects — au-dessus de la moyenne de l\'IA (norme : 25–34%).';
+    if (taux >= 0.25)
+      return '$pct% de pronostics corrects — dans la norme attendue à ce stade d\'apprentissage.';
+    if (taux >= 0.15)
+      return '$pct% de pronostics corrects — en dessous de la norme. L\'IA continue d\'apprendre.';
+    return '$pct% de pronostics corrects — journée difficile. Normal en phase d\'apprentissage précoce.';
   }
 
   Widget _buildPronosticCard(IaPronostic p, {required bool vainqueur}) {
