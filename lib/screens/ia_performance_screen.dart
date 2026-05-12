@@ -30,6 +30,7 @@ import '../widgets/ia/ia_tab_methodologie.dart';    // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_conseils.dart';        // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_backtesting.dart';     // ★ v9.90 découpage
 import '../widgets/ia/ia_bubble_widget.dart';        // ★ v9.93 bulles
+import '../widgets/ia/ia_calendrier_tab.dart';       // ★ v10.25 calendrier performances
 // import 'ia_journal_screen.dart'; // ★ v9.85 — conservé pour navigation (non utilisé directement)
 
 part 'ia_perf_secondary_widgets.dart'; // ★ v9.93 : widgets secondaires
@@ -62,9 +63,6 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   int _nbManquants = 0;
   int _nbTotal = 0;
 
-  // ★ v10.24 : offset mois pour le calendrier des performances (#5)
-  int _calMoisOffset = 0;
-
   // ★ v9.90 : variables _bt* migrées dans IaTabBacktesting (StatefulWidget autonome)
 
   // ── Filtre période Précision IA ───────────────────────────────────────────
@@ -91,7 +89,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 5, vsync: this); // ★ v9.80 : +Backtesting
+    _tabCtrl = TabController(length: 6, vsync: this); // ★ v10.25 : +Calendrier
     _loadStats();
     IaMemoryService.instance.addListener(_loadStats);
     // ★ v9.90 : _chargerPrefsBt() migré dans IaTabBacktesting.initState()
@@ -705,6 +703,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               Tab(text: '🧠 Mémoire IA', height: 52),
               Tab(text: '🔬 Backtesting', height: 52), // ★ v10.18 : déplacé entre Mémoire IA et Statistiques
               Tab(text: '📊 Statistiques', height: 52),
+              Tab(text: '📅 Calendrier', height: 52),   // ★ v10.25 : nouveau calendrier IA
               Tab(text: '⚙️ Algorithme', height: 52),
               Tab(text: '💡 Conseils', height: 52),
             ],
@@ -717,6 +716,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           _buildTabMemoire(),
           const IaTabBacktesting(),                        // ★ v10.18 : déplacé en position 1
           IaTabStats(alertService: widget.alertService),   // ★ v9.90
+          const IaCalendrierTab(),                         // ★ v10.25 : calendrier performances
           const IaTabMethodologie(),                       // ★ v9.90
           const IaTabConseils(),                           // ★ v9.90
         ],
@@ -1068,9 +1068,6 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         // ── ★ v9.92 : PRÉCISION HIPPODROME × DISCIPLINE ────────────────────
         _buildSectionHippoXDisc(),
         const SizedBox(height: 16),
-
-        // ── ★ v10.24 : CALENDRIER DES PERFORMANCES MENSUELLES (#5) ────────
-        _buildCalendrierPerformances(),
 
         // ── ★ v9.93 : CORRÉLATIONS ENTRE CRITÈRES ──────────────────────────
         _buildSectionCorrelations(),

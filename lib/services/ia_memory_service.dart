@@ -184,6 +184,73 @@ class IaMemoryService extends ChangeNotifier {
     }
     return result;
   }
+  /// ★ v10.25 : Données calendrier — agrège les pronostics résolus d'un mois donné
+  /// par jour, et calcule le palier de couleur selon la logique typePariConseille.
+  ///
+  /// Paliers :
+  ///  OR      : taux ≥ 60% ET ≥ 3 courses
+  ///  VERT    : taux ≥ 40%
+  ///  JAUNE   : taux ≥ 25%
+  ///  ORANGE  : taux ≥ 10% (au moins 1 bon)
+  ///  ROUGE   : courses mais 0 bon conseil
+  ///  GRIS    : aucune course ce jour
+  ///
+  /// Retourne Map<jourDuMois, DonneeJourCalendrier>
+  Map<int, DonneeJourCalendrier> donneesCalendrierJour(int annee, int mois) {
+    final Map<int, _AgregJourCal> aggr = {};
+
+    for (final p in _pronostics) {
+      if (!p.resultatsReels) continue;
+      final d = p.datePronostic;
+      if (d.year != annee || d.month != mois) continue;
+
+      final type = p.typePariConseille ?? '';
+      if (type.isEmpty || type == 'Inconnu' || type == 'À surveiller') continue;
+
+      final ag = aggr.putIfAbsent(d.day, () => _AgregJourCal());
+      ag.nbCourses++;
+      ag.pronostics.add(p);
+
+      if (_estBonConseilParType(p, type)) {
+        ag.nbBons++;
+        final ord = _estOrdreExact(p, type);
+        if (ord == true)  ag.nbOrdre++;
+        if (ord == false) ag.nbDesordre++;
+      }
+    }
+
+    // Convertir en DonneeJourCalendrier avec palier calculé
+    final result = <int, DonneeJourCalendrier>{};
+    for (final entry in aggr.entries) {
+      final ag  = entry.value;
+      final taux = ag.nbCourses > 0 ? ag.nbBons / ag.nbCourses : 0.0;
+      final PalierCalendrier palier;
+      if (ag.nbCourses == 0) {
+        palier = PalierCalendrier.gris;
+      } else if (ag.nbBons == 0) {
+        palier = PalierCalendrier.rouge;
+      } else if (taux >= 0.60 && ag.nbCourses >= 3) {
+        palier = PalierCalendrier.or;
+      } else if (taux >= 0.40) {
+        palier = PalierCalendrier.vert;
+      } else if (taux >= 0.25) {
+        palier = PalierCalendrier.jaune;
+      } else {
+        palier = PalierCalendrier.orange;
+      }
+      result[entry.key] = DonneeJourCalendrier(
+        jour:       entry.key,
+        nbCourses:  ag.nbCourses,
+        nbBons:     ag.nbBons,
+        nbOrdre:    ag.nbOrdre,
+        nbDesordre: ag.nbDesordre,
+        palier:     palier,
+        pronostics: List.unmodifiable(ag.pronostics),
+      );
+    }
+    return result;
+  }
+
   /// ★ v9.0 : Stats par label IA (triées par nb décroissant)
   List<StatsParLabel> get statsParLabel {
     final list = _statsLabels.values.toList()
@@ -4715,4 +4782,56 @@ extension IaMemoryServiceRapportHebdo on IaMemoryService {
       'dateGenere':      maintenant.toIso8601String(),
     };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ★ v10.25 — Structures de données pour le Calendrier des performances
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Palier de couleur du calendrier — basé sur typePariConseille (pas "favori 1er")
+enum PalierCalendrier {
+  or,       // ≥60% ET ≥3 courses  → dorée  🥇
+  vert,     // ≥40%                → vert foncé
+  jaune,    // ≥25%                → jaune/ambre
+  orange,   // ≥10% (≥1 bon)      → orange
+  rouge,    // courses mais 0 bon  → rouge
+  gris,     // aucune course       → gris neutre
+}
+
+/// Données agrégées pour une journée du calendrier
+class DonneeJourCalendrier {
+  final int                  jour;
+  final int                  nbCourses;
+  final int                  nbBons;
+  final int                  nbOrdre;
+  final int                  nbDesordre;
+  final PalierCalendrier     palier;
+  final List<IaPronostic>    pronostics; // pronostics gagnants du jour
+
+  const DonneeJourCalendrier({
+    required this.jour,
+    required this.nbCourses,
+    required this.nbBons,
+    required this.nbOrdre,
+    required this.nbDesordre,
+    required this.palier,
+    required this.pronostics,
+  });
+
+  double get taux => nbCourses > 0 ? nbBons / nbCourses : 0.0;
+
+  List<IaPronostic> get pronosticsGagnants =>
+      pronostics.where((p) {
+        final t = p.typePariConseille ?? '';
+        return t.isNotEmpty;
+      }).toList();
+}
+
+/// Agrégateur interne (usage privé dans donneesCalendrierJour)
+class _AgregJourCal {
+  int                nbCourses  = 0;
+  int                nbBons     = 0;
+  int                nbOrdre    = 0;
+  int                nbDesordre = 0;
+  List<IaPronostic>  pronostics = [];
 }
