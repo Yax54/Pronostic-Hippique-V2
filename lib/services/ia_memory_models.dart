@@ -503,8 +503,11 @@ class IaPoidsAdaptatifs {
     if (lower.contains('trot') && lower.contains('att')) return 'trot_attele';
     if (lower.contains('trot') && lower.contains('mont')) return 'trot_monte';
     if (lower.contains('trot')) return 'trot_attele';
+    // ★ v9.98 : course.type = "Attelé" ou "Monté" sans le mot "trot" → jamais matché avant
+    if (lower.contains('att')) return 'trot_attele'; // "Attelé" → trot_attele
+    if (lower.contains('mont')) return 'trot_monte';  // "Monté" → trot_monte
     if (lower.contains('plat')) return 'plat';
-    if (lower.contains('haies') || lower.contains('obstacle') || lower.contains('steeple')) return 'obstacle';
+    if (lower.contains('haies') || lower.contains('obstacle') || lower.contains('steeple') || lower.contains('cross')) return 'obstacle';
     return 'global';
   }
 

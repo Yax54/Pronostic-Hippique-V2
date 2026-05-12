@@ -91,6 +91,22 @@ class EloService {
       }
       _charge = true;
       debugPrint('[EloService] ✅ ${_ratings.length} ratings chargés (v2)');
+
+      // ★ v9.98 : Purge one-shot des entrées orphelines "NOM|" (discipline vide)
+      // Issues de la migration v1→v2 : nb=1 chacune, rating ≈ 1500 ± K, jamais lues
+      // car le moteur cherche "NOM|DISCIPLINE" — elles n'apportent rien à l'IA.
+      final flagPurge = prefs.getBool('elo_orphelins_purges_v1') ?? false;
+      if (!flagPurge) {
+        final keysOrphelins = _ratings.keys
+            .where((k) => k.endsWith('|'))
+            .toList();
+        for (final k in keysOrphelins) _ratings.remove(k);
+        await prefs.setBool('elo_orphelins_purges_v1', true);
+        if (keysOrphelins.isNotEmpty) {
+          debugPrint('[EloService] 🧹 Purge orphelins : ${keysOrphelins.length} entrées "NOM|" supprimées');
+          await _sauvegarder(); // persister immédiatement
+        }
+      }
     } catch (e) {
       debugPrint('[EloService] ⚠️ Erreur chargement : $e');
       _charge = true;
