@@ -111,12 +111,18 @@ class ZoneTurfService {
           final distanceM = c['distance'] as int? ?? 0;
           final montant = c['montantPrix'] as int? ?? 0;
           final disc = _pmuDisciplineToZt(c['discipline'] as String? ?? '');
-          final isQuinte = (c['categorieSpeciale'] as String? ?? '').contains('QUINTE');
-          final isQuarte = (c['categorieSpeciale'] as String? ?? '').contains('QUARTE') && !isQuinte;
+          // ★ v9.98 : categorieSpeciale n'existe PAS dans l'API PMU réelle.
+          // La détection Quinté/Quarté se fait via la liste paris[].typePari.
+          final pariTypes = (c['paris'] as List<dynamic>? ?? [])
+              .map((p) => (p as Map<String, dynamic>)['typePari'] as String? ?? '')
+              .toList();
+          final isQuinte = pariTypes.contains('E_QUINTE_PLUS');
+          final isQuarte = pariTypes.contains('E_QUARTE_PLUS') && !isQuinte;
 
           // ★ v9.93 : Détecter les courses classiques sans Quarté/Quinté
           // (Groupe 1/2/3, Poule d'Essai, etc.) — PMU ne publie que le Tiercé
-          final catSpec  = (c['categorieSpeciale'] as String? ?? '').toUpperCase();
+          // catSpec basé sur pariTypes maintenant (categorieSpeciale absent de l'API)
+          final catSpec  = pariTypes.join(' ');
           final nomUpper = nomCourse.toUpperCase();
           final isClassiqueSansMultiple = !isQuinte && !isQuarte &&
               (disc == 'Plat' || disc == 'PLAT') && montant >= 80000 &&
