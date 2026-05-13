@@ -549,7 +549,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── ★ v10.23 : Bandeau dynamique Conseil IA ──────────────────────
   Widget _buildBandeauConseilIA() {
-    final alertSvc = AlertService.instance;
+    // ★ fix : context.watch pour rebuild automatique quand AlertService notifie
+    final alertSvc = context.watch<AlertService>();
     final courses  = alertSvc.coursesConseilIA;
 
     return FutureBuilder<Map<String, dynamic>>(
@@ -595,7 +596,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => context.read<NavigationNotifier>().goTo(3),
+                  onTap: () => context.read<NavigationNotifier>().goTo(1),
                   child: const Text('Configurer →',
                       style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 12, fontWeight: FontWeight.bold)),
                 ),

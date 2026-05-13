@@ -235,13 +235,24 @@ class AlertTile extends StatelessWidget {
           } else {
             // ★ fix : alertes sans course associée → naviguer vers la bonne section
             alertSvc.markRead(alert.id);
-            final titre = alert.titre.toLowerCase();
+            // Normalisation robuste : suppression accents + minuscules
+            final titreRaw   = alert.titre;
+            final titreNorm  = titreRaw
+                .toLowerCase()
+                .replaceAll('é', 'e')
+                .replaceAll('è', 'e')
+                .replaceAll('ê', 'e')
+                .replaceAll('à', 'a')
+                .replaceAll('û', 'u');
             if (context.mounted) {
               final nav = context.read<NavigationNotifier>();
-              if (titre.contains('résultats pmu') || titre.contains('resultats pmu')) {
-                // "Résultats PMU du jour disponibles" → IA Stats (index 5)
+              // "🏁 Résultats PMU du jour disponibles" → IA Stats (index 5)
+              if (titreNorm.contains('resultats pmu') ||
+                  titreNorm.contains('pmu du jour') ||
+                  titreRaw.contains('PMU')) {
                 nav.goTo(5);
-              } else if (titre.contains('pronostics du jour') || titre.contains('bonjour')) {
+              } else if (titreNorm.contains('pronostics du jour') ||
+                         titreNorm.contains('bonjour')) {
                 // "Bonjour — Pronostics du jour disponibles" → Conseils (index 1)
                 nav.goTo(1);
               }
