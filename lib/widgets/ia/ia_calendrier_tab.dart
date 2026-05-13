@@ -16,6 +16,7 @@
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
@@ -120,6 +121,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   double _seuilVert   = 30.0;
   double _seuilJaune  = 25.0;
   double _seuilOrange = 20.0;
+
+  // ★ v10.31 : _ctrlVert/Jaune/Orange + _editVert/Jaune/Orange supprimés
+  //            (unused_field après suppression de _buildLegende)
+  //            L'édition des seuils reste dans _SeuilsParamsSheet.
 
   // ★ v10.26 : Indicateur de rafraîchissement temps réel
   bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
@@ -1105,6 +1110,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     );
   }
 
+  // ★ v10.31 : _buildModeSelector, _buildLegende, _legendeRow, _seuilField
+  //            supprimés (unused_element). L'édition des seuils reste accessible
+  //            via _SeuilsParamsSheet (bouton ⚙️ dans le header).
+
   // ══════════════════════════════════════════════════════════════════════
   //  DIALOG DÉTAIL JOUR — tap sur une case
   // ══════════════════════════════════════════════════════════════════════
@@ -1450,7 +1459,14 @@ class _DetailJourSheet extends StatelessWidget {
         Row(children: [
           // ★ v10.30 : tap sur le type de pari → explication
           GestureDetector(
-            onTap: () => _ouvrirDescriptifTypePari(context, type),
+            onTap: () => _ouvrirDescriptifTypePari(
+              context, type,
+              numeros: p.topNIA.take(
+                type == 'Quinté+' ? 5 : type == 'Quarté+' ? 4 :
+                type == 'Tiercé'  ? 3 : type.contains('Couplé') ? 2 : 1
+              ).toList(),
+              nomFavori: p.favoriIaNom,
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -1566,207 +1582,17 @@ class _DetailJourSheet extends StatelessWidget {
 //  ★ v10.30 : Descriptif des types de paris
 // ══════════════════════════════════════════════════════════════════════════════
 
-void _ouvrirDescriptifTypePari(BuildContext context, String type) {
+void _ouvrirDescriptifTypePari(BuildContext context, String type,
+    {List<String> numeros = const <String>[], String? nomFavori}) {
   showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _TypePariSheet(type: type),
+    context:            context,
+    backgroundColor:    Colors.transparent,
+    isScrollControlled: true,
+    builder: (_) => TypePariDescriptifSheet( // ★ v10.30 : source unique
+        type: type, numeros: numeros, nomFavori: nomFavori),
   );
 }
 
-class _TypePariSheet extends StatelessWidget {
-  final String type;
-  const _TypePariSheet({required this.type});
-
-  static const _descriptions = <String, Map<String, String>>{
-    'Simple Gagnant': {
-      'emoji': '🏆',
-      'titre': 'Simple Gagnant',
-      'court': 'Votre cheval finit 1ᵉʳ.',
-      'detail':
-        'Vous misez sur UN seul cheval et il doit remporter la course. '
-        "C'est le pari le plus simple. La cote est directement liée à la "
-        'probabilité de victoire — plus elle est élevée, plus le gain potentiel est grand, '
-        'mais plus le risque est réel.',
-      'conseil': "Idéal quand l'IA a un favori dominant avec une cote ≤ 8.",
-    },
-    'Simple Placé': {
-      'emoji': '🎯',
-      'titre': 'Simple Placé',
-      'court': 'Votre cheval finit dans les 3 premiers (parfois 2).',
-      'detail':
-        'Votre cheval doit se classer parmi les 3 premiers (2ᵉ ou 3ᵉ accepté). '
-        'Gain plus faible que le Simple Gagnant, mais probabilité bien plus haute. '
-        'Pour les courses de moins de 5 partants, seuls les 2 premiers comptent.',
-      'conseil': 'Parfait pour un cheval solide sans être le favori absolu.',
-    },
-    'Gagnant+Placé': {
-      'emoji': '🎯🏆',
-      'titre': 'Gagnant + Placé',
-      'court': 'Pari combiné : vous pariez gagnant ET placé en même temps.',
-      'detail':
-        'Vous jouez les deux paris simultanément sur le même cheval. '
-        'Si votre cheval gagne, vous touchez les deux dividendes. '
-        "S'il se place (2ᵉ ou 3ᵉ), vous ne touchez que le Placé. "
-        'La mise est doublée mais le filet de sécurité est réel.',
-      'conseil': "L'IA l'utilise quand la confiance est haute mais la cote attrayante.",
-    },
-    'Couplé Gagnant': {
-      'emoji': '🔗',
-      'titre': 'Couplé Gagnant',
-      'court': "Vos 2 chevaux arrivent 1ᵉʳ et 2ᵉ, dans n'importe quel ordre.",
-      'detail':
-        'Vous désignez 2 chevaux qui doivent occuper les 2 premières places '
-        '(ordre indifférent). Plus difficile que le Simple Gagnant, '
-        'mais la cote combinée est généralement intéressante.',
-      'conseil': "Utilisé quand l'IA identifie 2 candidats clairement supérieurs au reste.",
-    },
-    'Couplé Placé': {
-      'emoji': '🔗🎯',
-      'titre': 'Couplé Placé',
-      'court': 'Vos 2 chevaux finissent dans les 3 premiers.',
-      'detail':
-        'Vos 2 chevaux sélectionnés doivent tous deux se placer dans le Top 3, '
-        "dans n'importe quel ordre. Moins risqué que le Couplé Gagnant.",
-      'conseil': 'Bon rapport risque/récompense quand 2 chevaux se dégagent nettement.',
-    },
-    'Tiercé': {
-      'emoji': '🥉',
-      'titre': 'Tiercé',
-      'court': 'Vos 3 chevaux arrivent dans les 3 premiers.',
-      'detail':
-        "Vous désignez les 3 premiers chevaux dans l'ordre (Tiercé Ordre) "
-        "ou dans n'importe quel ordre (Tiercé Désordre). "
-        'Le Tiercé Ordre rapporte beaucoup plus. '
-        "L'IA conseille généralement le désordre pour plus de sécurité.",
-      'conseil': "Recommandé par l'IA quand 3 chevaux dominent clairement la course.",
-    },
-    'Quarté+': {
-      'emoji': '4️⃣',
-      'titre': 'Quarté+',
-      'court': 'Vos 4 chevaux occupent les 4 premières places.',
-      'detail':
-        'Vous désignez les 4 premiers chevaux (ordre ou désordre). '
-        'Disponible uniquement sur certaines courses sélectionnées par PMU. '
-        'Les gains peuvent être très importants. '
-        "Le '+' signifie qu'un bonus est accordé si votre sélection est exactement dans l'ordre.",
-      'conseil': "L'IA le conseille uniquement sur des courses isQuarte=true avec 4 candidats fiables.",
-    },
-    'Quinté+': {
-      'emoji': '5️⃣',
-      'titre': 'Quinté+',
-      'court': 'Vos 5 chevaux occupent les 5 premières places.',
-      'detail':
-        'Le pari phare de PMU. Disponible sur UNE course par jour, '
-        'généralement à Vincennes (Trot) ou Longchamp/Auteuil (Plat/Obstacle). '
-        'Vous sélectionnez 5 chevaux qui doivent occuper les 5 premières places. '
-        "Les gains sont exceptionnels, le jackpot peut atteindre plusieurs millions d'euros. "
-        'En cas d\'erreur sur un seul cheval, des bonus "4 sur 5" et "3 sur 5" existent.',
-      'conseil': "L'IA le conseille uniquement sur les courses isQuinte=true avec une confiance ≥ 70%.",
-    },
-    'À surveiller': {
-      'emoji': '👁️',
-      'titre': 'À surveiller',
-      'court': "L'IA surveille cette course sans conseil de pari ferme.",
-      'detail':
-        'Les scores IA sont insuffisants pour recommander un pari avec confiance. '
-        'Cela peut signifier une course très ouverte, trop peu de données '
-        'sur les partants, ou des conditions inhabituelles (terrain, distance inédite).',
-      'conseil': 'Ne pas parier — attendre des informations supplémentaires.',
-    },
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final info = _descriptions[type] ?? {
-      'emoji': '❓',
-      'titre': type,
-      'court': 'Type de pari PMU.',
-      'detail': "Consultez les règles PMU pour plus d'informations sur ce type de pari.",
-      'conseil': '',
-    };
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      decoration: const BoxDecoration(
-        color: Color(0xFF111F30),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Handle
-        Center(child: Container(
-          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20),
-          decoration: BoxDecoration(
-            color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-        )),
-
-        // Titre
-        Row(children: [
-          Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(
-              color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
-            ),
-            child: Center(child: Text(info['emoji']!,
-                style: const TextStyle(fontSize: 22))),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(info['titre']!,
-              style: const TextStyle(
-                color: Colors.white, fontSize: 18,
-                fontWeight: FontWeight.bold)),
-            const SizedBox(height: 3),
-            Text(info['court']!,
-              style: const TextStyle(
-                  color: Colors.white54, fontSize: 12)),
-          ])),
-        ]),
-
-        const SizedBox(height: 18),
-        const Divider(color: Colors.white12),
-        const SizedBox(height: 14),
-
-        // Explication détaillée
-        Text('Comment ça marche ?',
-          style: const TextStyle(
-            color: Colors.white70, fontSize: 13,
-            fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        Text(info['detail']!,
-          style: const TextStyle(
-            color: Colors.white60, fontSize: 13, height: 1.6)),
-
-        if ((info['conseil'] ?? '').isNotEmpty) ...[ 
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: const Color(0xFF7C4DFF).withValues(alpha: 0.25)),
-            ),
-            child: Row(children: [
-              const Icon(Icons.psychology_outlined,
-                  color: Color(0xFF7C4DFF), size: 16),
-              const SizedBox(width: 8),
-              Expanded(child: Text(info['conseil']!,
-                style: const TextStyle(
-                  color: Color(0xFFB39DDB),
-                  fontSize: 12, height: 1.5))),
-            ]),
-          ),
-        ],
-      ]),
-    );
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ★ v10.30 : BottomSheet paramétrage des seuils

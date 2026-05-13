@@ -3,6 +3,7 @@
 //  v10.22 : Panneau filtres avancés (Type Paris multi, Confiance min,
 //           Hippodrome multi, Discipline multi) + persistance prefs
 // ═══════════════════════════════════════════════════════════════════
+import '../widgets/type_pari_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../widgets/favori_button.dart';
@@ -1466,8 +1467,16 @@ class _ConseilCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(typePari,
-                                  style: TextStyle(color: confianceColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                              // ★ v10.30 : badge cliquable global
+                        TypePariBadge(
+                          type:      typePari,
+                          numeros:   course.partantsParRangIA
+                              .take(() { switch (typePari) { case 'Quinté+': return 5; case 'Quarté+': return 4; case 'Tiercé': return 3; case 'Couplé Gagnant': case 'Couplé Placé': return 2; default: return 1; } }())
+                              .map((p) => p.numero).toList(),
+                          nomFavori: course.partantsParRangIA.isNotEmpty
+                              ? course.partantsParRangIA.first.nom
+                              : null,
+                        ),
                               if (sousTitrePari.isNotEmpty)
                                 Text(sousTitrePari,
                                     style: TextStyle(color: confianceColor.withValues(alpha: 0.7), fontSize: 11)),
