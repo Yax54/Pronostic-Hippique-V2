@@ -22,6 +22,7 @@ import '../services/data_refresh_service.dart'; // ★ Lot 4 : fix écran gris
 import '../services/ia_memory_service.dart';
 import '../services/ia_pronostic_engine.dart';
 import '../utils/format_euros.dart';
+import 'type_pari_badge.dart'; // ★ v10.32
 
 // ── Point d'entrée public ────────────────────────────────────────────────────
 
@@ -2711,6 +2712,14 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                 child: const Text('QUINTÉ+', style: TextStyle(color: _gold, fontSize: 13, fontWeight: FontWeight.bold)),
               ),
             ],
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            TypePariBadge(
+              type:      _typesPari[_typePariIndex],
+              numeros:   _numerosFinaux.map((n) => n.toString()).toList(),
+              nomFavori: _chevalSelectionne?.nom,
+            ),
           ]),
         ],
       ),
