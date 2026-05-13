@@ -178,6 +178,9 @@ class BackupService {
     'ia_badges_v1',
     // ★ v10.27 : Seuils paliers calendrier (editables par l'utilisateur)
     'ia_calendrier_seuils_v1',
+    // ★ v10.34/v10.35 : Flags migration précision (recalcul après fix Couplé)
+    'ia_precision_migrated_v2',
+    'ia_precision_migrated_v3',
   ];
 
   // 📋 Paris utilisateur — historique complet

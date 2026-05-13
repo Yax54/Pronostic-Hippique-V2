@@ -617,7 +617,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           Text(
             '$jour',
             style: TextStyle(
-              color: estAuj ? _cGold : fgColor,
+              // ★ v10.35 : blanc pur pour contraste maximal sur fond coloré
+              color: estAuj
+                  ? _cGold
+                  : (hasCourses ? Colors.white : _cGreyTxt),
               fontSize: 13,
               fontWeight: estAuj || palier == PalierCalendrier.or
                   ? FontWeight.bold
@@ -628,7 +631,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             Text(
               '${dd.nbBons}/${dd.nbCourses}',
               style: TextStyle(
-                color: fgColor.withValues(alpha: 0.75),
+                // ★ v10.35 : couleur vive pour le ratio (lisible sur fond sombre)
+                color: palier == PalierCalendrier.gris
+                    ? _cGreyTxt
+                    : Colors.white.withValues(alpha: 0.85),
                 fontSize: 9,
                 fontWeight: FontWeight.w600,
               ),
@@ -1399,31 +1405,45 @@ class _DetailJourSheet extends StatelessWidget {
             ),
           ),
           // Badge score — couleur dynamique selon performance
+          // ★ v10.35 : Badge score avec distinction réussite complète vs partielle
           Builder(builder: (ctx) {
-            final sc = score ?? 0;
+            final sc   = score ?? 0;
+            final rang = p.rangFavoriIaDansArrivee;
+            final type = p.typePariConseille ?? '';
+            // Gagnant+Placé : distinguer rang==1 (complet) de rang 2-3 (partiel/Placé seul)
+            final estPartiel = type == 'Gagnant+Placé' && rang != null && rang > 1;
+            final badgeEmoji = estPartiel ? '🎯' : '✅'; // 🎯 = Placé seul, ✅ = Gagnant
             final badgeColor = sc >= 70
                 ? const Color(0xFFFFD700)
                 : sc >= 50
                     ? const Color(0xFF7C4DFF)
                     : Colors.white54;
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: badgeColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Text('✅', style: TextStyle(fontSize: 11)),
-                const SizedBox(width: 4),
-                if (score != null)
-                  Text('${sc.toStringAsFixed(0)}',
-                    style: TextStyle(
-                      color: badgeColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    )),
-              ]),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: badgeColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(badgeEmoji, style: const TextStyle(fontSize: 11)),
+                    const SizedBox(width: 4),
+                    if (score != null)
+                      Text('${sc.toStringAsFixed(0)}',
+                        style: TextStyle(
+                          color: badgeColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        )),
+                  ]),
+                ),
+                if (estPartiel)
+                  const Text('Placé seul',
+                    style: TextStyle(color: Colors.white38, fontSize: 8)),
+              ],
             );
           }),
         ]),
