@@ -1654,11 +1654,23 @@ class _SeuilUniquSheetState extends State<_SeuilUniquSheet> {
   String get _description {
     switch (widget.palier) {
       case PalierCalendrier.vert:
-        return 'Seuil minimum pour qu\'une journée soit considérée "Bonne".\nDoit être supérieur au seuil Norme (actuellement ${_j.toStringAsFixed(0)}%).';
+        return '🟢 VERT  : taux ≥ valeur saisie\n'
+            '🟡 JAUNE : taux entre ${_j.toStringAsFixed(0)}% et (valeur saisie − 1)%\n'
+            '🟠 ORANGE: taux entre ${_o.toStringAsFixed(0)}% et ${(_j - 1).toStringAsFixed(0)}%\n'
+            '🔴 ROUGE : taux < ${_o.toStringAsFixed(0)}%\n\n'
+            'Valeur autorisée : entre ${(_j + 1).toStringAsFixed(0)}% et 60%';
       case PalierCalendrier.jaune:
-        return 'Seuil minimum pour qu\'une journée soit "Dans la norme".\nDoit être entre ${_o.toStringAsFixed(0)}% et ${_v.toStringAsFixed(0)}%.';
+        return '🟢 VERT  : taux ≥ ${_v.toStringAsFixed(0)}%\n'
+            '🟡 JAUNE : taux entre valeur saisie et ${(_v - 1).toStringAsFixed(0)}%\n'
+            '🟠 ORANGE: taux entre ${_o.toStringAsFixed(0)}% et (valeur saisie − 1)%\n'
+            '🔴 ROUGE : taux < ${_o.toStringAsFixed(0)}%\n\n'
+            'Valeur autorisée : entre ${(_o + 1).toStringAsFixed(0)}% et ${(_v - 1).toStringAsFixed(0)}%';
       case PalierCalendrier.orange:
-        return 'Seuil minimum pour qu\'une journée soit "En dessous".\nEn dessous de ce seuil → Journée ratée (rouge).\nDoit être inférieur au seuil Norme (${_j.toStringAsFixed(0)}%).';
+        return '🟢 VERT  : taux ≥ ${_v.toStringAsFixed(0)}%\n'
+            '🟡 JAUNE : taux entre ${_j.toStringAsFixed(0)}% et ${(_v - 1).toStringAsFixed(0)}%\n'
+            '🟠 ORANGE: taux entre valeur saisie et ${(_j - 1).toStringAsFixed(0)}%\n'
+            '🔴 ROUGE : taux < valeur saisie\n\n'
+            'Valeur autorisée : entre 5% et ${(_j - 1).toStringAsFixed(0)}%';
       default: return '';
     }
   }
