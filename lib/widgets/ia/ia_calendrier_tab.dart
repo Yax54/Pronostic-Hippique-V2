@@ -121,14 +121,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   double _seuilJaune  = 25.0;
   double _seuilOrange = 20.0;
 
-  // Contrôleurs TextField pour l'édition inline des seuils
-  late TextEditingController _ctrlVert;
-  late TextEditingController _ctrlJaune;
-  late TextEditingController _ctrlOrange;
-  bool _editVert   = false;
-  bool _editJaune  = false;
-  bool _editOrange = false;
-
   // ★ v10.26 : Indicateur de rafraîchissement temps réel
   bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
 
@@ -147,18 +139,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     _modeTabs = TabController(length: 2, vsync: this);
     _modeTabs.addListener(() => setState(() {}));
     IaMemoryService.instance.addListener(_onMemChange);
-    _ctrlVert   = TextEditingController();
-    _ctrlJaune  = TextEditingController();
-    _ctrlOrange = TextEditingController();
     _chargerSeuils();
   }
 
   @override
   void dispose() {
     _modeTabs.dispose();
-    _ctrlVert.dispose();
-    _ctrlJaune.dispose();
-    _ctrlOrange.dispose();
     IaMemoryService.instance.removeListener(_onMemChange);
     super.dispose();
   }
@@ -265,10 +251,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         children: [
           _buildHeader(),
           const SizedBox(height: 16),
-          _buildModeSelector(),
-          const SizedBox(height: 16),
-          // ★ v10.27 : Légende interactive AVANT le calendrier
-          _buildLegende(),
+          // ★ v10.30 : Toggle + légende compacts fusionnés
+          _buildToggleEtLegendeFusionnes(),
           const SizedBox(height: 12),
           if (_modeTabs.index == 0) ...[
             _buildCalendrierMensuel(data),
@@ -379,32 +363,131 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  SÉLECTEUR DE MODE — Mensuel / Annuel
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildModeSelector() {
+  //  ★ v10.30 : TOGGLE MENSUEL/ANNUEL + LÉGENDE COMPACTE FUSIONNÉS
+  // ══════════════════════════════════════════════════════════════════════
+  Widget _buildToggleEtLegendeFusionnes() {
     return Container(
-      height: 38,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _cCard,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
       ),
-      child: TabBar(
-        controller: _modeTabs,
-        indicator: BoxDecoration(
-          color: _cGold.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _cGold.withValues(alpha: 0.4)),
+      child: Column(children: [
+
+        // ── Ligne 1 : Toggle Mensuel / Annuel + bouton ⚙️ ──────────────
+        Row(children: [
+          // Toggle
+          Expanded(
+            child: Container(
+              height: 36,
+              decoration: BoxDecoration(
+                color: _cDark,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: TabBar(
+                controller: _modeTabs,
+                indicator: BoxDecoration(
+                  color: _cGold.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: _cGold.withValues(alpha: 0.45)),
+                ),
+                labelColor: _cGold,
+                unselectedLabelColor: Colors.white38,
+                labelStyle: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.bold),
+                unselectedLabelStyle: const TextStyle(fontSize: 12),
+                dividerColor: Colors.transparent,
+                tabs: const [
+                  Tab(text: '📅 Mensuel'),
+                  Tab(text: '📆 Annuel'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Bouton ⚙️ — ouvre le BottomSheet de paramétrage
+          GestureDetector(
+            onTap: _ouvrirParametresSeuils,
+            child: Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: _cDark,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.12)),
+              ),
+              child: const Icon(Icons.tune,
+                  color: Colors.white54, size: 18),
+            ),
+          ),
+        ]),
+
+        const SizedBox(height: 10),
+
+        // ── Ligne 2 : Légende compacte horizontale ──────────────────────
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _legendePuce(PalierCalendrier.or,     '🥇', 'Noble'),
+            _legendePuce(PalierCalendrier.vert,   '✅', '≥${_seuilVert.toStringAsFixed(0)}%'),
+            _legendePuce(PalierCalendrier.jaune,  '📊', '≥${_seuilJaune.toStringAsFixed(0)}%'),
+            _legendePuce(PalierCalendrier.orange, '⚠️', '≥${_seuilOrange.toStringAsFixed(0)}%'),
+            _legendePuce(PalierCalendrier.rouge,  '❌', '<${_seuilOrange.toStringAsFixed(0)}%'),
+            _legendePuce(PalierCalendrier.gris,   '💤', 'Repos'),
+          ],
         ),
-        labelColor: _cGold,
-        unselectedLabelColor: Colors.white38,
-        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-        unselectedLabelStyle: const TextStyle(fontSize: 13),
-        dividerColor: Colors.transparent,
-        tabs: const [
-          Tab(text: '📅 Mensuel'),
-          Tab(text: '📆 Annuel'),
-        ],
+      ]),
+    );
+  }
+
+  /// Puce de légende compacte — couleur + emoji + label
+  Widget _legendePuce(PalierCalendrier p, String emoji, String label) {
+    return Column(children: [
+      Container(
+        width: 28, height: 28,
+        decoration: BoxDecoration(
+          color: p.bg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: p.border.withValues(alpha: 0.5)),
+        ),
+        child: Center(child: Text(emoji,
+            style: const TextStyle(fontSize: 13))),
+      ),
+      const SizedBox(height: 3),
+      Text(label, style: const TextStyle(
+          color: Colors.white38, fontSize: 9,
+          fontWeight: FontWeight.w500)),
+    ]);
+  }
+
+  /// Ouvre le BottomSheet de paramétrage des seuils
+  void _ouvrirParametresSeuils() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _SeuilsParamsSheet(
+        seuilVert:   _seuilVert,
+        seuilJaune:  _seuilJaune,
+        seuilOrange: _seuilOrange,
+        onApply: (v, j, o) {
+          setState(() {
+            _seuilVert   = v;
+            _seuilJaune  = j;
+            _seuilOrange = o;
+          });
+          _sauvegarderSeuils();
+        },
+        onReset: () {
+          setState(() {
+            _seuilVert   = 30.0;
+            _seuilJaune  = 25.0;
+            _seuilOrange = 20.0;
+          });
+          _sauvegarderSeuils();
+        },
       ),
     );
   }
@@ -1023,253 +1106,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  LÉGENDE INTERACTIVE — ★ v10.27 : seuils éditables + persistants
-  // ══════════════════════════════════════════════════════════════════════
-  Widget _buildLegende() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _cCard,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Titre + hint
-        Row(children: [
-          const Text('Paliers de couleur',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            )),
-          const SizedBox(width: 6),
-          Text('(tap seuil → modifier)',
-            style: TextStyle(
-              color: Colors.white24,
-              fontSize: 10,
-            )),
-        ]),
-        const SizedBox(height: 12),
-
-        // Ligne OR — non modifiable
-        _legendeRow(
-          palier:      PalierCalendrier.or,
-          label:       '🥇 Tiercé / Quarté / Quinté réussi',
-          seuilWidget: null,
-        ),
-        const SizedBox(height: 8),
-
-        // Ligne VERT — seuil modifiable
-        _legendeRow(
-          palier: PalierCalendrier.vert,
-          label:  '✅ Taux ≥',
-          seuilWidget: _seuilField(
-            valeur:     _seuilVert,
-            enEdition:  _editVert,
-            ctrl:       _ctrlVert,
-            couleur:    _cGreen,
-            onTap: () => setState(() {
-              _editVert   = true;
-              _editJaune  = false;
-              _editOrange = false;
-              _ctrlVert.text = _seuilVert.toStringAsFixed(0);
-              _ctrlVert.selection = TextSelection(
-                baseOffset: 0,
-                extentOffset: _ctrlVert.text.length,
-              );
-            }),
-            onSubmit: (v) {
-              final n = double.tryParse(v.replaceAll(',', '.'));
-              if (n != null && n > _seuilJaune && n <= 100) {
-                setState(() { _seuilVert = n; _editVert = false; });
-                _sauvegarderSeuils();
-              } else {
-                setState(() { _editVert = false; });
-              }
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Ligne JAUNE — seuil modifiable
-        _legendeRow(
-          palier: PalierCalendrier.jaune,
-          label:  '📊 Taux ≥',
-          seuilWidget: _seuilField(
-            valeur:     _seuilJaune,
-            enEdition:  _editJaune,
-            ctrl:       _ctrlJaune,
-            couleur:    _cYellow,
-            onTap: () => setState(() {
-              _editJaune  = true;
-              _editVert   = false;
-              _editOrange = false;
-              _ctrlJaune.text = _seuilJaune.toStringAsFixed(0);
-              _ctrlJaune.selection = TextSelection(
-                baseOffset: 0,
-                extentOffset: _ctrlJaune.text.length,
-              );
-            }),
-            onSubmit: (v) {
-              final n = double.tryParse(v.replaceAll(',', '.'));
-              if (n != null && n > _seuilOrange && n < _seuilVert) {
-                setState(() { _seuilJaune = n; _editJaune = false; });
-                _sauvegarderSeuils();
-              } else {
-                setState(() { _editJaune = false; });
-              }
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Ligne ORANGE — seuil modifiable
-        _legendeRow(
-          palier: PalierCalendrier.orange,
-          label:  '⚠️ Taux ≥',
-          seuilWidget: _seuilField(
-            valeur:     _seuilOrange,
-            enEdition:  _editOrange,
-            ctrl:       _ctrlOrange,
-            couleur:    _cOrange,
-            onTap: () => setState(() {
-              _editOrange = true;
-              _editVert   = false;
-              _editJaune  = false;
-              _ctrlOrange.text = _seuilOrange.toStringAsFixed(0);
-              _ctrlOrange.selection = TextSelection(
-                baseOffset: 0,
-                extentOffset: _ctrlOrange.text.length,
-              );
-            }),
-            onSubmit: (v) {
-              final n = double.tryParse(v.replaceAll(',', '.'));
-              if (n != null && n > 0 && n < _seuilJaune) {
-                setState(() { _seuilOrange = n; _editOrange = false; });
-                _sauvegarderSeuils();
-              } else {
-                setState(() { _editOrange = false; });
-              }
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-
-        // Ligne ROUGE — calculée automatiquement
-        _legendeRow(
-          palier: PalierCalendrier.rouge,
-          label:  '❌ Taux < ${_seuilOrange.toStringAsFixed(0)}%',
-          seuilWidget: null,
-        ),
-        const SizedBox(height: 8),
-
-        // Ligne GRIS — non modifiable
-        _legendeRow(
-          palier:      PalierCalendrier.gris,
-          label:       '💤 Aucune course',
-          seuilWidget: null,
-        ),
-
-        const SizedBox(height: 10),
-        const Divider(color: Colors.white12, height: 1),
-        const SizedBox(height: 8),
-        Text(
-          'Seuils persistants · Tap sur une valeur % pour modifier',
-          style: TextStyle(color: Colors.white24, fontSize: 10),
-        ),
-      ]),
-    );
-  }
-
-  Widget _legendeRow({
-    required PalierCalendrier palier,
-    required String           label,
-    required Widget?          seuilWidget,
-  }) {
-    return Row(children: [
-      Container(
-        width: 14, height: 14,
-        decoration: BoxDecoration(
-          color:        palier.bg,
-          borderRadius: BorderRadius.circular(3),
-          border:       Border.all(color: palier.border, width: 0.8),
-        ),
-      ),
-      const SizedBox(width: 8),
-      Text(label,
-        style: const TextStyle(color: Colors.white60, fontSize: 12)),
-      if (seuilWidget != null) ...[
-        const SizedBox(width: 4),
-        seuilWidget,
-        Text('%', style: const TextStyle(color: Colors.white60, fontSize: 12)),
-      ],
-    ]);
-  }
-
-  Widget _seuilField({
-    required double                valeur,
-    required bool                  enEdition,
-    required TextEditingController ctrl,
-    required Color                 couleur,
-    required VoidCallback          onTap,
-    required ValueChanged<String>  onSubmit,
-  }) {
-    if (enEdition) {
-      return SizedBox(
-        width: 42,
-        height: 28,
-        child: TextField(
-          controller:    ctrl,
-          autofocus:     true,
-          keyboardType:  const TextInputType.numberWithOptions(decimal: true),
-          textAlign:     TextAlign.center,
-          style: TextStyle(
-            color:      couleur,
-            fontSize:   13,
-            fontWeight: FontWeight.bold,
-          ),
-          decoration: InputDecoration(
-            isDense:        true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide:   BorderSide(color: couleur.withValues(alpha: 0.6)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide:   BorderSide(color: couleur, width: 1.5),
-            ),
-            filled:      true,
-            fillColor:   couleur.withValues(alpha: 0.08),
-          ),
-          onSubmitted: onSubmit,
-          onEditingComplete: () => onSubmit(ctrl.text),
-        ),
-      );
-    }
-    // Affichage normal — tap pour éditer
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          color:        couleur.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(6),
-          border:       Border.all(color: couleur.withValues(alpha: 0.35)),
-        ),
-        child: Text(
-          valeur.toStringAsFixed(0),
-          style: TextStyle(
-            color:      couleur,
-            fontSize:   13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
   //  DIALOG DÉTAIL JOUR — tap sur une case
   // ══════════════════════════════════════════════════════════════════════
   void _ouvrirDetailJour(
@@ -1459,15 +1295,20 @@ class _DetailJourSheet extends StatelessWidget {
                 Text(dateLabel,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 20,        // ★ v10.30 : agrandi
                     fontWeight: FontWeight.bold,
+                    letterSpacing: 0.3,
                   )),
-                const SizedBox(height: 2),
-                Text('${dd.nbBons}/${dd.nbCourses} bons conseils · $tauxPct · ${palier.label}',
-                  style: TextStyle(color: palier.fg, fontSize: 12)),
+                const SizedBox(height: 4),
+                Text('${dd.nbBons}/${dd.nbCourses} bons conseils · $tauxPct',
+                  style: const TextStyle(color: Colors.white54, fontSize: 13)),
                 const SizedBox(height: 3),
+                Text(palier.label,
+                  style: TextStyle(color: palier.fg, fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
                 Text(_descriptifTaux(taux, dd.palier),
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
               ])),
             ]),
           ),
@@ -1499,7 +1340,7 @@ class _DetailJourSheet extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     )),
                   const SizedBox(height: 10),
-                  ...bons.map((p) => _buildPronosticCard(p)),
+                  ...bons.map((p) => _buildPronosticCard(context, p)),
                 ],
               ],
             ),
@@ -1526,7 +1367,7 @@ class _DetailJourSheet extends StatelessWidget {
   }
 
   // ★ v10.27 : Card plus grande, titre blanc (jamais vert sur fond vert), contraste renforcé
-  Widget _buildPronosticCard(IaPronostic p) {
+  Widget _buildPronosticCard(BuildContext context, IaPronostic p) {
     final type   = p.typePariConseille ?? 'Inconnu';
     final favNom = p.favoriIaNom ?? '?';
     final rang   = p.rangFavoriIaDansArrivee;
@@ -1543,17 +1384,11 @@ class _DetailJourSheet extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        // Fond légèrement assombri vs _cGreenBg pur → meilleur contraste
-        color: const Color(0xFF0A2016),
+        // ★ v10.30 : fond neutre sombre — pas de couleur verte
+        color: const Color(0xFF0D1B2A),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _cGreen.withValues(alpha: 0.45), width: 1.2),
-        boxShadow: [
-          BoxShadow(
-            color: _cGreen.withValues(alpha: 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(
+            color: Colors.white.withValues(alpha: 0.10), width: 1.0),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
@@ -1571,26 +1406,34 @@ class _DetailJourSheet extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          // Badge "✅ Réussi"
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: _cGreen.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _cGreen.withValues(alpha: 0.4)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Text('✅', style: TextStyle(fontSize: 11)),
-              const SizedBox(width: 4),
-              if (score != null)
-                Text('${score.toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: _cGreen,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  )),
-            ]),
-          ),
+          // Badge score — couleur dynamique selon performance
+          Builder(builder: (ctx) {
+            final sc = score ?? 0;
+            final badgeColor = sc >= 70
+                ? const Color(0xFFFFD700)
+                : sc >= 50
+                    ? const Color(0xFF7C4DFF)
+                    : Colors.white54;
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: badgeColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Text('✅', style: TextStyle(fontSize: 11)),
+                const SizedBox(width: 4),
+                if (score != null)
+                  Text('${sc.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      color: badgeColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    )),
+              ]),
+            );
+          }),
         ]),
         const SizedBox(height: 5),
 
@@ -1603,11 +1446,35 @@ class _DetailJourSheet extends StatelessWidget {
 
         const SizedBox(height: 10),
 
-        // Type de pari + favori
+        // Type de pari cliquable + favori
         Row(children: [
-          _pill(type, Colors.white.withValues(alpha: 0.12), Colors.white70),
+          // ★ v10.30 : tap sur le type de pari → explication
+          GestureDetector(
+            onTap: () => _ouvrirDescriptifTypePari(context, type),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF7C4DFF).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(type,
+                  style: const TextStyle(
+                    color: Color(0xFFB39DDB),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  )),
+                const SizedBox(width: 4),
+                const Icon(Icons.info_outline,
+                    color: Color(0xFF7C4DFF), size: 12),
+              ]),
+            ),
+          ),
           const SizedBox(width: 6),
-          _pill('Favori : $favNom', Colors.white.withValues(alpha: 0.07), Colors.white54),
+          _pill('Favori : $favNom',
+              Colors.white.withValues(alpha: 0.07), Colors.white54),
         ]),
         const SizedBox(height: 10),
 
@@ -1636,11 +1503,11 @@ class _DetailJourSheet extends StatelessWidget {
               const Text('Arrivée réelle',
                 style: TextStyle(color: Colors.white38, fontSize: 12)), // ★ +2
               const SizedBox(height: 3),
-              // Arrivée réelle : fond assombri + texte vert sur noir → bon contraste
+              // ★ v10.30 : Arrivée réelle en doré — distinct de la prévision IA (blanc)
               Text(arriv,
-                style: TextStyle(
-                  color: _cGreen,
-                  fontSize: 14,                 // ★ +2
+                style: const TextStyle(
+                  color: Color(0xFFFFD700), // doré = résultat réel PMU
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                 )),
             ])),
@@ -1692,5 +1559,410 @@ class _DetailJourSheet extends StatelessWidget {
       ),
       child: Text(text, style: TextStyle(color: fg, fontSize: 11)),
     );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.30 : Descriptif des types de paris
+// ══════════════════════════════════════════════════════════════════════════════
+
+void _ouvrirDescriptifTypePari(BuildContext context, String type) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _TypePariSheet(type: type),
+  );
+}
+
+class _TypePariSheet extends StatelessWidget {
+  final String type;
+  const _TypePariSheet({required this.type});
+
+  static const _descriptions = <String, Map<String, String>>{
+    'Simple Gagnant': {
+      'emoji': '🏆',
+      'titre': 'Simple Gagnant',
+      'court': 'Votre cheval finit 1ᵉʳ.',
+      'detail':
+        'Vous misez sur UN seul cheval et il doit remporter la course. '
+        "C'est le pari le plus simple. La cote est directement liée à la "
+        'probabilité de victoire — plus elle est élevée, plus le gain potentiel est grand, '
+        'mais plus le risque est réel.',
+      'conseil': "Idéal quand l'IA a un favori dominant avec une cote ≤ 8.",
+    },
+    'Simple Placé': {
+      'emoji': '🎯',
+      'titre': 'Simple Placé',
+      'court': 'Votre cheval finit dans les 3 premiers (parfois 2).',
+      'detail':
+        'Votre cheval doit se classer parmi les 3 premiers (2ᵉ ou 3ᵉ accepté). '
+        'Gain plus faible que le Simple Gagnant, mais probabilité bien plus haute. '
+        'Pour les courses de moins de 5 partants, seuls les 2 premiers comptent.',
+      'conseil': 'Parfait pour un cheval solide sans être le favori absolu.',
+    },
+    'Gagnant+Placé': {
+      'emoji': '🎯🏆',
+      'titre': 'Gagnant + Placé',
+      'court': 'Pari combiné : vous pariez gagnant ET placé en même temps.',
+      'detail':
+        'Vous jouez les deux paris simultanément sur le même cheval. '
+        'Si votre cheval gagne, vous touchez les deux dividendes. '
+        "S'il se place (2ᵉ ou 3ᵉ), vous ne touchez que le Placé. "
+        'La mise est doublée mais le filet de sécurité est réel.',
+      'conseil': "L'IA l'utilise quand la confiance est haute mais la cote attrayante.",
+    },
+    'Couplé Gagnant': {
+      'emoji': '🔗',
+      'titre': 'Couplé Gagnant',
+      'court': "Vos 2 chevaux arrivent 1ᵉʳ et 2ᵉ, dans n'importe quel ordre.",
+      'detail':
+        'Vous désignez 2 chevaux qui doivent occuper les 2 premières places '
+        '(ordre indifférent). Plus difficile que le Simple Gagnant, '
+        'mais la cote combinée est généralement intéressante.',
+      'conseil': "Utilisé quand l'IA identifie 2 candidats clairement supérieurs au reste.",
+    },
+    'Couplé Placé': {
+      'emoji': '🔗🎯',
+      'titre': 'Couplé Placé',
+      'court': 'Vos 2 chevaux finissent dans les 3 premiers.',
+      'detail':
+        'Vos 2 chevaux sélectionnés doivent tous deux se placer dans le Top 3, '
+        "dans n'importe quel ordre. Moins risqué que le Couplé Gagnant.",
+      'conseil': 'Bon rapport risque/récompense quand 2 chevaux se dégagent nettement.',
+    },
+    'Tiercé': {
+      'emoji': '🥉',
+      'titre': 'Tiercé',
+      'court': 'Vos 3 chevaux arrivent dans les 3 premiers.',
+      'detail':
+        "Vous désignez les 3 premiers chevaux dans l'ordre (Tiercé Ordre) "
+        "ou dans n'importe quel ordre (Tiercé Désordre). "
+        'Le Tiercé Ordre rapporte beaucoup plus. '
+        "L'IA conseille généralement le désordre pour plus de sécurité.",
+      'conseil': "Recommandé par l'IA quand 3 chevaux dominent clairement la course.",
+    },
+    'Quarté+': {
+      'emoji': '4️⃣',
+      'titre': 'Quarté+',
+      'court': 'Vos 4 chevaux occupent les 4 premières places.',
+      'detail':
+        'Vous désignez les 4 premiers chevaux (ordre ou désordre). '
+        'Disponible uniquement sur certaines courses sélectionnées par PMU. '
+        'Les gains peuvent être très importants. '
+        "Le '+' signifie qu'un bonus est accordé si votre sélection est exactement dans l'ordre.",
+      'conseil': "L'IA le conseille uniquement sur des courses isQuarte=true avec 4 candidats fiables.",
+    },
+    'Quinté+': {
+      'emoji': '5️⃣',
+      'titre': 'Quinté+',
+      'court': 'Vos 5 chevaux occupent les 5 premières places.',
+      'detail':
+        'Le pari phare de PMU. Disponible sur UNE course par jour, '
+        'généralement à Vincennes (Trot) ou Longchamp/Auteuil (Plat/Obstacle). '
+        'Vous sélectionnez 5 chevaux qui doivent occuper les 5 premières places. '
+        "Les gains sont exceptionnels, le jackpot peut atteindre plusieurs millions d'euros. "
+        'En cas d\'erreur sur un seul cheval, des bonus "4 sur 5" et "3 sur 5" existent.',
+      'conseil': "L'IA le conseille uniquement sur les courses isQuinte=true avec une confiance ≥ 70%.",
+    },
+    'À surveiller': {
+      'emoji': '👁️',
+      'titre': 'À surveiller',
+      'court': "L'IA surveille cette course sans conseil de pari ferme.",
+      'detail':
+        'Les scores IA sont insuffisants pour recommander un pari avec confiance. '
+        'Cela peut signifier une course très ouverte, trop peu de données '
+        'sur les partants, ou des conditions inhabituelles (terrain, distance inédite).',
+      'conseil': 'Ne pas parier — attendre des informations supplémentaires.',
+    },
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final info = _descriptions[type] ?? {
+      'emoji': '❓',
+      'titre': type,
+      'court': 'Type de pari PMU.',
+      'detail': "Consultez les règles PMU pour plus d'informations sur ce type de pari.",
+      'conseil': '',
+    };
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      decoration: const BoxDecoration(
+        color: Color(0xFF111F30),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Handle
+        Center(child: Container(
+          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20),
+          decoration: BoxDecoration(
+            color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+        )),
+
+        // Titre
+        Row(children: [
+          Container(
+            width: 44, height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
+            ),
+            child: Center(child: Text(info['emoji']!,
+                style: const TextStyle(fontSize: 22))),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(info['titre']!,
+              style: const TextStyle(
+                color: Colors.white, fontSize: 18,
+                fontWeight: FontWeight.bold)),
+            const SizedBox(height: 3),
+            Text(info['court']!,
+              style: const TextStyle(
+                  color: Colors.white54, fontSize: 12)),
+          ])),
+        ]),
+
+        const SizedBox(height: 18),
+        const Divider(color: Colors.white12),
+        const SizedBox(height: 14),
+
+        // Explication détaillée
+        Text('Comment ça marche ?',
+          style: const TextStyle(
+            color: Colors.white70, fontSize: 13,
+            fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Text(info['detail']!,
+          style: const TextStyle(
+            color: Colors.white60, fontSize: 13, height: 1.6)),
+
+        if ((info['conseil'] ?? '').isNotEmpty) ...[ 
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: const Color(0xFF7C4DFF).withValues(alpha: 0.25)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.psychology_outlined,
+                  color: Color(0xFF7C4DFF), size: 16),
+              const SizedBox(width: 8),
+              Expanded(child: Text(info['conseil']!,
+                style: const TextStyle(
+                  color: Color(0xFFB39DDB),
+                  fontSize: 12, height: 1.5))),
+            ]),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.30 : BottomSheet paramétrage des seuils
+// ══════════════════════════════════════════════════════════════════════════════
+class _SeuilsParamsSheet extends StatefulWidget {
+  final double   seuilVert, seuilJaune, seuilOrange;
+  final void Function(double v, double j, double o) onApply;
+  final VoidCallback onReset;
+
+  const _SeuilsParamsSheet({
+    required this.seuilVert,
+    required this.seuilJaune,
+    required this.seuilOrange,
+    required this.onApply,
+    required this.onReset,
+  });
+
+  @override
+  State<_SeuilsParamsSheet> createState() => _SeuilsParamsSheetState();
+}
+
+class _SeuilsParamsSheetState extends State<_SeuilsParamsSheet> {
+  late double _v, _j, _o;
+
+  @override
+  void initState() {
+    super.initState();
+    _v = widget.seuilVert;
+    _j = widget.seuilJaune;
+    _o = widget.seuilOrange;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 20, 20,
+          20 + MediaQuery.of(context).viewInsets.bottom),
+      decoration: const BoxDecoration(
+        color: Color(0xFF111F30),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Handle
+        Container(
+          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+        ),
+
+        // Titre
+        Row(children: [
+          const Icon(Icons.tune, color: Colors.white54, size: 18),
+          const SizedBox(width: 8),
+          const Text('Paramétrer les seuils',
+            style: TextStyle(color: Colors.white, fontSize: 15,
+                fontWeight: FontWeight.bold)),
+          const Spacer(),
+          // Réinitialiser
+          GestureDetector(
+            onTap: () {
+              setState(() { _v = 30.0; _j = 25.0; _o = 20.0; });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.refresh, color: Colors.white38, size: 14),
+                SizedBox(width: 4),
+                Text('Réinitialiser',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ]),
+            ),
+          ),
+        ]),
+
+        const SizedBox(height: 6),
+        const Text(
+          'Les valeurs par défaut sont calibrées sur vos 271 analyses (moy. 26–31%).',
+          style: TextStyle(color: Colors.white38, fontSize: 10),
+        ),
+        const SizedBox(height: 20),
+
+        // Seuil VERT
+        _sliderSeuil(
+          label: '✅ Bonne journée',
+          emoji: '🟢',
+          value: _v,
+          min: _j + 1, max: 60,
+          color: const Color(0xFF4CAF7D),
+          onChanged: (v) => setState(() => _v = v),
+        ),
+        const SizedBox(height: 14),
+
+        // Seuil JAUNE
+        _sliderSeuil(
+          label: '📊 Dans la norme',
+          emoji: '🟡',
+          value: _j,
+          min: _o + 1, max: _v - 1,
+          color: const Color(0xFFFFD700),
+          onChanged: (v) => setState(() => _j = v),
+        ),
+        const SizedBox(height: 14),
+
+        // Seuil ORANGE
+        _sliderSeuil(
+          label: '⚠️ En dessous',
+          emoji: '🟠',
+          value: _o,
+          min: 5, max: _j - 1,
+          color: const Color(0xFFFF6D00),
+          onChanged: (v) => setState(() => _o = v),
+        ),
+
+        const SizedBox(height: 6),
+        Text(
+          'ROUGE = Taux < ${_o.toStringAsFixed(0)}%  |  GRIS = aucune course',
+          style: const TextStyle(color: Colors.white24, fontSize: 10),
+          textAlign: TextAlign.center,
+        ),
+
+        const SizedBox(height: 20),
+
+        // Bouton Appliquer
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7C4DFF),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(vertical: 13),
+            ),
+            onPressed: () {
+              widget.onApply(_v, _j, _o);
+              Navigator.pop(context);
+            },
+            child: const Text('Appliquer',
+              style: TextStyle(color: Colors.white,
+                  fontSize: 14, fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _sliderSeuil({
+    required String label, required String emoji,
+    required double value, required double min, required double max,
+    required Color color, required ValueChanged<double> onChanged,
+  }) {
+    final safeMin = min.clamp(1.0, 99.0);
+    final safeMax = max.clamp(safeMin + 1, 100.0);
+    final safeVal = value.clamp(safeMin, safeMax);
+    return Row(children: [
+      Text(emoji, style: const TextStyle(fontSize: 16)),
+      const SizedBox(width: 8),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(label,
+            style: const TextStyle(color: Colors.white70, fontSize: 12,
+                fontWeight: FontWeight.w600)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: color.withValues(alpha: 0.4)),
+            ),
+            child: Text('${safeVal.toStringAsFixed(0)}%',
+              style: TextStyle(color: color, fontSize: 11,
+                  fontWeight: FontWeight.bold)),
+          ),
+        ]),
+        SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: color,
+            inactiveTrackColor: color.withValues(alpha: 0.15),
+            thumbColor: color,
+            overlayColor: color.withValues(alpha: 0.1),
+            trackHeight: 3,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+          ),
+          child: Slider(
+            value: safeVal,
+            min: safeMin, max: safeMax,
+            divisions: (safeMax - safeMin).round().clamp(1, 100),
+            onChanged: onChanged,
+          ),
+        ),
+      ])),
+    ]);
   }
 }

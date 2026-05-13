@@ -488,9 +488,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildRaccourciCalendrier() {
     return GestureDetector(
       onTap: () {
-        // Navigue vers IA Stats (index 4) puis ouvre l'onglet Calendrier (index 2)
-        context.read<NavigationNotifier>().goTo(4);
-        // Délai minimal pour laisser le screen se construire avant d'animer l'onglet
+        context.read<NavigationNotifier>().goTo(5); // IA Stats = index 5
         Future.delayed(const Duration(milliseconds: 150), () {
           IaPerformanceScreen.ouvrirOngletCalendrier();
         });
@@ -499,22 +497,19 @@ class _HomeScreenState extends State<HomeScreen> {
         margin: const EdgeInsets.symmetric(horizontal: 16),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1A2A1A), Color(0xFF0D1B2A)],
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-          ),
+          color: const Color(0xFF111F30),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.55)),
+          border: Border.all(
+              color: const Color(0xFF7C4DFF).withValues(alpha: 0.35)),
         ),
         child: Row(
           children: [
             Container(
               width: 32, height: 32,
               decoration: BoxDecoration(
-                color: const Color(0xFF4CAF7D).withValues(alpha: 0.15),
+                color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.4)),
+                border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
               ),
               child: const Center(
                 child: Text('📅', style: TextStyle(fontSize: 16)),
@@ -528,7 +523,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text(
                     'Calendrier IA Stat',
                     style: TextStyle(
-                      color: Color(0xFF4CAF7D),
+                      color: Color(0xFFB39DDB), // violet clair
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.2,
