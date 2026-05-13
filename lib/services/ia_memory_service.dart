@@ -3353,12 +3353,30 @@ class IaMemoryService extends ChangeNotifier {
         return rang != null && rang <= 3;
 
       case 'Couplé Gagnant':
-        // Au moins 1 des 2 premiers IA est dans le top 2 réel
-        return rang != null && rang <= 2;
+        // ★ v10.33 fix : les 2 chevaux IA doivent être dans le top 2 réel
+        // rang seul ne suffit pas — il faut vérifier les 2 premiers IA dans l'arrivée
+        {
+          final arrivee = p.arriveeReelle;
+          if (arrivee == null || arrivee.length < 2) return rang != null && rang <= 2;
+          final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
+          if (topIA.length < 2) return rang != null && rang <= 2;
+          final top2Reel = arrivee.take(2).toSet();
+          // Au moins 1 des 2 chevaux IA dans le top 2 réel (désordre accepté)
+          final nbDansTop2 = topIA.take(2).where((n) => top2Reel.contains(n)).length;
+          return nbDansTop2 >= 1;
+        }
 
       case 'Couplé Placé':
-        // Au moins 1 des 2 premiers IA est dans le top 3 réel
-        return rang != null && rang <= 3;
+        // ★ v10.33 fix : au moins 1 des 2 chevaux IA dans le top 3 réel
+        {
+          final arrivee = p.arriveeReelle;
+          if (arrivee == null || arrivee.length < 3) return rang != null && rang <= 3;
+          final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
+          if (topIA.length < 2) return rang != null && rang <= 3;
+          final top3Reel = arrivee.take(3).toSet();
+          final nbDansTop3 = topIA.take(2).where((n) => top3Reel.contains(n)).length;
+          return nbDansTop3 >= 1;
+        }
 
       case 'Tiercé':
         // ✅ VERT si au moins 2 des 3 chevaux IA sont dans le top 3 réel (ordre libre)

@@ -368,8 +368,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // ══════════════════════════════════════════════════════════════════════
-  //  ★ v10.30 : TOGGLE MENSUEL/ANNUEL + LÉGENDE COMPACTE FUSIONNÉS
+  //  ★ v10.33 : TOGGLE MENSUEL/ANNUEL + LÉGENDE CLIQUABLE
   // ══════════════════════════════════════════════════════════════════════
   Widget _buildToggleEtLegendeFusionnes() {
     return Container(
@@ -381,99 +380,93 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       ),
       child: Column(children: [
 
-        // ── Ligne 1 : Toggle Mensuel / Annuel + bouton ⚙️ ──────────────
-        Row(children: [
-          // Toggle
-          Expanded(
-            child: Container(
-              height: 36,
-              decoration: BoxDecoration(
-                color: _cDark,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: TabBar(
-                controller: _modeTabs,
-                indicator: BoxDecoration(
-                  color: _cGold.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(7),
-                  border: Border.all(color: _cGold.withValues(alpha: 0.45)),
-                ),
-                labelColor: _cGold,
-                unselectedLabelColor: Colors.white38,
-                labelStyle: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.bold),
-                unselectedLabelStyle: const TextStyle(fontSize: 12),
-                dividerColor: Colors.transparent,
-                tabs: const [
-                  Tab(text: '📅 Mensuel'),
-                  Tab(text: '📆 Annuel'),
-                ],
-              ),
-            ),
+        // ── Ligne 1 : Toggle Mensuel / Annuel (plus grand, sans bouton ⚙️) ──
+        Container(
+          height: 44,
+          decoration: BoxDecoration(
+            color: _cDark,
+            borderRadius: BorderRadius.circular(10),
           ),
-          const SizedBox(width: 8),
-          // Bouton ⚙️ — ouvre le BottomSheet de paramétrage
-          GestureDetector(
-            onTap: _ouvrirParametresSeuils,
-            child: Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: _cDark,
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.12)),
-              ),
-              child: const Icon(Icons.tune,
-                  color: Colors.white54, size: 18),
+          child: TabBar(
+            controller: _modeTabs,
+            indicator: BoxDecoration(
+              color: _cGold.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _cGold.withValues(alpha: 0.45)),
             ),
+            labelColor: _cGold,
+            unselectedLabelColor: Colors.white38,
+            labelStyle: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.bold),
+            unselectedLabelStyle: const TextStyle(fontSize: 14),
+            dividerColor: Colors.transparent,
+            tabs: const [
+              Tab(text: '📅 Mensuel'),
+              Tab(text: '📆 Annuel'),
+            ],
           ),
-        ]),
+        ),
 
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
 
-        // ── Ligne 2 : Légende compacte horizontale ──────────────────────
+        // ── Ligne 2 : Légende cliquable — chaque puce ouvre son sheet ──
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _legendePuce(PalierCalendrier.or,     '🥇', 'Noble'),
-            _legendePuce(PalierCalendrier.vert,   '✅', '≥${_seuilVert.toStringAsFixed(0)}%'),
-            _legendePuce(PalierCalendrier.jaune,  '📊', '≥${_seuilJaune.toStringAsFixed(0)}%'),
-            _legendePuce(PalierCalendrier.orange, '⚠️', '≥${_seuilOrange.toStringAsFixed(0)}%'),
-            _legendePuce(PalierCalendrier.rouge,  '❌', '<${_seuilOrange.toStringAsFixed(0)}%'),
-            _legendePuce(PalierCalendrier.gris,   '💤', 'Repos'),
+            _legendePuce(PalierCalendrier.or,     '🥇', 'Noble',    null),
+            _legendePuce(PalierCalendrier.vert,   '✅', '≥${_seuilVert.toStringAsFixed(0)}%',   PalierCalendrier.vert),
+            _legendePuce(PalierCalendrier.jaune,  '📊', '≥${_seuilJaune.toStringAsFixed(0)}%',  PalierCalendrier.jaune),
+            _legendePuce(PalierCalendrier.orange, '⚠️', '≥${_seuilOrange.toStringAsFixed(0)}%', PalierCalendrier.orange),
+            _legendePuce(PalierCalendrier.rouge,  '❌', '<${_seuilOrange.toStringAsFixed(0)}%',  PalierCalendrier.rouge),
+            _legendePuce(PalierCalendrier.gris,   '💤', 'Repos',    null),
           ],
         ),
       ]),
     );
   }
 
-  /// Puce de légende compacte — couleur + emoji + label
-  Widget _legendePuce(PalierCalendrier p, String emoji, String label) {
-    return Column(children: [
-      Container(
-        width: 28, height: 28,
-        decoration: BoxDecoration(
-          color: p.bg,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: p.border.withValues(alpha: 0.5)),
+  /// Puce de légende — cliquable si palierEditable != null
+  Widget _legendePuce(PalierCalendrier p, String emoji, String label,
+      PalierCalendrier? palierEditable) {
+    final isEditable = palierEditable != null &&
+        palierEditable != PalierCalendrier.rouge; // rouge = dérivé de orange
+    return GestureDetector(
+      onTap: isEditable
+          ? () => _ouvrirSeuilPourPalier(palierEditable!)
+          : null,
+      child: Column(children: [
+        Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+            color: p.bg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isEditable
+                  ? p.fg.withValues(alpha: 0.6)
+                  : p.border.withValues(alpha: 0.4),
+              width: isEditable ? 1.5 : 0.8,
+            ),
+          ),
+          child: Center(child: Text(emoji,
+              style: const TextStyle(fontSize: 15))),
         ),
-        child: Center(child: Text(emoji,
-            style: const TextStyle(fontSize: 13))),
-      ),
-      const SizedBox(height: 3),
-      Text(label, style: const TextStyle(
-          color: Colors.white38, fontSize: 9,
-          fontWeight: FontWeight.w500)),
-    ]);
+        const SizedBox(height: 4),
+        Text(label, style: TextStyle(
+            color: isEditable ? p.fg.withValues(alpha: 0.9) : Colors.white38,
+            fontSize: 10,
+            fontWeight: isEditable ? FontWeight.w700 : FontWeight.w500)),
+      ]),
+    );
   }
 
-  /// Ouvre le BottomSheet de paramétrage des seuils
-  void _ouvrirParametresSeuils() {
+  /// Ouvre le sheet de paramétrage pour un palier spécifique
+  void _ouvrirSeuilPourPalier(PalierCalendrier palier) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => _SeuilsParamsSheet(
+      builder: (_) => _SeuilUniquSheet(
+        palier:      palier,
         seuilVert:   _seuilVert,
         seuilJaune:  _seuilJaune,
         seuilOrange: _seuilOrange,
@@ -482,14 +475,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             _seuilVert   = v;
             _seuilJaune  = j;
             _seuilOrange = o;
-          });
-          _sauvegarderSeuils();
-        },
-        onReset: () {
-          setState(() {
-            _seuilVert   = 30.0;
-            _seuilJaune  = 25.0;
-            _seuilOrange = 20.0;
           });
           _sauvegarderSeuils();
         },
@@ -1595,26 +1580,30 @@ void _ouvrirDescriptifTypePari(BuildContext context, String type,
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ★ v10.30 : BottomSheet paramétrage des seuils
+//  ★ v10.33 : Sheet paramétrage d'UN seul palier — ouvert depuis la légende
 // ══════════════════════════════════════════════════════════════════════════════
-class _SeuilsParamsSheet extends StatefulWidget {
-  final double   seuilVert, seuilJaune, seuilOrange;
+class _SeuilUniquSheet extends StatefulWidget {
+  final PalierCalendrier palier;
+  final double seuilVert, seuilJaune, seuilOrange;
   final void Function(double v, double j, double o) onApply;
-  final VoidCallback onReset;
 
-  const _SeuilsParamsSheet({
+  const _SeuilUniquSheet({
+    required this.palier,
     required this.seuilVert,
     required this.seuilJaune,
     required this.seuilOrange,
     required this.onApply,
-    required this.onReset,
   });
 
   @override
-  State<_SeuilsParamsSheet> createState() => _SeuilsParamsSheetState();
+  State<_SeuilUniquSheet> createState() => _SeuilUniquSheetState();
 }
 
-class _SeuilsParamsSheetState extends State<_SeuilsParamsSheet> {
+class _SeuilUniquSheetState extends State<_SeuilUniquSheet> {
+  late TextEditingController _ctrl;
+  String? _erreur;
+
+  // Valeurs courantes des 3 seuils (pour recalculer les bornes)
   late double _v, _j, _o;
 
   @override
@@ -1623,172 +1612,226 @@ class _SeuilsParamsSheetState extends State<_SeuilsParamsSheet> {
     _v = widget.seuilVert;
     _j = widget.seuilJaune;
     _o = widget.seuilOrange;
+    // Valeur initiale = seuil du palier concerné
+    final initial = _valeurCourante();
+    _ctrl = TextEditingController(text: initial.toStringAsFixed(0));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  double _valeurCourante() {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   return _v;
+      case PalierCalendrier.jaune:  return _j;
+      case PalierCalendrier.orange: return _o;
+      default: return _v;
+    }
+  }
+
+  // Infos du palier sélectionné
+  Color get _color {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   return const Color(0xFF4CAF7D);
+      case PalierCalendrier.jaune:  return const Color(0xFFFFD700);
+      case PalierCalendrier.orange: return const Color(0xFFFF7043);
+      default: return Colors.white54;
+    }
+  }
+
+  String get _label {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   return '✅ Bonne journée';
+      case PalierCalendrier.jaune:  return '📊 Dans la norme';
+      case PalierCalendrier.orange: return '⚠️ En dessous';
+      default: return '';
+    }
+  }
+
+  String get _description {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:
+        return 'Seuil minimum pour qu\'une journée soit considérée "Bonne".\nDoit être supérieur au seuil Norme (actuellement ${_j.toStringAsFixed(0)}%).';
+      case PalierCalendrier.jaune:
+        return 'Seuil minimum pour qu\'une journée soit "Dans la norme".\nDoit être entre ${_o.toStringAsFixed(0)}% et ${_v.toStringAsFixed(0)}%.';
+      case PalierCalendrier.orange:
+        return 'Seuil minimum pour qu\'une journée soit "En dessous".\nEn dessous de ce seuil → Journée ratée (rouge).\nDoit être inférieur au seuil Norme (${_j.toStringAsFixed(0)}%).';
+      default: return '';
+    }
+  }
+
+  // Bornes selon le palier
+  double get _min {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   return _j + 1;
+      case PalierCalendrier.jaune:  return _o + 1;
+      case PalierCalendrier.orange: return 5;
+      default: return 5;
+    }
+  }
+
+  double get _max {
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   return 60;
+      case PalierCalendrier.jaune:  return _v - 1;
+      case PalierCalendrier.orange: return _j - 1;
+      default: return 60;
+    }
+  }
+
+  void _valider() {
+    final txt = _ctrl.text.trim().replaceAll('%', '');
+    final val = double.tryParse(txt);
+    if (val == null) {
+      setState(() => _erreur = 'Entrez un nombre valide (ex: 28)');
+      return;
+    }
+    final rounded = val.roundToDouble();
+    if (rounded < _min || rounded > _max) {
+      setState(() => _erreur = 'Valeur entre ${_min.toStringAsFixed(0)} et ${_max.toStringAsFixed(0)}%');
+      return;
+    }
+    // Appliquer selon le palier
+    double nv = _v, nj = _j, no = _o;
+    switch (widget.palier) {
+      case PalierCalendrier.vert:   nv = rounded; break;
+      case PalierCalendrier.jaune:  nj = rounded; break;
+      case PalierCalendrier.orange: no = rounded; break;
+      default: break;
+    }
+    widget.onApply(nv, nj, no);
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, 20, 20,
-          20 + MediaQuery.of(context).viewInsets.bottom),
-      decoration: const BoxDecoration(
-        color: Color(0xFF111F30),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // Handle
-        Container(
-          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
-          decoration: BoxDecoration(
-            color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+    final color = _color;
+    return Padding(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+        decoration: const BoxDecoration(
+          color: Color(0xFF111F30),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-
-        // Titre
-        Row(children: [
-          const Icon(Icons.tune, color: Colors.white54, size: 18),
-          const SizedBox(width: 8),
-          const Text('Paramétrer les seuils',
-            style: TextStyle(color: Colors.white, fontSize: 15,
-                fontWeight: FontWeight.bold)),
-          const Spacer(),
-          // Réinitialiser
-          GestureDetector(
-            onTap: () {
-              setState(() { _v = 30.0; _j = 25.0; _o = 20.0; });
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(7),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.refresh, color: Colors.white38, size: 14),
-                SizedBox(width: 4),
-                Text('Réinitialiser',
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
-              ]),
-            ),
-          ),
-        ]),
-
-        const SizedBox(height: 6),
-        const Text(
-          'Les valeurs par défaut sont calibrées sur vos 271 analyses (moy. 26–31%).',
-          style: TextStyle(color: Colors.white38, fontSize: 10),
-        ),
-        const SizedBox(height: 20),
-
-        // Seuil VERT
-        _sliderSeuil(
-          label: '✅ Bonne journée',
-          emoji: '🟢',
-          value: _v,
-          min: _j + 1, max: 60,
-          color: const Color(0xFF4CAF7D),
-          onChanged: (v) => setState(() => _v = v),
-        ),
-        const SizedBox(height: 14),
-
-        // Seuil JAUNE
-        _sliderSeuil(
-          label: '📊 Dans la norme',
-          emoji: '🟡',
-          value: _j,
-          min: _o + 1, max: _v - 1,
-          color: const Color(0xFFFFD700),
-          onChanged: (v) => setState(() => _j = v),
-        ),
-        const SizedBox(height: 14),
-
-        // Seuil ORANGE
-        _sliderSeuil(
-          label: '⚠️ En dessous',
-          emoji: '🟠',
-          value: _o,
-          min: 5, max: _j - 1,
-          color: const Color(0xFFFF6D00),
-          onChanged: (v) => setState(() => _o = v),
-        ),
-
-        const SizedBox(height: 6),
-        Text(
-          'ROUGE = Taux < ${_o.toStringAsFixed(0)}%  |  GRIS = aucune course',
-          style: const TextStyle(color: Colors.white24, fontSize: 10),
-          textAlign: TextAlign.center,
-        ),
-
-        const SizedBox(height: 20),
-
-        // Bouton Appliquer
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF7C4DFF),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(vertical: 13),
-            ),
-            onPressed: () {
-              widget.onApply(_v, _j, _o);
-              Navigator.pop(context);
-            },
-            child: const Text('Appliquer',
-              style: TextStyle(color: Colors.white,
-                  fontSize: 14, fontWeight: FontWeight.bold)),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _sliderSeuil({
-    required String label, required String emoji,
-    required double value, required double min, required double max,
-    required Color color, required ValueChanged<double> onChanged,
-  }) {
-    final safeMin = min.clamp(1.0, 99.0);
-    final safeMax = max.clamp(safeMin + 1, 100.0);
-    final safeVal = value.clamp(safeMin, safeMax);
-    return Row(children: [
-      Text(emoji, style: const TextStyle(fontSize: 16)),
-      const SizedBox(width: 8),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 12,
-                fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Handle
+          Center(child: Container(
+            width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(5),
-              border: Border.all(color: color.withValues(alpha: 0.4)),
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(2)),
+          )),
+
+          // En-tête palier
+          Row(children: [
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.4)),
+              ),
+              child: Center(child: Text(
+                widget.palier == PalierCalendrier.vert   ? '✅' :
+                widget.palier == PalierCalendrier.jaune  ? '📊' : '⚠️',
+                style: const TextStyle(fontSize: 22),
+              )),
             ),
-            child: Text('${safeVal.toStringAsFixed(0)}%',
-              style: TextStyle(color: color, fontSize: 11,
-                  fontWeight: FontWeight.bold)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_label, style: TextStyle(
+                  color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text('Modifier le seuil de déclenchement',
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            ])),
+          ]),
+
+          const SizedBox(height: 16),
+          Text(_description,
+            style: const TextStyle(
+                color: Colors.white54, fontSize: 12, height: 1.5)),
+
+          const SizedBox(height: 20),
+
+          // Champ de saisie
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _ctrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                    decimal: false),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: color, fontSize: 28, fontWeight: FontWeight.bold),
+                decoration: InputDecoration(
+                  suffix: Text('%', style: TextStyle(
+                      color: color.withValues(alpha: 0.7), fontSize: 20)),
+                  filled: true,
+                  fillColor: color.withValues(alpha: 0.08),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: color.withValues(alpha: 0.4)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: color.withValues(alpha: 0.35)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: color, width: 1.8),
+                  ),
+                  hintText: _valeurCourante().toStringAsFixed(0),
+                  hintStyle: TextStyle(color: color.withValues(alpha: 0.3)),
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 16, horizontal: 12),
+                  errorText: null,
+                ),
+                onSubmitted: (_) => _valider(),
+              ),
+            ),
+          ]),
+
+          if (_erreur != null) ...[  
+            const SizedBox(height: 8),
+            Text(_erreur!, style: const TextStyle(
+                color: Color(0xFFEF5350), fontSize: 12)),
+          ],
+
+          const SizedBox(height: 8),
+          Text(
+            'Plage autorisée : ${_min.toStringAsFixed(0)}% – ${_max.toStringAsFixed(0)}%',
+            style: const TextStyle(color: Colors.white24, fontSize: 11),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Bouton Valider
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+              ),
+              onPressed: _valider,
+              child: const Text('Valider',
+                style: TextStyle(color: Colors.white,
+                    fontSize: 15, fontWeight: FontWeight.bold)),
+            ),
           ),
         ]),
-        SliderTheme(
-          data: SliderThemeData(
-            activeTrackColor: color,
-            inactiveTrackColor: color.withValues(alpha: 0.15),
-            thumbColor: color,
-            overlayColor: color.withValues(alpha: 0.1),
-            trackHeight: 3,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-          ),
-          child: Slider(
-            value: safeVal,
-            min: safeMin, max: safeMax,
-            divisions: (safeMax - safeMin).round().clamp(1, 100),
-            onChanged: onChanged,
-          ),
-        ),
-      ])),
-    ]);
+      ),
+    );
   }
 }
