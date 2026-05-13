@@ -81,6 +81,7 @@ class PronosticHippiqueApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => PmuProvider()),
         ChangeNotifierProvider(create: (_) => NavigationNotifier()),
         ChangeNotifierProvider.value(value: DataRefreshService.instance),
+        ChangeNotifierProvider.value(value: AlertService.instance),         // ★ v10.40 : fix crash — context.watch<AlertService>()
         ChangeNotifierProvider.value(value: IaPersonalityService.instance), // ★ v9.85
         ChangeNotifierProvider.value(value: IaUserPrefsService.instance),   // ★ v9.85
         ChangeNotifierProvider.value(value: IaBadgesService.instance),      // ★ v9.85
