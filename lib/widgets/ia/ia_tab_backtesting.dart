@@ -1789,6 +1789,174 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
         ],
 
         // ═══════════════════════════════════════════════════════════════════
+        // BLOC 4b — PAR TYPE DE PARI (★ v10.35 synergie vrais critères PMU)
+        // ═══════════════════════════════════════════════════════════════════
+        if (r.parTypePari.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF111F30),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(children: [
+                  Icon(Icons.casino_outlined, color: Color(0xFFFFD700), size: 16),
+                  SizedBox(width: 6),
+                  Text('Par type de pari — taux et Kelly optimal',
+                      style: TextStyle(color: Colors.white70, fontSize: 13,
+                          fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 4),
+                const Text(
+                  'Basé sur les vrais critères PMU (Couplé = 2 chevaux dans le top 2, etc.)',
+                  style: TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+                const SizedBox(height: 12),
+                ...(() {
+                  // Ordre des types de paris du plus joué au moins joué
+                  final entries = r.parTypePari.entries.toList()
+                    ..sort((a, b) => b.value.nbTotal.compareTo(a.value.nbTotal));
+                  return entries.map((e) {
+                    final stat   = e.value;
+                    final color  = stat.gainNet >= 0
+                        ? const Color(0xFF4CAF7D) : Colors.redAccent;
+                    final emoji  = stat.gainNet >= 0 ? '✅' : '❌';
+                    final kelly  = stat.kellyFraction();
+                    final kellyTxt = kelly > 0
+                        ? '🎯 Kelly : ${(kelly * 100).toStringAsFixed(0)}% bankroll'
+                        : '⛔ Ne pas jouer (Kelly = 0)';
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: color.withValues(alpha: 0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Text(emoji, style: const TextStyle(fontSize: 14)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(e.key,
+                                style: const TextStyle(color: Colors.white,
+                                    fontSize: 13, fontWeight: FontWeight.w600)),
+                            ),
+                            Text(
+                              '${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)} €',
+                              style: TextStyle(color: color, fontSize: 14,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ]),
+                          const SizedBox(height: 6),
+                          Row(children: [
+                            // Taux de réussite
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('${stat.taux.toStringAsFixed(0)}% de réussite',
+                                    style: const TextStyle(color: Colors.white54,
+                                        fontSize: 11)),
+                                Text('${stat.nbGagnes}/${stat.nbTotal} gagnés',
+                                    style: const TextStyle(color: Colors.white38,
+                                        fontSize: 10)),
+                              ],
+                            )),
+                            // ROI
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text('ROI ${stat.roi >= 0 ? "+" : ""}${stat.roi.toStringAsFixed(0)}%',
+                                    style: TextStyle(
+                                      color: stat.roi >= 0
+                                          ? const Color(0xFF4CAF7D)
+                                          : Colors.redAccent,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    )),
+                                Text('Série max : ${stat.maxSerie}',
+                                    style: const TextStyle(color: Colors.white38,
+                                        fontSize: 10)),
+                              ],
+                            )),
+                            // Kelly
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  kelly > 0
+                                      ? '${(kelly * 100).toStringAsFixed(0)}%'
+                                      : '0%',
+                                  style: TextStyle(
+                                    color: kelly > 0
+                                        ? const Color(0xFFFFD700)
+                                        : Colors.white24,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  )),
+                                const Text('Kelly',
+                                    style: TextStyle(color: Colors.white38,
+                                        fontSize: 9)),
+                              ],
+                            )),
+                          ]),
+                          if (stat.nbTotal >= 5) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(kellyTxt,
+                                style: const TextStyle(
+                                    color: Color(0xFFB39DDB),
+                                    fontSize: 10)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  }).toList();
+                })(),
+                // Conseil global
+                const SizedBox(height: 4),
+                Builder(builder: (ctx) {
+                  final meilleur = r.parTypePari.entries
+                      .where((e) => e.value.nbTotal >= 5 && e.value.roi > 0)
+                      .toList()
+                    ..sort((a, b) => b.value.roi.compareTo(a.value.roi));
+                  final eviter = r.parTypePari.entries
+                      .where((e) => e.value.nbTotal >= 5 && e.value.roi < -20)
+                      .toList()
+                    ..sort((a, b) => a.value.roi.compareTo(b.value.roi));
+                  if (meilleur.isEmpty && eviter.isEmpty) return const SizedBox();
+                  return Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '💡 ${meilleur.isNotEmpty ? "Privilégie : ${meilleur.take(2).map((e) => e.key).join(", ")}." : ""}'
+                      '${eviter.isNotEmpty ? " Évite : ${eviter.take(2).map((e) => e.key).join(", ")}." : ""}',
+                      style: const TextStyle(color: Color(0xFF7C4DFF),
+                          fontSize: 12, height: 1.4),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // ═══════════════════════════════════════════════════════════════════
         // BLOC 5 — PAR HIPPODROME
         // ═══════════════════════════════════════════════════════════════════
         if (r.parHippodrome.isNotEmpty) ...[

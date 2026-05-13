@@ -73,6 +73,8 @@ class BacktestResult {
   final Map<String, StatDiscipline> parHippodrome;
   // ★ v9.93 : Perte maximale consécutive (maxDrawdown)
   final double maxDrawdown;
+  // ★ v10.35 : Ventilation par type de pari (synergie avec vrais critères PMU)
+  final Map<String, StatTypePari> parTypePari;
 
   const BacktestResult({
     required this.courses,
@@ -90,7 +92,8 @@ class BacktestResult {
     required this.courbeGains,
     required this.parDiscipline,
     required this.parHippodrome,
-    this.maxDrawdown = 0.0, // ★ v9.93
+    this.maxDrawdown = 0.0,   // ★ v9.93
+    this.parTypePari = const {}, // ★ v10.35
   });
 
   bool get estRentable => gainNet > 0;
@@ -108,6 +111,44 @@ class StatDiscipline {
   int nbGagnes = 0;
   double gainNet = 0.0;
   double get taux => nbTotal > 0 ? nbGagnes / nbTotal * 100 : 0.0;
+}
+
+// ─── Stats par type de pari ─────────────────────────────────────────────────
+// ★ v10.35 : Ventilation par type de pari — même structure que StatDiscipline
+//            + Kelly optimal calculé depuis le taux de réussite réel
+class StatTypePari {
+  int    nbTotal   = 0;
+  int    nbGagnes  = 0;
+  double gainNet   = 0.0;
+  double miseTotal = 0.0;
+  int    maxSerie  = 0;     // série perdante max pour ce type
+  int    _serieCourante = 0;
+
+  double get taux => nbTotal > 0 ? nbGagnes / nbTotal * 100 : 0.0;
+  double get roi  => miseTotal > 0 ? (gainNet / miseTotal) * 100 : 0.0;
+
+  /// Kelly fraction = (p*b - q) / b
+  /// p = proba de gain, b = cote nette moyenne, q = 1 - p
+  /// Si taux < 10% → Kelly = 0 (ne pas jouer ce type)
+  double kellyFraction({double coteNetteMoyenne = 3.5}) {
+    if (nbTotal < 5) return 0.0; // pas assez de données
+    final p = nbGagnes / nbTotal;
+    final q = 1.0 - p;
+    final b = coteNetteMoyenne;
+    final k = (p * b - q) / b;
+    return k.clamp(0.0, 0.25); // jamais plus de 25% de la bankroll
+  }
+
+  void ajouterPari(bool gagne, double gain, double mise) {
+    nbTotal++;
+    miseTotal += mise;
+    gainNet   += gain;
+    if (gagne) { nbGagnes++; _serieCourante = 0; }
+    else {
+      _serieCourante++;
+      if (_serieCourante > maxSerie) maxSerie = _serieCourante;
+    }
+  }
 }
 
 // ─── Service de backtesting ───────────────────────────────────────────────────
@@ -155,7 +196,7 @@ class BacktestingService {
         tauxReussite: 0, roi: 0, gainNetCumule: 0,
         meilleureSerieGagnante: 0, pireSeriesPerdantes: 0,
         courbeGains: [],
-        parDiscipline: {}, parHippodrome: {},
+        parDiscipline: {}, parHippodrome: {}, parTypePari: {},
       );
     }
 
@@ -164,6 +205,8 @@ class BacktestingService {
     final List<double> courbeGains = [];
     final Map<String, StatDiscipline> parDisc  = {};
     final Map<String, StatDiscipline> parHippo = {};
+    // ★ v10.35 : Stats par type de pari
+    final Map<String, StatTypePari> parType = {};
 
     int serieGagnante = 0; int maxSerieGagnante = 0;
     int seriePerdante = 0; int maxSeriePerdante = 0;
@@ -238,6 +281,10 @@ class BacktestingService {
       if (gagne) parHippo[hippo]!.nbGagnes++;
       parHippo[hippo]!.gainNet += gainNetCourse;
 
+      // ★ v10.35 : Stats par type de pari (synergie avec vrais critères PMU)
+      parType.putIfAbsent(typeEffectif, () => StatTypePari());
+      parType[typeEffectif]!.ajouterPari(gagne, gainNetCourse, mise);
+
       courses.add(BacktestCourse(
         courseKey:          p.courseKey,
         nomCourse:          p.nomCourse,
@@ -300,6 +347,7 @@ class BacktestingService {
       parDiscipline:          parDisc,
       parHippodrome:          topHippos,
       maxDrawdown:            maxDrawdown, // ★ v9.93
+      parTypePari:            parType,     // ★ v10.35
     );
   }
 
