@@ -4063,12 +4063,37 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         ok   = rang != null && rang <= 3;
         break;
       case 'Couplé Gagnant':
-        gagn = rang == 1;
-        ok   = rang != null && rang <= 2;
+        // ★ fix : les 2 chevaux IA doivent TOUS DEUX être dans le top 2 réel
+        // rang seul (= rang du 1er cheval IA) ne suffit pas
+        {
+          final arr = c.arriveeReelle;
+          final n1  = int.tryParse(c.favoriIaNumero ?? '');
+          final n2  = int.tryParse(c.favoriIaNumero2 ?? '');
+          if (arr.length >= 2 && n1 != null && n2 != null) {
+            final top2 = arr.take(2).toSet();
+            gagn = top2.contains(n1) && top2.contains(n2);
+            ok   = false; // pas de "partiellement bon" pour Couplé Gagnant
+          } else {
+            gagn = false;
+            ok   = rang != null && rang <= 2; // fallback si données manquantes
+          }
+        }
         break;
       case 'Couplé Placé':
-        gagn = false;
-        ok   = rang != null && rang <= 3;
+        // ★ fix : les 2 chevaux IA doivent TOUS DEUX être dans le top 3 réel
+        {
+          final arr = c.arriveeReelle;
+          final n1  = int.tryParse(c.favoriIaNumero ?? '');
+          final n2  = int.tryParse(c.favoriIaNumero2 ?? '');
+          if (arr.length >= 3 && n1 != null && n2 != null) {
+            final top3 = arr.take(3).toSet();
+            gagn = false;
+            ok   = top3.contains(n1) && top3.contains(n2);
+          } else {
+            gagn = false;
+            ok   = rang != null && rang <= 3; // fallback si données manquantes
+          }
+        }
         break;
       case 'Tiercé':
         // ✅ VERT si au moins 2 des 3 chevaux IA sont dans le top 3 réel

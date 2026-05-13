@@ -743,7 +743,8 @@ class CourseDetailRapport {
   final String heure;
   final String discipline;
   final String typePariConseille;
-  final String? favoriIaNumero;       // numéro du cheval favori IA
+  final String? favoriIaNumero;       // numéro du cheval favori IA (1er topNIA)
+  final String? favoriIaNumero2;      // numéro du 2ème cheval IA (pour Couplé)
   final String? favoriIaNom;          // nom du cheval favori IA
   final double? scoreIA;              // score IA du favori
   final List<int> arriveeReelle;      // arrivée officielle PMU
@@ -761,6 +762,7 @@ class CourseDetailRapport {
     required this.discipline,
     required this.typePariConseille,
     this.favoriIaNumero,
+    this.favoriIaNumero2,
     this.favoriIaNom,
     this.scoreIA,
     required this.arriveeReelle,
@@ -785,6 +787,7 @@ class CourseDetailRapport {
     'dis':  discipline,
     'tp':   typePariConseille,
     'fnum': favoriIaNumero,
+    'fnum2': favoriIaNumero2,
     'fnom': favoriIaNom,
     'sIA':  scoreIA,
     'arr':  arriveeReelle,
@@ -804,6 +807,7 @@ class CourseDetailRapport {
     discipline:         j['dis']  as String? ?? '',
     typePariConseille:  j['tp']   as String? ?? '',
     favoriIaNumero:     j['fnum'] as String?,
+    favoriIaNumero2:    j['fnum2'] as String?,
     favoriIaNom:        j['fnom'] as String?,
     scoreIA:            (j['sIA'] as num?)?.toDouble(),
     arriveeReelle:      (j['arr'] as List<dynamic>? ?? [])

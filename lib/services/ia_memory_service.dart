@@ -3061,7 +3061,9 @@ class IaMemoryService extends ChangeNotifier {
       discStats[disc]!.add(rang, score);
 
       // ★ v9.6 : Construire le détail de cette course
-      final favori = p.favoriIA;
+      final topNIA = p.topNIA;
+      final favori  = topNIA.isNotEmpty ? topNIA.first : null;
+      final favori2 = topNIA.length >= 2 ? topNIA[1] : null; // ★ fix Couplé
       final scoreIaFavori = favori != null ? (p.scoresIA[favori] ?? 0.0) : 0.0;
       final noteC = rang == 1 ? '✅ Excellent'
           : rang != null && rang <= 3 ? '👍 Bon'
@@ -3081,6 +3083,7 @@ class IaMemoryService extends ChangeNotifier {
         discipline:        p.discipline,
         typePariConseille: p.typePariConseille ?? '',
         favoriIaNumero:    favori,
+        favoriIaNumero2:   favori2, // ★ fix Couplé : 2ème cheval IA
         favoriIaNom:       p.favoriIaNom, // ★ v9.6 nom du cheval favori
         scoreIA:           scoreIaFavori,
         arriveeReelle:     p.arriveeReelle ?? [],

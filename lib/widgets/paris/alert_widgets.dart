@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../main.dart' show NavigationNotifier;
 import '../../models/zt_models.dart';
 import '../../services/alert_service.dart';
 import '../../services/data_refresh_service.dart';
@@ -231,7 +233,20 @@ class AlertTile extends StatelessWidget {
               }
             }
           } else {
+            // ★ fix : alertes sans course associée → naviguer vers la bonne section
             alertSvc.markRead(alert.id);
+            final titre = alert.titre.toLowerCase();
+            if (context.mounted) {
+              final nav = context.read<NavigationNotifier>();
+              if (titre.contains('résultats pmu') || titre.contains('resultats pmu')) {
+                // "Résultats PMU du jour disponibles" → IA Stats (index 5)
+                nav.goTo(5);
+              } else if (titre.contains('pronostics du jour') || titre.contains('bonjour')) {
+                // "Bonjour — Pronostics du jour disponibles" → Conseils (index 1)
+                nav.goTo(1);
+              }
+              // autres alertes génériques → rien (markRead suffit)
+            }
           }
         },
         child: Opacity(

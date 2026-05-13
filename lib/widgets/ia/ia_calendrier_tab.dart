@@ -295,7 +295,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         Expanded(
           child: GestureDetector(
             onTap: _allerAujourdhui,
-            child: Column(children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
               Text(
                 '${_nomsMois[_moisRef.month]} ${_moisRef.year}',
                 textAlign: TextAlign.center,
@@ -310,6 +312,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 const SizedBox(height: 2),
                 Text(
                   'Tap → mois courant',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: _cGold.withValues(alpha: 0.6),
                     fontSize: 10,
@@ -380,9 +383,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       ),
       child: Column(children: [
 
-        // ── Ligne 1 : Toggle Mensuel / Annuel (plus grand, sans bouton ⚙️) ──
+        // ── Ligne 1 : Toggle Mensuel / Annuel ──
         Container(
-          height: 44,
+          height: 48,
           decoration: BoxDecoration(
             color: _cDark,
             borderRadius: BorderRadius.circular(10),
@@ -398,11 +401,25 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             unselectedLabelColor: Colors.white38,
             labelStyle: const TextStyle(
                 fontSize: 14, fontWeight: FontWeight.bold),
-            unselectedLabelStyle: const TextStyle(fontSize: 14),
+            unselectedLabelStyle: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.normal),
             dividerColor: Colors.transparent,
+            tabAlignment: TabAlignment.fill,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            indicatorPadding: EdgeInsets.zero,
             tabs: const [
-              Tab(text: '📅 Mensuel'),
-              Tab(text: '📆 Annuel'),
+              Tab(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('📅 Mensuel', overflow: TextOverflow.visible, softWrap: false),
+                ),
+              ),
+              Tab(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Text('📆 Annuel', overflow: TextOverflow.visible, softWrap: false),
+                ),
+              ),
             ],
           ),
         ),
