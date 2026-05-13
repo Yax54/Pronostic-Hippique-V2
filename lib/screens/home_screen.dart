@@ -17,6 +17,7 @@ import 'fiche_cheval_screen.dart';
 import 'ia_journal_screen.dart';                // ★ v9.89
 import '../services/alert_service.dart';         // ★ v10.23
 import '../main.dart' show NavigationNotifier;   // ★ v10.23
+import 'ia_performance_screen.dart';             // ★ v10.27 : raccourci calendrier
 
 
 class HomeScreen extends StatefulWidget {
@@ -259,6 +260,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   _buildStatsBanner(),
                   const SizedBox(height: 16),
                   _buildJournalIACard(),            // ★ v9.89
+                  const SizedBox(height: 8),
+                  _buildRaccourciCalendrier(),      // ★ v10.27
                   const SizedBox(height: 10),
                   _buildBandeauConseilIA(),         // ★ v10.23
                   const SizedBox(height: 10),
@@ -475,6 +478,74 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 8),
             const Icon(Icons.arrow_forward_ios, color: Color(0xFF7C4DFF), size: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── ★ v10.27 : Raccourci compact "Calendrier IA Stat" ───────────
+  Widget _buildRaccourciCalendrier() {
+    return GestureDetector(
+      onTap: () {
+        // Navigue vers IA Stats (index 4) puis ouvre l'onglet Calendrier (index 2)
+        context.read<NavigationNotifier>().goTo(4);
+        // Délai minimal pour laisser le screen se construire avant d'animer l'onglet
+        Future.delayed(const Duration(milliseconds: 150), () {
+          IaPerformanceScreen.ouvrirOngletCalendrier();
+        });
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A2A1A), Color(0xFF0D1B2A)],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.55)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: const Color(0xFF4CAF7D).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.4)),
+              ),
+              child: const Center(
+                child: Text('📅', style: TextStyle(fontSize: 16)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Calendrier IA Stat',
+                    style: TextStyle(
+                      color: Color(0xFF4CAF7D),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  SizedBox(height: 1),
+                  Text(
+                    'Historique de performance par journée',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Color(0xFF4CAF7D), size: 16),
           ],
         ),
       ),

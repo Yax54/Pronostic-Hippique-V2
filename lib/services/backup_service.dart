@@ -176,6 +176,8 @@ class BackupService {
     // ★ v9.85 : Préférences utilisateur et badges
     'ia_user_prefs_v1',
     'ia_badges_v1',
+    // ★ v10.27 : Seuils paliers calendrier (editables par l'utilisateur)
+    'ia_calendrier_seuils_v1',
   ];
 
   // 📋 Paris utilisateur — historique complet

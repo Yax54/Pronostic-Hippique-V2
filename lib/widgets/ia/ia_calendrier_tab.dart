@@ -16,6 +16,7 @@
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
 import 'ia_widgets_communs.dart';
@@ -114,6 +115,20 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
   static const int _maxMoisArriere = 24;
 
+  // ★ v10.27 : Seuils dynamiques des paliers (modifiables par l'utilisateur)
+  static const _keySeuilsCalendrier = 'ia_calendrier_seuils_v1';
+  double _seuilVert   = 30.0;
+  double _seuilJaune  = 25.0;
+  double _seuilOrange = 20.0;
+
+  // Contrôleurs TextField pour l'édition inline des seuils
+  late TextEditingController _ctrlVert;
+  late TextEditingController _ctrlJaune;
+  late TextEditingController _ctrlOrange;
+  bool _editVert   = false;
+  bool _editJaune  = false;
+  bool _editOrange = false;
+
   // ★ v10.26 : Indicateur de rafraîchissement temps réel
   bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
 
@@ -132,11 +147,18 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     _modeTabs = TabController(length: 2, vsync: this);
     _modeTabs.addListener(() => setState(() {}));
     IaMemoryService.instance.addListener(_onMemChange);
+    _ctrlVert   = TextEditingController();
+    _ctrlJaune  = TextEditingController();
+    _ctrlOrange = TextEditingController();
+    _chargerSeuils();
   }
 
   @override
   void dispose() {
     _modeTabs.dispose();
+    _ctrlVert.dispose();
+    _ctrlJaune.dispose();
+    _ctrlOrange.dispose();
     IaMemoryService.instance.removeListener(_onMemChange);
     super.dispose();
   }
@@ -150,6 +172,48 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) setState(() => _showRefreshFlash = false);
     });
+  }
+
+  // ── Seuils dynamiques — chargement / sauvegarde ───────────────────────
+  Future<void> _chargerSeuils() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw   = prefs.getString(_keySeuilsCalendrier);
+    if (raw != null) {
+      // Format compact : "30.0|25.0|20.0"
+      final parts = raw.split('|');
+      if (parts.length == 3) {
+        final v = double.tryParse(parts[0]);
+        final j = double.tryParse(parts[1]);
+        final o = double.tryParse(parts[2]);
+        if (v != null && j != null && o != null && v > j && j > o && o > 0) {
+          if (mounted) setState(() {
+            _seuilVert   = v;
+            _seuilJaune  = j;
+            _seuilOrange = o;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> _sauvegarderSeuils() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _keySeuilsCalendrier,
+      '$_seuilVert|$_seuilJaune|$_seuilOrange',
+    );
+  }
+
+  // ── Calcul palier dynamique (utilise les seuils éditables) ────────────
+  PalierCalendrier _getPalierDynamique(DonneeJourCalendrier dd) {
+    // OR est immuable — déterminé par l'IA, indépendant des seuils
+    if (dd.palier == PalierCalendrier.or) return PalierCalendrier.or;
+    if (dd.nbCourses == 0)               return PalierCalendrier.gris;
+    final pct = dd.taux * 100;
+    if (pct >= _seuilVert)   return PalierCalendrier.vert;
+    if (pct >= _seuilJaune)  return PalierCalendrier.jaune;
+    if (pct >= _seuilOrange) return PalierCalendrier.orange;
+    return PalierCalendrier.rouge;
   }
 
   // ── Navigation mois ───────────────────────────────────────────────────
@@ -203,6 +267,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           const SizedBox(height: 16),
           _buildModeSelector(),
           const SizedBox(height: 16),
+          // ★ v10.27 : Légende interactive AVANT le calendrier
+          _buildLegende(),
+          const SizedBox(height: 12),
           if (_modeTabs.index == 0) ...[
             _buildCalendrierMensuel(data),
             const SizedBox(height: 20),
@@ -214,8 +281,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           ] else ...[
             _buildVueAnnuelle(),
           ],
-          const SizedBox(height: 16),
-          _buildLegende(),
         ],
       ),
     );
@@ -408,7 +473,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                       now.month == moisRef.month &&
                       now.day == jour;
       final estFut  = DateTime(moisRef.year, moisRef.month, jour).isAfter(now);
-      final palier  = estFut || dd == null ? PalierCalendrier.gris : dd.palier;
+      // ★ v10.27 : Palier calculé dynamiquement avec les seuils éditables
+      final palier  = estFut || dd == null
+          ? PalierCalendrier.gris
+          : _getPalierDynamique(dd);
       final estGris = palier == PalierCalendrier.gris;
 
       cells.add(Expanded(
@@ -955,18 +1023,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  LÉGENDE
+  //  LÉGENDE INTERACTIVE — ★ v10.27 : seuils éditables + persistants
   // ══════════════════════════════════════════════════════════════════════
   Widget _buildLegende() {
-    final paliers = [
-      (PalierCalendrier.or,     '🥇 ≥1 Tiercé/Quarté/Quinté réussi'),
-      (PalierCalendrier.vert,   '✅ Taux ≥ 30%'),
-      (PalierCalendrier.jaune,  '📊 Taux 25–29%'),
-      (PalierCalendrier.orange, '⚠️ Taux 20–24%'),
-      (PalierCalendrier.rouge,  '❌ Taux < 20%'),
-      (PalierCalendrier.gris,   '💤 Aucune course'),
-    ];
-
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -975,30 +1034,238 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Paliers de couleur',
-          style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
-        Wrap(spacing: 16, runSpacing: 8, children: paliers.map((p) {
-          return Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 14, height: 14,
-              decoration: BoxDecoration(
-                color: p.$1.bg,
-                borderRadius: BorderRadius.circular(3),
-                border: Border.all(color: p.$1.border, width: 0.8),
-              ),
-            ),
-            const SizedBox(width: 5),
-            Text(p.$2,
-              style: TextStyle(color: Colors.white54, fontSize: 11)),
-          ]);
-        }).toList()),
+        // Titre + hint
+        Row(children: [
+          const Text('Paliers de couleur',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            )),
+          const SizedBox(width: 6),
+          Text('(tap seuil → modifier)',
+            style: TextStyle(
+              color: Colors.white24,
+              fontSize: 10,
+            )),
+        ]),
+        const SizedBox(height: 12),
+
+        // Ligne OR — non modifiable
+        _legendeRow(
+          palier:      PalierCalendrier.or,
+          label:       '🥇 Tiercé / Quarté / Quinté réussi',
+          seuilWidget: null,
+        ),
         const SizedBox(height: 8),
-        const Text(
-          'Basé sur typePariConseille — Tap sur une case pour voir le détail',
+
+        // Ligne VERT — seuil modifiable
+        _legendeRow(
+          palier: PalierCalendrier.vert,
+          label:  '✅ Taux ≥',
+          seuilWidget: _seuilField(
+            valeur:     _seuilVert,
+            enEdition:  _editVert,
+            ctrl:       _ctrlVert,
+            couleur:    _cGreen,
+            onTap: () => setState(() {
+              _editVert   = true;
+              _editJaune  = false;
+              _editOrange = false;
+              _ctrlVert.text = _seuilVert.toStringAsFixed(0);
+              _ctrlVert.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: _ctrlVert.text.length,
+              );
+            }),
+            onSubmit: (v) {
+              final n = double.tryParse(v.replaceAll(',', '.'));
+              if (n != null && n > _seuilJaune && n <= 100) {
+                setState(() { _seuilVert = n; _editVert = false; });
+                _sauvegarderSeuils();
+              } else {
+                setState(() { _editVert = false; });
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Ligne JAUNE — seuil modifiable
+        _legendeRow(
+          palier: PalierCalendrier.jaune,
+          label:  '📊 Taux ≥',
+          seuilWidget: _seuilField(
+            valeur:     _seuilJaune,
+            enEdition:  _editJaune,
+            ctrl:       _ctrlJaune,
+            couleur:    _cYellow,
+            onTap: () => setState(() {
+              _editJaune  = true;
+              _editVert   = false;
+              _editOrange = false;
+              _ctrlJaune.text = _seuilJaune.toStringAsFixed(0);
+              _ctrlJaune.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: _ctrlJaune.text.length,
+              );
+            }),
+            onSubmit: (v) {
+              final n = double.tryParse(v.replaceAll(',', '.'));
+              if (n != null && n > _seuilOrange && n < _seuilVert) {
+                setState(() { _seuilJaune = n; _editJaune = false; });
+                _sauvegarderSeuils();
+              } else {
+                setState(() { _editJaune = false; });
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Ligne ORANGE — seuil modifiable
+        _legendeRow(
+          palier: PalierCalendrier.orange,
+          label:  '⚠️ Taux ≥',
+          seuilWidget: _seuilField(
+            valeur:     _seuilOrange,
+            enEdition:  _editOrange,
+            ctrl:       _ctrlOrange,
+            couleur:    _cOrange,
+            onTap: () => setState(() {
+              _editOrange = true;
+              _editVert   = false;
+              _editJaune  = false;
+              _ctrlOrange.text = _seuilOrange.toStringAsFixed(0);
+              _ctrlOrange.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: _ctrlOrange.text.length,
+              );
+            }),
+            onSubmit: (v) {
+              final n = double.tryParse(v.replaceAll(',', '.'));
+              if (n != null && n > 0 && n < _seuilJaune) {
+                setState(() { _seuilOrange = n; _editOrange = false; });
+                _sauvegarderSeuils();
+              } else {
+                setState(() { _editOrange = false; });
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Ligne ROUGE — calculée automatiquement
+        _legendeRow(
+          palier: PalierCalendrier.rouge,
+          label:  '❌ Taux < ${_seuilOrange.toStringAsFixed(0)}%',
+          seuilWidget: null,
+        ),
+        const SizedBox(height: 8),
+
+        // Ligne GRIS — non modifiable
+        _legendeRow(
+          palier:      PalierCalendrier.gris,
+          label:       '💤 Aucune course',
+          seuilWidget: null,
+        ),
+
+        const SizedBox(height: 10),
+        const Divider(color: Colors.white12, height: 1),
+        const SizedBox(height: 8),
+        Text(
+          'Seuils persistants · Tap sur une valeur % pour modifier',
           style: TextStyle(color: Colors.white24, fontSize: 10),
         ),
       ]),
+    );
+  }
+
+  Widget _legendeRow({
+    required PalierCalendrier palier,
+    required String           label,
+    required Widget?          seuilWidget,
+  }) {
+    return Row(children: [
+      Container(
+        width: 14, height: 14,
+        decoration: BoxDecoration(
+          color:        palier.bg,
+          borderRadius: BorderRadius.circular(3),
+          border:       Border.all(color: palier.border, width: 0.8),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Text(label,
+        style: const TextStyle(color: Colors.white60, fontSize: 12)),
+      if (seuilWidget != null) ...[
+        const SizedBox(width: 4),
+        seuilWidget,
+        Text('%', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+      ],
+    ]);
+  }
+
+  Widget _seuilField({
+    required double                valeur,
+    required bool                  enEdition,
+    required TextEditingController ctrl,
+    required Color                 couleur,
+    required VoidCallback          onTap,
+    required ValueChanged<String>  onSubmit,
+  }) {
+    if (enEdition) {
+      return SizedBox(
+        width: 42,
+        height: 28,
+        child: TextField(
+          controller:    ctrl,
+          autofocus:     true,
+          keyboardType:  const TextInputType.numberWithOptions(decimal: true),
+          textAlign:     TextAlign.center,
+          style: TextStyle(
+            color:      couleur,
+            fontSize:   13,
+            fontWeight: FontWeight.bold,
+          ),
+          decoration: InputDecoration(
+            isDense:        true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide:   BorderSide(color: couleur.withValues(alpha: 0.6)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide:   BorderSide(color: couleur, width: 1.5),
+            ),
+            filled:      true,
+            fillColor:   couleur.withValues(alpha: 0.08),
+          ),
+          onSubmitted: onSubmit,
+          onEditingComplete: () => onSubmit(ctrl.text),
+        ),
+      );
+    }
+    // Affichage normal — tap pour éditer
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color:        couleur.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+          border:       Border.all(color: couleur.withValues(alpha: 0.35)),
+        ),
+        child: Text(
+          valeur.toStringAsFixed(0),
+          style: TextStyle(
+            color:      couleur,
+            fontSize:   13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1224,30 +1491,15 @@ class _DetailJourSheet extends StatelessWidget {
                     ),
                   )
                 else ...[
+                  // ★ v10.27 : Gagnants uniquement — perdants masqués (données conservées)
                   Text('✅ Pronostics réussis (${bons.length})',
                     style: const TextStyle(
                       color: Colors.white54,
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     )),
-                  const SizedBox(height: 8),
-                  ...bons.map((p) => _buildPronosticCard(p, vainqueur: true)),
-
-                  // Pronostics ratés
-                  if (dd.nbCourses > bons.length) ...[
-                    const SizedBox(height: 16),
-                    Text('❌ Pronostics ratés (${dd.nbCourses - bons.length})',
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      )),
-                    const SizedBox(height: 8),
-                    ...dd.pronostics
-                        .where((p) => !IaMemoryService.instance
-                            .estBonConseil(p, p.typePariConseille ?? ''))
-                        .map((p) => _buildPronosticCard(p, vainqueur: false)),
-                  ],
+                  const SizedBox(height: 10),
+                  ...bons.map((p) => _buildPronosticCard(p)),
                 ],
               ],
             ),
@@ -1273,114 +1525,156 @@ class _DetailJourSheet extends StatelessWidget {
     return '$pct% de pronostics corrects — journée difficile (<20%).';
   }
 
-  Widget _buildPronosticCard(IaPronostic p, {required bool vainqueur}) {
-    final type     = p.typePariConseille ?? 'Inconnu';
-    final favNom   = p.favoriIaNom ?? '?';
-    final rang     = p.rangFavoriIaDansArrivee;
-    final score    = p.scorePerformance;
-    final conf     = p.confiancePredite;
-    final hip      = p.hippodrome;
-    final disc     = p.discipline;
-    final topIA    = p.topNIA.take(3).map((e) => 'N°$e').join(' · ');
-    final arriv    = p.arriveeReelle != null
+  // ★ v10.27 : Card plus grande, titre blanc (jamais vert sur fond vert), contraste renforcé
+  Widget _buildPronosticCard(IaPronostic p) {
+    final type   = p.typePariConseille ?? 'Inconnu';
+    final favNom = p.favoriIaNom ?? '?';
+    final rang   = p.rangFavoriIaDansArrivee;
+    final score  = p.scorePerformance;
+    final conf   = p.confiancePredite;
+    final hip    = p.hippodrome;
+    final disc   = p.discipline;
+    final topIA  = p.topNIA.take(3).map((e) => 'N°$e').join(' · ');
+    final arriv  = p.arriveeReelle != null
         ? p.arriveeReelle!.take(3).map((e) => 'N°$e').join('-')
         : '—';
-    final borderC  = vainqueur ? _cGreen.withValues(alpha: 0.4)
-                               : _cRed.withValues(alpha: 0.2);
-    final bgC      = vainqueur ? _cGreenBg : _cRedBg;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: bgC,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderC),
+        // Fond légèrement assombri vs _cGreenBg pur → meilleur contraste
+        color: const Color(0xFF0A2016),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _cGreen.withValues(alpha: 0.45), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: _cGreen.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Titre course
+        // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
         Row(children: [
           Expanded(
-            child: Text(p.nomCourse.isEmpty ? 'Course' : p.nomCourse,
+            child: Text(
+              p.nomCourse.isEmpty ? 'Course' : p.nomCourse,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
+                color: Colors.white,          // ★ blanc, pas _cGreen
+                fontSize: 15,                 // ★ +2 vs ancien 13
                 fontWeight: FontWeight.bold,
+                letterSpacing: 0.1,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (score != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text('Score ${score.toStringAsFixed(0)}',
-                style: const TextStyle(color: Colors.white54, fontSize: 10)),
+          // Badge "✅ Réussi"
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: _cGreen.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _cGreen.withValues(alpha: 0.4)),
             ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Text('✅', style: TextStyle(fontSize: 11)),
+              const SizedBox(width: 4),
+              if (score != null)
+                Text('${score.toStringAsFixed(0)}',
+                  style: TextStyle(
+                    color: _cGreen,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  )),
+            ]),
+          ),
         ]),
-        const SizedBox(height: 4),
+        const SizedBox(height: 5),
 
-        // Hippodrome + discipline
+        // Hippodrome + discipline — texte plus lisible
         if (hip.isNotEmpty || disc.isNotEmpty)
-          Text('$hip${disc.isNotEmpty ? ' · $disc' : ''}',
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          Text(
+            '$hip${disc.isNotEmpty ? ' · $disc' : ''}',
+            style: const TextStyle(color: Colors.white54, fontSize: 13), // ★ +2
+          ),
 
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
 
         // Type de pari + favori
         Row(children: [
-          _pill(type, Colors.white24, Colors.white54),
+          _pill(type, Colors.white.withValues(alpha: 0.12), Colors.white70),
           const SizedBox(width: 6),
-          _pill('Favori : $favNom', Colors.white12, Colors.white38),
+          _pill('Favori : $favNom', Colors.white.withValues(alpha: 0.07), Colors.white54),
         ]),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
 
-        // IA vs Réel
-        Row(children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('IA prévoyait',
-              style: TextStyle(color: Colors.white24, fontSize: 10)),
-            Text(topIA.isEmpty ? '—' : topIA,
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          ])),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Arrivée réelle',
-              style: TextStyle(color: Colors.white24, fontSize: 10)),
-            Text(arriv,
-              style: TextStyle(
-                color: vainqueur ? _cGreen : _cRed,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              )),
-          ])),
-          if (rang != null)
-            Column(children: [
-              Text('Rang', style: const TextStyle(color: Colors.white24, fontSize: 10)),
-              Text('#$rang',
+        // IA vs Réel — section bien séparée
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('IA prévoyait',
+                style: TextStyle(color: Colors.white38, fontSize: 12)), // ★ +2
+              const SizedBox(height: 3),
+              Text(topIA.isEmpty ? '—' : topIA,
+                style: const TextStyle(
+                  color: Colors.white,          // ★ blanc pour lisibilité
+                  fontSize: 14,                 // ★ +2
+                  fontWeight: FontWeight.w600,
+                )),
+            ])),
+            Container(width: 1, height: 36, color: Colors.white12),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Arrivée réelle',
+                style: TextStyle(color: Colors.white38, fontSize: 12)), // ★ +2
+              const SizedBox(height: 3),
+              // Arrivée réelle : fond assombri + texte vert sur noir → bon contraste
+              Text(arriv,
                 style: TextStyle(
-                  color: rang == 1 ? _cGold : rang <= 3 ? _cGreen : _cRed,
-                  fontSize: 14,
+                  color: _cGreen,
+                  fontSize: 14,                 // ★ +2
                   fontWeight: FontWeight.bold,
                 )),
-            ]),
-        ]),
+            ])),
+            if (rang != null) ...[
+              const SizedBox(width: 8),
+              Column(children: [
+                const Text('Rang',
+                  style: TextStyle(color: Colors.white38, fontSize: 12)),
+                const SizedBox(height: 3),
+                Text('#$rang',
+                  style: TextStyle(
+                    color: rang == 1 ? _cGold : rang <= 3 ? _cGreen : Colors.white60,
+                    fontSize: 16,               // ★ +2
+                    fontWeight: FontWeight.bold,
+                  )),
+              ]),
+            ],
+          ]),
+        ),
 
         // Confiance si disponible
         if (conf != null) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Row(children: [
+            Icon(Icons.psychology_outlined, color: Colors.white38, size: 14),
+            const SizedBox(width: 5),
             const Text('Confiance : ',
-              style: TextStyle(color: Colors.white24, fontSize: 10)),
+              style: TextStyle(color: Colors.white38, fontSize: 12)),
             Text('${(conf * 100).toStringAsFixed(0)}%',
               style: TextStyle(
                 color: conf >= 0.6 ? _cGreen
                      : conf >= 0.4 ? _cYellow
                      : _cOrange,
-                fontSize: 10,
+                fontSize: 13,                   // ★ +3
                 fontWeight: FontWeight.bold,
               )),
           ]),

@@ -40,6 +40,12 @@ class IaPerformanceScreen extends StatefulWidget {
 
   const IaPerformanceScreen({super.key, required this.alertService});
 
+  // ★ v10.27 : raccourci depuis HomeScreen — ouvre l'onglet Calendrier (index 2)
+  static _IaPerformanceScreenState? _instance;
+  static void ouvrirOngletCalendrier() {
+    _instance?._tabCtrl.animateTo(2);
+  }
+
   @override
   State<IaPerformanceScreen> createState() => _IaPerformanceScreenState();
 }
@@ -89,7 +95,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 6, vsync: this); // ★ v10.25 : +Calendrier
+    IaPerformanceScreen._instance = this; // ★ v10.27 : raccourci calendrier
+    _tabCtrl = TabController(length: 6, vsync: this);
     _loadStats();
     IaMemoryService.instance.addListener(_loadStats);
     // ★ v9.90 : _chargerPrefsBt() migré dans IaTabBacktesting.initState()
@@ -162,6 +169,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
   @override
   void dispose() {
+    if (IaPerformanceScreen._instance == this) {
+      IaPerformanceScreen._instance = null; // ★ v10.27
+    }
     IaMemoryService.instance.removeListener(_loadStats);
     _tabCtrl.dispose();
     super.dispose();
@@ -701,9 +711,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             padding: const EdgeInsets.symmetric(horizontal: 4),
             tabs: const [
               Tab(text: '🧠 Mémoire IA', height: 52),
-              Tab(text: '🔬 Backtesting', height: 52), // ★ v10.18 : déplacé entre Mémoire IA et Statistiques
+              Tab(text: '🔬 Backtesting', height: 52),
+              Tab(text: '📅 Calendrier', height: 52),   // ★ v10.27 : déplacé avant Statistiques
               Tab(text: '📊 Statistiques', height: 52),
-              Tab(text: '📅 Calendrier', height: 52),   // ★ v10.25 : nouveau calendrier IA
               Tab(text: '⚙️ Algorithme', height: 52),
               Tab(text: '💡 Conseils', height: 52),
             ],
@@ -714,11 +724,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         controller: _tabCtrl,
         children: [
           _buildTabMemoire(),
-          const IaTabBacktesting(),                        // ★ v10.18 : déplacé en position 1
-          IaTabStats(alertService: widget.alertService),   // ★ v9.90
-          const IaCalendrierTab(),                         // ★ v10.25 : calendrier performances
-          const IaTabMethodologie(),                       // ★ v9.90
-          const IaTabConseils(),                           // ★ v9.90
+          const IaTabBacktesting(),
+          const IaCalendrierTab(),                         // ★ v10.27 : déplacé avant Statistiques
+          IaTabStats(alertService: widget.alertService),
+          const IaTabMethodologie(),
+          const IaTabConseils(),
         ],
       ),
     );
