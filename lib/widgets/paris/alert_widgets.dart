@@ -202,34 +202,42 @@ class AlertTile extends StatelessWidget {
                 );
               }
             } else {
+              // Course introuvable dans le programme courant
+              alertSvc.markRead(alert.id);
               if (context.mounted) {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Row(children: [
-                      const Icon(Icons.flag_circle,
-                          color: Color(0xFFFFD700), size: 22),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'Course terminée — résultat disponible dans l\'historique PMU.',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
+                if (alert.type == AlertType.conseilIA) {
+                  // "Nouvelle course dans tes critères" → Conseils IA (index 1)
+                  context.read<NavigationNotifier>().goTo(1);
+                } else {
+                  // Autre type (résultat, rappel…) → SnackBar informatif
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(children: [
+                        const Icon(Icons.flag_circle,
+                            color: Color(0xFFFFD700), size: 22),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Course terminée — résultat disponible dans l\'historique PMU.',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                      ),
-                    ]),
-                    backgroundColor: const Color(0xFF2E4A1E),
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 14),
-                    duration: const Duration(seconds: 4),
-                  ),
-                );
+                      ]),
+                      backgroundColor: const Color(0xFF2E4A1E),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
               }
             }
           } else {
