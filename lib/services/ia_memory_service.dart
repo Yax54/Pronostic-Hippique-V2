@@ -972,10 +972,13 @@ class IaMemoryService extends ChangeNotifier {
       // ★ v9.95 : migration one-shot — recalcul de _precisionParType depuis
       // les pronostics bruts pour corriger le double-comptage historique.
       // Exécutée UNE SEULE FOIS grâce au flag 'ia_precision_migrated_v2'.
-      final flagMigration = prefs.getBool('ia_precision_migrated_v2') ?? false;
+      // ★ v10.34 : Bumper le flag à v3 pour forcer un recalcul complet
+    // après la correction des seuils Couplé Gagnant et Couplé Placé
+    // (anciens faux positifs corrigés — nbDansTop >= 1 → >= 2)
+    final flagMigration = prefs.getBool('ia_precision_migrated_v3') ?? false;
       if (!flagMigration && _pronostics.any((p) => p.resultatsReels)) {
         await _recalculerPrecisionParTypeDepuisPronostics();
-        await prefs.setBool('ia_precision_migrated_v2', true);
+        await prefs.setBool('ia_precision_migrated_v3', true);
         if (kDebugMode) {
           debugPrint('[IaMemory] ✅ Flag ia_precision_migrated_v2 posé.');
         }
@@ -3356,29 +3359,35 @@ class IaMemoryService extends ChangeNotifier {
         return rang != null && rang <= 3;
 
       case 'Couplé Gagnant':
-        // ★ v10.33 fix : les 2 chevaux IA doivent être dans le top 2 réel
-        // rang seul ne suffit pas — il faut vérifier les 2 premiers IA dans l'arrivée
+        // ★ v10.34 fix CRITIQUE : les 2 chevaux IA DOIVENT être dans le top 2 réel
+        // Un Couplé Gagnant n'est réussi QUE si les 2 chevaux sélectionnés
+        // finissent aux 2 premières places (ordre indifférent).
+        // Ex: IA choisit N°5 et N°9 → ils doivent TOUS LES DEUX être dans [1er, 2e]
         {
           final arrivee = p.arriveeReelle;
           if (arrivee == null || arrivee.length < 2) return rang != null && rang <= 2;
           final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
           if (topIA.length < 2) return rang != null && rang <= 2;
           final top2Reel = arrivee.take(2).toSet();
-          // Au moins 1 des 2 chevaux IA dans le top 2 réel (désordre accepté)
+          // LES 2 chevaux IA doivent être dans le top 2 réel (>= 2, pas >= 1)
           final nbDansTop2 = topIA.take(2).where((n) => top2Reel.contains(n)).length;
-          return nbDansTop2 >= 1;
+          return nbDansTop2 >= 2;
         }
 
       case 'Couplé Placé':
-        // ★ v10.33 fix : au moins 1 des 2 chevaux IA dans le top 3 réel
+        // ★ v10.34 fix CRITIQUE : les 2 chevaux IA DOIVENT être dans le top 3 réel
+        // Un Couplé Placé n'est réussi QUE si les 2 chevaux sélectionnés
+        // finissent tous les deux dans les 3 premières places (ordre indifférent).
+        // Ex: IA choisit N°3 et N°10 → ils doivent TOUS LES DEUX être dans [1er, 2e, 3e]
         {
           final arrivee = p.arriveeReelle;
           if (arrivee == null || arrivee.length < 3) return rang != null && rang <= 3;
           final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
           if (topIA.length < 2) return rang != null && rang <= 3;
           final top3Reel = arrivee.take(3).toSet();
+          // LES 2 chevaux IA doivent être dans le top 3 réel (>= 2, pas >= 1)
           final nbDansTop3 = topIA.take(2).where((n) => top3Reel.contains(n)).length;
-          return nbDansTop3 >= 1;
+          return nbDansTop3 >= 2;
         }
 
       case 'Tiercé':

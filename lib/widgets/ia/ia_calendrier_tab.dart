@@ -325,28 +325,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
         // ▶ Suivant
         _navBtn(Icons.chevron_right, _peutAvancer ? _avancer : null),
-
-        // ★ v10.26 : Badge "Mis à jour" — flash 800ms après rafraîchissement
-        const SizedBox(width: 6),
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 400),
-          opacity: _showRefreshFlash ? 1.0 : 0.0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: _cGreen.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _cGreen.withValues(alpha: 0.4)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.refresh, color: _cGreen, size: 11),
-              const SizedBox(width: 4),
-              Text('Mis à jour',
-                style: TextStyle(color: _cGreen, fontSize: 10,
-                    fontWeight: FontWeight.w600)),
-            ]),
-          ),
-        ),
       ]),
     );
   }
@@ -478,11 +456,14 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
   /// Ouvre le sheet de paramétrage pour un palier spécifique
   void _ouvrirSeuilPourPalier(PalierCalendrier palier) {
-    showModalBottomSheet(
+    // ★ v10.34 : Dialog centré au milieu de l'écran
+    showDialog(
       context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _SeuilUniquSheet(
+      barrierColor: Colors.black54,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        child: _SeuilUniquSheet(
         palier:      palier,
         seuilVert:   _seuilVert,
         seuilJaune:  _seuilJaune,
@@ -495,7 +476,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           });
           _sauvegarderSeuils();
         },
-      ),
+      )),  // ferme _SeuilUniquSheet + Dialog
     );
   }
 
