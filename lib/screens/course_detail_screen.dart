@@ -2,6 +2,7 @@
 //  COURSE DETAIL SCREEN — Détail complet d'une course + Pronostics IA
 // ═══════════════════════════════════════════════════════════════════
 
+import '../widgets/type_pari_badge.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -341,6 +342,29 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
   // ──────────────────────────────────────────────────────────────────
   // ONGLET 1 : VUE IA (pronostics + scores)
   // ──────────────────────────────────────────────────────────────────
+  // ★ v10.30 : helpers pour TypePariBadge
+  static String _typePariDuConseil(String conseil) {
+    final cu = conseil.toUpperCase();
+    if (cu.contains('QUINTÉ')) return 'Quinté+';
+    if (cu.contains('QUARTÉ')) return 'Quarté+';
+    if (cu.contains('TIERCÉ') || cu.contains('TIERCE')) return 'Tiercé';
+    if (cu.contains('COUPLÉ GAGNANT') || cu.contains('COUPLE GAGNANT')) return 'Couplé Gagnant';
+    if (cu.contains('COUPLÉ PLACÉ') || cu.contains('COUPLE PLACE')) return 'Couplé Placé';
+    if (cu.contains('GAGNANT+PLACÉ') || cu.contains('GAGNANT PLACÉ')) return 'Gagnant+Placé';
+    if (cu.contains('SIMPLE PLACÉ') || cu.contains('SIMPLE PLACE')) return 'Simple Placé';
+    if (cu.contains('SIMPLE GAGNANT') || cu.contains('GAGNANT')) return 'Simple Gagnant';
+    return 'À surveiller';
+  }
+
+  static int _nbChevauxPourConseil(String conseil) {
+    final cu = conseil.toUpperCase();
+    if (cu.contains('QUINTÉ')) return 5;
+    if (cu.contains('QUARTÉ')) return 4;
+    if (cu.contains('TIERCÉ') || cu.contains('TIERCE')) return 3;
+    if (cu.contains('COUPLÉ') || cu.contains('COUPLE')) return 2;
+    return 1;
+  }
+
   Widget _buildTabIA() {
     final partantsIA = widget.course.partantsParRangIA;
 
@@ -414,7 +438,20 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                         ? const Color(0xFFFFB74D) // orange — MOY.
                         : const Color(0xFFEF5350); // rouge — FAIBLE
             final conseilIcon = conf >= 80 ? '✅' : conf >= 65 ? '💡' : conf >= 50 ? '⚠️' : '🚫';
-            return Container(
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ★ v10.30 : Badge type de pari cliquable
+                TypePariBadge(
+                  type:      _typePariDuConseil(_pronostic.conseil),
+                  numeros:   widget.course.partantsParRangIA
+                      .take(_nbChevauxPourConseil(_pronostic.conseil))
+                      .map((p) => p.numero).toList(),
+                  nomFavori: widget.course.partantsParRangIA.isNotEmpty
+                      ? widget.course.partantsParRangIA.first.nom : null,
+                ),
+                const SizedBox(height: 8),
+                Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: conseilColor.withValues(alpha: 0.1),
@@ -432,6 +469,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                   ),
                 ],
               ),
+            ),
+              ],
             );
           }),
           // ★ v9.85 : Phrase IA contextuelle sous le conseil

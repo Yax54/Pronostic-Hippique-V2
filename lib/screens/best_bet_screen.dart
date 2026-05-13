@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════
 //  ONGLET BEST BET — Meilleur Pari du Jour (Zone-Turf + IA)
 // ═══════════════════════════════════════════════════════════════════
+import '../widgets/type_pari_badge.dart';
 import 'package:flutter/material.dart';
 import '../widgets/favori_button.dart'; // ★ v9.3
 import 'package:provider/provider.dart';
@@ -983,14 +984,16 @@ class _TopBetCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: confianceColor.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(opp.typePari,
-                              style: TextStyle(color: confianceColor, fontSize: 13, fontWeight: FontWeight.bold)),
+                        // ★ v10.30 : badge cliquable global
+                        TypePariBadge(
+                          type:      opp.typePari,
+                          numeros:   opp.course.partantsParRangIA.take(
+                            opp.typePari == 'Quinté+' ? 5 :
+                            opp.typePari == 'Quarté+' ? 4 :
+                            opp.typePari == 'Tiercé'  ? 3 :
+                            opp.typePari.contains('Couplé') ? 2 : 1
+                          ).map((p) => p.numero).toList(),
+                          nomFavori: opp.favori.nom,
                         ),
                       ],
                     ),
