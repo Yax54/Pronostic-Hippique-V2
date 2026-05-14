@@ -144,9 +144,11 @@ class IaMemoryService extends ChangeNotifier {
     // ★ v10.36 : On n'accepte que les pronostics dont la date est strictement
     // dans la journée courante (00h00 → 23h59). Le fallback 48h a été supprimé
     // car il faisait apparaître les pronostics d'hier soir le matin suivant.
+    // ★ v10.37 : Fenêtre élargie à -3 minutes (au lieu de -1) pour couvrir
+    // les courses finissant entre 23h57 et minuit sans les rater.
     final pronosDuJour = _pronostics.where((p) =>
         p.resultatsReels &&
-        p.datePronostic.isAfter(debutJour.subtract(const Duration(minutes: 1))) &&
+        p.datePronostic.isAfter(debutJour.subtract(const Duration(minutes: 3))) &&
         p.datePronostic.isBefore(finJour)).toList();
 
     // Si rien aujourd'hui → retourner vide (pas de fallback sur jours précédents)

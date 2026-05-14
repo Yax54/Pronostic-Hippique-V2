@@ -51,7 +51,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
         const SizedBox(height: 6),
         Text(
           poids.nbMisesAJour > 0
-            ? 'â¡ Poids actuellement adaptes apres ${poids.nbMisesAJour} apprentissage(s)'
+            ? '⚡ Poids actuellement adaptes apres ${poids.nbMisesAJour} apprentissage(s)'
             : '📊 Poids par défaut – l\'IA adaptera ces valeurs avec l\'expérience',
           style: TextStyle(
             color: poids.nbMisesAJour > 0 ? _gold : Colors.white38,
@@ -325,6 +325,27 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
               style: TextStyle(color: Colors.white54, fontSize: 12)),
           const SizedBox(height: 8),
           // Les 3 criteres les plus modifies = les plus interessants Ã  suivre
+          // ★ v10.37 : message < 3 jours
+          if (joursAffiches.length < 3)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(children: [
+                const Text('📊', style: TextStyle(fontSize: 14)),
+                const SizedBox(width: 8),
+                Expanded(child: Text(
+                  'Graphe disponible après 3 analyses '
+                  '(${joursAffiches.length}/3 effectuées)',
+                  style: const TextStyle(color: Colors.white38, fontSize: 12),
+                )),
+              ]),
+            )
+          else
+          // Les 3 critères les plus modifiés = les plus intéressants à suivre
           ...tries.take(3).map((c) {
             final couleurCritere = c == 'forme' ? const Color(0xFF4CAF7D)
                 : c == 'cote'  ? const Color(0xFFFF9800)
@@ -486,10 +507,36 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
 
         const SizedBox(height: 8),
         const Text(
-          'Si rien ne bouge apres 3+ semaines â les donnees API PMU '
-          'atteignent peut-Ãªtre leur limite predictive.',
+          'Si rien ne bouge après 3+ semaines — les données API PMU '
+          'atteignent peut-être leur limite prédictive.',
           style: TextStyle(color: Colors.white24, fontSize: 11),
         ),
+
+        // ★ v10.37 : Date de dernière mise à jour
+        if (journal.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Builder(builder: (context) {
+            final dernier = journal.first;
+            final d = dernier.date;
+            final now = DateTime.now();
+            // ★ v10.37 fix : comparaison par date calendaire (pas par durée)
+            // inDays tronque — une analyse hier à 23h58 consultée à 00h05
+            // donnerait "il y a 0 jours". On compare les dates sans heure.
+            final aujourdhuiDate = DateTime(now.year, now.month, now.day);
+            final dateAnalyse    = DateTime(d.year, d.month, d.day);
+            final ecartJours = aujourdhuiDate.difference(dateAnalyse).inDays;
+            final String label;
+            if (ecartJours == 0)      label = "aujourd'hui";
+            else if (ecartJours == 1) label = 'hier';
+            else                      label = 'il y a $ecartJours jours';
+            return Text(
+              'Dernière mise à jour : $label '
+              '(${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')} '
+              'à ${d.hour.toString().padLeft(2,'0')}h${d.minute.toString().padLeft(2,'0')})',
+              style: const TextStyle(color: Colors.white24, fontSize: 11),
+            );
+          }),
+        ],
       ]),
     );
   }
