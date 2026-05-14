@@ -1,3 +1,5 @@
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../services/alert_service.dart';
 
@@ -20,6 +22,18 @@ class _AlertSettingsTabState extends State<AlertSettingsTab> {
   void initState() {
     super.initState();
     _config = widget.alertSvc.config;
+    // ★ v10.35 : écouter les changements de permission pour mise à jour dynamique
+    widget.alertSvc.addListener(_onAlertSvcChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.alertSvc.removeListener(_onAlertSvcChanged);
+    super.dispose();
+  }
+
+  void _onAlertSvcChanged() {
+    if (mounted) setState(() { _config = widget.alertSvc.config; });
   }
 
   Future<void> _save() async {
@@ -35,6 +49,9 @@ class _AlertSettingsTabState extends State<AlertSettingsTab> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _buildPermissionBanner(context, hasPermission, permStatus),
+        const SizedBox(height: 12),
+        // ★ v10.35 : Mode Sommeil
+        _ModeSommeilWidget(alertSvc: widget.alertSvc),
         const SizedBox(height: 20),
         _buildSectionTitle('🎯 Périmètre des alertes', 'Choisissez pour quelles courses recevoir des alertes'),
         const SizedBox(height: 12),
@@ -1097,6 +1114,235 @@ class _AlertSettingsSheetState extends State<AlertSettingsSheet> {
           );
         }).toList(),
       ),
+    );
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.35 : Widget Mode Sommeil
+//  Plage horaire pendant laquelle aucune alerte/notification n'est envoyée.
+//  Persisté dans SharedPreferences : 'alerte_sommeil_v1'
+// ══════════════════════════════════════════════════════════════════════════════
+class _ModeSommeilWidget extends StatefulWidget {
+  final AlertService alertSvc;
+  const _ModeSommeilWidget({required this.alertSvc});
+  @override
+  State<_ModeSommeilWidget> createState() => _ModeSommeilWidgetState();
+}
+
+class _ModeSommeilWidgetState extends State<_ModeSommeilWidget> {
+  static const _kCle = 'alerte_sommeil_v1';
+  bool   _actif   = false;
+  int    _heureDebut = 22;
+  int    _minuteDebut = 0;
+  int    _heureFin   = 7;
+  int    _minuteFin  = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _charger();
+  }
+
+  Future<void> _charger() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw   = prefs.getString(_kCle);
+    if (raw == null) return;
+    try {
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      if (mounted) setState(() {
+        _actif       = m['actif']       as bool? ?? false;
+        _heureDebut  = m['heureDebut']  as int?  ?? 22;
+        _minuteDebut = m['minuteDebut'] as int?  ?? 0;
+        _heureFin    = m['heureFin']    as int?  ?? 7;
+        _minuteFin   = m['minuteFin']   as int?  ?? 0;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _sauvegarder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kCle, jsonEncode({
+      'actif':       _actif,
+      'heureDebut':  _heureDebut,
+      'minuteDebut': _minuteDebut,
+      'heureFin':    _heureFin,
+      'minuteFin':   _minuteFin,
+    }));
+  }
+
+  /// Vérifie si on est actuellement en période de sommeil
+  static bool estEnSommeil(Map<String, dynamic>? cfg) {
+    if (cfg == null) return false;
+    if (!(cfg['actif'] as bool? ?? false)) return false;
+    final now = TimeOfDay.now();
+    final nowMin = now.hour * 60 + now.minute;
+    final debutMin = (cfg['heureDebut'] as int? ?? 22) * 60 + (cfg['minuteDebut'] as int? ?? 0);
+    final finMin   = (cfg['heureFin']   as int? ?? 7)  * 60 + (cfg['minuteFin']   as int? ?? 0);
+    // Gérer le cas où la plage chevauche minuit (ex: 22h → 7h)
+    if (debutMin > finMin) {
+      return nowMin >= debutMin || nowMin < finMin;
+    }
+    return nowMin >= debutMin && nowMin < finMin;
+  }
+
+  String _fmt(int h, int m) =>
+      '${h.toString().padLeft(2, '0')}h${m.toString().padLeft(2, '0')}';
+
+  Future<void> _choisirHeure(bool estDebut) async {
+    final init = TimeOfDay(
+      hour:   estDebut ? _heureDebut  : _heureFin,
+      minute: estDebut ? _minuteDebut : _minuteFin,
+    );
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: init,
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Color(0xFF1565C0),
+            onPrimary: Colors.white,
+            surface: Color(0xFF0D1B2A),
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      if (estDebut) { _heureDebut = picked.hour;  _minuteDebut = picked.minute; }
+      else          { _heureFin   = picked.hour;  _minuteFin   = picked.minute; }
+    });
+    await _sauvegarder();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A1628),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _actif
+              ? const Color(0xFF1565C0).withValues(alpha: 0.6)
+              : Colors.white.withValues(alpha: 0.07)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // En-tête avec toggle
+        Row(children: [
+          Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1565C0).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+            ),
+            child: const Center(
+              child: Text('🌙', style: TextStyle(fontSize: 20)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Mode Sommeil',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold)),
+              Text(
+                _actif
+                    ? 'Actif : ${_fmt(_heureDebut, _minuteDebut)} → ${_fmt(_heureFin, _minuteFin)}'
+                    : 'Aucune alerte pendant une plage horaire',
+                style: TextStyle(
+                  color: _actif
+                      ? const Color(0xFF64B5F6)
+                      : Colors.white38,
+                  fontSize: 12),
+              ),
+            ]),
+          ),
+          Switch(
+            value: _actif,
+            onChanged: (v) async {
+              setState(() => _actif = v);
+              await _sauvegarder();
+            },
+            activeColor: const Color(0xFF1565C0),
+            activeTrackColor: const Color(0xFF1565C0).withValues(alpha: 0.3),
+          ),
+        ]),
+
+        // Plage horaire (visible uniquement si actif)
+        if (_actif) ...[
+          const SizedBox(height: 12),
+          const Divider(color: Colors.white12),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _choisirHeure(true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: const Color(0xFF1565C0).withValues(alpha: 0.3)),
+                  ),
+                  child: Column(children: [
+                    const Text('Début',
+                      style: TextStyle(color: Colors.white38, fontSize: 10)),
+                    const SizedBox(height: 4),
+                    Text(_fmt(_heureDebut, _minuteDebut),
+                      style: const TextStyle(
+                        color: Color(0xFF64B5F6),
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold)),
+                  ]),
+                ),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text('→',
+                style: TextStyle(color: Colors.white38, fontSize: 20))),
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _choisirHeure(false),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: const Color(0xFF1565C0).withValues(alpha: 0.3)),
+                  ),
+                  child: Column(children: [
+                    const Text('Fin',
+                      style: TextStyle(color: Colors.white38, fontSize: 10)),
+                    const SizedBox(height: 4),
+                    Text(_fmt(_heureFin, _minuteFin),
+                      style: const TextStyle(
+                        color: Color(0xFF64B5F6),
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold)),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'Aucune notification de ${_fmt(_heureDebut, _minuteDebut)} à ${_fmt(_heureFin, _minuteFin)}.'
+            '${_heureDebut > _heureFin ? ' (plage traverse minuit)' : ''}',
+            style: const TextStyle(color: Colors.white38, fontSize: 10),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ]),
     );
   }
 }

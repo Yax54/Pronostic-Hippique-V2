@@ -638,7 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // ── État : filtres actifs, X courses ─────────────────────────
         return GestureDetector(
-          onTap: () => context.read<NavigationNotifier>().goTo(3),
+          onTap: () => context.read<NavigationNotifier>().goTo(1), // ★ fix → Conseils IA
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),

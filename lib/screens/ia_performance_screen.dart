@@ -43,7 +43,7 @@ class IaPerformanceScreen extends StatefulWidget {
   // ★ v10.27 : raccourci depuis HomeScreen — ouvre l'onglet Calendrier (index 2)
   static _IaPerformanceScreenState? _instance;
   static void ouvrirOngletCalendrier() {
-    _instance?._tabCtrl.animateTo(2);
+    _instance?._tabCtrl.animateTo(2, duration: Duration.zero); // ★ fix : duration zéro = téléportation sans animation
   }
 
   @override

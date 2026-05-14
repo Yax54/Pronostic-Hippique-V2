@@ -263,6 +263,24 @@ class AlertTile extends StatelessWidget {
                          titreNorm.contains('bonjour')) {
                 // "Bonjour — Pronostics du jour disponibles" → Conseils (index 1)
                 nav.goTo(1);
+              } else if (titreNorm.contains('critere') ||
+                         titreNorm.contains('correspond') ||
+                         titreNorm.contains('nouvelle course')) {
+                // "Nouvelle course dans tes critères" → Conseils IA (index 1)
+                nav.goTo(1);
+              } else if (titreNorm.contains('conseil ia') ||
+                         titreNorm.contains('conseil du jour')) {
+                // Conseil IA → Conseils IA (index 1)
+                nav.goTo(1);
+              } else if (titreNorm.contains('best bet') ||
+                         titreNorm.contains('meilleur pari')) {
+                // Best Bet → Best Bet (index 4)
+                nav.goTo(4);
+              } else if (titreNorm.contains('rappel') ||
+                         titreNorm.contains('30 min') ||
+                         titreNorm.contains('depart')) {
+                // Rappel mise / départ → Mes Paris (index 6)
+                nav.goTo(6);
               }
               // autres alertes génériques → rien (markRead suffit)
             }

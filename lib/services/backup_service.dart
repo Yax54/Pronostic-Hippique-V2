@@ -202,6 +202,7 @@ class BackupService {
     // ★ v9.94-audit : clés manquantes
     'alert_cote_chute_notifies_v1',   // Anti-doublons alertes cote chute (alert_service)
     'data_refresh_resume_hebdo_date', // Date dernier résumé hebdo lundi (data_refresh_service)
+    'alerte_sommeil_v1',              // ★ v10.41 : Mode Sommeil — plage horaire sans alertes
   ];
 
   // 👤 Profil — identite de l'utilisateur
