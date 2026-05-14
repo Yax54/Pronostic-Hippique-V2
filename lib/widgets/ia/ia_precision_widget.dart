@@ -666,14 +666,16 @@ class _SectionPrecisionIAState extends State<SectionPrecisionIA> {
                       if (_filtrePeriode == 'custom')   return '🏆 Précision IA — Période personnalisée';
                       return '🏆 Précision IA — ${_libelleFiltre(_filtrePeriode!)}';
                     }(),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                    // ★ v10.36 : fontSize 12→14 pour meilleure lisibilité
+                    style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
                   )),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 54, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 10), textAlign: TextAlign.center)),
+                  // ★ v10.36 : fontSize 10→13, 11→13
+                  const SizedBox(width: 58, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 11), textAlign: TextAlign.center)),
+                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 24, child: Text('7j', style: TextStyle(color: Colors.white38, fontSize: 11), textAlign: TextAlign.center)),
+                  const SizedBox(width: 24, child: Text('7j', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 14),
                 ]),
               ),
@@ -1036,42 +1038,44 @@ Widget _buildLignePrecisionParType(StatsPrecisionParType p, {required bool isLas
             children: [
               // ── Ligne principale ─────────────────────────────────────────
               Row(children: [
-                Text(p.emoji, style: const TextStyle(fontSize: 14)),
+                Text(p.emoji, style: const TextStyle(fontSize: 16)),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(p.typePari,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      // ★ v10.36 : 13→15
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
                 ),
                 // Bons / Total selon filtre
                 _cellStat('$bons/$nb',
                     bons > 0 ? _kGreen : Colors.white38,
-                    width: 54, bold: bons > 0),
+                    width: 58, bold: bons > 0),
                 const SizedBox(width: 6),
                 // Taux
                 SizedBox(
                   width: 46,
                   child: nb > 0
                       ? Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
                           decoration: BoxDecoration(
                             color: tauxColor.withValues(alpha: 0.13),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: tauxColor.withValues(alpha: 0.4)),
                           ),
                           child: Text('${taux.toStringAsFixed(0)}%',
-                              style: TextStyle(color: tauxColor, fontSize: 12, fontWeight: FontWeight.bold),
+                              // ★ v10.36 : 12→14
+                              style: TextStyle(color: tauxColor, fontSize: 14, fontWeight: FontWeight.bold),
                               textAlign: TextAlign.center),
                         )
                       : const SizedBox(),
                 ),
                 const SizedBox(width: 4),
-                // Tendance 7j (toujours basée sur historique récent)
+                // Tendance 7j
                 SizedBox(width: 20,
                     child: Text(tendTxt,
-                        style: TextStyle(color: tendColor, fontSize: 14, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: tendColor, fontSize: 15, fontWeight: FontWeight.bold),
                         textAlign: TextAlign.center)),
                 if (nb > 0)
-                  const Icon(Icons.chevron_right, color: Colors.white24, size: 14),
+                  const Icon(Icons.chevron_right, color: Colors.white24, size: 16),
               ]),
               // ── Sous-ligne Ordre / Désordre ──────────────────────────────
               if (hasOrdreDesordre)
@@ -1085,7 +1089,8 @@ Widget _buildLignePrecisionParType(StatsPrecisionParType p, {required bool isLas
                     if (bons > 0)
                       Text(
                         '(${ordreF + desordF}/$bons classés)',
-                        style: const TextStyle(color: Colors.white24, fontSize: 10),
+                        // ★ v10.36 : 10→12
+                        style: const TextStyle(color: Colors.white24, fontSize: 12),
                       ),
                   ]),
                 ),

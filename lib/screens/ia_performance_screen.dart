@@ -763,6 +763,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       ),
       child: Column(children: [
         // Ligne 1 : stats de performance classiques
+        // ★ v10.36 : libellés clarifiés — "Favori IA" = le cheval N°1 conseillé par l'IA
         Row(children: [
           _buildQuickStatSmall(
             hasData ? '${s.tauxFavoriTop3.toStringAsFixed(0)}%' : '~71%',
@@ -782,7 +783,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           ),
         ]),
         const SizedBox(height: 8),
-        // Ligne 2 : Taux de réussite réel + Taux de confiance IA
+        // Ligne 2 : Précision IA + Calibration IA
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
@@ -790,7 +791,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(children: [
-            // Taux réussite IA
+            // ★ v10.36 : "Taux réussite" renommé "Précision IA" = % conseils bons
             Expanded(
               child: Row(children: [
                 Container(
@@ -814,7 +815,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const Text('Taux réussite', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                  // ★ v10.36 : libellé plus clair
+                  const Text('Précision IA', style: TextStyle(color: Colors.white38, fontSize: 10)),
                 ]),
               ]),
             ),
@@ -883,6 +885,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               ]),
             ),
           ]),
+        ),
+        const SizedBox(height: 6),
+        // ★ v10.36 : note explicative des tuiles Top3/Gagnant/Top5
+        Text(
+          '▲ Favori IA = cheval N°1 sélectionné — % de fois où il finit gagnant / top3 / top5',
+          style: TextStyle(color: Colors.white24, fontSize: 10),
         ),
         const SizedBox(height: 6),
         Row(children: [

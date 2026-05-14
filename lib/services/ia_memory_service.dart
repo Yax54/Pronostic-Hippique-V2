@@ -141,18 +141,16 @@ class IaMemoryService extends ChangeNotifier {
     final finJour   = debutJour.add(const Duration(days: 1));
 
     // Collecter les pronostics résolus AUJOURD'HUI
+    // ★ v10.36 : On n'accepte que les pronostics dont la date est strictement
+    // dans la journée courante (00h00 → 23h59). Le fallback 48h a été supprimé
+    // car il faisait apparaître les pronostics d'hier soir le matin suivant.
     final pronosDuJour = _pronostics.where((p) =>
         p.resultatsReels &&
-        p.datePronostic.isAfter(debutJour.subtract(const Duration(hours: 1))) &&
+        p.datePronostic.isAfter(debutJour.subtract(const Duration(minutes: 1))) &&
         p.datePronostic.isBefore(finJour)).toList();
 
-    // Si rien aujourd'hui → essayer sur les dernières 48h (courses tardives)
-    final source = pronosDuJour.isNotEmpty
-        ? pronosDuJour
-        : _pronostics.where((p) =>
-            p.resultatsReels &&
-            p.datePronostic.isAfter(now.subtract(const Duration(hours: 48))) &&
-            p.datePronostic.isBefore(finJour)).toList();
+    // Si rien aujourd'hui → retourner vide (pas de fallback sur jours précédents)
+    final source = pronosDuJour;
 
     // Agréger par type de pari
     final Map<String, int> nb      = {};
@@ -262,7 +260,7 @@ class IaMemoryService extends ChangeNotifier {
       // Critères (OR logique) :
       //   • type noble (Tiercé/Quarté+/Quinté+) réussi  → exploit rare
       //   • scorePerformance ≥ 70                       → très bonne perf IA
-      //   • confiancePredite ≥ 0.75                     → confiance élevée confirmée
+      //   • confiancePredite ≥ 75                      → confiance élevée confirmée (échelle 0–100)
       const _typesBestBet = {
         'Quinté+', 'Quinté+ Ordre', 'Quinté+ Désordre',
         'Quarté+', 'Quarté+ Ordre', 'Quarté+ Désordre',
@@ -273,7 +271,7 @@ class IaMemoryService extends ChangeNotifier {
         if (!_estBonConseilParType(p, t)) return false;
         if (_typesBestBet.contains(t))      return true;
         if ((p.scorePerformance ?? 0) >= 70) return true;
-        if ((p.confiancePredite  ?? 0) >= 0.75) return true;
+        if ((p.confiancePredite  ?? 0) >= 75) return true;
         return false;
       });
 

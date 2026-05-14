@@ -226,36 +226,37 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
   }
 
   // ── Bouton filtre — vert si sélectionné, jaune si non sélectionné ─────────
+  // ★ v10.36 : fontSize 11→14, padding augmenté
   Widget _bouton(String label, String? valeur, {IconData? icone}) {
     final actif = _filtre == valeur;
-    const vertActif   = Color(0xFF4CAF7D);   // vert sélectionné
-    const jauneInactif = Color(0xFFFFD700);  // jaune non sélectionné
+    const vertActif   = Color(0xFF4CAF7D);
+    const jauneInactif = Color(0xFFFFD700);
     return GestureDetector(
       onTap: () => setState(() => _filtre = valeur),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
           color: actif
               ? vertActif.withValues(alpha: 0.18)
               : jauneInactif.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: actif ? vertActif : jauneInactif.withValues(alpha: 0.55),
-            width: actif ? 1.6 : 1.2,
+            width: actif ? 1.8 : 1.2,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icone != null) ...[
-              Icon(icone, size: 12,
+              Icon(icone, size: 14,
                   color: actif ? vertActif : jauneInactif.withValues(alpha: 0.8)),
-              const SizedBox(width: 4),
+              const SizedBox(width: 5),
             ],
             Text(label,
                 style: TextStyle(
                   color: actif ? vertActif : jauneInactif.withValues(alpha: 0.85),
-                  fontSize: 11,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.2,
                 )),
@@ -265,65 +266,62 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
     );
   }
 
-  // ── Barre de filtres : 5 boutons fixes ───────────────────────────────────
+  // ── Barre de filtres : 5 boutons sur 2 lignes (Wrap) ★ v10.36
   Widget _buildFiltreBarre() {
     final now     = DateTime.now();
     const moisC   = ['','Jan','Fév','Mar','Avr','Mai','Juin','Juil','Aoû','Sep','Oct','Nov','Déc'];
     final libAuj  = 'Auj. ${now.day} ${moisC[now.month]}';
-    // Libellé du bouton Période quand une plage custom est active
     final libPeriode = (_filtre == 'custom' && _debut != null && _fin != null)
-        ? '${_debut!.day.toString().padLeft(2,'0')}/${_debut!.month.toString().padLeft(2,'0')}'  
+        ? '${_debut!.day.toString().padLeft(2,'0')}/${_debut!.month.toString().padLeft(2,'0')}'
           ' → ${_fin!.day.toString().padLeft(2,'0')}/${_fin!.month.toString().padLeft(2,'0')}'
         : 'Période';
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        _bouton('Tout',    'all',   icone: Icons.all_inclusive),
-        const SizedBox(width: 6),
-        _bouton('60j IA',  null,    icone: Icons.psychology),
-        const SizedBox(width: 6),
-        _bouton('7 jrs',   '7j',    icone: Icons.date_range),
-        const SizedBox(width: 6),
-        _bouton(libAuj,    'today', icone: Icons.today),
-        const SizedBox(width: 6),
+    // ★ v10.36 : Wrap = 2 lignes auto, plus grand, plus lisible
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _bouton('Tout',   'all',   icone: Icons.all_inclusive),
+        _bouton('60j IA', null,    icone: Icons.psychology),
+        _bouton('7 jrs',  '7j',    icone: Icons.date_range),
+        _bouton(libAuj,   'today', icone: Icons.today),
         // Bouton Période — ouvre le sélecteur de dates
         GestureDetector(
           onTap: _choisirPeriode,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             decoration: BoxDecoration(
               color: _filtre == 'custom'
                   ? const Color(0xFF9C27B0).withValues(alpha: 0.18)
                   : const Color(0xFFFFD700).withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: _filtre == 'custom'
                     ? const Color(0xFF9C27B0)
                     : const Color(0xFFFFD700).withValues(alpha: 0.55),
-                width: _filtre == 'custom' ? 1.6 : 1.2,
+                width: _filtre == 'custom' ? 1.8 : 1.2,
               ),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.calendar_month,
-                  size: 12,
+                  size: 14,
                   color: _filtre == 'custom'
                       ? const Color(0xFF9C27B0)
                       : const Color(0xFFFFD700).withValues(alpha: 0.8)),
-              const SizedBox(width: 4),
+              const SizedBox(width: 5),
               Text(libPeriode,
                   style: TextStyle(
                     color: _filtre == 'custom'
                         ? const Color(0xFF9C27B0)
                         : const Color(0xFFFFD700).withValues(alpha: 0.85),
-                    fontSize: 11,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.2,
                   )),
             ]),
           ),
         ),
-      ]),
+      ],
     );
   }
 
@@ -411,30 +409,34 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
           children: [
             // ── En-tête type + score ─────────────────────────────────
             Row(children: [
-              Text(widget.stats.emoji, style: const TextStyle(fontSize: 20)),
+              Text(widget.stats.emoji, style: const TextStyle(fontSize: 22)),
               const SizedBox(width: 8),
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(widget.stats.typePari,
-                      style: const TextStyle(color: Colors.white, fontSize: 15,
+                      // ★ v10.36 : 15→17
+                      style: const TextStyle(color: Colors.white, fontSize: 17,
                           fontWeight: FontWeight.bold)),
                   Text('Conseils IA — $_libellePeriode',
-                      style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                      // ★ v10.36 : 10→13
+                      style: const TextStyle(color: Colors.white38, fontSize: 13)),
                 ],
               )),
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Text('$nbBons/$nbTotal',
-                    style: TextStyle(color: widget.green, fontSize: 16,
+                    // ★ v10.36 : 16→18
+                    style: TextStyle(color: widget.green, fontSize: 18,
                         fontWeight: FontWeight.bold)),
                 Text('$taux% réussite',
-                    style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                    // ★ v10.36 : 10→13
+                    style: const TextStyle(color: Colors.white38, fontSize: 13)),
               ]),
             ]),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             // ── Filtre période ───────────────────────────────────────
             _buildFiltreBarre(),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             // ── Chips récap ──────────────────────────────────────────
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -461,7 +463,8 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
               unselectedLabelColor: Colors.white38,
               indicatorColor: widget.green,
               indicatorSize: TabBarIndicatorSize.tab,
-              labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+              // ★ v10.36 : 11→13
+              labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
               tabs: [
                 Tab(text: '✅ Gagnants (${gagnants.length})'),
                 Tab(text: '❌ Perdants (${perdants.length})'),
@@ -472,7 +475,8 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
         ),
         content: SizedBox(
           width: double.maxFinite,
-          height: 400,
+          // ★ v10.36 : 400→450 pour compenser les filtres sur 2 lignes
+          height: 450,
           child: _tousPronostics.isEmpty
               ? Center(child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

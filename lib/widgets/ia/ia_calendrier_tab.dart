@@ -1579,6 +1579,8 @@ class _DetailJourSheet extends StatelessWidget {
         ),
 
         // Confiance si disponible
+        // ★ v10.36 fix : confiancePredite est en 0–100 (pas 0–1).
+        // L'ancien "conf * 100" transformait 69.99 → 6999%. Supprimé.
         if (conf != null) ...[
           const SizedBox(height: 8),
           Row(children: [
@@ -1586,12 +1588,12 @@ class _DetailJourSheet extends StatelessWidget {
             const SizedBox(width: 5),
             const Text('Confiance : ',
               style: TextStyle(color: Colors.white38, fontSize: 12)),
-            Text('${(conf * 100).toStringAsFixed(0)}%',
+            Text('${conf.clamp(0.0, 100.0).toStringAsFixed(0)}%',
               style: TextStyle(
-                color: conf >= 0.6 ? _cGreen
-                     : conf >= 0.4 ? _cYellow
+                color: conf >= 75 ? _cGreen
+                     : conf >= 55 ? _cYellow
                      : _cOrange,
-                fontSize: 13,                   // ★ +3
+                fontSize: 13,
                 fontWeight: FontWeight.bold,
               )),
           ]),
