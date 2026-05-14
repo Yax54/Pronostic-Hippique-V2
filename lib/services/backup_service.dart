@@ -62,7 +62,7 @@
 //     widget_course2_name / widget_horse2_name / widget_heure2 / widget_confiance2
 //     widget_course3_name / widget_horse3_name / widget_heure3 / widget_confiance3
 //
-//  ── TOTAL : 30 CLES — COUVERTURE 100% ────────────────────────────────────
+//  ── TOTAL : 36 CLES — COUVERTURE 100% ────────────────────────────────────
 //
 //  ── CE QUE CONTIENT CHAQUE CLE ───────────────────────────────────────────
 //
@@ -93,6 +93,7 @@
 //     v5.0 : Correction caracteres + reinitialisation complete + compteurs corrects
 //     v7.2 : +cooldown bulle, +message jour, +heure analyse, +conseils notifiés
 //     v7.3 : +résumé hebdo lundi, +anti-doublon cote chute, retrait clé orpheline
+//     v7.4 : +bt_discipline, +bt_hippodrome, +flags transitoires ELO/conseils
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -111,7 +112,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.3'; // ★ v9.94-audit : +résumé hebdo lundi, +anti-doublon cote chute, retrait clé orpheline
+  static const _backupVersion = '7.4'; // ★ v10.371-audit : +bt_discipline, +bt_hippodrome, +elo_orphelins_purges_v1, +conseils_inject_pending
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -158,6 +159,8 @@ class BackupService {
     'bt_jours',
     'bt_type',
     'bt_confiance_min',
+    'bt_discipline',     // ★ v10.371-audit : filtre discipline backtesting
+    'bt_hippodrome',     // ★ v10.371-audit : filtre hippodrome backtesting
     // ★ v10.22 : Filtres Conseils IA (persistés dans conseils_screen.dart)
     'conseils_filtres_types_paris',
     'conseils_filtres_confiance_min',
@@ -181,6 +184,9 @@ class BackupService {
     // ★ v10.34/v10.35 : Flags migration précision (recalcul après fix Couplé)
     'ia_precision_migrated_v2',
     'ia_precision_migrated_v3',
+    // ★ v10.371-audit : flags transitoires (one-shot — restaurer évite un recalcul inutile)
+    'elo_orphelins_purges_v1',   // Flag purge ELO orphelins (elo_service)
+    'conseils_inject_pending',   // Flag injection conseils en attente
   ];
 
   // 📋 Paris utilisateur — historique complet
@@ -1022,7 +1028,7 @@ class BackupInfo {
   // IA
   final bool    iaApprise;
   final int     nbAjustements;
-  final Map<String, double> poidsActuels;   // 17 criteres adaptatifs
+  final Map<String, double> poidsActuels;   // 19 critères adaptatifs (v10.x : +mouvCote, +placeDepart)
   final PoidsIndicesResume? poidsIndices;   // Indices criteres/confiance/reussite
   final bool    aSeuilsAdaptatifs;
   final int     nbTypesPrecision;
