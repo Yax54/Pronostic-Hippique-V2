@@ -752,11 +752,12 @@ class BackupService {
           final p = json.decode(poidsStr) as Map<String, dynamic>;
           nbAjustements = (p['nbMisesAJour'] as num?)?.toInt() ?? 0;
           iaApprise     = nbAjustements > 0;
-          // Extraire les 17 poids adaptatifs pour affichage (v9.0)
+          // Extraire les 19 poids adaptatifs pour affichage (v9.93)
           for (final key in ['forme','gains','record','cote','constance','victoires',
                              'discipline','distSpec','jockey','repos','hippo',
-                             'entraineur','elo',                           // v8.0
-                             'terrain','divergence','poidsRel','progression']) { // v9.0
+                             'entraineur','elo',                                    // v8.0
+                             'terrain','divergence','poidsRel','progression',       // v9.0
+                             'mouvCote','placeDepart']) {                           // v9.92/v9.93
             final val = (p[key] as num?)?.toDouble();
             if (val != null) poidsActuels[key] = val;
           }
