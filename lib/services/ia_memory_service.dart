@@ -1000,7 +1000,7 @@ class IaMemoryService extends ChangeNotifier {
         await _recalculerPrecisionParTypeDepuisPronostics();
         await prefs.setBool('ia_precision_migrated_v3', true);
         if (kDebugMode) {
-          debugPrint('[IaMemory] ✅ Flag ia_precision_migrated_v2 posé.');
+          debugPrint('[IaMemory] ✅ Flag ia_precision_migrated_v3 posé.');
         }
       }
 
@@ -3233,6 +3233,8 @@ class IaMemoryService extends ChangeNotifier {
       'divergence': 'Coup préparé',      // ★ v9.0
       'poidsRel':   'Poids porté',       // ★ v9.0
       'progression':'Progression',       // ★ v9.0
+      'mouvCote':   'Mouv. Cote',          // ★ v9.92
+      'placeDepart':'Place Départ',        // ★ v9.93
     };
     return labels[k] ?? k;
   }
