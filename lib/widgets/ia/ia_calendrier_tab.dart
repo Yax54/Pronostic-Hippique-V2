@@ -127,6 +127,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   //            L'édition des seuils reste dans _SeuilsParamsSheet.
 
   // ★ v10.26 : Indicateur de rafraîchissement temps réel
+  // ignore: unused_field
   bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
 
   // ── Noms mois / jours ─────────────────────────────────────────────────
@@ -416,6 +417,19 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             _legendePuce(PalierCalendrier.gris,   '💤', 'Repos',    null),
           ],
         ),
+        // ★ v10.36 : Légende étoile Best Bet
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('⭐', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 6),
+            Text(
+              'Best Bet — pronostic de haute qualité (score ≥ 70, conf. ≥ 75% ou noble réussi)',
+              style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 10),
+            ),
+          ],
+        ),
       ]),
     );
   }
@@ -427,7 +441,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         palierEditable != PalierCalendrier.rouge; // rouge = dérivé de orange
     return GestureDetector(
       onTap: isEditable
-          ? () => _ouvrirSeuilPourPalier(palierEditable!)
+          ? () => _ouvrirSeuilPourPalier(palierEditable)
           : null,
       child: Column(children: [
         Container(
@@ -590,14 +604,17 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     required bool                    estFut,
   }) {
     final hasCourses = dd != null && dd.nbCourses > 0 && !estFut;
+    // ignore: unused_local_variable
     final fgColor    = estFut ? Colors.white12 : (hasCourses ? palier.fg : _cGreyTxt);
     final bgColor    = estFut ? _cGrey : palier.bg;
     final bordColor  = estAuj
         ? _cGold.withValues(alpha: 0.9)
         : (hasCourses ? palier.border : Colors.transparent);
+    // ★ v10.36 : Best Bet — pronostic de haute qualité ce jour
+    final hasBestBet = hasCourses && (dd.hasBestBet);
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 350), // ★ v10.26 : 350ms pour voir la transition
+      duration: const Duration(milliseconds: 350),
       curve: Curves.easeInOut,
       height: 42,
       decoration: BoxDecoration(
@@ -610,6 +627,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 blurRadius: 6,
                 spreadRadius: 1,
               )]
+            : hasBestBet
+            ? [BoxShadow(
+                color: _cGold.withValues(alpha: 0.18),
+                blurRadius: 4,
+                spreadRadius: 0,
+              )]
             : null,
       ),
       child: Stack(alignment: Alignment.center, children: [
@@ -617,7 +640,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           Text(
             '$jour',
             style: TextStyle(
-              // ★ v10.35 : blanc pur pour contraste maximal sur fond coloré
               color: estAuj
                   ? _cGold
                   : (hasCourses ? Colors.white : _cGreyTxt),
@@ -631,7 +653,6 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             Text(
               '${dd.nbBons}/${dd.nbCourses}',
               style: TextStyle(
-                // ★ v10.35 : couleur vive pour le ratio (lisible sur fond sombre)
                 color: palier == PalierCalendrier.gris
                     ? _cGreyTxt
                     : Colors.white.withValues(alpha: 0.85),
@@ -641,7 +662,17 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             ),
         ]),
 
-        // Indicateur OR en haut à droite
+        // ★ v10.36 : Étoile ⭐ Best Bet en haut à gauche
+        // Visible sur tous les paliers sauf OR (qui a déjà ★ à droite)
+        if (hasBestBet && palier != PalierCalendrier.or)
+          Positioned(
+            top: 2, left: 3,
+            child: Text('⭐',
+              style: const TextStyle(fontSize: 8),
+            ),
+          ),
+
+        // Indicateur OR ★ en haut à droite (inchangé)
         if (palier == PalierCalendrier.or && hasCourses)
           Positioned(
             top: 2, right: 3,

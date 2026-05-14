@@ -97,16 +97,19 @@ class TypePariDescriptifSheet extends StatelessWidget {
 
   // ── Taux dynamique depuis IaMemoryService ────────────────────────────────
   String _tauxDynamique() {
+    // ★ v10.36 : Lire precisionParType (pronostics IA résolus) et non
+    // statsParType (paris utilisateur manuels) — source correcte pour
+    // afficher la précision réelle de l'IA sur ce type de pari.
     try {
-      final stats = IaMemoryService.instance.statsParType;
+      final stats = IaMemoryService.instance.precisionParType;
       final st = stats.where((s) => s.typePari == type).toList();
       if (st.isEmpty) return '';
       final s    = st.first;
-      final nb   = s.nbJoues;
-      final bons = s.nbGagnes;
+      final nb   = s.nbTotal;
+      final bons = s.nbBons;
       if (nb < 5) return '';
       final pct = (bons / nb * 100).toStringAsFixed(0);
-      return "Taux actuel de l'IA sur ce type : $bons/$nb = $pct%";
+      return "Précision IA sur ce type : $bons/$nb = $pct%";
     } catch (_) { return ''; }
   }
 

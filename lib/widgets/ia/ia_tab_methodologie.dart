@@ -4,18 +4,40 @@ import 'ia_widgets_communs.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  IaTabMethodologie — Onglet "Algorithme" de IaPerformanceScreen
-//  Extrait lors du découpage v9.90 — StatelessWidget pur, zéro état.
-//  Accède à IaMemoryService.instance directement (singleton, pas d'état UI).
+//  ★ v10.36 : Converti en StatefulWidget + listener IaMemoryService
+//  → les poids se mettent à jour immédiatement après chaque apprentissage,
+//    sans avoir à quitter et revenir sur l'onglet (fix latence critères).
 // ══════════════════════════════════════════════════════════════════════════════
 
-class IaTabMethodologie extends StatelessWidget {
+class IaTabMethodologie extends StatefulWidget {
   const IaTabMethodologie({super.key});
 
+  @override
+  State<IaTabMethodologie> createState() => _IaTabMethodologieState();
+}
+
+class _IaTabMethodologieState extends State<IaTabMethodologie> {
   // ignore: unused_field
   static const _dark   = Color(0xFF0D1B2A);
   static const _card   = Color(0xFF111F30);
   static const _gold   = Color(0xFFFFD700);
   static const _green  = Color(0xFF4CAF7D);
+
+  @override
+  void initState() {
+    super.initState();
+    IaMemoryService.instance.addListener(_onPoidsChange);
+  }
+
+  @override
+  void dispose() {
+    IaMemoryService.instance.removeListener(_onPoidsChange);
+    super.dispose();
+  }
+
+  void _onPoidsChange() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {

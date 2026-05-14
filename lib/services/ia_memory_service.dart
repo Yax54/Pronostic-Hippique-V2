@@ -258,6 +258,25 @@ class IaMemoryService extends ChangeNotifier {
         // taux >= 0.20 et < 0.25
         palier = PalierCalendrier.orange;
       }
+      // ★ v10.36 : hasBestBet — ≥ 1 pronostic réussi de haute qualité ce jour
+      // Critères (OR logique) :
+      //   • type noble (Tiercé/Quarté+/Quinté+) réussi  → exploit rare
+      //   • scorePerformance ≥ 70                       → très bonne perf IA
+      //   • confiancePredite ≥ 0.75                     → confiance élevée confirmée
+      const _typesBestBet = {
+        'Quinté+', 'Quinté+ Ordre', 'Quinté+ Désordre',
+        'Quarté+', 'Quarté+ Ordre', 'Quarté+ Désordre',
+        'Tiercé',  'Tiercé Ordre',  'Tiercé Désordre',
+      };
+      final bool hasBestBet = ag.pronostics.any((p) {
+        final t = p.typePariConseille ?? '';
+        if (!_estBonConseilParType(p, t)) return false;
+        if (_typesBestBet.contains(t))      return true;
+        if ((p.scorePerformance ?? 0) >= 70) return true;
+        if ((p.confiancePredite  ?? 0) >= 0.75) return true;
+        return false;
+      });
+
       result[entry.key] = DonneeJourCalendrier(
         jour:       entry.key,
         nbCourses:  ag.nbCourses,
@@ -266,6 +285,7 @@ class IaMemoryService extends ChangeNotifier {
         nbDesordre: ag.nbDesordre,
         palier:     palier,
         pronostics: List.unmodifiable(ag.pronostics),
+        hasBestBet: hasBestBet,
       );
     }
     return result;
@@ -4857,6 +4877,9 @@ class DonneeJourCalendrier {
   final int                  nbDesordre;
   final PalierCalendrier     palier;
   final List<IaPronostic>    pronostics; // pronostics gagnants du jour
+  // ★ v10.36 : true si ≥ 1 pronostic "Best Bet" ce jour
+  // (score ≥ 70, confiance ≥ 75%, ou type noble Tiercé/Quarté+/Quinté+ réussi)
+  final bool                 hasBestBet;
 
   const DonneeJourCalendrier({
     required this.jour,
@@ -4866,6 +4889,7 @@ class DonneeJourCalendrier {
     required this.nbDesordre,
     required this.palier,
     required this.pronostics,
+    this.hasBestBet = false,
   });
 
   double get taux => nbCourses > 0 ? nbBons / nbCourses : 0.0;

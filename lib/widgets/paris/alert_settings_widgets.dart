@@ -1173,6 +1173,7 @@ class _ModeSommeilWidgetState extends State<_ModeSommeilWidget> {
   }
 
   /// Vérifie si on est actuellement en période de sommeil
+  // ignore: unused_element
   static bool estEnSommeil(Map<String, dynamic>? cfg) {
     if (cfg == null) return false;
     if (!(cfg['actif'] as bool? ?? false)) return false;
