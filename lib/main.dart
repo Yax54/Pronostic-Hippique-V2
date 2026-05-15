@@ -91,7 +91,6 @@ class PronosticHippiqueApp extends StatelessWidget {
         title: 'Pronostic Hippique',
         debugShowCheckedModeBanner: false,
         locale: const Locale('fr', 'FR'),
-        scrollBehavior: const ScrollBehavior().copyWith(overscroll: false),
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
           GlobalWidgetsLocalizations.delegate,

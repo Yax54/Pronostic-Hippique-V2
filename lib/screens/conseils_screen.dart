@@ -843,7 +843,6 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
     };
 
     return ListView.builder(
-      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
       itemCount: _coursesAvecPartants.length,
       itemBuilder: (ctx, i) {
