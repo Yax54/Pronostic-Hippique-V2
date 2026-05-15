@@ -855,16 +855,37 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
           final terminee = item.course.heureDateTime.isBefore(DateTime.now());
           final sansCote = item.course.partants.isNotEmpty &&
               item.course.partants.every((p) => p.coteDecimale >= 99);
-          return _ConseilCard(
-            course: item.course,
-            reunion: item.reunion,
-            rang: i + 1,
-            cotesDisponibles: !sansCote,
-            onTap: () => Navigator.push(ctx, MaterialPageRoute(
-              builder: (_) => CourseDetailScreen(course: item.course, reunion: item.reunion),
-            )),
-            onBet: terminee ? null : () => ouvrirPari(item.course, item.reunion),
-          );
+          try {
+            return _ConseilCard(
+              course: item.course,
+              reunion: item.reunion,
+              rang: i + 1,
+              cotesDisponibles: !sansCote,
+              onTap: () => Navigator.push(ctx, MaterialPageRoute(
+                builder: (_) => CourseDetailScreen(course: item.course, reunion: item.reunion),
+              )),
+              onBet: terminee ? null : () => ouvrirPari(item.course, item.reunion),
+            );
+          } catch (e, stack) {
+            debugPrint('ERREUR CONSEIL CARD #$i');
+            debugPrint('Course: ${item.course.nom}');
+            debugPrint('$e');
+            debugPrint('$stack');
+            return Container(
+              height: 120,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(
+                child: Text(
+                  'Erreur carte ${item.course.nom}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            );
+          }
         },
       ),
     );
