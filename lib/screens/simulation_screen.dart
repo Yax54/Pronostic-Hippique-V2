@@ -675,7 +675,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
             Icon(Icons.tune, color: Colors.white24, size: 18),
             SizedBox(width: 8),
             Text('Aucun critère modifié.',
-              style: TextStyle(color: Colors.white38, fontSize: 15)),
+              style: TextStyle(color: Colors.white38, fontSize: 17)),
           ],
         ),
       );
@@ -692,7 +692,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Critères modifiés',
-            style: TextStyle(color: _cyan, fontSize: 15, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: _cyan, fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           ...modifies.map((e) {
             final label = kLabelsSimu[e.key] ?? e.key;
