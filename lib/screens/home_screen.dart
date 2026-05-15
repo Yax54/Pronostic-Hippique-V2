@@ -263,11 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: const Color(0xFF1A3A5C),
           onRefresh: () => _charger(refresh: true),
           child: SingleChildScrollView(
-            // ★ fix fond gris : ClampingScrollPhysics bloque l'overscroll Android
-            // qui révélait le fond gris. AlwaysScrollable garde le pull-to-refresh.
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: ClampingScrollPhysics(),
-            ),
+            physics: const AlwaysScrollableScrollPhysics(),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
