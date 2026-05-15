@@ -843,7 +843,9 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
     };
 
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+      // ★ v10.37 fix : padding bottom 20→100 pour couvrir la navbar Android
+      // et éviter le fond gris système qui transparaît en bas de liste
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
       itemCount: _coursesAvecPartants.length,
       itemBuilder: (ctx, i) {
         final item = _coursesAvecPartants[i];

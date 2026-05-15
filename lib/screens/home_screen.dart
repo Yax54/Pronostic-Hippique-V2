@@ -203,6 +203,29 @@ class _HomeScreenState extends State<HomeScreen> {
     final reunions  = DataRefreshService.instance.reunions;
     final nbCourses = reunions.fold<int>(0, (sum, r) => sum + r.courses.length);
     final conseil   = _conseilIACached;
+    final meilleur  = _meilleurPariCached;
+
+    // ★ v10.37 : Enregistrer les courseKeys des 2 paris premium de l'accueil
+    // (Conseil IA du Jour + Meilleur Pari du Jour) pour le calcul hasBestBet
+    final keyConseil  = conseil.course != null && conseil.reunion != null
+        ? buildCourseKey(
+            reunionCode: conseil.reunion!.code,
+            numCourse:   conseil.course!.numCourse,
+            dateStr:     conseil.course!.dateStr,
+          )
+        : '';
+    final keyMeilleur = meilleur.course != null && meilleur.reunion != null
+        ? buildCourseKey(
+            reunionCode: meilleur.reunion!.code,
+            numCourse:   meilleur.course!.numCourse,
+            dateStr:     meilleur.course!.dateStr,
+          )
+        : '';
+    if (keyConseil.isNotEmpty || keyMeilleur.isNotEmpty) {
+      await IaMemoryService.instance.enregistrerParisPremiumDuJour(
+        [keyConseil, keyMeilleur].where((k) => k.isNotEmpty).toList(),
+      );
+    }
 
     // ★ v10.23 : recalcul immédiat + résumé Conseil IA matinal
     final nbConseil = await AlertService.instance.recalculerCoursesConseilIA(reunions);
@@ -489,7 +512,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return GestureDetector(
       onTap: () {
         context.read<NavigationNotifier>().goTo(5); // IA Stats = index 5
-        Future.delayed(const Duration(milliseconds: 150), () {
+        // ★ v10.37 fix : attendre que la page soit montée avant d'appeler
+        // animateTo — le delayed(150ms) n'était pas fiable.
+        // addPostFrameCallback garantit que le widget est rendu.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
           IaPerformanceScreen.ouvrirOngletCalendrier();
         });
       },
@@ -607,31 +633,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // ── État : filtres actifs, 0 course ─────────────────────────
         if (nb == 0) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111F30),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFFF6D00).withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                const Text('😶', style: TextStyle(fontSize: 16)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Aucune course actuelle dans tes critères',
-                          style: TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600)),
-                      if (criteresLabel.isNotEmpty)
-                        Text(criteresLabel,
-                            style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11)),
-                    ],
+          // ★ v10.37 fix : cliquable même à 0 course → redirige vers Conseils IA
+          return GestureDetector(
+            onTap: () => context.read<NavigationNotifier>().goTo(1),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111F30),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFF6D00).withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Text('😶', style: TextStyle(fontSize: 16)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Aucune course actuelle dans tes critères',
+                            style: TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600)),
+                        if (criteresLabel.isNotEmpty)
+                          Text(criteresLabel,
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11)),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                  // Flèche pour indiquer que c'est cliquable
+                  const Icon(Icons.chevron_right, color: Colors.white24, size: 16),
+                ],
+              ),
             ),
           );
         }

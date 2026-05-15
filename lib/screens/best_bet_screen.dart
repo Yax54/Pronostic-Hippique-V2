@@ -77,6 +77,7 @@ class _BestBetScreenState extends State<BestBetScreen>
       final svc = context.read<DataRefreshService>();
       if (svc.reunions.isNotEmpty) {
         if (mounted) setState(() { _reunions = svc.reunions; _loading = false; _error = null; });
+        _enregistrerBestBetsPremium();
         return;
       }
     }
@@ -90,9 +91,42 @@ class _BestBetScreenState extends State<BestBetScreen>
         final r = await ZoneTurfService.chargerProgramme(forceRefresh: false);
         if (mounted) setState(() { _reunions = r; _loading = false; });
       }
+      _enregistrerBestBetsPremium();
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  // ★ v10.37 : Enregistrer les courseKeys des 3 Best Bets (Top Équilibre, Plus Sûr, Plus Rentable)
+  void _enregistrerBestBetsPremium() {
+    try {
+      final opps = _calculerOpportunites();
+      if (opps.isEmpty) return;
+      // Top Équilibre = trié par scoreComposite → first
+      final topEquilibre = opps.isNotEmpty ? opps.first : null;
+      // Plus Sûr = trié par scoreConfiance → first
+      final trieSur = List<_BetOpp>.from(opps)
+        ..sort((a, b) => b.scoreConfiance.compareTo(a.scoreConfiance));
+      final plusSur = trieSur.isNotEmpty ? trieSur.first : null;
+      // Plus Rentable = trié par scoreGain → first
+      final trieRentable = List<_BetOpp>.from(opps)
+        ..sort((a, b) => b.scoreGain.compareTo(a.scoreGain));
+      final plusRentable = trieRentable.isNotEmpty ? trieRentable.first : null;
+
+      final keys = <String>[];
+      for (final opp in [topEquilibre, plusSur, plusRentable]) {
+        if (opp == null) continue;
+        final key = buildCourseKey(
+          reunionCode: opp.reunion.code,
+          numCourse:   opp.course.numCourse,
+          dateStr:     opp.course.dateStr,
+        );
+        if (key.isNotEmpty) keys.add(key);
+      }
+      if (keys.isNotEmpty) {
+        IaMemoryService.instance.enregistrerParisPremiumDuJour(keys);
+      }
+    } catch (_) {}
   }
 
   // ── Calcul des opportunités ───────────────────────────────────────

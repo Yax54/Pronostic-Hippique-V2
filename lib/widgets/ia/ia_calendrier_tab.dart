@@ -417,7 +417,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             _legendePuce(PalierCalendrier.gris,   '💤', 'Repos',    null),
           ],
         ),
-        // ★ v10.36 : Légende étoile Best Bet
+        // ★ v10.37 : Légende étoile Best Bet
         const SizedBox(height: 10),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -425,7 +425,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             const Text('⭐', style: TextStyle(fontSize: 12)),
             const SizedBox(width: 6),
             Text(
-              'Best Bet — pronostic de haute qualité (score ≥ 70, conf. ≥ 75% ou noble réussi)',
+              'Best Bet — Conseil IA, Meilleur Pari ou Best Bet du jour réussi',
               style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 10),
             ),
           ],

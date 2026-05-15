@@ -62,6 +62,9 @@ class IaMemoryService extends ChangeNotifier {
   static const _precisionIAKey  = 'ia_precision_v2';   // ★ Précision IA par type de pari (v2)
   static const _seuilsKey       = 'ia_seuils_v1';      // ★ Seuils de confiance adaptatifs
   static const _statsLabelsKey  = 'ia_stats_labels_v1'; // ★ v9.0 Stats par label IA
+  // ★ v10.37 : CourseKeys des 5 paris premium du jour (Conseil IA + Meilleur Pari + 3 Best Bets)
+  // Sauvegardés le jour J, utilisés lors de l'analyse du soir pour décider hasBestBet
+  static const _premiumDuJourKey = 'ia_premium_du_jour_v1';
   static const _maxPronostics   = 600;
   // ★ Lot 4 : Compression + purge automatique
   static const _maxPronosticsAge = 90;    // purger les pronostics > 90 jours sans résultat
@@ -78,6 +81,10 @@ class IaMemoryService extends ChangeNotifier {
   final List<RapportJournalier>    _rapports      = [];
   // ★ v9.91 : structure hiérarchique du journal
   final List<BilanSemaine>         _bilansSemaine = [];
+
+  // ★ v10.37 : CourseKeys des 5 paris premium du jour (en mémoire + persistés)
+  // Format : 'YYYY-MM-DD|key1,key2,...'  — réinitialisé chaque nouveau jour
+  Set<String> _premiumCourseKeys = {};
   BilanSemaine? _pendingBilanHebdo; // ★ v9.93 : bilan semaine en attente pour bulle
   final List<BilanMois>            _bilansMois    = [];
   final Map<String, StatsTypePari>    _statsTypes    = {}; // ★ clé = typePari
@@ -258,23 +265,14 @@ class IaMemoryService extends ChangeNotifier {
         // taux >= 0.20 et < 0.25
         palier = PalierCalendrier.orange;
       }
-      // ★ v10.36 : hasBestBet — ≥ 1 pronostic réussi de haute qualité ce jour
-      // Critères (OR logique) :
-      //   • type noble (Tiercé/Quarté+/Quinté+) réussi  → exploit rare
-      //   • scorePerformance ≥ 70                       → très bonne perf IA
-      //   • confiancePredite ≥ 75                      → confiance élevée confirmée (échelle 0–100)
-      const _typesBestBet = {
-        'Quinté+', 'Quinté+ Ordre', 'Quinté+ Désordre',
-        'Quarté+', 'Quarté+ Ordre', 'Quarté+ Désordre',
-        'Tiercé',  'Tiercé Ordre',  'Tiercé Désordre',
-      };
+      // ★ v10.37 : hasBestBet — ⭐ si AU MOINS 1 des 5 paris premium du jour
+      // (Conseil IA du Jour, Meilleur Pari du Jour, Best Bet Top Équilibre,
+      // Plus Sûr, Plus Rentable) a été bon selon les critères de son type de pari.
+      // Les courseKeys premium sont sauvegardés le jour J par home_screen
+      // et best_bet_screen via enregistrerParisPremiumDuJour().
       final bool hasBestBet = ag.pronostics.any((p) {
-        final t = p.typePariConseille ?? '';
-        if (!_estBonConseilParType(p, t)) return false;
-        if (_typesBestBet.contains(t))      return true;
-        if ((p.scorePerformance ?? 0) >= 70) return true;
-        if ((p.confiancePredite  ?? 0) >= 75) return true;
-        return false;
+        if (!_premiumCourseKeys.contains(p.courseKey)) return false;
+        return _estBonConseilParType(p, p.typePariConseille ?? '');
       });
 
       result[entry.key] = DonneeJourCalendrier(
@@ -1005,6 +1003,8 @@ class IaMemoryService extends ChangeNotifier {
       }
 
       _loaded = true;
+      // ★ v10.37 : charger les paris premium du jour
+      await _chargerPremiumDuJour();
       _loadCompleter!.complete();
       _loadCompleter = null;
     } catch (e) {
@@ -3382,32 +3382,28 @@ class IaMemoryService extends ChangeNotifier {
 
       case 'Couplé Gagnant':
         // ★ v10.34 fix CRITIQUE : les 2 chevaux IA DOIVENT être dans le top 2 réel
-        // Un Couplé Gagnant n'est réussi QUE si les 2 chevaux sélectionnés
-        // finissent aux 2 premières places (ordre indifférent).
-        // Ex: IA choisit N°5 et N°9 → ils doivent TOUS LES DEUX être dans [1er, 2e]
+        // ★ v10.37 fix : fallback strict — données insuffisantes = false
         {
           final arrivee = p.arriveeReelle;
-          if (arrivee == null || arrivee.length < 2) return rang != null && rang <= 2;
+          if (arrivee == null || arrivee.length < 2) return false; // données insuffisantes
           final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
-          if (topIA.length < 2) return rang != null && rang <= 2;
+          if (topIA.length < 2) return false; // pas assez de sélections IA
           final top2Reel = arrivee.take(2).toSet();
-          // LES 2 chevaux IA doivent être dans le top 2 réel (>= 2, pas >= 1)
           final nbDansTop2 = topIA.take(2).where((n) => top2Reel.contains(n)).length;
           return nbDansTop2 >= 2;
         }
 
       case 'Couplé Placé':
         // ★ v10.34 fix CRITIQUE : les 2 chevaux IA DOIVENT être dans le top 3 réel
-        // Un Couplé Placé n'est réussi QUE si les 2 chevaux sélectionnés
-        // finissent tous les deux dans les 3 premières places (ordre indifférent).
-        // Ex: IA choisit N°3 et N°10 → ils doivent TOUS LES DEUX être dans [1er, 2e, 3e]
+        // ★ v10.37 fix : le fallback (arrivee.length < 3) était trop permissif —
+        // si l'arrivée PMU ne contient que 2 chevaux, on retourne false car
+        // on ne peut pas confirmer que les 2 chevaux IA sont bien dans le top 3.
         {
           final arrivee = p.arriveeReelle;
-          if (arrivee == null || arrivee.length < 3) return rang != null && rang <= 3;
+          if (arrivee == null || arrivee.length < 3) return false; // données insuffisantes
           final topIA = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
-          if (topIA.length < 2) return rang != null && rang <= 3;
+          if (topIA.length < 2) return false; // pas assez de sélections IA
           final top3Reel = arrivee.take(3).toSet();
-          // LES 2 chevaux IA doivent être dans le top 3 réel (>= 2, pas >= 1)
           final nbDansTop3 = topIA.take(2).where((n) => top3Reel.contains(n)).length;
           return nbDansTop3 >= 2;
         }
@@ -4028,6 +4024,46 @@ class IaMemoryService extends ChangeNotifier {
     _poids = IaPoidsAdaptatifs();
     await _save();
     notifyListeners();
+  }
+
+  // ★ v10.37 : Enregistrer les courseKeys des 5 paris premium du jour
+  // Appelé depuis home_screen quand les widgets Conseil IA et Meilleur Pari
+  // sont construits, et depuis best_bet_screen pour les 3 onglets.
+  Future<void> enregistrerParisPremiumDuJour(List<String> courseKeys) async {
+    final todayKey = () {
+      final n = DateTime.now();
+      return '${n.year}-${n.month.toString().padLeft(2,'0')}-${n.day.toString().padLeft(2,'0')}';
+    }();
+    // Ajouter les nouveaux keys sans dupliquer
+    _premiumCourseKeys.addAll(courseKeys.where((k) => k.isNotEmpty));
+    // Persister : format "YYYY-MM-DD|key1,key2,..."
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _premiumDuJourKey,
+      '$todayKey|${_premiumCourseKeys.join(',')}',
+    );
+  }
+
+  // ★ v10.37 : Charger les paris premium du jour depuis SharedPreferences
+  Future<void> _chargerPremiumDuJour() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getString(_premiumDuJourKey) ?? '';
+    if (stored.isEmpty) return;
+    final parts = stored.split('|');
+    if (parts.length < 2) return;
+    final todayKey = () {
+      final n = DateTime.now();
+      return '${n.year}-${n.month.toString().padLeft(2,'0')}-${n.day.toString().padLeft(2,'0')}';
+    }();
+    // Valide uniquement si c'est le bon jour
+    if (parts[0] == todayKey) {
+      _premiumCourseKeys = Set<String>.from(
+        parts[1].split(',').where((k) => k.isNotEmpty),
+      );
+    } else {
+      // Nouveau jour → réinitialiser
+      _premiumCourseKeys = {};
+    }
   }
 
   // ★ Lot 4 ── Statistiques de compression ─────────────────────────────────
