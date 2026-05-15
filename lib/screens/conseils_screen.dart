@@ -842,7 +842,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       }
     };
 
-    return Container(
+    return ColoredBox(
       color: const Color(0xFF0D1B2A),
       child: ListView.builder(
         physics: const ClampingScrollPhysics(),
