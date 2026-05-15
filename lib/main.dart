@@ -90,8 +90,6 @@ class PronosticHippiqueApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Pronostic Hippique',
         debugShowCheckedModeBanner: false,
-        // ★ v10.39 fix définitif fond gris scroll : désactive GlowingOverscrollIndicator Android
-        scrollBehavior: const ScrollBehavior().copyWith(overscroll: false),
         locale: const Locale('fr', 'FR'),
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
@@ -107,21 +105,8 @@ class PronosticHippiqueApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF2E7D52),
             brightness: Brightness.dark,
-            // ★ v10.38 fix : forcer TOUTES les variantes surface pour éliminer
-            // le fond gris Material3 auto-calculé (surfaceContainer*)
-            surface:                 const Color(0xFF0D1B2A),
-            surfaceContainerLowest:  const Color(0xFF0D1B2A),
-            surfaceContainerLow:     const Color(0xFF0D1B2A),
-            surfaceContainer:        const Color(0xFF0D1B2A),
-            surfaceContainerHigh:    const Color(0xFF0D1B2A),
-            surfaceContainerHighest: const Color(0xFF0D1B2A),
-            surfaceDim:              const Color(0xFF0D1B2A),
-            surfaceBright:           const Color(0xFF0D1B2A),
           ),
-          // ★ v10.38/v10.39 fix : canvasColor + dialogTheme pour couvrir tous les cas
-          canvasColor:              const Color(0xFF0D1B2A),
-          dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF0D1B2A)),
-          scaffoldBackgroundColor:  const Color(0xFF0D1B2A),
+          scaffoldBackgroundColor: const Color(0xFF0D2818),
           appBarTheme: const AppBarTheme(
             backgroundColor: Color(0xFF0D2818),
             foregroundColor: Colors.white,
@@ -240,7 +225,6 @@ class _MainNavigationState extends State<MainNavigation> {
     // Écoute le NavigationNotifier pour changer d'onglet
     final currentIndex = context.watch<NavigationNotifier>().index;
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1B2A), // ★ fix fond gris overscroll
       body: IndexedStack(index: currentIndex, children: _screens),
       bottomNavigationBar: _buildBottomNav(currentIndex),
     );
