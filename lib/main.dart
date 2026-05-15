@@ -105,8 +105,14 @@ class PronosticHippiqueApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF2E7D52),
             brightness: Brightness.dark,
+            // ★ v10.37 fix : forcer surface sombre pour éviter le fond gris
+            // système qui apparaît en overscroll sur Android (Material3)
+            surface:          const Color(0xFF0D1B2A),
+            surfaceContainerHighest: const Color(0xFF0D1B2A),
           ),
-          scaffoldBackgroundColor: const Color(0xFF0D2818),
+          // ★ v10.37 fix : canvasColor = fond des ListView en overscroll
+          canvasColor:            const Color(0xFF0D1B2A),
+          scaffoldBackgroundColor: const Color(0xFF0D1B2A),
           appBarTheme: const AppBarTheme(
             backgroundColor: Color(0xFF0D2818),
             foregroundColor: Colors.white,
