@@ -1414,23 +1414,26 @@ class _ConseilCard extends StatelessWidget {
                   // Top 3 IA
                   Row(
                     children: top3.asMap().entries.map((e) {
-                      final medals  = ['🥇', '🥈', '🥉'];
-                      final mColors = [const Color(0xFFFFD700), const Color(0xFFC0C0C0), const Color(0xFFCD7F32)];
+                      const medals = ['🥇', '🥈', '🥉'];
+                      final medal = e.key < medals.length ? medals[e.key] : '${e.key + 1}.';
+                      final medalColor = e.key < 3
+                          ? [const Color(0xFFFFD700), const Color(0xFFC0C0C0), const Color(0xFFCD7F32)][e.key]
+                          : const Color(0xFF7C4DFF);
                       final p = e.value;
                       return Expanded(
                         child: Container(
                           margin: EdgeInsets.only(right: e.key < 2 ? 6 : 0),
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
                           decoration: BoxDecoration(
-                            color: mColors[e.key].withValues(alpha: 0.07),
+                            color: medalColor.withValues(alpha: 0.07),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: mColors[e.key].withValues(alpha: 0.2)),
+                            border: Border.all(color: medalColor.withValues(alpha: 0.2)),
                           ),
                           child: Column(
                             children: [
-                              Text(medals[e.key], style: const TextStyle(fontSize: 14)),
+                              Text(medal, style: const TextStyle(fontSize: 14)),
                               Text('N°${p.numero}',
-                                  style: TextStyle(color: mColors[e.key], fontSize: 13, fontWeight: FontWeight.bold)),
+                                  style: TextStyle(color: medalColor, fontSize: 13, fontWeight: FontWeight.bold)),
                               Text(p.nom.split(' ').first,
                                   style: const TextStyle(color: Colors.white60, fontSize: 11),
                                   maxLines: 1, overflow: TextOverflow.ellipsis),
