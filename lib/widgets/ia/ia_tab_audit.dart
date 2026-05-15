@@ -138,29 +138,33 @@ class _IaTabAuditState extends State<IaTabAudit> {
     });
   }
 
-  // ── Export JPEG ──────────────────────────────────────────────────────────
+  // ── Export — tableau complet via ScrollController ─────────────────────────
   Future<void> _exporterJpeg() async {
     try {
+      // On capture le RepaintBoundary qui enveloppe la Column complète
+      // La Column est dans un SingleChildScrollView — on doit d'abord
+      // faire défiler jusqu'en haut, puis capturer toute la hauteur de scroll
       final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
 
+      // Forcer le rendu de toute la hauteur du scroll
       final image = await boundary.toImage(pixelRatio: 2.5);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) return;
 
-      final Uint8List pngBytes = byteData.buffer.asUint8List();
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/audit_ia_criteres.png');
+      final pngBytes = byteData.buffer.asUint8List();
+      final tempDir  = await getTemporaryDirectory();
+      final file     = File('${tempDir.path}/audit_ia_criteres.png');
       await file.writeAsBytes(pngBytes);
 
       await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'image/png')],  
+        [XFile(file.path, mimeType: 'image/png')],
         subject: 'Audit Critères IA — Pronostic Hippique',
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Erreur lors de la génération de l\'image')),
+          SnackBar(content: Text('Erreur export : $e')),
         );
       }
     }
@@ -248,36 +252,41 @@ class _IaTabAuditState extends State<IaTabAudit> {
           ),
         ),
 
-        // ── Tableau ───────────────────────────────────────────────────────
+        // ── Tableau scrollable avec capture complète ──────────────────────
         Expanded(
-          child: RepaintBoundary(
-            key: _repaintKey,
-            child: ColoredBox(
-              color: const Color(0xFF0D1B2A),
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                children: [
-                  // En-tête tableau
-                  _buildEnTete(),
-                  const SizedBox(height: 6),
-                  // Lignes critères
-                  ..._resultats.map((r) => _buildLigne(r)),
-                  const SizedBox(height: 16),
-                  // Note de bas de page
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.04),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      '🔍 Lecture seule — aucun poids modifié.\n'
-                      'Top3 = chevaux arrivés 1er/2e/3e • HorsTop5 = arrivés 6e et au-delà.\n'
-                      'Delta positif = le critère discrimine bien les bons chevaux.',
-                      style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.5),
-                    ),
+          child: SingleChildScrollView(
+            child: RepaintBoundary(
+              key: _repaintKey,
+              child: ColoredBox(
+                color: const Color(0xFF0D1B2A),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // En-tête tableau
+                      _buildEnTete(),
+                      const SizedBox(height: 6),
+                      // Toutes les lignes (pas de ListView — Column complète)
+                      ..._resultats.map((r) => _buildLigne(r)),
+                      const SizedBox(height: 16),
+                      // Note de bas de page
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          '🔍 Lecture seule — aucun poids modifié.\n'
+                          'Top3 = chevaux arrivés 1er/2e/3e • HorsTop5 = arrivés 6e et au-delà.\n'
+                          'Delta positif = le critère discrimine bien les bons chevaux.',
+                          style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.5),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
