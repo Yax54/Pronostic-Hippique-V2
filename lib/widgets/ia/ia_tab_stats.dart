@@ -282,7 +282,7 @@ class IaTabStats extends StatelessWidget {
                 style: TextStyle(color: Colors.white38, fontSize: 14)),
             SizedBox(height: 4),
             Text('Les stats s’alimentent après chaque analyse de journée',
-                style: TextStyle(color: Colors.white24, fontSize: 12),
+                style: TextStyle(color: Colors.white24, fontSize: 14),
                 textAlign: TextAlign.center),
           ],
         ),
@@ -353,7 +353,7 @@ class IaTabStats extends StatelessWidget {
                   Expanded(
                     child: Row(children: [
                       Text('🌆',
-                          style: const TextStyle(fontSize: 13)),
+                          style: const TextStyle(fontSize: 14)),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
@@ -375,7 +375,7 @@ class IaTabStats extends StatelessWidget {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text('échantillon',
-                              style: const TextStyle(color: Colors.white30, fontSize: 10)),
+                              style: const TextStyle(color: Colors.white30, fontSize: 12)),
                         ),
                     ]),
                   ),
@@ -387,7 +387,7 @@ class IaTabStats extends StatelessWidget {
                           fontSize: 16)),
                   const SizedBox(width: 6),
                   Text('($nb)',
-                      style: const TextStyle(color: Colors.white30, fontSize: 12)),
+                      style: const TextStyle(color: Colors.white30, fontSize: 14)),
                 ]),
                 const SizedBox(height: 7),
                 ClipRRect(
@@ -408,7 +408,7 @@ class IaTabStats extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '+ ${sorted.length - 12} autres hippodromes',
-              style: const TextStyle(color: Colors.white30, fontSize: 12),
+              style: const TextStyle(color: Colors.white30, fontSize: 14),
               textAlign: TextAlign.center,
             ),
           ),

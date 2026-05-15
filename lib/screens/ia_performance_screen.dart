@@ -688,7 +688,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   hasData ? '${s.coursesAvecResultat} courses' : 'Estimé',
                   style: TextStyle(
                     color: hasData ? _gold : _purple,
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -816,7 +816,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                     ),
                   ),
                   // ★ v10.36 : libellé plus clair
-                  const Text('Précision IA', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                  const Text('Précision IA', style: TextStyle(color: Colors.white38, fontSize: 12)),
                 ]),
               ]),
             ),
@@ -849,7 +849,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const Text('Calibration IA', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                  const Text('Calibration IA', style: TextStyle(color: Colors.white38, fontSize: 12)),
                 ]),
               ]),
             ),
@@ -880,7 +880,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const Text('Score moyen IA', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                  const Text('Score moyen IA', style: TextStyle(color: Colors.white38, fontSize: 12)),
                 ]),
               ]),
             ),
@@ -890,7 +890,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         // ★ v10.36 : note explicative des tuiles Top3/Gagnant/Top5
         Text(
           '▲ Favori IA = cheval N°1 sélectionné — % de fois où il finit gagnant / top3 / top5',
-          style: TextStyle(color: Colors.white24, fontSize: 10),
+          style: TextStyle(color: Colors.white24, fontSize: 12),
         ),
         const SizedBox(height: 6),
         Row(children: [
@@ -907,7 +907,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   : 'Statistiques estimées — données réelles disponibles après analyse journée',
               style: TextStyle(
                 color: hasData ? _gold : _purple,
-                fontSize: 11,
+                fontSize: 12,
               ),
             ),
           ),
@@ -1330,29 +1330,61 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             // Titre
             Row(children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: _green.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+                  color: _green.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.query_stats_rounded, color: _green, size: 22),
+                child: const Icon(Icons.query_stats_rounded, color: _green, size: 28),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const Text(
-                    'Analyse journée',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                    '🧠 Analyse journée IA',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
                   ),
+                  const SizedBox(height: 4),
                   Text(
-                    'Récupère les résultats PMU et ajuste les poids IA',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 15),
+                    'Récupère les résultats PMU, compare les pronostics IA et met à jour l\'apprentissage.',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 14),
                   ),
                 ]),
               ),
             ]),
 
             const SizedBox(height: 14),
+
+            // Bloc info pédagogique
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _green.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _green.withValues(alpha: 0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.schedule_rounded, color: Color(0xFF4CAF7D), size: 16),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'À lancer après les dernières courses, idéalement après 20h30.',
+                        style: TextStyle(color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  const _MiniListeAnalyse(),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            const SizedBox(height: 4),
 
             // Barre de progression (visible seulement pendant l'analyse)
             if (_analyseEnCours) ...[
@@ -1403,7 +1435,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   child: Text(
                     _analyseMessage,
                     style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 16),
-                    maxLines: 2,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1419,24 +1451,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
             // Info rapide si aucune analyse encore
             if (!_analyseEnCours && !hasResultat) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.04),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(Icons.info_outline, color: Colors.white24, size: 15),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Analyse toutes les courses terminées du jour, compare avec les pronostics IA et ajuste les poids.\n\n⏰ Conseil : lancez l\'analyse après 20h30 pour avoir tous les résultats PMU de la journée.',
-                      style: TextStyle(color: Colors.white38, fontSize: 15),
-                    ),
-                  ),
-                ]),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
             ],
 
             // ★ v9.92 : Encadré "Dernière analyse" — date + heure
@@ -1523,7 +1538,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                         child: const Text('IA',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1,
                           ),
@@ -1660,7 +1675,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                                                 child: Text(d,
                                                     style: const TextStyle(
                                                         color: Colors.white54,
-                                                        fontSize: 11)),
+                                                        fontSize: 12)),
                                               ))
                                           .toList(),
                                     ),
@@ -1684,7 +1699,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                                     '💡 Les résultats PMU sont publiés en général après 20h. '
                                     'Si le problème persiste le lendemain, utilisez "Purger" pour nettoyer.',
                                     style: TextStyle(
-                                        color: Colors.orange, fontSize: 11),
+                                        color: Colors.orange, fontSize: 12),
                                   ),
                                 ),
                               ],
@@ -1873,12 +1888,48 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           border: Border.all(color: bannerColor.withValues(alpha: 0.3)),
         ),
         child: Row(children: [
-          Icon(bannerIcon, color: bannerColor, size: 16),
-          const SizedBox(width: 8),
+          Icon(bannerIcon, color: bannerColor, size: 20),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               bannerText,
-              style: TextStyle(color: bannerColor, fontSize: 15, fontWeight: FontWeight.bold),
+              style: TextStyle(color: bannerColor, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+
+      // Message apprentissage clair
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: avecResultats
+              ? const Color(0xFF4CAF7D).withValues(alpha: 0.08)
+              : Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: avecResultats
+                ? const Color(0xFF4CAF7D).withValues(alpha: 0.3)
+                : Colors.white12,
+          ),
+        ),
+        child: Row(children: [
+          Text(
+            avecResultats ? '🧠' : 'ℹ️',
+            style: const TextStyle(fontSize: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              avecResultats
+                  ? 'Apprentissage IA effectué sur ${r.nbNouveauxResultats} nouveau${r.nbNouveauxResultats > 1 ? 'x' : ''} résultat${r.nbNouveauxResultats > 1 ? 's' : ''}.'
+                  : 'IA déjà à jour — aucun nouvel apprentissage déclenché.',
+              style: TextStyle(
+                color: avecResultats ? const Color(0xFF4CAF7D) : Colors.white54,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ]),
@@ -1918,12 +1969,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
                 ),
                 child: Row(children: [
-                  const Icon(Icons.schedule, color: Colors.orange, size: 13),
-                  const SizedBox(width: 5),
+                  const Icon(Icons.schedule, color: Colors.orange, size: 16),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       '${r.nbSansResultat} en attente PMU',
-                      style: const TextStyle(color: Colors.orange, fontSize: 13),
+                      style: const TextStyle(color: Colors.orange, fontSize: 14),
                     ),
                   ),
                 ]),
@@ -1942,12 +1993,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
                 ),
                 child: Row(children: [
-                  const Icon(Icons.error_outline, color: Colors.redAccent, size: 13),
-                  const SizedBox(width: 5),
+                  const Icon(Icons.error_outline, color: Colors.redAccent, size: 16),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       '${r.nbCoursesEchouees} erreur(s) réseau',
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 14),
                     ),
                   ),
                 ]),
@@ -1975,7 +2026,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 'L\'IA a récupéré les partants et calculé ses pronostics pour toutes les courses passées. '
                 'Les résultats officiels PMU ne sont pas encore publiés. '
                 'Relancez l\'analyse après 20h00 pour comparer et déclencher l\'apprentissage.',
-                style: TextStyle(color: Colors.white60, fontSize: 14),
+                style: TextStyle(color: Colors.white60, fontSize: 15),
               ),
             ),
           ]),
@@ -2029,11 +2080,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(children: [
-              const Icon(Icons.list_alt_rounded, color: Colors.white38, size: 14),
+              const Icon(Icons.list_alt_rounded, color: Colors.white38, size: 16),
               const SizedBox(width: 6),
               Text(
                 'Détail des ${sorted.length} course(s)',
-                style: const TextStyle(color: Colors.white54, fontSize: 12,
+                style: const TextStyle(color: Colors.white54, fontSize: 14,
                     fontWeight: FontWeight.bold),
               ),
               const Spacer(),
@@ -2083,7 +2134,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 Expanded(
                   child: Text(
                     nom,
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -2095,7 +2146,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                     statut,
                     style: TextStyle(
                       color: col,
-                      fontSize: 11,
+                      fontSize: 13,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -2114,23 +2165,23 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       Container(width: 7, height: 7,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
       const SizedBox(width: 3),
-      Text(label, style: TextStyle(color: color, fontSize: 10)),
+      Text(label, style: TextStyle(color: color, fontSize: 12)),
     ],
   );
 
   Widget _buildMiniStat(String value, String label, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
         ),
         child: Column(children: [
-          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 15)),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 15), textAlign: TextAlign.center),
+          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 22)),
+          const SizedBox(height: 4),
+          Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12), textAlign: TextAlign.center),
         ]),
       ),
     );
@@ -2152,20 +2203,20 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Row(mainAxisSize: MainAxisSize.min, children: const [
-          Icon(Icons.trending_up, color: Colors.white24, size: 13),
+          Icon(Icons.trending_up, color: Colors.white38, size: 16),
           SizedBox(width: 6),
-          Text('Poids dominants :', style: TextStyle(color: Colors.white38, fontSize: 13)),
+          Text('Poids dominants :', style: TextStyle(color: Colors.white54, fontSize: 14)),
         ]),
         ...top3.map((e) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: _gold.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(color: _gold.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: _gold.withValues(alpha: 0.3)),
           ),
           child: Text(
             '${labels[e.key] ?? e.key} ${(e.value * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(color: _gold, fontSize: 12, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold),
           ),
         )),
       ],
@@ -2277,7 +2328,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 '${stats.nbTotal} courses',
                 style: TextStyle(
                   color: fiable ? _green : Colors.orange,
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -2293,7 +2344,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             _cellLabel('Top 5', stats.nbTop5, stats.nbTotal, _purple),
             if (!fiable) ...[
               const SizedBox(width: 10),
-              const Text('⚠️ Données insuffisantes', style: TextStyle(color: Colors.white30, fontSize: 11)),
+              const Text('⚠️ Données insuffisantes', style: TextStyle(color: Colors.white30, fontSize: 12)),
             ],
           ]),
         ],
@@ -2309,11 +2360,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
             const Spacer(),
-            Text('$nb/$total', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+            Text('$nb/$total', style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(width: 4),
-            Text(pctStr, style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 11)),
+            Text(pctStr, style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12)),
           ]),
           const SizedBox(height: 4),
           ClipRRect(
@@ -2605,7 +2656,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 Text('📐', style: TextStyle(fontSize: 15)),
                 SizedBox(width: 6),
                 Text('PrécisionIA = Indice 1 + Indice 2 + Indice 3',
-                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
               ]),
               const SizedBox(height: 10),
               _buildIndiceRow(
@@ -2634,7 +2685,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               const SizedBox(height: 8),
               const Text(
                 '💡 Les poids s\'ajustent automatiquement : l\'indice le plus prédictif gagne en influence.',
-                style: TextStyle(color: Colors.white38, fontSize: 11),
+                style: TextStyle(color: Colors.white38, fontSize: 14),
               ),
             ],
           ),
@@ -2658,7 +2709,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 "🏆 Précision IA (30j glissants) : sur X courses conseillées Quinté+, combien l'IA avait-elle raison selon PMU ?\n"
                 "Ex : 3 bons sur 5 Quinté+ = 60% de précision. ⚠️ Ces chiffres concernent les CONSEILS IA, pas vos paris.",
                 // NB : le tableau 🎰 Taux de réussite par type (plus bas) concerne VOS paris enregistrés.
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: Colors.white54, fontSize: 14),
               ),
             ),
           ]),
@@ -2713,14 +2764,14 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                       if (_filtrePeriode == 'custom')   return '🏆 Précision IA — Période personnalisée';
                       return '🏆 Précision IA — ${_libelleFiltre(_filtrePeriode!)}';
                     }(),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                    style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
                   )),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 54, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 10), textAlign: TextAlign.center)),
+                  const SizedBox(width: 54, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 11), textAlign: TextAlign.center)),
+                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 24, child: Text('7j', style: TextStyle(color: Colors.white38, fontSize: 11), textAlign: TextAlign.center)),
+                  const SizedBox(width: 24, child: Text('7j', style: TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center)),
                   const SizedBox(width: 14),
                 ]),
               ),
@@ -2751,13 +2802,13 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   Text('⚙️', style: TextStyle(fontSize: 14)),
                   SizedBox(width: 6),
                   Text('Seuils de confiance actuels (adaptatifs)',
-                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 8),
                 const Text(
                   'Ces seuils évoluent selon la précision réelle — '
                   "l'IA devient plus ou moins sélective par type de pari.",
-                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                  style: TextStyle(color: Colors.white38, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
                 _buildLigneSeuilAdaptatif('🥇 Simple Gagnant',  seuils.seuilSimpleGagnant,  80.0),
@@ -2774,7 +2825,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           const SizedBox(height: 6),
           const Text(
             "💡 Après chaque analyse de la journée, les 3 indices et les poids IA s'ajustent automatiquement.",
-            style: TextStyle(color: Colors.white24, fontSize: 12),
+            style: TextStyle(color: Colors.white24, fontSize: 14),
           ),
         ],
       ],
@@ -2799,7 +2850,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             ),
             child: const Text(
               'Pas encore assez de données.\nAnalysez plus de courses pour voir votre précision par hippodrome.',
-              style: TextStyle(color: Colors.white54, fontSize: 13),
+              style: TextStyle(color: Colors.white54, fontSize: 14),
             ),
           ),
         ],
@@ -2880,7 +2931,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                             child: Text(
                               e.key,
                               style: const TextStyle(
-                                  color: Colors.white, fontSize: 13),
+                                  color: Colors.white, fontSize: 14),
                             ),
                           ),
                           // Barre de progression
@@ -2907,7 +2958,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                               textAlign: TextAlign.right,
                               style: TextStyle(
                                 color: color,
-                                fontSize: 13,
+                                fontSize: 14,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -2917,7 +2968,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                           Text(
                             '($nb)',
                             style: const TextStyle(
-                                color: Colors.white38, fontSize: 11),
+                                color: Colors.white38, fontSize: 12),
                           ),
                         ],
                       ),
@@ -2943,7 +2994,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 '${insuffisants.length} hippodrome(s) — données insuffisantes (<5 courses)',
                 style: const TextStyle(
                     color: Colors.white54,
-                    fontSize: 12,
+                    fontSize: 14,
                     fontStyle: FontStyle.italic),
               ),
               iconColor: Colors.white38,
@@ -2976,12 +3027,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                       Expanded(
                         child: Text(e.key,
                             style: const TextStyle(
-                                color: Colors.white54, fontSize: 12)),
+                                color: Colors.white54, fontSize: 14)),
                       ),
                       Text(
                         '$pct% ($nb/5 courses)',
                         style: const TextStyle(
-                            color: Colors.white38, fontSize: 11),
+                            color: Colors.white38, fontSize: 12),
                       ),
                     ],
                   ),
@@ -3014,7 +3065,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             children: [
               Row(children: [
                 Expanded(child: Text(label,
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600))),
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600))),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
@@ -3023,11 +3074,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                     border: Border.all(color: couleur.withValues(alpha: 0.4)),
                   ),
                   child: Text('$pct%',
-                      style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: couleur, fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ]),
               const SizedBox(height: 3),
-              Text(soustitre, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+              Text(soustitre, style: const TextStyle(color: Colors.white38, fontSize: 14)),
               const SizedBox(height: 4),
               // Barre de progression du poids
               ClipRRect(
@@ -3151,31 +3202,31 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             Expanded(child: Text(pr.nomCourse,
                 style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
                 overflow: TextOverflow.ellipsis)),
-            Text(dateStr, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            Text(dateStr, style: const TextStyle(color: Colors.white54, fontSize: 12)),
           ]),
           const SizedBox(height: 4),
           // ── Ligne 2 : hippodrome + heure + discipline ─────────────
           Row(children: [
             const SizedBox(width: 24),
             Text('📍 ${pr.hippodrome}  •  $heureStr  •  ${pr.discipline}',
-                style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
           ]),
           const SizedBox(height: 6),
           // ── Ligne 3 : chevaux conseillés IA ───────────────────────
           Row(children: [
             const SizedBox(width: 24),
-            const Text('🤖 IA : ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+            const Text('🤖 IA : ', style: TextStyle(color: Colors.white54, fontSize: 12)),
             Text(chevauxStr.isNotEmpty ? chevauxStr : '—',
                 style: TextStyle(color: borderColor, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
-            Text('($confStr)', style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            Text('($confStr)', style: const TextStyle(color: Colors.white38, fontSize: 12)),
           ]),
           // ── Ligne 4 : arrivée réelle PMU (si résolu) ──────────────
           if (resolu && arriveeStr.isNotEmpty) ...[
             const SizedBox(height: 4),
             Row(children: [
               const SizedBox(width: 24),
-              const Text('🏁 PMU : ', style: TextStyle(color: Colors.white54, fontSize: 11)),
+              const Text('🏁 PMU : ', style: TextStyle(color: Colors.white54, fontSize: 12)),
               Text(arriveeStr,
                   style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             ]),
@@ -3188,7 +3239,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               if (perf.isNotEmpty)
                 Text(perf, style: TextStyle(
                     color: bonConseil ? _green : Colors.white38,
-                    fontSize: 11, fontWeight: FontWeight.w600)),
+                    fontSize: 12, fontWeight: FontWeight.w600)),
               if (ordreLabel.isNotEmpty) ...[
                 const SizedBox(width: 10),
                 Container(
@@ -3209,7 +3260,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                           color: (ordreLabel.contains('ORDRE') && !ordreLabel.contains('DES'))
                               ? const Color(0xFF66BB6A)
                               : const Color(0xFFFFB74D),
-                          fontSize: 11, fontWeight: FontWeight.bold)),
+                          fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
               ],
             ]),
@@ -3254,7 +3305,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Text(label,
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
       );
 
   /// ── v9.53 : ligne de détail utilisée dans le dialogue par type ──────────
@@ -3313,7 +3364,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(p.typePari,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
                 ),
                 // Bons / Total selon filtre
                 _cellStat('$bons/$nb',
@@ -3332,7 +3383,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                             border: Border.all(color: tauxColor.withValues(alpha: 0.4)),
                           ),
                           child: Text('${taux.toStringAsFixed(0)}%',
-                              style: TextStyle(color: tauxColor, fontSize: 12, fontWeight: FontWeight.bold),
+                              style: TextStyle(color: tauxColor, fontSize: 13, fontWeight: FontWeight.bold),
                               textAlign: TextAlign.center),
                         )
                       : const SizedBox(),
@@ -3358,7 +3409,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                     if (bons > 0)
                       Text(
                         '(${ordreF + desordF}/$bons classés)',
-                        style: const TextStyle(color: Colors.white24, fontSize: 10),
+                        style: const TextStyle(color: Colors.white24, fontSize: 12),
                       ),
                   ]),
                 ),
@@ -3374,7 +3425,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       SizedBox(
         width: width,
         child: Text(txt,
-            style: TextStyle(color: color, fontSize: 13,
+            style: TextStyle(color: color, fontSize: 14,
                 fontWeight: bold ? FontWeight.bold : FontWeight.normal),
             textAlign: TextAlign.center),
       );
@@ -3387,7 +3438,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Text('$label : $count',
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
       );
 
   // ── Sélecteur de période pour le tableau Précision IA ────────────────────
@@ -3446,7 +3497,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                         color: _filtrePeriode == 'custom'
                             ? _purple
                             : const Color(0xFFFFD700),
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.2,
                       )),
@@ -3491,7 +3542,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             Text(label,
                 style: TextStyle(
                   color: actif ? vertActif : jauneInactif,
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.2,
                 )),
@@ -3528,7 +3579,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       const Icon(Icons.bar_chart, color: Colors.white38, size: 13),
       const SizedBox(width: 5),
       Text('$label : $totalBons/$totalNb conseils bons — ${taux.toStringAsFixed(0)}% tous types',
-          style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          style: const TextStyle(color: Colors.white38, fontSize: 14)),
     ]);
   }
 
@@ -3649,7 +3700,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
             style: const TextStyle(color: Colors.white60, fontSize: 12))),
         Text(valeurActuelle.toStringAsFixed(1),
             style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-        Text(deltaTxt, style: TextStyle(color: deltaColor, fontSize: 11)),
+        Text(deltaTxt, style: TextStyle(color: deltaColor, fontSize: 12)),
       ]),
     );
   }
@@ -4023,7 +4074,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           Text('${tp.nbFavoriGagnant} gagnant${tp.nbFavoriGagnant > 1 ? "s" : ""}',
               style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
           Text('${tp.nbFavoriTop3} top3 (${tp.tauxTop3.toStringAsFixed(0)}%)',
-              style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
         ]),
       ]),
     );
@@ -4157,7 +4208,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             Text('${c.hippodrome}${c.heure.isNotEmpty ? " · ${c.heure}" : ""}  '
                  '${c.typePariConseille.isNotEmpty ? "· ${c.typePariConseille}" : ""}',
-                style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
           ]),
         ),
         const SizedBox(width: 8),
@@ -4166,7 +4217,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
           if (c.arriveeReelle.isNotEmpty)
             Text('Arr: ${c.arriveeReelle.take(3).map((n) => "N°$n").join("-")}',
-                style: const TextStyle(color: Colors.white24, fontSize: 10)),
+                style: const TextStyle(color: Colors.white24, fontSize: 12)),
         ]),
       ]),
     );
@@ -4228,7 +4279,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   'Dernière analyse',
                   style: TextStyle(
                     color: dt == null ? Colors.white24 : Colors.white54,
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
@@ -4426,4 +4477,35 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
   // ── Widget : Journal des critères en hausse/baisse ★ v9.92 ──────────────────
   // → Délégué à IaPerfSecondaryWidgets (ia_perf_secondary_widgets.dart)
+}
+
+// ── Widget pédagogique — mini-liste des étapes de l'analyse ──────────────────
+class _MiniListeAnalyse extends StatelessWidget {
+  const _MiniListeAnalyse();
+
+  static const _etapes = [
+    (Icons.download_rounded,       Color(0xFF42A5F5), 'Résultats PMU récupérés'),
+    (Icons.compare_arrows_rounded, Color(0xFF7C4DFF), 'Pronostics IA comparés'),
+    (Icons.memory_rounded,         Color(0xFF4CAF7D), 'Mémoire IA mise à jour'),
+    (Icons.tune_rounded,           Color(0xFFFFD700), 'Poids ajustés seulement si nouveaux résultats'),
+    (Icons.rule_rounded,           Color(0xFFFF9800), 'Audit recalculé si besoin'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: _etapes.map((e) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(children: [
+          Icon(e.$1, color: e.$2, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(e.$3,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 14)),
+          ),
+        ]),
+      )).toList(),
+    );
+  }
 }

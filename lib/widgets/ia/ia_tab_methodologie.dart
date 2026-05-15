@@ -307,22 +307,22 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
               border: Border.all(color: _gold.withValues(alpha: 0.4)),
             ),
             child: Text('${poids.nbMisesAJour} analyse(s)',
-                style: const TextStyle(color: _gold, fontSize: 12, fontWeight: FontWeight.bold)),
+                style: const TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold)),
           ),
         ]),
         const SizedBox(height: 8),
-        Text(diagnostic, style: TextStyle(color: diagColor, fontSize: 13)),
+        Text(diagnostic, style: TextStyle(color: diagColor, fontSize: 14)),
         const SizedBox(height: 4),
         Text(
           'Derive totale vs valeurs initiales : ${(deriveTotal * 100).toStringAsFixed(1)} pts',
-          style: const TextStyle(color: Colors.white38, fontSize: 12),
+          style: const TextStyle(color: Colors.white38, fontSize: 14),
         ),
 
         // ââ Historique jour par jour âââââââââââââââââââââââââââââââââââââââââ
         if (joursAffiches.isNotEmpty) ...[
           const SizedBox(height: 14),
           const Text('Évolution des 3 critères principaux (14j)',
-              style: TextStyle(color: Colors.white54, fontSize: 12)),
+              style: TextStyle(color: Colors.white54, fontSize: 14)),
           const SizedBox(height: 8),
           // Les 3 criteres les plus modifies = les plus interessants Ã  suivre
           // ★ v10.37 : message < 3 jours
@@ -340,7 +340,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                 Expanded(child: Text(
                   'Graphe disponible après 3 analyses '
                   '(${joursAffiches.length}/3 effectuées)',
-                  style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  style: const TextStyle(color: Colors.white38, fontSize: 14),
                 )),
               ]),
             )
@@ -368,12 +368,12 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                       decoration: BoxDecoration(color: couleurCritere, shape: BoxShape.circle)),
                   const SizedBox(width: 6),
                   Text(noms[c] ?? c,
-                      style: TextStyle(color: couleurCritere, fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: couleurCritere, fontSize: 14, fontWeight: FontWeight.bold)),
                   const Spacer(),
                   Text(
                     'init: ${(defauts[c]! * 100).toStringAsFixed(0)}%  '
                     'â  actuel: ${(poids.getPoids(c) * 100).toStringAsFixed(1)}%',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
                   ),
                 ]),
                 const SizedBox(height: 5),
@@ -432,7 +432,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
         // ââ 19 criteres complets âââââââââââââââââââââââââââââââââââââââââââââ
         const SizedBox(height: 12),
         const Text('19 critères – variation vs valeurs initiales :',
-            style: TextStyle(color: Colors.white54, fontSize: 12)),
+            style: TextStyle(color: Colors.white54, fontSize: 14)),
         const SizedBox(height: 8),
         ...tries.map((c) {
           final actuel  = poids.getPoids(c);
@@ -450,11 +450,11 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
             child: Row(children: [
               SizedBox(width: 115,
                   child: Text(noms[c] ?? c,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13))),
-              Text('$pctDef%', style: const TextStyle(color: Colors.white38, fontSize: 12)),
-              const Text(' â ', style: TextStyle(color: Colors.white24, fontSize: 12)),
+                      style: const TextStyle(color: Colors.white70, fontSize: 14))),
+              Text('$pctDef%', style: const TextStyle(color: Colors.white38, fontSize: 14)),
+              const Text(' â ', style: TextStyle(color: Colors.white24, fontSize: 14)),
               Text('$pctAct%',
-                  style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+                  style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
               const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
@@ -463,7 +463,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text('$fleche $pctDiff%',
-                    style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+                    style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
               ),
             ]),
           );
@@ -484,13 +484,13 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
               SizedBox(width: 6),
               Text('Synergie Î2 â poids des 3 indices du score final',
                   style: TextStyle(color: Color(0xFF7C4DFF),
-                      fontSize: 12, fontWeight: FontWeight.bold)),
+                      fontSize: 14, fontWeight: FontWeight.bold)),
             ]),
             const SizedBox(height: 4),
             const Text(
               'L\'IA apprend aussi le meilleur mix entre les criteres (Î1), '
               'la confiance IA, et le taux historique par type de pari.',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
+              style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
             const SizedBox(height: 8),
             _buildLigneIndice('Score multicriteres (Î1)',
@@ -509,7 +509,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
         const Text(
           'Si rien ne bouge après 3+ semaines — les données API PMU '
           'atteignent peut-être leur limite prédictive.',
-          style: TextStyle(color: Colors.white24, fontSize: 11),
+          style: TextStyle(color: Colors.white24, fontSize: 12),
         ),
 
         // ★ v10.37 : Date de dernière mise à jour
@@ -533,7 +533,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
               'Dernière mise à jour : $label '
               '(${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')} '
               'à ${d.hour.toString().padLeft(2,'0')}h${d.minute.toString().padLeft(2,'0')})',
-              style: const TextStyle(color: Colors.white24, fontSize: 11),
+              style: const TextStyle(color: Colors.white24, fontSize: 12),
             );
           }),
         ],
@@ -554,15 +554,15 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 6),
         SizedBox(width: 155,
-            child: Text(nom, style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            child: Text(nom, style: const TextStyle(color: Colors.white70, fontSize: 14))),
         Text('${(defaut * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white38, fontSize: 12)),
-        const Text(' â ', style: TextStyle(color: Colors.white24, fontSize: 12)),
+            style: const TextStyle(color: Colors.white38, fontSize: 14)),
+        const Text(' â ', style: TextStyle(color: Colors.white24, fontSize: 14)),
         Text('${(actuel * 100).toStringAsFixed(1)}%',
-            style: TextStyle(color: c, fontSize: 13, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: c, fontSize: 14, fontWeight: FontWeight.bold)),
         const SizedBox(width: 6),
         Text('$fleche ${diff >= 0 ? '+' : ''}${(diff * 100).toStringAsFixed(1)}%',
-            style: TextStyle(color: c, fontSize: 11)),
+            style: TextStyle(color: c, fontSize: 12)),
       ]),
     );
   }
