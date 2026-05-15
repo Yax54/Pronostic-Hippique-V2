@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -157,9 +156,11 @@ class _IaTabAuditState extends State<IaTabAudit> {
       final file     = File('${tempDir.path}/audit_ia_criteres.png');
       await file.writeAsBytes(pngBytes);
 
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'image/png')],
-        subject: 'Audit Critères IA — Pronostic Hippique',
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'image/png')],
+          subject: 'Audit Critères IA — Pronostic Hippique',
+        ),
       );
     } catch (e) {
       if (mounted) {
@@ -301,7 +302,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
       children: [
         Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
       ],
     );
   }
@@ -316,7 +317,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
       ),
       child: const Row(
         children: [
-          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold))),
+          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold))),
           SizedBox(width: 6),
           _ColHeader('Top3'),
           SizedBox(width: 6),
@@ -324,7 +325,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
           SizedBox(width: 6),
           _ColHeader('Delta'),
           SizedBox(width: 6),
-          Expanded(flex: 3, child: Text('Diagnostic', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text('Diagnostic', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -349,7 +350,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
             flex: 5,
             child: Text(
               r.label,
-              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -379,7 +380,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
               ),
               child: Text(
                 diag,
-                style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -404,7 +405,7 @@ class _ColHeader extends StatelessWidget {
       width: 42,
       child: Text(
         text,
-        style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold),
+        style: const TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold),
         textAlign: TextAlign.center,
       ),
     );
@@ -425,7 +426,7 @@ class _ValCell extends StatelessWidget {
         text,
         style: TextStyle(
           color: color,
-          fontSize: 11,
+          fontSize: 13,
           fontWeight: bold ? FontWeight.bold : FontWeight.normal,
         ),
         textAlign: TextAlign.center,

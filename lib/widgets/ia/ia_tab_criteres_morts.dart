@@ -254,7 +254,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
       children: [
         Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
       ],
     );
   }
@@ -269,7 +269,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
       ),
       child: const Row(
         children: [
-          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold))),
+          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold))),
           SizedBox(width: 6),
           _ColH('% Réel'),
           SizedBox(width: 6),
@@ -277,7 +277,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
           SizedBox(width: 6),
           _ColH('F.50'),
           SizedBox(width: 6),
-          Expanded(flex: 3, child: Text('Statut', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text('Statut', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -299,7 +299,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
         children: [
           Expanded(
             flex: 5,
-            child: Text(r.label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: Text(r.label, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           const SizedBox(width: 6),
           // Barre de vitalité inline
@@ -308,7 +308,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text('${r.pctReel.toStringAsFixed(0)}%', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+                Text('${r.pctReel.toStringAsFixed(0)}%', style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 2),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(3),
@@ -335,7 +335,7 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Text(statut, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+              child: Text(statut, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
         ],
@@ -350,7 +350,7 @@ class _ColH extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
     width: 42,
-    child: Text(text, style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+    child: Text(text, style: const TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
   );
 }
 
@@ -361,7 +361,7 @@ class _ValC extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
     width: 42,
-    child: Text(text, style: TextStyle(color: color, fontSize: 11), textAlign: TextAlign.center),
+    child: Text(text, style: TextStyle(color: color, fontSize: 13), textAlign: TextAlign.center),
   );
 }
 
