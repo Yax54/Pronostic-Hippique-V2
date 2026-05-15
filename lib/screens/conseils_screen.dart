@@ -845,6 +845,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
     return ColoredBox(
       color: const Color(0xFF0D1B2A),
       child: ListView.builder(
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
         itemCount: _coursesAvecPartants.length,
         itemBuilder: (ctx, i) {
