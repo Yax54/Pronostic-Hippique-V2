@@ -63,7 +63,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
             Text('Journal de ${ia.prenom}',
                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             Text('${rapports.length} entrée${rapports.length > 1 ? "s" : ""}',
-                style: const TextStyle(color: Colors.white38, fontSize: 13)),
+                style: const TextStyle(color: Colors.white38, fontSize: 14)),
           ]),
         ]),
       ),
@@ -130,7 +130,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
                 Text(bm.libelle,
                     style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                 Text('${bm.semaines.length} semaine${bm.semaines.length > 1 ? "s" : ""} · ${bm.totalCourses} courses',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    style: const TextStyle(color: Colors.white54, fontSize: 14)),
               ])),
               _badgeTaux(bm.tauxGagnant, couleur),
               const SizedBox(width: 8),
@@ -271,7 +271,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
             Text('Bilan de la semaine (depuis le $semaine)',
                 style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
             Text('$nbJours jour${nbJours > 1 ? "s" : ""} analysé${nbJours > 1 ? "s" : ""} · $totalCourses courses',
-                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                style: const TextStyle(color: Colors.white54, fontSize: 14)),
           ])),
           _badgeTaux(tauxGagnant, couleur),
         ]),
@@ -289,7 +289,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
         if (top3Gains.isNotEmpty) ...[
           const SizedBox(height: 12),
           const Text('Critères renforcés cette semaine :',
-              style: TextStyle(color: Colors.white54, fontSize: 11)),
+              style: TextStyle(color: Colors.white54, fontSize: 14)),
           const SizedBox(height: 6),
           Wrap(spacing: 8, runSpacing: 4, children: top3Gains.map((e) {
             final delta = (e.value as num).toDouble();
@@ -301,7 +301,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
                 border: Border.all(color: _green.withValues(alpha: 0.3)),
               ),
               child: Text('${e.key} +${(delta * 100).toStringAsFixed(1)}%',
-                  style: const TextStyle(color: _green, fontSize: 11)),
+                  style: const TextStyle(color: _green, fontSize: 14)),
             );
           }).toList()),
         ],
@@ -461,7 +461,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       Text(emoji, style: const TextStyle(fontSize: 16)),
       const SizedBox(height: 2),
       Text(valeur, style: TextStyle(color: couleur, fontSize: 14, fontWeight: FontWeight.bold)),
-      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 14)),
     ]);
 
   Widget _stat(String emoji, String label) => Row(mainAxisSize: MainAxisSize.min, children: [

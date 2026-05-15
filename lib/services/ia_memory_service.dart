@@ -4104,8 +4104,12 @@ class IaMemoryService extends ChangeNotifier {
       _premiumHistorique[today] ?? [],
     );
     for (final p in valides) {
-      // Remplacer si même courseKey, sinon ajouter
-      entreeJour.removeWhere((ex) => ex.courseKey == p.courseKey);
+      // Remplacer si même courseKey + sourceWidget + typePari
+      // (évite d'écraser les autres widgets premium de la même course)
+      entreeJour.removeWhere((ex) =>
+          ex.courseKey    == p.courseKey    &&
+          ex.sourceWidget == p.sourceWidget &&
+          ex.typePari     == p.typePari);
       entreeJour.add(p);
     }
     _premiumHistorique[today] = entreeJour;

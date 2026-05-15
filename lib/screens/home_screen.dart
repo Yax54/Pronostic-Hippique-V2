@@ -448,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
       Text(emoji, style: const TextStyle(fontSize: 16)),
       const SizedBox(height: 2),
       Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-      Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 13)),
+      Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14)),
     ],
   );
 
@@ -763,7 +763,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Text(criteresLabel,
                             style: TextStyle(
                                 color: const Color(0xFF4CAF7D).withValues(alpha: 0.8),
-                                fontSize: 11),
+                                fontSize: 14),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
                       ],
@@ -1010,9 +1010,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(p.nom, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                                  Text(p.nom, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
                                   if (p.driver.isNotEmpty)
-                                    Text(p.driver, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+                                    Text(p.driver, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14)),
                                 ],
                               ),
                             ),
@@ -1236,7 +1236,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14)),
                           const SizedBox(height: 4),
                           Text('${course.nom} • $lieu',
-                              style: const TextStyle(color: Colors.white38, fontSize: 13),
+                              style: const TextStyle(color: Colors.white38, fontSize: 14),
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                         ],
                       ),
@@ -1394,7 +1394,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'Mise à jour PMU en cours…',
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.65),
-            fontSize: 12,
+            fontSize: 14,
           ),
         ),
       ],
@@ -1477,7 +1477,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Text(
         score > 0 ? '${score.round()}/100' : '—',
-        style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold),
+        style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -1492,7 +1492,7 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.white12),
         ),
-        child: const Text('IA en calcul…', style: TextStyle(color: Colors.white30, fontSize: 11)),
+        child: const Text('IA en calcul…', style: TextStyle(color: Colors.white30, fontSize: 14)),
       );
     }
     final Color c;
@@ -1511,7 +1511,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Text(
         '${confiance.toStringAsFixed(0)}% $lbl',
-        style: TextStyle(color: c, fontSize: 12, fontWeight: FontWeight.bold),
+        style: TextStyle(color: c, fontSize: 14, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -1608,7 +1608,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Text('Journée Express',
                       style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                   Text(source,
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 14)),
                 ]),
               ),
               GestureDetector(
@@ -1621,7 +1621,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.5)),
                   ),
                   child: const Text('Tout voir →',
-                      style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ),
             ]),
@@ -1683,7 +1683,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Row(children: [
                         Expanded(
                           child: Text(item.course.nom,
-                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                         if (item.course.isQuinte)
@@ -1700,11 +1700,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       ]),
                       Row(children: [
                         Text('${item.reunion.lieu} • $heureLabel',
-                            style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 14)),
                         if (p1 != null) ...[
                           const SizedBox(width: 5),
                           Text('N°${p1.numero} ${p1.nom.split(' ').first}',
-                              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                              style: const TextStyle(color: Colors.white38, fontSize: 14),
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                           const SizedBox(width: 3),
                           _buildFormeBadgeInline(p1.tendanceForme),
@@ -1719,7 +1719,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text('${score.round()}%',
-                        style: TextStyle(color: scoreColor, fontSize: 13, fontWeight: FontWeight.bold)),
+                        style: TextStyle(color: scoreColor, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ]),
               ),
@@ -1728,11 +1728,11 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
             child: Row(children: [
-              const Icon(Icons.info_outline, color: Colors.white24, size: 12),
+              const Icon(Icons.info_outline, color: Colors.white24, size: 14),
               const SizedBox(width: 5),
               Text(
                 '${items.length} course${items.length > 1 ? 's' : ''} — appuie pour voir les conseils',
-                style: const TextStyle(color: Colors.white24, fontSize: 11),
+                style: const TextStyle(color: Colors.white24, fontSize: 14),
               ),
             ]),
           ),
@@ -1823,14 +1823,14 @@ class _ProchainesCourseRow extends StatelessWidget {
                         ),
                       Expanded(
                         child: Text(course.nom,
-                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
                             maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     ],
                   ),
                   Text(
                     '$lieu • ${course.distance}m • ${course.type} • ${course.partants.length}🐴',
-                    style: const TextStyle(color: Colors.white38, fontSize: 13),
+                    style: const TextStyle(color: Colors.white38, fontSize: 14),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -1901,7 +1901,7 @@ class _ReunionCard extends StatelessWidget {
                     color: color.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(reunion.code, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+                  child: Text(reunion.code, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -1912,9 +1912,9 @@ class _ReunionCard extends StatelessWidget {
                     style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 Text('${reunion.courses.length} course${reunion.courses.length > 1 ? 's' : ''}',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14)),
                 Text('${reunion.totalPartants} chevaux',
-                    style: TextStyle(color: color.withValues(alpha: 0.8), fontSize: 13)),
+                    style: TextStyle(color: color.withValues(alpha: 0.8), fontSize: 14)),
               ],
             ),
           ],
