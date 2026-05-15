@@ -62,7 +62,15 @@
 //     widget_course2_name / widget_horse2_name / widget_heure2 / widget_confiance2
 //     widget_course3_name / widget_horse3_name / widget_heure3 / widget_confiance3
 //
-//  ── TOTAL : 36 CLES — COUVERTURE 100% ────────────────────────────────────
+//  🧪 LABO IA — Simulations sauvegardées (simulation_candidate_service.dart) — 1 clé
+//     simulation_candidates_v1 : Pistes de simulation enregistrées (candidats)
+//                                Obligatoire — non recalculable.
+//
+//  📊 CACHE AUDIT — Cache de calcul IA (ia_audit_cache_service.dart) — 1 clé
+//     ia_audit_cache_v1 : Cache des 4 onglets Audit (Utilité, Morts,
+//                         Corrélations, Discipline). Optionnel — recalculable.
+//
+//  ── TOTAL : 38 CLES — COUVERTURE 100% ────────────────────────────────────
 //
 //  ── CE QUE CONTIENT CHAQUE CLE ───────────────────────────────────────────
 //
@@ -112,7 +120,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.4'; // ★ v10.371-audit : +bt_discipline, +bt_hippodrome, +elo_orphelins_purges_v1, +conseils_inject_pending
+  static const _backupVersion = '7.5'; // ★ v10.35 : +simulation_candidates_v1 (Labo IA), +ia_audit_cache_v1 (Cache Audit)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -256,6 +264,18 @@ class BackupService {
     'widget_forme',
   ];
 
+  // 🧪 Labo IA — pistes de simulation sauvegardées par l'utilisateur
+  // OBLIGATOIRE : non recalculable (données saisies manuellement par l'utilisateur)
+  static const _keysLaboIA = [
+    'simulation_candidates_v1', // Pistes Labo IA (SimulationCandidateService)
+  ];
+
+  // 📊 Cache Audit — résultats pré-calculés des 4 onglets Audit
+  // OPTIONNEL : recalculable, mais évite 30s de recalcul au premier lancement
+  static const _keysAuditCache = [
+    'ia_audit_cache_v1', // Cache des onglets Audit (IaAuditCacheService)
+  ];
+
   // Toutes les cles reunies (pour reinitialisation complete)
   static List<String> get _toutesLesCles => [
     ..._keysIA,
@@ -264,6 +284,8 @@ class BackupService {
     ..._keysAlertes,
     ..._keysProfil,
     ..._keysWidget,
+    ..._keysLaboIA,
+    ..._keysAuditCache,
   ];
 
   // ════════════════════════════════════════════════════════════════════════
@@ -307,6 +329,8 @@ class BackupService {
       'alertes'    : <String, dynamic>{},
       'profil'     : <String, dynamic>{},
       'widget'     : <String, dynamic>{},
+      'laboIA'     : <String, dynamic>{},   // ★ v10.35 : Pistes Labo IA
+      'auditCache' : <String, dynamic>{},   // ★ v10.35 : Cache Audit
     };
 
     // ── 🧠 Memoire IA ────────────────────────────────────────────────────
@@ -369,6 +393,32 @@ class BackupService {
       if (entry != null) {
         data['widget'][key] = entry;
         if (kDebugMode) debugPrint('[Backup] WGT $key -> ok');
+      }
+    }
+
+    // ── 🧪 Labo IA — pistes de simulation ★ v10.35 ───────────────────────
+    for (final key in _keysLaboIA) {
+      final entry = _lireEntree(prefs, key);
+      if (entry != null) {
+        data['laboIA'][key] = entry;
+        if (kDebugMode) {
+          final val = entry['value'];
+          final info = val is List ? '${val.length} pistes' : 'ok (${entry['type']})';
+          debugPrint('[Backup] LAB $key -> $info');
+        }
+      } else {
+        if (kDebugMode) debugPrint('[Backup] LAB $key -> ABSENT (ok)');
+      }
+    }
+
+    // ── 📊 Cache Audit — ★ v10.35 ────────────────────────────────────────
+    for (final key in _keysAuditCache) {
+      final entry = _lireEntree(prefs, key);
+      if (entry != null) {
+        data['auditCache'][key] = entry;
+        if (kDebugMode) debugPrint('[Backup] AUD $key -> ok');
+      } else {
+        if (kDebugMode) debugPrint('[Backup] AUD $key -> ABSENT (ok)');
       }
     }
 
@@ -658,6 +708,22 @@ class BackupService {
         final nbCote = await _restaurerGroupe(prefs, data['cote'] as Map<String, dynamic>?);
         total += nbCote;
         if (kDebugMode) debugPrint('[Backup] CoteTracker restaure : $nbCote cles');
+      }
+
+      // ── 🧪 LABO IA ★ v10.35 ──────────────────────────────────────────────
+      // Restaurer les pistes de simulation (obligatoire — non recalculable)
+      if (data.containsKey('laboIA')) {
+        final nbLabo = await _restaurerGroupe(prefs, data['laboIA'] as Map<String, dynamic>?);
+        total += nbLabo;
+        if (kDebugMode) debugPrint('[Backup] LaboIA restaure : $nbLabo cles');
+      }
+
+      // ── 📊 CACHE AUDIT ★ v10.35 ──────────────────────────────────────────
+      // Restaurer le cache Audit (optionnel — recalculable si absent)
+      if (data.containsKey('auditCache')) {
+        final nbAudit = await _restaurerGroupe(prefs, data['auditCache'] as Map<String, dynamic>?);
+        total += nbAudit;
+        if (kDebugMode) debugPrint('[Backup] AuditCache restaure : $nbAudit cles');
       }
 
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes
