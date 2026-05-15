@@ -1,7 +1,4 @@
-import 'dart:convert';
 import 'dart:math' as math;
-
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/simulation_models.dart';
 import '../services/ia_memory_service.dart';
@@ -28,8 +25,7 @@ class SimulationService {
   SimulationService._();
   static final SimulationService instance = SimulationService._();
 
-  static const String _candidatsKey = 'simulation_candidats_v1';
-  static const double _seuilSigma   = 2.0; // σ min pour critère vivant
+  static const double _seuilSigma = 2.0; // σ min pour critère vivant
 
   // ── Critères vivants détectés sur l'historique ────────────────────────────
   /// Retourne les clés courtes ('f','g'...) des critères vivants (σ > seuil)
@@ -289,44 +285,4 @@ class SimulationService {
     return math.sqrt(vari);
   }
 
-  // ── Candidats — SharedPreferences uniquement ──────────────────────────────
-  Future<List<Map<String, dynamic>>> chargerCandidats() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw   = prefs.getString(_candidatsKey) ?? '[]';
-      final list  = json.decode(raw) as List<dynamic>;
-      return list.cast<Map<String, dynamic>>();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  Future<void> sauvegarderCandidat(
-    SimulationResultat res,
-    String nom,
-  ) async {
-    try {
-      final prefs     = await SharedPreferences.getInstance();
-      final candidats = await chargerCandidats();
-      final candidat  = SimulationCandidat(
-        id:       DateTime.now().millisecondsSinceEpoch.toString(),
-        nom:      nom,
-        date:     DateTime.now(),
-        resultat: res,
-      );
-      candidats.insert(0, candidat.toJson());
-      // Garder les 20 derniers candidats max
-      if (candidats.length > 20) candidats.removeRange(20, candidats.length);
-      await prefs.setString(_candidatsKey, json.encode(candidats));
-    } catch (_) {}
-  }
-
-  Future<void> supprimerCandidat(String id) async {
-    try {
-      final prefs     = await SharedPreferences.getInstance();
-      final candidats = await chargerCandidats();
-      candidats.removeWhere((c) => c['id'] == id);
-      await prefs.setString(_candidatsKey, json.encode(candidats));
-    } catch (_) {}
-  }
 }

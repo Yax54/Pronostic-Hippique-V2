@@ -156,9 +156,35 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   // ── Charger candidats (liste simple pour le panneau) ─────────────────────
+  // Source unique : SimulationCandidateService (simulation_candidates_v1)
+  // Conversion SimulationCandidate → Map imbriquée attendue par SimulationAssistantPanel
   Future<void> _chargerCandidats() async {
-    final c = await _svc.chargerCandidats();
-    if (mounted) setState(() => _candidats = c);
+    final list = await _cSvc.listCandidates();
+    if (!mounted) return;
+    setState(() {
+      _candidats = list.map((c) => <String, dynamic>{
+        'nom': c.label,
+        'resultat': {
+          'params': {'discipline': c.discipline},
+          'apres':  {
+            'top1':      c.top1Apres,
+            'top3':      c.top3Apres,
+            'top5':      c.top5Apres,
+            'roi':       c.roiApres,
+            'gainNet':   c.gainNetApres,
+            'outsiders': c.outsidersApres,
+          },
+          'avant': {
+            'top1':      c.top1Avant,
+            'top3':      c.top3Avant,
+            'top5':      c.top5Avant,
+            'roi':       c.roiAvant,
+            'gainNet':   c.gainNetAvant,
+            'outsiders': c.outsidersAvant,
+          },
+        },
+      }).toList();
+    });
   }
 
   // ── Critères affichés (modifiés ou ajoutés manuellement) ─────────────────
