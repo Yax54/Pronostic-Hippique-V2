@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../services/ia_memory_service.dart';
+import '../../services/ia_audit_cache_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Onglet Corrélations IA — lecture seule, pas de modification de poids
@@ -41,6 +42,8 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
   int _nbCourses  = 0;
   bool _calcule   = false;
 
+  final IaAuditCacheService _cache = IaAuditCacheService();
+
   // ── Labels identiques à ia_tab_audit.dart ────────────────────────────────
   static const Map<String, String> _labels = {
     'f':  'A — Forme récente',
@@ -71,18 +74,52 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
   @override
   void initState() {
     super.initState();
+    _chargerOuCalculer();
+  }
+
+
+  // ── Cache : charger depuis le cache ou recalculer ★ v10.33 ───────────────
+  Future<void> _chargerOuCalculer() async {
+    final svc = IaMemoryService.instance;
+    final nbAvecResultat = svc.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+
+    final valide = await _cache.isCacheValid(nbAvecResultat);
+    if (valide) {
+      final cached = await _cache.readCache();
+      final raw = cached?['auditCorrelations'];
+      if (raw is Map<String, dynamic>) {
+        final rawPaires = raw['paires'] as List?;
+        final rawVivants = raw['critersVivants'] as List?;
+        if (rawPaires != null && rawVivants != null) {
+          final paires = rawPaires.map((e) => _PaireCritere.fromJson(e as Map<String, dynamic>)).toList();
+          if (mounted) {
+            setState(() {
+              _paires         = paires;
+              _critersVivants = List<String>.from(rawVivants);
+              _nbPartants     = (raw['nbPartants'] as int?) ?? 0;
+              _nbCourses      = (raw['nbCourses'] as int?) ?? 0;
+              _calcule        = true;
+            });
+          }
+          return;
+        }
+      }
+    }
+
     _calculer();
   }
 
   // ── Calcul Pearson ────────────────────────────────────────────────────────
-  void _calculer() {
+  Future<void> _calculer() async {
     final svc        = IaMemoryService.instance;
     final pronostics = svc.pronostics
         .where((p) => p.scoresCriteres.isNotEmpty)
         .toList();
 
     if (pronostics.isEmpty) {
-      setState(() { _calcule = true; });
+      if (mounted) setState(() { _calcule = true; });
       return;
     }
 
@@ -163,13 +200,31 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
     // 4. Trier par |r| décroissant
     paires.sort((a, b) => b.r.abs().compareTo(a.r.abs()));
 
-    setState(() {
-      _paires         = paires;
-      _critersVivants = critersVivants;
-      _nbPartants     = nbPartantsTotal;
-      _nbCourses      = pronostics.length;
-      _calcule        = true;
-    });
+
+    // Mise en cache ★ v10.33
+    final cacheActuel = await _cache.readCache();
+    await _cache.writeCache(
+      nbPronosticsAvecResultat: pronostics.length,
+      auditUtiliteGlobal:   cacheActuel?['auditUtiliteGlobal'],
+      auditCriteresVivants: cacheActuel?['auditCriteresVivants'],
+      auditCorrelations: {
+        'paires':         paires.map((p) => p.toJson()).toList(),
+        'critersVivants': critersVivants,
+        'nbPartants':     nbPartantsTotal,
+        'nbCourses':      pronostics.length,
+      },
+      auditParDiscipline: cacheActuel?['auditParDiscipline'],
+    );
+
+    if (mounted) {
+      setState(() {
+        _paires         = paires;
+        _critersVivants = critersVivants;
+        _nbPartants     = nbPartantsTotal;
+        _nbCourses      = pronostics.length;
+        _calcule        = true;
+      });
+    }
   }
 
   // ── Pearson ───────────────────────────────────────────────────────────────
@@ -556,6 +611,23 @@ class _PaireCritere {
     required this.niveau,
     required this.n,
   });
+
+  // ★ v10.33 : sérialisation cache
+  Map<String, dynamic> toJson() => {
+    'cleA': cleA, 'cleB': cleB,
+    'labelA': labelA, 'labelB': labelB,
+    'r': r, 'niveau': niveau.index, 'n': n,
+  };
+
+  factory _PaireCritere.fromJson(Map<String, dynamic> j) => _PaireCritere(
+    cleA:   j['cleA'] as String,
+    cleB:   j['cleB'] as String,
+    labelA: j['labelA'] as String,
+    labelB: j['labelB'] as String,
+    r:      (j['r'] as num).toDouble(),
+    niveau: _NiveauCorr.values[j['niveau'] as int],
+    n:      j['n'] as int,
+  );
 }
 
 // Note : ScoresCriteres.toJson() est utilisé directement

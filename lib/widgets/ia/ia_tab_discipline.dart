@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../services/ia_memory_service.dart';
+import '../../services/ia_audit_cache_service.dart';
 import '../../services/ia_memory_models.dart';
 import 'ia_tab_audit.dart'; // ← extension ScoresCriteresMap.toMap()
 
@@ -43,6 +44,8 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
   // Résultats calculés — map discipline → données
   final Map<String, _DiscData> _data = {};
   bool _calcule = false;
+
+  final IaAuditCacheService _cache = IaAuditCacheService();
 
   // Clés RepaintBoundary pour l'export JPEG, une par onglet discipline
   final Map<String, GlobalKey> _repaintKeys = {
@@ -82,7 +85,7 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
   void initState() {
     super.initState();
     _discCtrl = TabController(length: _disciplines.length, vsync: this);
-    _calculer();
+    _chargerOuCalculer();
   }
 
   @override
@@ -101,7 +104,38 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
   }
 
   // ── Calcul principal ──────────────────────────────────────────────────────
-  void _calculer() {
+
+  // ── Cache : charger depuis le cache ou recalculer ★ v10.33 ───────────────
+  Future<void> _chargerOuCalculer() async {
+    final svc = IaMemoryService.instance;
+    final nbAvecResultat = svc.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+
+    final valide = await _cache.isCacheValid(nbAvecResultat);
+    if (valide) {
+      final cached = await _cache.readCache();
+      final rawDisc = cached?['auditParDiscipline'];
+      if (rawDisc is Map<String, dynamic> && rawDisc.isNotEmpty) {
+        bool allOk = true;
+        for (final d in ['Plat', 'Trot', 'Obstacle']) {
+          final raw = rawDisc[d];
+          if (raw is Map<String, dynamic>) {
+            _data[d] = _DiscData.fromJson(raw);
+          } else {
+            allOk = false; break;
+          }
+        }
+        if (allOk && mounted) {
+          setState(() { _calcule = true; });
+          return;
+        }
+      }
+    }
+
+    _calculer();
+  }
+  Future<void> _calculer() async {
     final svc        = IaMemoryService.instance;
     final pronostics = svc.pronostics; // tous, pas seulement avec résultats
 
@@ -118,7 +152,25 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
       _data[disc] = _calculerDisc(disc, parDisc[disc]!);
     }
 
-    setState(() { _calcule = true; });
+
+    // Mise en cache ★ v10.33
+    final svc2 = IaMemoryService.instance;
+    final nbAvecResultat = svc2.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+    final cacheActuel = await _cache.readCache();
+    await _cache.writeCache(
+      nbPronosticsAvecResultat: nbAvecResultat,
+      auditUtiliteGlobal:   cacheActuel?['auditUtiliteGlobal'],
+      auditCriteresVivants: cacheActuel?['auditCriteresVivants'],
+      auditCorrelations:    cacheActuel?['auditCorrelations'],
+      auditParDiscipline: {
+        for (final d in ['Plat', 'Trot', 'Obstacle'])
+          if (_data.containsKey(d)) d: _data[d]!.toJson(),
+      },
+    );
+
+    if (mounted) setState(() { _calcule = true; });
   }
 
   // ── Calcul pour une discipline ────────────────────────────────────────────
@@ -682,6 +734,23 @@ class _DiscData {
     required this.criteres,
     required this.paires,
   });
+
+  // ★ v10.33 : sérialisation cache
+  Map<String, dynamic> toJson() => {
+    'nbCourses': nbCourses, 'nbAvecResultat': nbAvecResultat,
+    'nbPartants': nbPartants, 'critersVivants': critersVivants,
+    'criteres': criteres.map((c) => c.toJson()).toList(),
+    'paires':   paires.map((p) => p.toJson()).toList(),
+  };
+
+  factory _DiscData.fromJson(Map<String, dynamic> j) => _DiscData(
+    nbCourses:      j['nbCourses'] as int,
+    nbAvecResultat: j['nbAvecResultat'] as int,
+    nbPartants:     j['nbPartants'] as int,
+    critersVivants: j['critersVivants'] as int,
+    criteres: (j['criteres'] as List).map((e) => _CritereDisc.fromJson(e as Map<String, dynamic>)).toList(),
+    paires:   (j['paires']   as List).map((e) => _PaireDisc.fromJson(e   as Map<String, dynamic>)).toList(),
+  );
 }
 
 class _CritereDisc {
@@ -702,6 +771,20 @@ class _CritereDisc {
     required this.nbTop3,
     required this.nbHorsTop5,
   });
+
+  // ★ v10.33
+  Map<String, dynamic> toJson() => {
+    'cle': cle, 'label': label,
+    'moyTop3': moyTop3, 'moyHorsTop5': moyHorsTop5,
+    'delta': delta, 'nbTop3': nbTop3, 'nbHorsTop5': nbHorsTop5,
+  };
+  factory _CritereDisc.fromJson(Map<String, dynamic> j) => _CritereDisc(
+    cle: j['cle'] as String, label: j['label'] as String,
+    moyTop3: (j['moyTop3'] as num).toDouble(),
+    moyHorsTop5: (j['moyHorsTop5'] as num).toDouble(),
+    delta: (j['delta'] as num).toDouble(),
+    nbTop3: j['nbTop3'] as int, nbHorsTop5: j['nbHorsTop5'] as int,
+  );
 
   String get diagnostic {
     if (delta >= 8.0)  return 'Très utile';
@@ -731,6 +814,18 @@ class _PaireDisc {
     required this.labelA, required this.labelB,
     required this.r, required this.n,
   });
+
+  // ★ v10.33
+  Map<String, dynamic> toJson() => {
+    'cleA': cleA, 'cleB': cleB,
+    'labelA': labelA, 'labelB': labelB,
+    'r': r, 'n': n,
+  };
+  factory _PaireDisc.fromJson(Map<String, dynamic> j) => _PaireDisc(
+    cleA: j['cleA'] as String, cleB: j['cleB'] as String,
+    labelA: j['labelA'] as String, labelB: j['labelB'] as String,
+    r: (j['r'] as num).toDouble(), n: j['n'] as int,
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../services/ia_audit_cache_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Onglet Audit Critères IA — lecture seule
@@ -28,6 +29,8 @@ class _IaTabAuditState extends State<IaTabAudit> {
   int _nbCourses = 0;
   int _nbPartants = 0;
   bool _calcule = false;
+
+  final IaAuditCacheService _cache = IaAuditCacheService();
 
   // ── Labels des 19 critères A→S ────────────────────────────────────────────
   static const Map<String, String> _labels = {
@@ -55,18 +58,53 @@ class _IaTabAuditState extends State<IaTabAudit> {
   @override
   void initState() {
     super.initState();
+    _chargerOuCalculer();
+  }
+
+  // ── Cache : charger depuis le cache ou recalculer ★ v10.33 ───────────────
+  Future<void> _chargerOuCalculer() async {
+    final svc = IaMemoryService.instance;
+    final nbAvecResultat = svc.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+
+    // Tentative lecture cache
+    final valide = await _cache.isCacheValid(nbAvecResultat);
+    if (valide) {
+      final cached = await _cache.readCache();
+      final raw = cached?['auditUtiliteGlobal'];
+      if (raw is Map<String, dynamic>) {
+        final rawCriteres = raw['criteres'] as List?;
+        if (rawCriteres != null && rawCriteres.isNotEmpty) {
+          final resultats = rawCriteres
+              .map((e) => _CritereAudit.fromJson(e as Map<String, dynamic>))
+              .toList();
+          if (mounted) {
+            setState(() {
+              _resultats  = resultats;
+              _nbCourses  = (raw['nbCourses'] as int?) ?? 0;
+              _nbPartants = (raw['nbPartants'] as int?) ?? 0;
+              _calcule    = true;
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    // Recalcul + mise en cache
     _calculer();
   }
 
   // ── Calcul de l'audit sur l'historique ───────────────────────────────────
-  void _calculer() {
+  Future<void> _calculer() async {
     final svc = IaMemoryService.instance;
     final pronostics = svc.pronostics
         .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
         .toList();
 
     if (pronostics.isEmpty) {
-      setState(() { _calcule = true; });
+      if (mounted) setState(() { _calcule = true; });
       return;
     }
 
@@ -129,12 +167,28 @@ class _IaTabAuditState extends State<IaTabAudit> {
     // Tri par delta décroissant
     resultats.sort((a, b) => b.delta.compareTo(a.delta));
 
-    setState(() {
-      _resultats   = resultats;
-      _nbCourses   = pronostics.length;
-      _nbPartants  = nbPartantsTotal;
-      _calcule     = true;
-    });
+    // Mise en cache ★ v10.33
+    final cacheActuel = await _cache.readCache();
+    await _cache.writeCache(
+      nbPronosticsAvecResultat: pronostics.length,
+      auditUtiliteGlobal: {
+        'criteres':    resultats.map((r) => r.toJson()).toList(),
+        'nbPartants':  nbPartantsTotal,
+        'nbCourses':   pronostics.length,
+      },
+      auditCriteresVivants: cacheActuel?['auditCriteresVivants'],
+      auditCorrelations:    cacheActuel?['auditCorrelations'],
+      auditParDiscipline:   cacheActuel?['auditParDiscipline'],
+    );
+
+    if (mounted) {
+      setState(() {
+        _resultats   = resultats;
+        _nbCourses   = pronostics.length;
+        _nbPartants  = nbPartantsTotal;
+        _calcule     = true;
+      });
+    }
   }
 
   // ── Export — tableau complet via ScrollController ─────────────────────────
@@ -455,6 +509,23 @@ class _CritereAudit {
     required this.nbTop3,
     required this.nbHorsTop5,
   });
+
+  // ★ v10.33 : sérialisation cache
+  Map<String, dynamic> toJson() => {
+    'cle': cle, 'label': label,
+    'moyTop3': moyTop3, 'moyHorsTop5': moyHorsTop5,
+    'delta': delta, 'nbTop3': nbTop3, 'nbHorsTop5': nbHorsTop5,
+  };
+
+  factory _CritereAudit.fromJson(Map<String, dynamic> j) => _CritereAudit(
+    cle:         j['cle'] as String,
+    label:       j['label'] as String,
+    moyTop3:     (j['moyTop3'] as num).toDouble(),
+    moyHorsTop5: (j['moyHorsTop5'] as num).toDouble(),
+    delta:       (j['delta'] as num).toDouble(),
+    nbTop3:      j['nbTop3'] as int,
+    nbHorsTop5:  j['nbHorsTop5'] as int,
+  );
 
   String get diagnostic {
     if (delta > 8.0)  return 'Très utile';

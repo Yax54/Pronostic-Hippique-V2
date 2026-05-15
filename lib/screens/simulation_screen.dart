@@ -68,7 +68,7 @@ const _critersInactifs = <String, String>{
   'rp':  'Repos : fallback 50',
   'mc':  'Mouvement cote : historique absent',
   'pd':  'Place départ : non alimenté',
-  'rc':  'Record : non exploitable',
+  'r':   'Record : non exploitable',
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -263,18 +263,34 @@ class _SimulationScreenState extends State<SimulationScreen> {
     });
   }
 
-  // ── Export PNG page entière ★ v10.32 ──────────────────────────────────────
+  // ── Export PNG page entière ★ v10.33 ──────────────────────────────────────
+  // Inclut : Résultats + Critères modifiés + Verdict + Assistant complet
   Future<void> _exporter() async {
+    if (_resultat == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lancez d\'abord une simulation.')));
+      }
+      return;
+    }
     try {
-      // Laisser Flutter rendre le widget complet
-      await Future.delayed(const Duration(milliseconds: 150));
+      // 1. Forcer le dépliement de l'assistant pour qu'il soit dans l'image
+      bool wasCollapsed = false;
+      if (!_assistantExpanded) {
+        wasCollapsed = true;
+        setState(() => _assistantExpanded = true);
+        // Laisser Flutter rendre le widget déplié
+        await Future.delayed(const Duration(milliseconds: 300));
+      } else {
+        await Future.delayed(const Duration(milliseconds: 150));
+      }
 
       final boundary = _exportKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
       if (boundary == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Lancez d\'abord une simulation.')));
+            const SnackBar(content: Text('Erreur : widget non rendu.')));
         }
         return;
       }
@@ -291,6 +307,12 @@ class _SimulationScreenState extends State<SimulationScreen> {
           '_${now.hour.toString().padLeft(2,"0")}${now.minute.toString().padLeft(2,"0")}.png';
       final file  = File('${dir.path}/$fname');
       await file.writeAsBytes(bytes);
+
+      // 2. Reployer l'assistant si nécessaire
+      if (wasCollapsed && mounted) {
+        setState(() => _assistantExpanded = false);
+      }
+
       await SharePlus.instance.share(ShareParams(
         files:   [XFile(file.path, mimeType: 'image/png')],
         subject: 'Simulation IA — ${_params.discipline} — Pronostic Hippique',
@@ -352,8 +374,6 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
 
     await _cSvc.saveCandidate(candidate);
-    // Aussi mettre à jour la liste "ancienne" pour le panneau assistant
-    await _svc.sauvegarderCandidat(_resultat!, nom.trim());
     await _chargerCandidats();
 
     if (mounted) {
@@ -503,7 +523,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
             _buildBoutonLancer(),
             if (_enCours) _buildChargement(),
 
-            // ── Zone exportable page entière ★ v10.32 ─────────────────
+            // ── Zone exportable page entière ★ v10.33 ─────────────────
+            // RepaintBoundary englobe Résultats + Assistant (export complet)
             if (_showResult && _resultat != null)
               RepaintBoundary(
                 key: _exportKey,
@@ -521,15 +542,16 @@ class _SimulationScreenState extends State<SimulationScreen> {
                       _buildBlocPeriode('7 derniers jours',
                           _resultat!.avant7j,  _resultat!.apres7j),
                       _buildFiabiliteBloc(_resultat!),
-                      // Métadonnées export
                       _buildPiedExport(),
+                      // ★ v10.33 : Panneau assistant inclus dans l'export
+                      _buildAssistantSection(),
                     ],
                   ),
                 ),
-              ),
-
-            // ── Panneau assistant ──────────────────────────────────────
-            _buildAssistantSection(),
+              )
+            else
+              // Panneau assistant visible même sans simulation
+              _buildAssistantSection(),
           ],
         ),
       ),
