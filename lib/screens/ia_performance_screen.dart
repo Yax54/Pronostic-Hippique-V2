@@ -29,6 +29,7 @@ import '../widgets/ia/ia_tab_stats.dart';           // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_methodologie.dart';    // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_conseils.dart';        // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_backtesting.dart';     // ★ v9.90 découpage
+import '../widgets/ia/ia_tab_audit.dart';           // ★ audit critères A→S
 import '../widgets/ia/ia_bubble_widget.dart';        // ★ v9.93 bulles
 import '../widgets/ia/ia_calendrier_tab.dart';       // ★ v10.25 calendrier performances
 // import 'ia_journal_screen.dart'; // ★ v9.85 — conservé pour navigation (non utilisé directement)
@@ -96,7 +97,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   void initState() {
     super.initState();
     IaPerformanceScreen._instance = this; // ★ v10.27 : raccourci calendrier
-    _tabCtrl = TabController(length: 6, vsync: this);
+    _tabCtrl = TabController(length: 7, vsync: this);
     _loadStats();
     IaMemoryService.instance.addListener(_loadStats);
     // ★ v9.90 : _chargerPrefsBt() migré dans IaTabBacktesting.initState()
@@ -716,6 +717,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               Tab(text: '📊 Statistiques', height: 52),
               Tab(text: '⚙️ Algorithme', height: 52),
               Tab(text: '💡 Conseils', height: 52),
+              Tab(text: '🔍 Audit', height: 52),
             ],
           ),
         ),
@@ -729,6 +731,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           IaTabStats(alertService: widget.alertService),
           const IaTabMethodologie(),
           const IaTabConseils(),
+          const IaTabAudit(),
         ],
       ),
     );
