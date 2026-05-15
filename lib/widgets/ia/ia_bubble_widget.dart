@@ -73,7 +73,7 @@ class IaBubbleOverlayState extends State<IaBubbleOverlay> {
   }
 
   /// ★ v9.93 : Navigation corrigée — table réelle 0=Accueil 1=Conseils 2=Prog
-  ///            3=Courses 4=BestBet 5=IAStats 6=MesParis 7=Audit 8=Profil
+  ///            3=Courses 4=BestBet 5=IAStats 6=MesParis 7=LaboIA 8=Audit 9=Profil
   void _naviguerVersPage(String message, String type) {
     _dismiss();
     if (!mounted) return;
@@ -81,8 +81,8 @@ class IaBubbleOverlayState extends State<IaBubbleOverlay> {
 
     // Types explicites
     if (type == 'victoire' || type == 'defaite') { nav.goTo(6); return; }
-    if (type == 'niveau')                         { nav.goTo(8); return; } // Profil = index 8
-    if (type == 'badge')                          { nav.goTo(8); return; } // ★ v9.93 badge → Profil (index 8)
+    if (type == 'niveau')                         { nav.goTo(9); return; } // Profil = index 9
+    if (type == 'badge')                          { nav.goTo(9); return; } // ★ Profil = index 9
     if (type == 'analyse')                        { nav.goTo(5); return; } // ★ v9.93 après analyse → IA Stats
     if (type == 'nonPartant')                     { nav.goTo(3); return; } // ★ v9.93 retrait → Courses
     if (type == 'hebdo')                          { nav.goTo(5); return; } // ★ v9.93 résumé hebdo → IA Stats

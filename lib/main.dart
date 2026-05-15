@@ -12,6 +12,7 @@ import 'screens/profile_screen.dart';
 import 'screens/mes_paris_screen.dart';
 import 'screens/ia_performance_screen.dart';
 import 'screens/audit_screen.dart';
+import 'screens/simulation_screen.dart';
 import 'services/alert_service.dart';
 import 'services/ia_memory_service.dart';
 import 'services/elo_service.dart';
@@ -41,7 +42,8 @@ class NavigationNotifier extends ChangeNotifier {
   void goToMesParisSuivi()  => goTo(6); // ★ v9.92 : idem goToMesParis mais signale l'onglet Suivi
   void goToAccueil()        => goTo(0);
   void goToProgramme()      => goTo(2); // ★ v10.26 : Conseils déplacé en index 1 → Prog. passe en 2
-  void goToAudit()          => goTo(7); // ★ Audit IA section principale
+  void goToSimulation()     => goTo(7); // ★ Laboratoire IA
+  void goToAudit()          => goTo(8); // ★ Audit IA section principale
 
   // ★ v9.92 : onglet interne demandé à l'ouverture de MesParis
   int _mesParisPendingTab = 0;
@@ -168,9 +170,10 @@ class _MainNavigationState extends State<MainNavigation> {
       const RacesScreen(),      // 3 — Courses
       const BestBetScreen(),    // 4 — Best Bet
       IaPerformanceScreen(alertService: alertSvc), // 5 — IA Stats
-      const MesPariScreen(),    // 6 — Mes Paris
-      const AuditScreen(),      // 7 — Audit IA
-      const ProfileScreen(),    // 8 — Profil
+      const MesPariScreen(),      // 6 — Mes Paris
+      const SimulationScreen(),    // 7 — Labo IA Simulation
+      const AuditScreen(),         // 8 — Audit IA
+      const ProfileScreen(),       // 9 — Profil
     ];
     Future.microtask(() {
       if (mounted) {
@@ -220,6 +223,7 @@ class _MainNavigationState extends State<MainNavigation> {
     _NavDef(icon: Icons.emoji_events_outlined,   activeIcon: Icons.emoji_events,     label: 'Best Bet',  color: Color(0xFFFFD700)), // Or trophée
     _NavDef(icon: Icons.psychology_outlined,     activeIcon: Icons.psychology,       label: 'IA Stats',  color: Color(0xFFE040FB)), // Rose/Magenta cerveau
     _NavDef(icon: Icons.track_changes_outlined,  activeIcon: Icons.track_changes,    label: 'Mes Paris', color: Color(0xFF00BCD4)), // Cyan suivi
+    _NavDef(icon: Icons.science_outlined,        activeIcon: Icons.science,          label: 'Labo IA',   color: Color(0xFF00E5FF)), // Cyan — Labo Simulation
     _NavDef(icon: Icons.find_in_page_outlined,   activeIcon: Icons.find_in_page,     label: 'Audit',     color: Color(0xFFFFD700)), // Or — Audit IA
     _NavDef(icon: Icons.person_outline,          activeIcon: Icons.person,           label: 'Profil',    color: Color(0xFFB0BEC5)), // Argent neutre
   ];
@@ -381,7 +385,7 @@ class _NavItem extends StatelessWidget {
     final activeColor = def.color;
     final inactiveColor = const Color(0xFF6B7B8A); // gris bleuté discret
 
-    // Badge orange sur Mes Paris (index 6) — Audit est à l'index 7, Profil à 8
+    // Badge orange sur Mes Paris (index 6) — Labo=7, Audit=8, Profil=9
     final isMesParis = index == 6;
     final nbParisEnAttente = isMesParis
         ? context.select<PmuProvider, int>(
