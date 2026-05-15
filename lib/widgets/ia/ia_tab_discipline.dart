@@ -361,8 +361,8 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
             ),
             indicatorSize: TabBarIndicatorSize.tab,
             dividerColor: Colors.transparent,
-            labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-            unselectedLabelStyle: const TextStyle(fontSize: 13),
+            labelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            unselectedLabelStyle: const TextStyle(fontSize: 15),
             tabs: const [
               Tab(text: '🏇 Plat'),
               Tab(text: '🔄 Trot'),
@@ -480,7 +480,7 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
               child: const Column(
                 children: [
                   Text('📤', style: TextStyle(fontSize: 18)),
-                  Text('Export', style: TextStyle(color: Color(0xFFFFD700), fontSize: 9)),
+                  Text('Export', style: TextStyle(color: Color(0xFFFFD700), fontSize: 15)),
                 ],
               ),
             ),
@@ -493,11 +493,11 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
   Widget _statChip(String emoji, String val, String label) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Text(emoji, style: const TextStyle(fontSize: 12)),
+      Text(emoji, style: const TextStyle(fontSize: 14)),
       const SizedBox(width: 3),
-      Text(val,   style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+      Text(val,   style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
       const SizedBox(width: 2),
-      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
     ],
   );
 
@@ -518,7 +518,7 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
           child: Text(
             'Échantillon faible ($nb courses avec résultat). '
             'Les résultats sont indicatifs — interprétez avec précaution.',
-            style: const TextStyle(color: Color(0xFFFF9800), fontSize: 12),
+            style: const TextStyle(color: Color(0xFFFF9800), fontSize: 14),
           ),
         ),
       ],
@@ -531,15 +531,15 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(titre, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-        Text(sous,  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        Text(titre, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+        Text(sous,  style: const TextStyle(color: Colors.white38, fontSize: 14)),
       ],
     ),
   );
 
   Widget _vide(String msg) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-    child: Text(msg, style: const TextStyle(color: Colors.white38, fontSize: 12, fontStyle: FontStyle.italic)),
+    child: Text(msg, style: const TextStyle(color: Colors.white38, fontSize: 14, fontStyle: FontStyle.italic)),
   );
 
   // ── Tableau utilité ───────────────────────────────────────────────────────
@@ -579,7 +579,7 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
           Expanded(
             flex: 4,
             child: Text(abrev,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -594,7 +594,7 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
             flex: 3,
             child: Text(
               c.diagnostic,
-              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
+              style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold),
               textAlign: TextAlign.right,
               overflow: TextOverflow.ellipsis,
             ),
@@ -623,9 +623,9 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
 
   Widget _lItem(String e, String s, String l) => Column(
     children: [
-      Text(e, style: const TextStyle(fontSize: 12)),
-      Text(s, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-      Text(l, style: const TextStyle(color: Colors.white54, fontSize: 9)),
+      Text(e, style: const TextStyle(fontSize: 14)),
+      Text(s, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+      Text(l, style: const TextStyle(color: Colors.white54, fontSize: 15)),
     ],
   );
 
@@ -670,32 +670,32 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
       ),
       child: Row(
         children: [
-          SizedBox(width: 24, child: Text(emoji, style: const TextStyle(fontSize: 13))),
+          SizedBox(width: 24, child: Text(emoji, style: const TextStyle(fontSize: 15))),
           Expanded(
             flex: 3,
             child: Text(_abrev(p.labelA),
-              style: const TextStyle(color: Colors.white, fontSize: 12),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           Expanded(
             flex: 3,
             child: Text(_abrev(p.labelB),
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           SizedBox(
             width: 48,
             child: Text(rStr,
-              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+              style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
               textAlign: TextAlign.center,
             ),
           ),
           Expanded(
             flex: 3,
             child: Text(interp,
-              style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 11),
+              style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 14),
               textAlign: TextAlign.right,
               overflow: TextOverflow.ellipsis,
             ),
@@ -841,7 +841,7 @@ class _TH extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold),
+    style: const TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold),
     textAlign: right ? TextAlign.right : center ? TextAlign.center : TextAlign.left,
   );
 }
@@ -857,7 +857,7 @@ class _TV extends StatelessWidget {
     width: 42,
     child: Text(
       text,
-      style: TextStyle(color: color, fontSize: 12, fontWeight: bold ? FontWeight.bold : FontWeight.normal),
+      style: TextStyle(color: color, fontSize: 14, fontWeight: bold ? FontWeight.bold : FontWeight.normal),
       textAlign: TextAlign.center,
     ),
   );

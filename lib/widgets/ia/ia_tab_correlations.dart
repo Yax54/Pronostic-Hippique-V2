@@ -311,7 +311,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
               Text(
                 'Il faut au moins 10 partants avec des scores variés\npour calculer les corrélations.\n\n'
                 'Critères vivants détectés : ${_critersVivants.length}/19',
-                style: const TextStyle(color: Colors.white54, fontSize: 13),
+                style: const TextStyle(color: Colors.white54, fontSize: 15),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -374,7 +374,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
               Expanded(
                 child: Text(
                   'Corrélations de Pearson — $_nbCourses courses · $_nbPartants partants',
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ),
               // Bouton export
@@ -395,7 +395,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
           const SizedBox(height: 6),
           Text(
             '${_critersVivants.length} critères vivants analysés · ${_paires.length} paires calculées',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: const TextStyle(color: Colors.white54, fontSize: 14),
           ),
           const SizedBox(height: 8),
           // Résumé par niveau
@@ -421,7 +421,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
       borderRadius: BorderRadius.circular(8),
       border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
-    child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+    child: Text(label, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
   );
 
   // ── Légende ───────────────────────────────────────────────────────────────
@@ -447,8 +447,8 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
   Widget _legendeItem(String emoji, String seuil, String label) => Column(
     children: [
       Text(emoji, style: const TextStyle(fontSize: 14)),
-      Text(seuil, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9), textAlign: TextAlign.center),
+      Text(seuil, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 15), textAlign: TextAlign.center),
     ],
   );
 
@@ -464,10 +464,10 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
       child: const Row(
         children: [
           SizedBox(width: 28), // emoji
-          Expanded(flex: 3, child: Text('Critère A',   style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold))),
-          Expanded(flex: 3, child: Text('Critère B',   style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold))),
-          SizedBox(width: 52, child: Text('r',          style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-          Expanded(flex: 3, child: Text('Interprétation', style: TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.right)),
+          Expanded(flex: 3, child: Text('Critère A',   style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold))),
+          Expanded(flex: 3, child: Text('Critère B',   style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold))),
+          SizedBox(width: 52, child: Text('r',          style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text('Interprétation', style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold), textAlign: TextAlign.right)),
         ],
       ),
     );
@@ -508,7 +508,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
             flex: 3,
             child: Text(
               abrevA,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -517,7 +517,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
             flex: 3,
             child: Text(
               abrevB,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -528,7 +528,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
               rStr,
               style: TextStyle(
                 color: color,
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: FontWeight.bold,
                 fontFamily: 'monospace',
               ),
@@ -540,7 +540,7 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
             flex: 3,
             child: Text(
               interp,
-              style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 11),
+              style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 14),
               textAlign: TextAlign.right,
               overflow: TextOverflow.ellipsis,
             ),

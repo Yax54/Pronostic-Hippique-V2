@@ -251,7 +251,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
               SizedBox(height: 8),
               Text(
                 'L\'audit nécessite des courses avec résultats réels enregistrés.',
-                style: TextStyle(color: Colors.white54, fontSize: 13),
+                style: TextStyle(color: Colors.white54, fontSize: 15),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -270,13 +270,13 @@ class _IaTabAuditState extends State<IaTabAudit> {
               Expanded(
                 child: Text(
                   '$_nbCourses courses • $_nbPartants partants analysés',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
                 ),
               ),
               ElevatedButton.icon(
                 onPressed: _exporterJpeg,
                 icon: const Icon(Icons.share, size: 15),
-                label: const Text('Export', style: TextStyle(fontSize: 13)),
+                label: const Text('Export', style: TextStyle(fontSize: 15)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFFD700),
                   foregroundColor: Colors.black,
@@ -336,7 +336,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
                           '🔍 Lecture seule — aucun poids modifié.\n'
                           'Top3 = chevaux arrivés 1er/2e/3e • HorsTop5 = arrivés 6e et au-delà.\n'
                           'Delta positif = le critère discrimine bien les bons chevaux.',
-                          style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.5),
+                          style: TextStyle(color: Colors.white38, fontSize: 14, height: 1.5),
                         ),
                       ),
                     ],
@@ -356,7 +356,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
       children: [
         Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
       ],
     );
   }
@@ -371,7 +371,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
       ),
       child: const Row(
         children: [
-          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold))),
+          Expanded(flex: 5, child: Text('Critère', style: TextStyle(color: Color(0xFFFFD700), fontSize: 15, fontWeight: FontWeight.bold))),
           SizedBox(width: 6),
           _ColHeader('Top3'),
           SizedBox(width: 6),
@@ -379,7 +379,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
           SizedBox(width: 6),
           _ColHeader('Delta'),
           SizedBox(width: 6),
-          Expanded(flex: 3, child: Text('Diagnostic', style: TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text('Diagnostic', style: TextStyle(color: Color(0xFFFFD700), fontSize: 15, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -404,7 +404,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
             flex: 5,
             child: Text(
               r.label,
-              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w600),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -434,7 +434,7 @@ class _IaTabAuditState extends State<IaTabAudit> {
               ),
               child: Text(
                 diag,
-                style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+                style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -459,7 +459,7 @@ class _ColHeader extends StatelessWidget {
       width: 42,
       child: Text(
         text,
-        style: const TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold),
+        style: const TextStyle(color: Color(0xFFFFD700), fontSize: 15, fontWeight: FontWeight.bold),
         textAlign: TextAlign.center,
       ),
     );
@@ -480,7 +480,7 @@ class _ValCell extends StatelessWidget {
         text,
         style: TextStyle(
           color: color,
-          fontSize: 13,
+          fontSize: 15,
           fontWeight: bold ? FontWeight.bold : FontWeight.normal,
         ),
         textAlign: TextAlign.center,

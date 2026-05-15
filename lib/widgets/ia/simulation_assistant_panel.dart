@@ -484,15 +484,16 @@ class SimulationAssistantPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Ligne 1 : titre + badge ──────────────────────────────────
           Row(
             children: [
               Icon(Icons.verified_outlined, color: color, size: 18),
               const SizedBox(width: 8),
-              Text('Score de confiance',
-                style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Text('$score / 100',
-                style: TextStyle(color: color, fontSize: 24, fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Text('Score de confiance',
+                  style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis),
+              ),
               const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -501,9 +502,15 @@ class SimulationAssistantPanel extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(label,
-                  style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700)),
+                  style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
               ),
             ],
+          ),
+          const SizedBox(height: 6),
+          // ── Ligne 2 : score centré ───────────────────────────────────
+          Center(
+            child: Text('$score / 100',
+              style: TextStyle(color: color, fontSize: 28, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 8),
           ClipRRect(

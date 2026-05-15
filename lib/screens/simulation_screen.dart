@@ -16,6 +16,7 @@
 //  • Renommage "Enregistrer comme piste" + sous-texte sécurité
 // ═══════════════════════════════════════════════════════════════════════════
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -23,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/simulation_models.dart';
 import '../models/simulation_candidate_model.dart';
@@ -126,6 +128,9 @@ class _SimulationScreenState extends State<SimulationScreen> {
   static const Color _vert  = Color(0xFF00E676);
   static const Color _rouge = Color(0xFFEF5350);
 
+  // Clé de persistance état Labo
+  static const _kEtatLabo = 'labo_ia_etat_v1';
+
   // ── Init ──────────────────────────────────────────────────────────────────
   @override
   void initState() {
@@ -133,18 +138,62 @@ class _SimulationScreenState extends State<SimulationScreen> {
     _tousLesCriters = _svc.critersVivants();
     _chargerCandidats();
 
-    // Pré-remplissage si "Rejouer" depuis Mes pistes
-    if (widget.preloadDiscipline != null) {
-      _params = _params.copyWith(discipline: widget.preloadDiscipline!);
-    }
-    if (widget.preloadCoefficients != null) {
-      for (final e in widget.preloadCoefficients!.entries) {
-        if (_tousLesCriters.contains(e.key) && (e.value - 1.0).abs() > 0.01) {
-          _mults[e.key]       = e.value;
-          _critersActifs.add(e.key);
+    // Pré-remplissage depuis "Rejouer" (priorité sur l'état sauvegardé)
+    if (widget.preloadDiscipline != null || widget.preloadCoefficients != null) {
+      if (widget.preloadDiscipline != null) {
+        _params = _params.copyWith(discipline: widget.preloadDiscipline!);
+      }
+      if (widget.preloadCoefficients != null) {
+        for (final e in widget.preloadCoefficients!.entries) {
+          if (_tousLesCriters.contains(e.key) && (e.value - 1.0).abs() > 0.01) {
+            _mults[e.key]       = e.value;
+            _critersActifs.add(e.key);
+          }
         }
       }
+    } else {
+      // Restaurer l'état précédent (discipline + critères)
+      _restaurerEtat();
     }
+  }
+
+  // ── Persistance état Labo ─────────────────────────────────────────────────
+  Future<void> _sauvegarderEtat() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final etat = <String, dynamic>{
+        'discipline': _params.discipline,
+        'mults': _mults,
+        'actifs': _critersActifs.toList(),
+      };
+      await prefs.setString(_kEtatLabo, json.encode(etat));
+    } catch (_) {}
+  }
+
+  Future<void> _restaurerEtat() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw   = prefs.getString(_kEtatLabo);
+      if (raw == null) return;
+      final etat  = json.decode(raw) as Map<String, dynamic>;
+      final disc  = etat['discipline'] as String? ?? 'Toutes';
+      final multsRaw = (etat['mults'] as Map<String, dynamic>?) ?? {};
+      final actifsRaw = (etat['actifs'] as List<dynamic>?) ?? [];
+      if (!mounted) return;
+      setState(() {
+        _params = _params.copyWith(discipline: disc);
+        for (final e in multsRaw.entries) {
+          if (_tousLesCriters.contains(e.key)) {
+            _mults[e.key] = (e.value as num).toDouble();
+          }
+        }
+        for (final k in actifsRaw) {
+          if (_tousLesCriters.contains(k as String)) {
+            _critersActifs.add(k);
+          }
+        }
+      });
+    } catch (_) {}
   }
 
   @override
@@ -220,6 +269,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
       _showResult = false;
       _resultat   = null;
     });
+    _sauvegarderEtat();
   }
 
   // ── Appliquer preset ──────────────────────────────────────────────────────
@@ -232,7 +282,6 @@ class _SimulationScreenState extends State<SimulationScreen> {
       _critersActifs.clear();
       _showResult = false;
       _resultat   = null;
-      // Ajuster la discipline si besoin
       if (p.discipline != 'Toutes') {
         _params = _params.copyWith(discipline: p.discipline);
       }
@@ -243,6 +292,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
         }
       }
     });
+    _sauvegarderEtat();
   }
 
   // ── Test prudent / agressif depuis l'assistant ────────────────────────────
@@ -287,6 +337,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
       _mults[k]      = double.parse(val.toStringAsFixed(2));
       ctrl.text      = val.toStringAsFixed(2);
     });
+    _sauvegarderEtat();
   }
 
   // ── Export PNG page entière ★ v10.33 ──────────────────────────────────────
@@ -500,6 +551,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
     if (choix != null && mounted) {
       setState(() => _critersActifs.add(choix));
+      _sauvegarderEtat();
     }
   }
 
@@ -630,10 +682,13 @@ class _SimulationScreenState extends State<SimulationScreen> {
             selectedColor: _gold,
             backgroundColor: Colors.white.withValues(alpha: 0.08),
             side: BorderSide(color: sel ? _gold : Colors.white24),
-            onSelected: (_) => setState(() {
-              _params = _params.copyWith(discipline: d);
-              _showResult = false;
-            }),
+            onSelected: (_) {
+              setState(() {
+                _params = _params.copyWith(discipline: d);
+                _showResult = false;
+              });
+              _sauvegarderEtat();
+            },
           );
         }).toList(),
       ),
@@ -866,151 +921,150 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
-  // ── Slider + champ saisie manuelle ★ v10.32 ──────────────────────────────
+  // ── Critère : saisie manuelle seule (sans slider) ★ v10.36 ──────────────
+  // • Croix de suppression TOUJOURS visible (fix : avant masquée si modifié)
+  // • Boutons − / + pas de 0.05 pour ajustement rapide
+  // • Champ texte libre + OK pour valeur précise
   Widget _buildSliderWithInput(String k) {
-    final val   = _mults[k] ?? 1.0;
-    final label = kLabelsSimu[k] ?? k;
+    final val        = _mults[k] ?? 1.0;
+    final label      = kLabelsSimu[k] ?? k;
     final isModified = (val - 1.0).abs() > 0.01;
-    final color = val > 1.05
-        ? _vert
-        : val < 0.95
-            ? _rouge
-            : Colors.white54;
-    final ctrl  = _ctrlFor(k);
-    final erreur = _textErrors[k];
+    final color      = val > 1.05 ? _vert : val < 0.95 ? _rouge : Colors.white54;
+    final ctrl       = _ctrlFor(k);
+    final erreur     = _textErrors[k];
+
+    void supprimer() => setState(() {
+      _mults.remove(k);
+      _critersActifs.remove(k);
+      _textCtrls[k]?.dispose();
+      _textCtrls.remove(k);
+      _textErrors.remove(k);
+      _sauvegarderEtat();
+    });
+
+    void ajuster(double delta) {
+      final nv = (val + delta).clamp(0.50, 2.00);
+      final arrondi = double.parse(nv.toStringAsFixed(2));
+      setState(() {
+        _mults[k]       = arrondi;
+        ctrl.text       = arrondi.toStringAsFixed(2);
+        _textErrors[k]  = null;
+      });
+      _sauvegarderEtat();
+    }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.03),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isModified
-                ? color.withValues(alpha: 0.25)
+                ? color.withValues(alpha: 0.30)
                 : Colors.white.withValues(alpha: 0.06),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            // ── Ligne label + bouton supprimer ─────────────────────────
-            Row(
-              children: [
-                if (!isModified)
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      _mults.remove(k);
-                      _critersActifs.remove(k);
-                      _textCtrls[k]?.dispose();
-                      _textCtrls.remove(k);
-                      _textErrors.remove(k);
-                    }),
-                    child: const Padding(
-                      padding: EdgeInsets.only(right: 6),
-                      child: Icon(Icons.close, size: 15, color: Colors.white24),
-                    ),
-                  )
-                else
-                  const SizedBox(width: 21),
-                Text(label, style: TextStyle(
-                  color: isModified ? Colors.white : Colors.white54,
-                  fontSize: 16,
-                  fontWeight: isModified ? FontWeight.w600 : FontWeight.normal,
-                )),
-                const Spacer(),
-                // Valeur actuelle affichée à droite
-                Text('x${val.toStringAsFixed(2)}',
-                  style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            const SizedBox(height: 4),
-
-            // ── Slider ─────────────────────────────────────────────────
-            SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                activeTrackColor:   color,
-                thumbColor:         color,
-                inactiveTrackColor: Colors.white12,
-                overlayColor:       color.withValues(alpha: 0.15),
-                trackHeight:        4,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-              ),
-              child: Slider(
-                value:     val,
-                min:       0.5,
-                max:       2.0,
-                divisions: 30,
-                onChanged: (v) {
-                  setState(() {
-                    _mults[k]  = v;
-                    ctrl.text  = v.toStringAsFixed(2);
-                    _textErrors[k] = null;
-                  });
-                },
+            // ── Croix suppression — TOUJOURS visible ───────────────
+            GestureDetector(
+              onTap: supprimer,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: Icon(Icons.close, size: 18,
+                  color: isModified ? _rouge.withValues(alpha: 0.7) : Colors.white24),
               ),
             ),
 
-            // ── Saisie manuelle ★ v10.32 ───────────────────────────────
-            Row(
+            // ── Label ──────────────────────────────────────────────
+            Expanded(
+              child: Text(label, style: TextStyle(
+                color:      isModified ? Colors.white : Colors.white54,
+                fontSize:   15,
+                fontWeight: isModified ? FontWeight.w600 : FontWeight.normal,
+              )),
+            ),
+
+            // ── Bouton − ───────────────────────────────────────────
+            _btnAjust('−', () => ajuster(-0.05), color),
+            const SizedBox(width: 6),
+
+            // ── Champ valeur ───────────────────────────────────────
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const Text('Coefficient : ',
-                  style: TextStyle(color: Colors.white54, fontSize: 14)),
                 SizedBox(
-                  width: 72,
-                  height: 34,
+                  width: 68,
+                  height: 36,
                   child: TextField(
                     controller: ctrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                     decoration: InputDecoration(
-                      isDense:       true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      isDense:        true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
                       enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: color.withValues(alpha: 0.4)),
+                        borderSide: BorderSide(color: color.withValues(alpha: 0.45)),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderSide: BorderSide(color: color),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      errorBorder: OutlineInputBorder(
-                        borderSide: const BorderSide(color: _rouge),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
                     ),
-                    onSubmitted: (_) => _appliquerSaisie(k),
+                    onSubmitted: (_) { _appliquerSaisie(k); _sauvegarderEtat(); },
                   ),
                 ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: color,
-                    side: BorderSide(color: color.withValues(alpha: 0.6)),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  onPressed: () => _appliquerSaisie(k),
-                  child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                ),
-                if (erreur != null) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(erreur,
-                      style: const TextStyle(color: _rouge, fontSize: 12)),
-                  ),
-                ],
+                if (erreur != null)
+                  Text(erreur,
+                    style: const TextStyle(color: _rouge, fontSize: 11),
+                    textAlign: TextAlign.center),
               ],
+            ),
+            const SizedBox(width: 6),
+
+            // ── Bouton + ───────────────────────────────────────────
+            _btnAjust('+', () => ajuster(0.05), color),
+            const SizedBox(width: 8),
+
+            // ── Bouton OK ──────────────────────────────────────────
+            GestureDetector(
+              onTap: () { _appliquerSaisie(k); _sauvegarderEtat(); },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: color.withValues(alpha: 0.45)),
+                ),
+                child: Text('OK',
+                  style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _btnAjust(String symbol, VoidCallback onTap, Color color) =>
+    GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 32, height: 36,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        alignment: Alignment.center,
+        child: Text(symbol,
+          style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+      ),
+    );
 
   // ── Critères inactifs (repliable) ★ v10.32 ────────────────────────────────
   Widget _buildCriteresInactifs() {
