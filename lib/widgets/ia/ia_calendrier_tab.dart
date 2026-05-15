@@ -679,7 +679,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             child: Text('★',
               style: TextStyle(
                 color: _cGold,
-                fontSize: 8,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
             ),

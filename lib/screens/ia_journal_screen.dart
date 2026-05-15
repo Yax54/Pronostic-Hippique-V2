@@ -352,7 +352,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
         SizedBox(width: compact ? 8 : 12),
         Expanded(
           child: Container(
-            padding: EdgeInsets.all(compact ? 10 : 14),
+            padding: EdgeInsets.all(compact ? 14 : 14),
             decoration: BoxDecoration(
               color: _card,
               borderRadius: BorderRadius.circular(14),
@@ -365,7 +365,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
               Row(children: [
                 Expanded(child: Text(jourStr, style: TextStyle(
                     color: isLatest ? Colors.white : Colors.white70,
-                    fontSize: compact ? 13 : 16,
+                    fontSize: compact ? 16 : 18,
                     fontWeight: FontWeight.bold))),
                 if (isLatest)
                   Container(
@@ -375,7 +375,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text('Dernière entrée',
-                        style: TextStyle(color: couleur, fontSize: 12,
+                        style: TextStyle(color: couleur, fontSize: 14,
                             fontWeight: FontWeight.bold)),
                   ),
               ]),
@@ -386,7 +386,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
               ],
               Text(texte, style: TextStyle(
                   color: Colors.white,
-                  fontSize: compact ? 13 : 17,
+                  fontSize: compact ? 16 : 18,
                   height: 1.55,
                   fontStyle: FontStyle.italic)),
               SizedBox(height: compact ? 8 : 12),
@@ -465,9 +465,9 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
     ]);
 
   Widget _stat(String emoji, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
-    Text(emoji, style: const TextStyle(fontSize: 15)),
+    Text(emoji, style: const TextStyle(fontSize: 16)),
     const SizedBox(width: 5),
-    Text(label, style: const TextStyle(color: Colors.white54, fontSize: 14)),
+    Text(label, style: const TextStyle(color: Colors.white54, fontSize: 15)),
   ]);
 
   Color _couleurTaux(double taux) {

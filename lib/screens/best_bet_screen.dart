@@ -12,6 +12,7 @@ import '../services/zone_turf_service.dart';
 import '../services/data_refresh_service.dart';
 import '../services/alert_service.dart';
 import '../services/ia_memory_service.dart' show IaMemoryService;
+import '../services/ia_memory_models.dart' show PremiumPronosticDuJour;
 import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
@@ -29,6 +30,8 @@ class _BetOpp {
   final String typePari;
   final String conseil;
   final bool estTerminee;        // true si l'heure de départ est passée
+  // ★ v10.37 : numéros conseillés dans l'ordre IA (pour validation étoile ⭐ v2)
+  final List<String> numeros;
 
   const _BetOpp({
     required this.course,
@@ -39,6 +42,7 @@ class _BetOpp {
     required this.scoreGain,
     required this.typePari,
     required this.conseil,
+    required this.numeros,
     required this.estTerminee,
   });
 }
@@ -97,7 +101,7 @@ class _BestBetScreenState extends State<BestBetScreen>
     }
   }
 
-  // ★ v10.37 : Enregistrer les courseKeys des 3 Best Bets (Top Équilibre, Plus Sûr, Plus Rentable)
+  // ★ v10.37 v2 : Enregistrer les 3 Best Bets avec courseKey + typePari + numéros
   void _enregistrerBestBetsPremium() {
     try {
       final opps = _calculerOpportunites();
@@ -115,7 +119,7 @@ class _BestBetScreenState extends State<BestBetScreen>
         ..sort((a, b) => b.scoreGain.compareTo(a.scoreGain));
       final plusRentable = trieRentable.isNotEmpty ? trieRentable.first : null;
 
-      final keys = <String>[];
+      final premiums = <PremiumPronosticDuJour>[];
       for (final opp in [topEquilibre, plusSur, plusRentable]) {
         if (opp == null) continue;
         final key = buildCourseKey(
@@ -123,10 +127,15 @@ class _BestBetScreenState extends State<BestBetScreen>
           numCourse:   opp.course.numCourse,
           dateStr:     opp.course.dateStr,
         );
-        if (key.isNotEmpty) keys.add(key);
+        if (key.isEmpty) continue;
+        premiums.add(PremiumPronosticDuJour(
+          courseKey: key,
+          typePari:  opp.typePari,
+          numeros:   opp.numeros,
+        ));
       }
-      if (keys.isNotEmpty) {
-        IaMemoryService.instance.enregistrerParisPremiumDuJour(keys);
+      if (premiums.isNotEmpty) {
+        IaMemoryService.instance.enregistrerPronosticsPremiumDuJour(premiums);
       }
     } catch (_) {}
   }
@@ -220,6 +229,24 @@ class _BestBetScreenState extends State<BestBetScreen>
           conseil = 'Course très ouverte (${scoreConf.round()}/100). Mise minimale ou abstention conseillée.';
         }
 
+        // ★ v10.37 : Calculer les numéros conseillés selon le type de pari
+        final int nbNum = typePari == 'Quinté+'
+            ? 5
+            : typePari == 'Quarté+'
+                ? 4
+                : (typePari == 'Tiercé' ||
+                       typePari == 'Tiercé Ordre' ||
+                       typePari == 'Tiercé Désordre')
+                    ? 3
+                    : (typePari == 'Couplé Gagnant' ||
+                           typePari == 'Couplé Placé')
+                        ? 2
+                        : 1;
+        final numeros = sorted
+            .take(nbNum)
+            .map((p) => p.numero)
+            .toList();
+
         opps.add(_BetOpp(
           course: course,
           reunion: reunion,
@@ -229,6 +256,7 @@ class _BestBetScreenState extends State<BestBetScreen>
           scoreGain: scoreGainRaw,
           typePari: typePari,
           conseil: conseil,
+          numeros: numeros,
           estTerminee: course.heureDateTime.isBefore(DateTime.now()),
         ));
       }

@@ -128,6 +128,37 @@ class ScoresCriteres {
   }
 }
 
+// ─── ★ v10.37 : Pronostic premium du jour (étoile ⭐ calendrier) ─────────────
+// Stocke courseKey + typePari + numeros conseillés pour validation stricte.
+// Remplace le simple Set<String> _premiumCourseKeys (v1) par une liste typée (v2).
+class PremiumPronosticDuJour {
+  final String       courseKey;   // ex: '2025-07-01_R1C5'
+  final String       typePari;    // ex: 'Simple Gagnant', 'Quinté+'
+  final List<String> numeros;     // numéros conseillés dans l'ordre IA (ex: ['3','7','1'])
+
+  const PremiumPronosticDuJour({
+    required this.courseKey,
+    required this.typePari,
+    required this.numeros,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'courseKey': courseKey,
+    'typePari':  typePari,
+    'numeros':   numeros,
+  };
+
+  factory PremiumPronosticDuJour.fromJson(Map<String, dynamic> j) {
+    return PremiumPronosticDuJour(
+      courseKey: j['courseKey'] as String? ?? '',
+      typePari:  j['typePari']  as String? ?? '',
+      numeros: (j['numeros'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList(),
+    );
+  }
+}
+
 // ─── Modèle d'un pronostic enregistré ────────────────────────────────────────
 
 class IaPronostic {

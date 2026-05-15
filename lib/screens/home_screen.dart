@@ -8,6 +8,7 @@ import '../models/zt_models.dart';
 import '../services/data_refresh_service.dart';
 import '../services/ia_personality_service.dart';  // ★ v9.85
 import '../services/ia_memory_service.dart';       // ★ v9.89
+import '../services/ia_memory_models.dart' show PremiumPronosticDuJour; // ★ v10.37
 import '../widgets/ia/ia_bubble_widget.dart';       // ★ v9.85
 import '../widgets/ia/ia_speech_widget.dart';       // ★ v9.85
 import '../widgets/arrivee_reelle_widget.dart';
@@ -205,26 +206,59 @@ class _HomeScreenState extends State<HomeScreen> {
     final conseil   = _conseilIACached;
     final meilleur  = _meilleurPariCached;
 
-    // ★ v10.37 : Enregistrer les courseKeys des 2 paris premium de l'accueil
-    // (Conseil IA du Jour + Meilleur Pari du Jour) pour le calcul hasBestBet
-    final keyConseil  = conseil.course != null && conseil.reunion != null
-        ? buildCourseKey(
-            reunionCode: conseil.reunion!.code,
-            numCourse:   conseil.course!.numCourse,
-            dateStr:     conseil.course!.dateStr,
-          )
-        : '';
-    final keyMeilleur = meilleur.course != null && meilleur.reunion != null
-        ? buildCourseKey(
-            reunionCode: meilleur.reunion!.code,
-            numCourse:   meilleur.course!.numCourse,
-            dateStr:     meilleur.course!.dateStr,
-          )
-        : '';
-    if (keyConseil.isNotEmpty || keyMeilleur.isNotEmpty) {
-      await IaMemoryService.instance.enregistrerParisPremiumDuJour(
-        [keyConseil, keyMeilleur].where((k) => k.isNotEmpty).toList(),
+    // ★ v10.37 v2 : Enregistrer les 2 conseils premium de l'accueil
+    // avec courseKey + typePari + numéros exacts affichés dans le widget.
+    // → Validation stricte de l'étoile ⭐ calendrier (pas de fausse étoile).
+    final premiums = <PremiumPronosticDuJour>[];
+
+    // ── Conseil IA du Jour ──────────────────────────────────────────
+    if (conseil.course != null && conseil.reunion != null) {
+      final keyConseil = buildCourseKey(
+        reunionCode: conseil.reunion!.code,
+        numCourse:   conseil.course!.numCourse,
+        dateStr:     conseil.course!.dateStr,
       );
+      if (keyConseil.isNotEmpty) {
+        // typePari : chercher dans les pronostics IA enregistrés
+        final pronoConseil = IaMemoryService.instance.pronostics
+            .where((p) => p.courseKey == keyConseil)
+            .lastOrNull;
+        final typePariConseil = pronoConseil?.typePariConseille ?? '';
+        // Numéros : les N premiers top3 affichés dans le widget Conseil IA
+        final numerosConseil = conseil.top3.map((p) => p.numero).toList();
+        premiums.add(PremiumPronosticDuJour(
+          courseKey: keyConseil,
+          typePari:  typePariConseil,
+          numeros:   numerosConseil,
+        ));
+      }
+    }
+
+    // ── Meilleur Pari du Jour ───────────────────────────────────────
+    if (meilleur.course != null && meilleur.reunion != null &&
+        meilleur.cheval != null) {
+      final keyMeilleur = buildCourseKey(
+        reunionCode: meilleur.reunion!.code,
+        numCourse:   meilleur.course!.numCourse,
+        dateStr:     meilleur.course!.dateStr,
+      );
+      if (keyMeilleur.isNotEmpty) {
+        final pronoMeilleur = IaMemoryService.instance.pronostics
+            .where((p) => p.courseKey == keyMeilleur)
+            .lastOrNull;
+        final typePariMeilleur = pronoMeilleur?.typePariConseille ?? '';
+        // Numéros : le favori affiché dans le widget Meilleur Pari
+        final numerosMeilleur = [meilleur.cheval!.numero];
+        premiums.add(PremiumPronosticDuJour(
+          courseKey: keyMeilleur,
+          typePari:  typePariMeilleur,
+          numeros:   numerosMeilleur,
+        ));
+      }
+    }
+
+    if (premiums.isNotEmpty) {
+      await IaMemoryService.instance.enregistrerPronosticsPremiumDuJour(premiums);
     }
 
     // ★ v10.23 : recalcul immédiat + résumé Conseil IA matinal
@@ -707,7 +741,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Text('$nb',
                         style: const TextStyle(
                             color: Color(0xFF4CAF7D),
-                            fontSize: 16,
+                            fontSize: 18,
                             fontWeight: FontWeight.bold)),
                   ),
                 ),
