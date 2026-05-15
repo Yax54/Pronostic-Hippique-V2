@@ -31,7 +31,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
-        android:label="Pronostic Hippique"
+        android:label="Race Predictor"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -67,7 +67,7 @@
         <receiver
             android:name=".RacePredictorWidget"
             android:exported="true"
-            android:label="Pronostic Hippique">
+            android:label="Race Predictor">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
             </intent-filter>
@@ -124,6 +124,9 @@
         </intent>
     </queries>
 </manifest>
+
+
+
 
 
 
