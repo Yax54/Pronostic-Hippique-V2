@@ -1066,6 +1066,10 @@ class AlertService extends ChangeNotifier {
     final courses = _filtrerCoursesSelonCriteresConseils(reunions);
 
     for (final item in courses) {
+      // ★ v10.25 — Filtre périmètre : respecter scope favoris/suivies/toutes
+      final courseKey = '${item.reunion.code}C${item.course.numCourse}';
+      if (!_coursePasseFiltreByCourseKey(courseKey)) continue;
+
       final key = '${item.course.nom}_${item.reunion.lieu}';
       if (_conseilIANotifies.contains(key)) continue; // déjà notifié
 
@@ -1447,6 +1451,10 @@ class AlertService extends ChangeNotifier {
     // et pour lesquelles aucun pari n'a encore été enregistré
     if (_config.activerDerniereChance) {
       for (final item in _coursesMatchingConseils) {
+        // ★ v10.25 — Filtre périmètre : respecter scope favoris/suivies/toutes
+        final courseKeyDC = '${item.reunion.code}C${item.course.numCourse}';
+        if (!_coursePasseFiltreByCourseKey(courseKeyDC)) continue;
+
         final diffMin = item.course.heureDateTime.difference(now).inMinutes;
         // Fenêtre 25-35 min avant départ
         if (diffMin < 25 || diffMin > 35) continue;

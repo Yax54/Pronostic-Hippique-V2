@@ -153,14 +153,24 @@ class PmuApiService {
         final listeRapports = item['rapports'] as List<dynamic>? ?? [];
         for (final r in listeRapports) {
           final combinaison = r['combinaison'] as String? ?? '';
-          final dividende = (r['dividende'] as num?)?.toDouble() ?? 0.0;
-          // Le dividende PMU est pour 1€ misé (unité PourUnEuro)
-          // On normalise : si dividendeUnite = "PourUnEuro", on garde tel quel
-          // Si c'est pour 100 centimes, on divise par 100
-          final dividendeUnite = item['dividendeUnite'] as String? ?? 'PourUnEuro';
-          final dividendeNormalise = dividendeUnite == 'PourUnEuro'
-              ? dividende
-              : dividende / 100.0;
+
+          // ── Parsing dividende unifié ──────────────────────────────────────
+          // L'API PMU renvoie TOUJOURS le dividende en centimes d'euro
+          // dans 'dividendePourUnEuro' (ex: 210 = 2,10€ pour 1€ misé).
+          // Le champ 'dividende' (s'il existe) est parfois en centimes aussi.
+          // Règle : priorité à 'dividendePourUnEuro' / 100, sinon 'dividende' / 100.
+          // ⚠️ Ne JAMAIS lire le champ brut sans diviser par 100.
+          final rawDivPourUnEuro = r['dividendePourUnEuro'];
+          final rawDivLegacy     = r['dividende'];
+
+          double dividendeNormalise = 0.0;
+          if (rawDivPourUnEuro != null) {
+            // Champ officiel PMU : valeur en centimes → /100
+            dividendeNormalise = (rawDivPourUnEuro as num).toDouble() / 100.0;
+          } else if (rawDivLegacy != null) {
+            // Champ alternatif : également en centimes → /100
+            dividendeNormalise = (rawDivLegacy as num).toDouble() / 100.0;
+          }
 
           if (dividendeNormalise > 0) {
             rapports.add(RapportPmu(
