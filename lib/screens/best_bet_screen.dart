@@ -103,7 +103,9 @@ class _BestBetScreenState extends State<BestBetScreen>
       final opps = _calculerOpportunites();
       if (opps.isEmpty) return;
       // Top Équilibre = trié par scoreComposite → first
-      final topEquilibre = opps.isNotEmpty ? opps.first : null;
+      final trieComposite = List<_BetOpp>.from(opps)
+        ..sort((a, b) => b.scoreComposite.compareTo(a.scoreComposite));
+      final topEquilibre = trieComposite.isNotEmpty ? trieComposite.first : null;
       // Plus Sûr = trié par scoreConfiance → first
       final trieSur = List<_BetOpp>.from(opps)
         ..sort((a, b) => b.scoreConfiance.compareTo(a.scoreConfiance));
