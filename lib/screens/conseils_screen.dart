@@ -842,28 +842,29 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       }
     };
 
-    return ListView.builder(
-      // ★ fix fond gris : ClampingScrollPhysics bloque l'overscroll Android
-      // qui révélait le fond du Scaffold parent (gris Material3)
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
-      itemCount: _coursesAvecPartants.length,
-      itemBuilder: (ctx, i) {
-        final item = _coursesAvecPartants[i];
-        final terminee = item.course.heureDateTime.isBefore(DateTime.now());
-        final sansCote = item.course.partants.isNotEmpty &&
-            item.course.partants.every((p) => p.coteDecimale >= 99);
-        return _ConseilCard(
-          course: item.course,
-          reunion: item.reunion,
-          rang: i + 1,
-          cotesDisponibles: !sansCote,
-          onTap: () => Navigator.push(ctx, MaterialPageRoute(
-            builder: (_) => CourseDetailScreen(course: item.course, reunion: item.reunion),
-          )),
-          onBet: terminee ? null : () => ouvrirPari(item.course, item.reunion),
-        );
-      },
+    return Container(
+      color: const Color(0xFF0D1B2A),
+      child: ListView.builder(
+        physics: const ClampingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
+        itemCount: _coursesAvecPartants.length,
+        itemBuilder: (ctx, i) {
+          final item = _coursesAvecPartants[i];
+          final terminee = item.course.heureDateTime.isBefore(DateTime.now());
+          final sansCote = item.course.partants.isNotEmpty &&
+              item.course.partants.every((p) => p.coteDecimale >= 99);
+          return _ConseilCard(
+            course: item.course,
+            reunion: item.reunion,
+            rang: i + 1,
+            cotesDisponibles: !sansCote,
+            onTap: () => Navigator.push(ctx, MaterialPageRoute(
+              builder: (_) => CourseDetailScreen(course: item.course, reunion: item.reunion),
+            )),
+            onBet: terminee ? null : () => ouvrirPari(item.course, item.reunion),
+          );
+        },
+      ),
     );
   }
 
