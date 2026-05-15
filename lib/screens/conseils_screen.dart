@@ -842,14 +842,16 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       }
     };
 
+    final courses = _coursesAvecPartants;
+
     return ColoredBox(
       color: const Color(0xFF0D1B2A),
       child: ListView.builder(
         physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
-        itemCount: _coursesAvecPartants.length,
+        itemCount: courses.length,
         itemBuilder: (ctx, i) {
-          final item = _coursesAvecPartants[i];
+          final item = courses[i];
           final terminee = item.course.heureDateTime.isBefore(DateTime.now());
           final sansCote = item.course.partants.isNotEmpty &&
               item.course.partants.every((p) => p.coteDecimale >= 99);
