@@ -319,7 +319,11 @@ class ZoneTurfService {
         final musiqueGlobale = pm['musique'] as String? ?? '';
 
         // D) JOURS DE REPOS — calculer depuis dateLastPerf
-        //    PMU expose parfois 'dateDernierePerformance' ou 'nbJoursAbsence'
+        //    Ordre de priorité :
+        //    1. nbJoursAbsence (champ direct PMU)
+        //    2. dateDernierePerformance (champ date ISO)
+        //    3. Extraction depuis performances[] → champ date de la plus récente
+        //    4. Extraction depuis musique PMU datée (format "JJ/MM/YYYY:musique")
         int joursRepos = 0;
         final nbJoursAbsence = pm['nbJoursAbsence'];
         if (nbJoursAbsence is int && nbJoursAbsence > 0) {
@@ -327,13 +331,53 @@ class ZoneTurfService {
         } else if (nbJoursAbsence is num && nbJoursAbsence > 0) {
           joursRepos = nbJoursAbsence.toInt();
         } else {
-          // Essayer depuis dateDernierePerformance si dispo
+          // Priorité 2 : dateDernierePerformance
           final dateDernPerf = pm['dateDernierePerformance'] as String?;
           if (dateDernPerf != null && dateDernPerf.isNotEmpty) {
             try {
               final parsed = DateTime.parse(dateDernPerf);
               joursRepos = DateTime.now().difference(parsed).inDays.abs();
             } catch (_) {}
+          }
+
+          // Priorité 3 : extraire la date la plus récente dans performances[]
+          if (joursRepos == 0) {
+            final perfsRaw = pm['performances'] ?? pm['historiquePerformances'];
+            if (perfsRaw is List && perfsRaw.isNotEmpty) {
+              DateTime? plusRecente;
+              for (final perf in perfsRaw) {
+                if (perf is! Map) continue;
+                // Champs possibles : 'date', 'datePerformance', 'jour'
+                final dateRaw = perf['date'] ?? perf['datePerformance'] ?? perf['jour'];
+                if (dateRaw == null) continue;
+                DateTime? dt;
+                if (dateRaw is String && dateRaw.isNotEmpty) {
+                  try { dt = DateTime.parse(dateRaw); } catch (_) {}
+                  // Format FR : "JJ/MM/YYYY"
+                  if (dt == null && dateRaw.contains('/')) {
+                    try {
+                      final parts = dateRaw.split('/');
+                      if (parts.length == 3) {
+                        dt = DateTime(
+                          int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0])
+                        );
+                      }
+                    } catch (_) {}
+                  }
+                } else if (dateRaw is int) {
+                  // Timestamp epoch millisecondes
+                  try { dt = DateTime.fromMillisecondsSinceEpoch(dateRaw); } catch (_) {}
+                }
+                if (dt != null && (plusRecente == null || dt.isAfter(plusRecente))) {
+                  plusRecente = dt;
+                }
+              }
+              if (plusRecente != null) {
+                final jours = DateTime.now().difference(plusRecente).inDays.abs();
+                // Sanity check : entre 1 et 500 jours (évite les dates aberrantes)
+                if (jours >= 1 && jours <= 500) joursRepos = jours;
+              }
+            }
           }
         }
 

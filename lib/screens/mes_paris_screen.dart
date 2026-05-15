@@ -971,8 +971,9 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
           }
         });
       }
-      // Charger les dividendes PMU si course terminée depuis > 20 min
-      if (diff.inMinutes <= -20) {
+      // Charger les dividendes PMU si course terminée depuis > 5 min
+      // OU si le résultat est déjà connu (isGagne != null) — évite le délai de 20 min
+      if (diff.inMinutes <= -5 || course.isGagne != null) {
         _chargerRapportsPmu();
       }
     });

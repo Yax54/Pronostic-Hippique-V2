@@ -26,6 +26,8 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
   List<_CritereVitalite> _resultats = [];
   int _nbPartants = 0;
   bool _calcule = false;
+  // Couverture Repos/Fraîcheur : % de chevaux avec joursRepos connu
+  double _pctReposCouverture = 0.0;
 
   static const Map<String, String> _labels = {
     'f':  'A — Forme récente',
@@ -70,6 +72,9 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
     final Map<String, int> nbReel    = {};
     final Map<String, int> nbFallback = {};
     int total = 0;
+    // Couverture Repos : nbChevaux avec joursRepos > 0 dans les prono
+    int nbAvecRepos = 0;
+    int nbTotalChevaux = 0;
 
     for (final prono in pronostics) {
       for (final entry in prono.scoresCriteres.entries) {
@@ -85,6 +90,11 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
             nbReel[crit] = (nbReel[crit] ?? 0) + 1;
           }
         }
+        // Couverture Repos/Fraîcheur :
+        // repos != 50.0 = score calculé = donnée disponible
+        final reposScore = map['rp'];
+        nbTotalChevaux++;
+        if (reposScore != null && reposScore != 50.0) nbAvecRepos++;
         total++;
       }
     }
@@ -112,6 +122,9 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
       _resultats  = resultats;
       _nbPartants = total;
       _calcule    = true;
+      _pctReposCouverture = nbTotalChevaux > 0
+          ? (nbAvecRepos / nbTotalChevaux * 100)
+          : 0.0;
     });
   }
 
@@ -171,9 +184,34 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  '$_nbPartants partants analysés',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$_nbPartants partants analysés',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 2),
+                    // ── Couverture Repos/Fraîcheur ──────────────────────────
+                    Row(
+                      children: [
+                        const Text('💤 J — Repos : ',
+                            style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        Text(
+                          '${_pctReposCouverture.toStringAsFixed(0)}% de couverture',
+                          style: TextStyle(
+                            color: _pctReposCouverture >= 60
+                                ? const Color(0xFF00E676)
+                                : _pctReposCouverture >= 30
+                                    ? const Color(0xFFFFD700)
+                                    : const Color(0xFFEF5350),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
               ElevatedButton.icon(
