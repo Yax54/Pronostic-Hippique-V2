@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 import '../widgets/ia/ia_tab_audit.dart';
 import '../widgets/ia/ia_tab_correlations.dart';
 import '../widgets/ia/ia_tab_criteres_morts.dart';
+import '../widgets/ia/ia_tab_discipline.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AuditScreen — Section principale "Audit IA"
-// 3 sous-onglets :
-//   • 📊 19 Critères   (Top3 / HorsTop5 / Delta / Diagnostic)
-//   • 💀 Critères Morts (% fallback 50 par critère)
+// 4 sous-onglets :
+//   • 📊 19 Critères    (Top3 / HorsTop5 / Delta / Diagnostic)
+//   • 💀 Morts          (% fallback 50 par critère)
 //   • 🔗 Corrélations   (Pearson entre critères vivants)
+//   • 🏇 Discipline     (audit séparé Plat / Trot / Obstacle)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AuditScreen extends StatelessWidget {
@@ -18,7 +20,7 @@ class AuditScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         backgroundColor: const Color(0xFF0D1B2A),
         appBar: AppBar(
@@ -35,10 +37,10 @@ class AuditScreen extends StatelessWidget {
               ),
               child: TabBar(
                 labelStyle: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.bold,
                 ),
-                unselectedLabelStyle: const TextStyle(fontSize: 12),
+                unselectedLabelStyle: const TextStyle(fontSize: 11),
                 labelColor: const Color(0xFFFFD700),
                 unselectedLabelColor: Colors.white54,
                 indicator: BoxDecoration(
@@ -51,10 +53,13 @@ class AuditScreen extends StatelessWidget {
                 ),
                 indicatorSize: TabBarIndicatorSize.tab,
                 dividerColor: Colors.transparent,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
                 tabs: const [
                   Tab(text: '📊 19 Critères'),
                   Tab(text: '💀 Morts'),
                   Tab(text: '🔗 Corrélations'),
+                  Tab(text: '🏇 Discipline'),
                 ],
               ),
             ),
@@ -65,6 +70,7 @@ class AuditScreen extends StatelessWidget {
             IaTabAudit(),
             IaTabCriteresMorts(),
             IaTabCorrelations(),
+            IaTabDiscipline(),
           ],
         ),
       ),
