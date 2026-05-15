@@ -220,29 +220,31 @@ class SimulationService {
   }
 
   // ── Dividende pour le calcul ROI ──────────────────────────────────────────
-  /// Pour l'IA actuelle (simu=false) : cote PMU enregistrée du favori IA
-  /// Pour la simulation (simu=true)  : cote PMU ou cote brute du favori simulé
+  /// ★ v10.31 : Utilise cotesPmuParNumero[favoriNumero] si disponible,
+  /// permettant au ROI simulé de fonctionner même quand le favori simulé
+  /// est différent du favori IA réel enregistré.
   ///
-  /// Parsing robuste : jamais de replaceAll(',','') → "2,10" devient 2.10
+  /// Priorité :
+  ///   1. cotesPmuParNumero[favoriNumero]   → dividende PMU officiel par cheval
+  ///   2. coteFavoriPmu (si même favori)    → fallback ancien comportement
+  ///   3. null → exclure du ROI (aucune donnée fiable)
   double? _dividendePourNumero(
     IaPronostic prono,
     String favoriNumero,
     {required bool simu}
   ) {
-    // Source 1 : coteFavoriPmu sur le pronostic (dividende PMU officiel enregistré)
-    // Disponible uniquement si favoriNumero == le favori IA réel enregistré
-    final favoriReel = prono.favoriIA;
-    if (!simu && favoriReel == favoriNumero && prono.coteFavoriPmu != null) {
-      final d = prono.coteFavoriPmu!;
-      if (d > 0 && d < 1000) return d; // sanity check
+    // Source 1 (★ v10.31) : cotesPmuParNumero — disponible pour TOUT cheval
+    // Rempli depuis E_SIMPLE_GAGNANT (rList complet) lors de l'analyse journée
+    final coteMap = prono.cotesPmuParNumero;
+    if (coteMap.isNotEmpty) {
+      final cote = coteMap[favoriNumero];
+      if (cote != null && cote > 1.0 && cote < 1000) return cote;
     }
 
-    // Pour la simulation : chercher la cote dans les scoresCriteres du cheval
-    // Le score de cote (clé 'c') est normalisé 0-100, pas une cote décimale.
-    // On ne peut pas en déduire une cote fiable → exclusion préférable.
-    // EXCEPTION : si c'est le même favori que le favori IA réel,
-    // on peut utiliser coteFavoriPmu.
-    if (simu && favoriReel == favoriNumero && prono.coteFavoriPmu != null) {
+    // Source 2 : coteFavoriPmu scalaire (fallback — favori IA uniquement)
+    // Compatible avec les pronostics antérieurs à v10.31
+    final favoriReel = prono.favoriIA;
+    if (favoriReel == favoriNumero && prono.coteFavoriPmu != null) {
       final d = prono.coteFavoriPmu!;
       if (d > 0 && d < 1000) return d;
     }
@@ -252,7 +254,13 @@ class SimulationService {
   }
 
   /// Retourne la cote décimale du favori (pour détection outsider)
+  /// ★ v10.31 : utilise cotesPmuParNumero si disponible
   double? _coteFavori(IaPronostic prono, String numero) {
+    final coteMap = prono.cotesPmuParNumero;
+    if (coteMap.isNotEmpty) {
+      final cote = coteMap[numero];
+      if (cote != null && cote > 1.0) return cote;
+    }
     if (prono.favoriIA == numero) return prono.coteFavoriPmu;
     return null;
   }

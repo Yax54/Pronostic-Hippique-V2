@@ -214,7 +214,7 @@ class _MainNavigationState extends State<MainNavigation> {
   }
 
   // ★ v10.26 : Onglets reordonnés + couleurs uniques par destination
-  // Ordre : Accueil | Conseils | Prog. | Courses | Best Bet | IA Stats | Mes Paris | Profil
+  // Ordre : 0=Accueil | 1=Conseils | 2=Programme | 3=Courses | 4=BestBet | 5=IAStats | 6=MesParis | 7=LaboIA | 8=Audit | 9=Profil
   static const List<_NavDef> _navItems = [
     _NavDef(icon: Icons.home_outlined,           activeIcon: Icons.home,             label: 'Accueil',   color: Color(0xFF4CAF7D)), // Vert app
     _NavDef(icon: Icons.auto_awesome_outlined,   activeIcon: Icons.auto_awesome,     label: 'Conseils',  color: Color(0xFF7C4DFF)), // Violet IA

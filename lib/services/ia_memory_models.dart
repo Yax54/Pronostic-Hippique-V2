@@ -187,6 +187,12 @@ class IaPronostic {
   // Permet un backtesting réaliste sans cotes fixes.
   double? coteFavoriPmu;
 
+  // ★ v10.31 : Cotes PMU Simple Gagnant par numéro de cheval.
+  // Rempli lors de l'enregistrement du résultat depuis E_SIMPLE_GAGNANT (rList complet).
+  // Format : { '1': 2.10, '3': 5.40, '7': 12.60, ... }
+  // Permet à la simulation de retrouver la cote de n'importe quel cheval choisi.
+  Map<String, double> cotesPmuParNumero;
+
   IaPronostic({
     required this.courseKey,
     required this.nomCourse,
@@ -210,6 +216,7 @@ class IaPronostic {
     this.precisionIA,
     this.favoriIaNom,
     this.coteFavoriPmu,
+    this.cotesPmuParNumero = const {},
   });
 
   String? get favoriIA {
@@ -246,6 +253,7 @@ class IaPronostic {
     'precisionIA': precisionIA,
     'favoriIaNom': favoriIaNom,
     'coteFavoriPmu': coteFavoriPmu,
+    'cotesPmuParNumero': cotesPmuParNumero,
   };
 
   factory IaPronostic.fromJson(Map<String, dynamic> j) {
@@ -287,6 +295,11 @@ class IaPronostic {
       precisionIA: (j['precisionIA'] as num?)?.toDouble(),
       favoriIaNom: j['favoriIaNom'] as String?,
       coteFavoriPmu: (j['coteFavoriPmu'] as num?)?.toDouble(),
+      cotesPmuParNumero: (() {
+        final raw = j['cotesPmuParNumero'] as Map<String, dynamic>?;
+        if (raw == null) return <String, double>{};
+        return raw.map((k, v) => MapEntry(k, (v as num).toDouble()));
+      })(),
     );
   }
 }

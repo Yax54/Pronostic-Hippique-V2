@@ -566,18 +566,27 @@ class IaMemoryService extends ChangeNotifier {
 
         // Extraire l'arrivée officielle depuis les rapports PMU
         final List<int> arriveeOfficielle = [];
+        // ★ v10.31 : cotes PMU Simple Gagnant par numéro
+        final Map<String, double> cotesParNumero = {};
 
         for (final r in rapports) {
           final typePari = r['typePari'] as String? ?? '';
           final rList    = (r['rapports'] as List<dynamic>? ?? []);
           if (rList.isEmpty) continue;
 
-          // Simple Gagnant → cheval N°1
-          if (typePari == 'E_SIMPLE_GAGNANT' && arriveeOfficielle.isEmpty) {
-            final rap = rList.first as Map<String, dynamic>;
-            final n = int.tryParse(rap['combinaison']?.toString() ?? '');
-            if (n != null && !arriveeOfficielle.contains(n)) {
-              arriveeOfficielle.add(n);
+          // Simple Gagnant → cheval N°1 + cotes de tous les participants
+          if (typePari == 'E_SIMPLE_GAGNANT') {
+            for (final rap in rList) {
+              final m = rap as Map<String, dynamic>;
+              final n = int.tryParse(m['combinaison']?.toString().trim() ?? '');
+              if (n == null) continue;
+              if (arriveeOfficielle.isEmpty) arriveeOfficielle.add(n);
+              // Dividende → cote (dividendePourUnEuro en centimes)
+              final rawDiv = m['dividendePourUnEuro'] ?? m['dividende'];
+              if (rawDiv != null) {
+                final cote = (rawDiv as num).toDouble() / 100.0;
+                if (cote > 1.0) cotesParNumero[n.toString()] = cote;
+              }
             }
           }
 
@@ -630,8 +639,9 @@ class IaMemoryService extends ChangeNotifier {
         final keyAUtiliser = idxDirect >= 0 ? courseKey : memKey;
 
         await enregistrerResultat(
-          courseKey: keyAUtiliser,
-          arriveeReelle: arriveeOfficielle,
+          courseKey:          keyAUtiliser,
+          arriveeReelle:      arriveeOfficielle,
+          cotesPmuParNumero:  cotesParNumero.isNotEmpty ? cotesParNumero : null,
         );
 
         recuperes++;
@@ -1490,6 +1500,7 @@ class IaMemoryService extends ChangeNotifier {
   Future<void> enregistrerResultat({
     required String courseKey,
     required List<int> arriveeReelle,
+    Map<String, double>? cotesPmuParNumero, // ★ v10.31
   }) async {
     await _load();
 
@@ -1575,8 +1586,13 @@ class IaMemoryService extends ChangeNotifier {
       precisionIA:            precIAR,
       // ★ fix : préserver favoriIaNom (champ perdu avant ce fix)
       favoriIaNom:            p.favoriIaNom,
-      // ★ v9.94 : diagnostic lisible par course (était toujours null avant ce fix)
+      // ★ v9.94 : diagnostic lisible par course
       diagnosticApprentissage: diagCourse,
+      // ★ v10.31 : cotes PMU par numéro (merge avec existantes)
+      coteFavoriPmu: cotesPmuParNumero != null && p.favoriIA != null
+          ? (cotesPmuParNumero[p.favoriIA!] ?? p.coteFavoriPmu)
+          : p.coteFavoriPmu,
+      cotesPmuParNumero: cotesPmuParNumero ?? p.cotesPmuParNumero,
     );
 
     await _save();
@@ -2758,6 +2774,8 @@ class IaMemoryService extends ChangeNotifier {
 
             // ── Parser l'arrivée (même logique qu'alert_service) ──────────
             final List<int> arrivee = [];
+            // ★ v10.31 : cotes PMU Simple Gagnant par numéro
+            final Map<String, double> cotesJ = {};
             try {
               final rapports = jsonDecode(resp.body) as List<dynamic>;
               for (final r in rapports) {
@@ -2765,11 +2783,19 @@ class IaMemoryService extends ChangeNotifier {
                 final rList    = (r['rapports'] as List<dynamic>?) ?? [];
                 if (rList.isEmpty) continue;
 
-                // Simple Gagnant → cheval N°1
+                // Simple Gagnant → cheval N°1 + cotes de tous les participants
                 if (typePari == 'E_SIMPLE_GAGNANT') {
-                  final n = int.tryParse(
-                      (rList.first as Map)['combinaison']?.toString().trim() ?? '');
-                  if (n != null && !arrivee.contains(n)) arrivee.insert(0, n);
+                  for (final rap in rList) {
+                    final m = rap as Map<String, dynamic>;
+                    final n = int.tryParse(m['combinaison']?.toString().trim() ?? '');
+                    if (n == null) continue;
+                    if (arrivee.isEmpty) arrivee.insert(0, n);
+                    final rawDiv = m['dividendePourUnEuro'] ?? m['dividende'];
+                    if (rawDiv != null) {
+                      final cote = (rawDiv as num).toDouble() / 100.0;
+                      if (cote > 1.0) cotesJ[n.toString()] = cote;
+                    }
+                  }
                 }
                 // Placés → top 3
                 if (typePari == 'E_SIMPLE_PLACE') {
@@ -2868,6 +2894,11 @@ class IaMemoryService extends ChangeNotifier {
                 favoriIaNom:            pOld.favoriIaNom,
                 // ★ v9.94 : diagnostic lisible par course
                 diagnosticApprentissage: diagJ,
+                // ★ v10.31 : cotes PMU par numéro (mise à jour depuis E_SIMPLE_GAGNANT)
+                coteFavoriPmu: cotesJ.isNotEmpty && pOld.favoriIA != null
+                    ? (cotesJ[pOld.favoriIA!] ?? pOld.coteFavoriPmu)
+                    : pOld.coteFavoriPmu,
+                cotesPmuParNumero: cotesJ.isNotEmpty ? cotesJ : pOld.cotesPmuParNumero,
               );
               // ★ v9.95 : tracker CE pronostic comme nouvellement résolu dans cette passe
               nouveauxResolusParPasse.add(_pronostics[idx]);
