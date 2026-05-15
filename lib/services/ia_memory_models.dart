@@ -128,30 +128,36 @@ class ScoresCriteres {
   }
 }
 
-// ─── ★ v10.37 : Pronostic premium du jour (étoile ⭐ calendrier) ─────────────
-// Stocke courseKey + typePari + numeros conseillés pour validation stricte.
-// Remplace le simple Set<String> _premiumCourseKeys (v1) par une liste typée (v2).
+// ─── ★ v10.38 : Pronostic premium du jour (étoile ⭐ calendrier) ─────────────
+// Stocke courseKey + typePari + numeros + sourceWidget pour validation stricte.
+// L'étoile ⭐ n'est accordée QUE si ce conseil exact (tous les 4 champs) est gagnant.
+// Historique multi-jours dans IaMemoryService._premiumHistorique (90 jours).
 class PremiumPronosticDuJour {
-  final String       courseKey;   // ex: '2025-07-01_R1C5'
-  final String       typePari;    // ex: 'Simple Gagnant', 'Quinté+'
-  final List<String> numeros;     // numéros conseillés dans l'ordre IA (ex: ['3','7','1'])
+  final String       courseKey;    // ex: 'R1C5_01072025' — identifiant unique de la course
+  final String       typePari;     // ex: 'Simple Gagnant', 'Quinté+' — type affiché dans le widget
+  final List<String> numeros;      // numéros conseillés dans l'ordre IA (ex: ['3','7','1'])
+  final String       sourceWidget; // widget source : 'conseilJour' | 'meilleurPari' |
+                                   //   'topEquilibre' | 'plusSur' | 'plusRentable'
 
   const PremiumPronosticDuJour({
     required this.courseKey,
     required this.typePari,
     required this.numeros,
+    required this.sourceWidget,
   });
 
   Map<String, dynamic> toJson() => {
-    'courseKey': courseKey,
-    'typePari':  typePari,
-    'numeros':   numeros,
+    'courseKey':    courseKey,
+    'typePari':     typePari,
+    'numeros':      numeros,
+    'sourceWidget': sourceWidget,
   };
 
   factory PremiumPronosticDuJour.fromJson(Map<String, dynamic> j) {
     return PremiumPronosticDuJour(
-      courseKey: j['courseKey'] as String? ?? '',
-      typePari:  j['typePari']  as String? ?? '',
+      courseKey:    j['courseKey']    as String? ?? '',
+      typePari:     j['typePari']     as String? ?? '',
+      sourceWidget: j['sourceWidget'] as String? ?? '',
       numeros: (j['numeros'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),

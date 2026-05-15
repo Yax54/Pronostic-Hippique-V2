@@ -316,7 +316,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: _cGold.withValues(alpha: 0.6),
-                    fontSize: 10,
+                    fontSize: 14,
                   ),
                 ),
               ],
@@ -426,7 +426,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             const SizedBox(width: 6),
             Text(
               'Best Bet — Conseil IA, Meilleur Pari ou Best Bet du jour réussi',
-              style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 10),
+              style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 14),
             ),
           ],
         ),
@@ -462,7 +462,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         const SizedBox(height: 4),
         Text(label, style: TextStyle(
             color: isEditable ? p.fg.withValues(alpha: 0.9) : Colors.white38,
-            fontSize: 10,
+            fontSize: 14,
             fontWeight: isEditable ? FontWeight.w700 : FontWeight.w500)),
       ]),
     );
@@ -517,7 +517,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: Colors.white38,
-              fontSize: 11,
+              fontSize: 14,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.5,
             ),
@@ -643,7 +643,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
               color: estAuj
                   ? _cGold
                   : (hasCourses ? Colors.white : _cGreyTxt),
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: estAuj || palier == PalierCalendrier.or
                   ? FontWeight.bold
                   : FontWeight.normal,
@@ -766,7 +766,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Répartition des journées',
-        style: TextStyle(color: Colors.white54, fontSize: 11)),
+        style: TextStyle(color: Colors.white54, fontSize: 14)),
       const SizedBox(height: 6),
       ClipRRect(
         borderRadius: BorderRadius.circular(4),
@@ -789,7 +789,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           Container(width: 8, height: 8,
             decoration: BoxDecoration(color: p.$2, borderRadius: BorderRadius.circular(2))),
           const SizedBox(width: 4),
-          Text('${p.$1}j', style: TextStyle(color: p.$2, fontSize: 11, fontWeight: FontWeight.bold)),
+          Text('${p.$1}j', style: TextStyle(color: p.$2, fontSize: 14, fontWeight: FontWeight.bold)),
         ]);
       }).toList()),
     ]);
@@ -846,7 +846,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         const SizedBox(width: 10),
         Expanded(
           child: Text(commentaire,
-            style: TextStyle(color: couleurComm, fontSize: 12)),
+            style: TextStyle(color: couleurComm, fontSize: 14)),
         ),
       ]),
     );
@@ -902,12 +902,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 Row(children: [
                   Expanded(
                     child: Text(t,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                      style: const TextStyle(color: Colors.white70, fontSize: 14)),
                   ),
                   Text('$bons/$nb',
                     style: TextStyle(
                       color: col,
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: FontWeight.bold,
                     )),
                   const SizedBox(width: 8),
@@ -915,7 +915,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                     width: 44,
                     child: Text('${(tx * 100).toStringAsFixed(0)}%',
                       textAlign: TextAlign.right,
-                      style: TextStyle(color: col, fontSize: 13, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: col, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ]),
                 const SizedBox(height: 5),
@@ -1023,7 +1023,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     return Row(children: [
       Text(emoji, style: const TextStyle(fontSize: 16)),
       const SizedBox(width: 8),
-      Expanded(child: Text(txt, style: TextStyle(color: col, fontSize: 12))),
+      Expanded(child: Text(txt, style: TextStyle(color: col, fontSize: 14))),
     ]);
   }
 
@@ -1091,7 +1091,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             Text(_nomsMois[mois].substring(0, 3),
               style: TextStyle(
                 color: estSel ? _cGold : Colors.white70,
-                fontSize: 12,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
               )),
             const SizedBox(height: 6),
@@ -1103,7 +1103,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
               )),
             const SizedBox(height: 2),
             Text(tc == 0 ? 'Aucune' : '$tb/$tc',
-              style: TextStyle(color: col.withValues(alpha: 0.7), fontSize: 10)),
+              style: TextStyle(color: col.withValues(alpha: 0.7), fontSize: 14)),
           ],
         ),
       ),
@@ -1122,7 +1122,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(_nomsMois[mois].substring(0, 3),
-            style: const TextStyle(color: Colors.white24, fontSize: 12, fontWeight: FontWeight.bold)),
+            style: const TextStyle(color: Colors.white24, fontSize: 14, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           const Text('—', style: TextStyle(color: Colors.white12, fontSize: 18)),
         ],
@@ -1160,7 +1160,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       ),
       child: Text(msg,
         textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white38, fontSize: 13)),
+        style: const TextStyle(color: Colors.white38, fontSize: 14)),
     );
   }
 
@@ -1170,7 +1170,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.bold)),
       const SizedBox(height: 2),
       Text(label,
-        style: const TextStyle(color: Colors.white38, fontSize: 10)),
+        style: const TextStyle(color: Colors.white38, fontSize: 14)),
     ]);
   }
 
@@ -1330,14 +1330,14 @@ class _DetailJourSheet extends StatelessWidget {
                   )),
                 const SizedBox(height: 4),
                 Text('${dd.nbBons}/${dd.nbCourses} bons conseils · $tauxPct',
-                  style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                  style: const TextStyle(color: Colors.white54, fontSize: 14)),
                 const SizedBox(height: 3),
                 Text(palier.label,
-                  style: TextStyle(color: palier.fg, fontSize: 12,
+                  style: TextStyle(color: palier.fg, fontSize: 14,
                       fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text(_descriptifTaux(taux, dd.palier),
-                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  style: const TextStyle(color: Colors.white38, fontSize: 14)),
               ])),
             ]),
           ),
@@ -1356,7 +1356,7 @@ class _DetailJourSheet extends StatelessWidget {
                       padding: EdgeInsets.symmetric(vertical: 24),
                       child: Text(
                         'Aucun pronostic gagnant ce jour',
-                        style: TextStyle(color: Colors.white38, fontSize: 13),
+                        style: TextStyle(color: Colors.white38, fontSize: 14),
                       ),
                     ),
                   )
@@ -1365,7 +1365,7 @@ class _DetailJourSheet extends StatelessWidget {
                   Text('✅ Pronostics réussis (${bons.length})',
                     style: const TextStyle(
                       color: Colors.white54,
-                      fontSize: 12,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
                     )),
                   const SizedBox(height: 10),
@@ -1484,7 +1484,7 @@ class _DetailJourSheet extends StatelessWidget {
         if (hip.isNotEmpty || disc.isNotEmpty)
           Text(
             '$hip${disc.isNotEmpty ? ' · $disc' : ''}',
-            style: const TextStyle(color: Colors.white54, fontSize: 13), // ★ +2
+            style: const TextStyle(color: Colors.white54, fontSize: 14),
           ),
 
         const SizedBox(height: 10),
@@ -1513,12 +1513,12 @@ class _DetailJourSheet extends StatelessWidget {
                 Text(type,
                   style: const TextStyle(
                     color: Color(0xFFB39DDB),
-                    fontSize: 12,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                   )),
                 const SizedBox(width: 4),
                 const Icon(Icons.info_outline,
-                    color: Color(0xFF7C4DFF), size: 12),
+                    color: Color(0xFF7C4DFF), size: 14),
               ]),
             ),
           ),
@@ -1538,7 +1538,7 @@ class _DetailJourSheet extends StatelessWidget {
           child: Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('IA prévoyait',
-                style: TextStyle(color: Colors.white38, fontSize: 12)), // ★ +2
+                style: TextStyle(color: Colors.white38, fontSize: 14)),
               const SizedBox(height: 3),
               Text(topIA.isEmpty ? '—' : topIA,
                 style: const TextStyle(
@@ -1551,7 +1551,7 @@ class _DetailJourSheet extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Arrivée réelle',
-                style: TextStyle(color: Colors.white38, fontSize: 12)), // ★ +2
+                style: TextStyle(color: Colors.white38, fontSize: 14)),
               const SizedBox(height: 3),
               // ★ v10.30 : Arrivée réelle en doré — distinct de la prévision IA (blanc)
               Text(arriv,
@@ -1565,7 +1565,7 @@ class _DetailJourSheet extends StatelessWidget {
               const SizedBox(width: 8),
               Column(children: [
                 const Text('Rang',
-                  style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  style: TextStyle(color: Colors.white38, fontSize: 14)),
                 const SizedBox(height: 3),
                 Text('#$rang',
                   style: TextStyle(
@@ -1587,13 +1587,13 @@ class _DetailJourSheet extends StatelessWidget {
             Icon(Icons.psychology_outlined, color: Colors.white38, size: 14),
             const SizedBox(width: 5),
             const Text('Confiance : ',
-              style: TextStyle(color: Colors.white38, fontSize: 12)),
+              style: TextStyle(color: Colors.white38, fontSize: 14)),
             Text('${conf.clamp(0.0, 100.0).toStringAsFixed(0)}%',
               style: TextStyle(
                 color: conf >= 75 ? _cGreen
                      : conf >= 55 ? _cYellow
                      : _cOrange,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
               )),
           ]),
@@ -1609,7 +1609,7 @@ class _DetailJourSheet extends StatelessWidget {
         color: bg,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(text, style: TextStyle(color: fg, fontSize: 11)),
+      child: Text(text, style: TextStyle(color: fg, fontSize: 14)),
     );
   }
 }
@@ -1814,14 +1814,14 @@ class _SeuilUniquSheetState extends State<_SeuilUniquSheet> {
                   color: color, fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('Modifier le seuil de déclenchement',
-                style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                style: const TextStyle(color: Colors.white38, fontSize: 14)),
             ])),
           ]),
 
           const SizedBox(height: 16),
           Text(_description,
             style: const TextStyle(
-                color: Colors.white54, fontSize: 12, height: 1.5)),
+                color: Colors.white54, fontSize: 14, height: 1.5)),
 
           const SizedBox(height: 20),
 
@@ -1866,13 +1866,13 @@ class _SeuilUniquSheetState extends State<_SeuilUniquSheet> {
           if (_erreur != null) ...[  
             const SizedBox(height: 8),
             Text(_erreur!, style: const TextStyle(
-                color: Color(0xFFEF5350), fontSize: 12)),
+                color: Color(0xFFEF5350), fontSize: 14)),
           ],
 
           const SizedBox(height: 8),
           Text(
             'Plage autorisée : ${_min.toStringAsFixed(0)}% – ${_max.toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white24, fontSize: 11),
+            style: const TextStyle(color: Colors.white24, fontSize: 14),
           ),
 
           const SizedBox(height: 24),

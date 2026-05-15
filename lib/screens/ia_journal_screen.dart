@@ -203,9 +203,9 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(bs.libelle,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
                 Text('${bs.rapportsJson.length} jour${bs.rapportsJson.length > 1 ? "s" : ""} · ${bs.totalCourses} courses',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    style: const TextStyle(color: Colors.white38, fontSize: 14)),
               ])),
               _badgeTaux(bs.tauxGagnant, couleur),
               const SizedBox(width: 8),
@@ -308,7 +308,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
         const SizedBox(height: 12),
         Text(
           _phraseBilanHebdo(tauxGagnant, nbJours, meilleureDisc, ia.prenom),
-          style: const TextStyle(color: Colors.white70, fontSize: 13,
+          style: const TextStyle(color: Colors.white70, fontSize: 16,
               fontStyle: FontStyle.italic, height: 1.4),
         ),
       ]),
@@ -440,7 +440,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       borderRadius: BorderRadius.circular(8),
     ),
     child: Text('${taux.toStringAsFixed(0)}% ✓',
-        style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.bold)),
+        style: TextStyle(color: couleur, fontSize: 15, fontWeight: FontWeight.bold)),
   );
 
   Widget _chipStat(String emoji, String label, Color color) => Container(
@@ -450,9 +450,9 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       borderRadius: BorderRadius.circular(6),
     ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Text(emoji, style: const TextStyle(fontSize: 12)),
+      Text(emoji, style: const TextStyle(fontSize: 14)),
       const SizedBox(width: 4),
-      Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+      Text(label, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w600)),
     ]),
   );
 

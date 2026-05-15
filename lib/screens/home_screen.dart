@@ -227,9 +227,10 @@ class _HomeScreenState extends State<HomeScreen> {
         // Numéros : les N premiers top3 affichés dans le widget Conseil IA
         final numerosConseil = conseil.top3.map((p) => p.numero).toList();
         premiums.add(PremiumPronosticDuJour(
-          courseKey: keyConseil,
-          typePari:  typePariConseil,
-          numeros:   numerosConseil,
+          courseKey:    keyConseil,
+          typePari:     typePariConseil,
+          numeros:      numerosConseil,
+          sourceWidget: 'conseilJour',
         ));
       }
     }
@@ -250,9 +251,10 @@ class _HomeScreenState extends State<HomeScreen> {
         // Numéros : le favori affiché dans le widget Meilleur Pari
         final numerosMeilleur = [meilleur.cheval!.numero];
         premiums.add(PremiumPronosticDuJour(
-          courseKey: keyMeilleur,
-          typePari:  typePariMeilleur,
-          numeros:   numerosMeilleur,
+          courseKey:    keyMeilleur,
+          typePari:     typePariMeilleur,
+          numeros:      numerosMeilleur,
+          sourceWidget: 'meilleurPari',
         ));
       }
     }
@@ -524,7 +526,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     apercu,
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.70),
-                      fontSize: 13,
+                      fontSize: 16,
                       height: 1.4,
                     ),
                     maxLines: 2,
@@ -584,7 +586,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'Calendrier IA Stat',
                     style: TextStyle(
                       color: Color(0xFFB39DDB), // violet clair
-                      fontSize: 13,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.2,
                     ),
@@ -594,7 +596,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     'Historique de performance par journée',
                     style: TextStyle(
                       color: Colors.white38,
-                      fontSize: 11,
+                      fontSize: 14,
                     ),
                   ),
                 ],
@@ -652,13 +654,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: Text(
                     'Filtres critères non activés — configure-les dans Conseils IA',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 12),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 14),
                   ),
                 ),
                 GestureDetector(
                   onTap: () => context.read<NavigationNotifier>().goTo(1),
                   child: const Text('Configurer →',
-                      style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -687,10 +689,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('Aucune course actuelle dans tes critères',
-                            style: TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600)),
+                            style: TextStyle(color: Colors.white60, fontSize: 15, fontWeight: FontWeight.w600)),
                         if (criteresLabel.isNotEmpty)
                           Text(criteresLabel,
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11)),
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 14)),
                       ],
                     ),
                   ),
@@ -754,7 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         '🎯 $nb course${nb > 1 ? 's correspondent' : ' correspond'} à tes critères',
                         style: const TextStyle(
-                            color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                            color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       if (criteresLabel.isNotEmpty) ...[
                         const SizedBox(height: 2),
@@ -896,7 +898,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 SizedBox(width: 3),
                                 Text('Terminée',
                                     style: TextStyle(color: Color(0xFFEF5350),
-                                        fontSize: 11, fontWeight: FontWeight.bold)),
+                                        fontSize: 14, fontWeight: FontWeight.bold)),
                               ],
                             ),
                           )
@@ -925,7 +927,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Icon(Icons.flag, color: Colors.white38, size: 16),
                       SizedBox(width: 8),
                       Text('Course terminée — Paris fermés',
-                          style: TextStyle(color: Colors.white38, fontSize: 13,
+                          style: TextStyle(color: Colors.white38, fontSize: 15,
                               fontWeight: FontWeight.bold)),
                     ],
                   ),
@@ -945,7 +947,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: const Color(0xFF7C4DFF).withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Text('🧠 SÉLECTION IA', style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 13, fontWeight: FontWeight.bold)),
+                          child: const Text('🧠 SÉLECTION IA', style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 15, fontWeight: FontWeight.bold)),
                         ),
                         const Spacer(),
                         // Badge confiance globale de la course
@@ -966,9 +968,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           spacing: 5,
                           runSpacing: 4,
                           children: [
-                            const Text('🏇 PMU : ', style: TextStyle(color: Color(0xFFFFD700), fontSize: 12, fontWeight: FontWeight.bold)),
+                            const Text('🏇 PMU : ', style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold)),
                             ...course.pronosticPMU.take(4).map((n) =>
-                              Text('N°$n', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600))
+                              Text('N°$n', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))
                             ),
                           ],
                         ),
@@ -1033,7 +1035,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       borderRadius: BorderRadius.circular(6),
                                       border: Border.all(color: colors[i].withValues(alpha: 0.35)),
                                     ),
-                                    child: Text('Fiche', style: TextStyle(color: colors[i], fontSize: 10, fontWeight: FontWeight.bold)),
+                                    child: Text('Fiche', style: TextStyle(color: colors[i], fontSize: 14, fontWeight: FontWeight.bold)),
                                   ),
                                 ),
                               ],
@@ -1301,7 +1303,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
     child: Column(
       children: [
-        Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+        Text(value, style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.bold)),
         Text(label, style: const TextStyle(color: Colors.white38, fontSize: 14)),
       ],
     ),

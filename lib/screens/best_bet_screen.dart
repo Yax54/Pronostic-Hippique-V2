@@ -120,20 +120,27 @@ class _BestBetScreenState extends State<BestBetScreen>
       final plusRentable = trieRentable.isNotEmpty ? trieRentable.first : null;
 
       final premiums = <PremiumPronosticDuJour>[];
-      for (final opp in [topEquilibre, plusSur, plusRentable]) {
-        if (opp == null) continue;
+
+      // Chaque widget source est identifié explicitement pour l'historique étoile ⭐
+      void ajouterPremium(_BetOpp? opp, String sourceWidget) {
+        if (opp == null) return;
         final key = buildCourseKey(
           reunionCode: opp.reunion.code,
           numCourse:   opp.course.numCourse,
           dateStr:     opp.course.dateStr,
         );
-        if (key.isEmpty) continue;
+        if (key.isEmpty) return;
         premiums.add(PremiumPronosticDuJour(
-          courseKey: key,
-          typePari:  opp.typePari,
-          numeros:   opp.numeros,
+          courseKey:    key,
+          typePari:     opp.typePari,
+          numeros:      opp.numeros,
+          sourceWidget: sourceWidget,
         ));
       }
+
+      ajouterPremium(topEquilibre, 'topEquilibre');
+      ajouterPremium(plusSur,      'plusSur');
+      ajouterPremium(plusRentable, 'plusRentable');
       if (premiums.isNotEmpty) {
         IaMemoryService.instance.enregistrerPronosticsPremiumDuJour(premiums);
       }
@@ -335,7 +342,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                     Text('Sélection IA PMU optimisée',
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.5),
-                            fontSize: 13)),
+                            fontSize: 14)),
                   ],
                 ),
               ),
@@ -401,7 +408,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                                       fontWeight: FontWeight.bold)),
                               const Text('Mise simulée',
                                   style: TextStyle(
-                                      color: Colors.white38, fontSize: 11)),
+                                      color: Colors.white38, fontSize: 14)),
                             ],
                           ),
                         ],
@@ -441,7 +448,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                                         fontWeight: FontWeight.bold)),
                                 const Text('Mise Kelly',
                                     style: TextStyle(
-                                        color: Colors.white38, fontSize: 11)),
+                                        color: Colors.white38, fontSize: 14)),
                               ],
                             ),
                           ],
@@ -539,7 +546,7 @@ class _BestBetScreenState extends State<BestBetScreen>
               fontSize: 16, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center),
           const SizedBox(height: 8),
-          Text(sousTitre, style: const TextStyle(color: Colors.white38, fontSize: 13),
+          Text(sousTitre, style: const TextStyle(color: Colors.white38, fontSize: 14),
               textAlign: TextAlign.center),
           if (nbMaj < 15) ...[
             const SizedBox(height: 16),
@@ -552,7 +559,7 @@ class _BestBetScreenState extends State<BestBetScreen>
               ),
               child: Text('Progression : $nbMaj / 15 analyses',
                   style: const TextStyle(color: Color(0xFF7C4DFF),
-                      fontSize: 13, fontWeight: FontWeight.bold)),
+                      fontSize: 14, fontWeight: FontWeight.bold)),
             ),
           ],
         ]),
@@ -643,7 +650,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                 const Expanded(
                   child: Text(
                     'Courses terminées — Analyse IA conservée pour apprentissage',
-                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
                   ),
                 ),
               ],
@@ -672,7 +679,7 @@ class _BestBetScreenState extends State<BestBetScreen>
           const Text(
             'Votre capital total disponible pour les paris.\n'
             'Kelly calcule la mise optimale pour maximiser\nla croissance sans ruiner le bankroll.',
-            style: TextStyle(color: Colors.white54, fontSize: 13),
+            style: TextStyle(color: Colors.white54, fontSize: 14),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -754,7 +761,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                         ),
                         Text(
                           'Gain estimé : ~$gainEstime €  (cote ×${cote.toStringAsFixed(1)})',
-                          style: const TextStyle(color: Colors.white38, fontSize: 13),
+                          style: const TextStyle(color: Colors.white38, fontSize: 14),
                         ),
                       ],
                     ),
@@ -771,9 +778,9 @@ class _BestBetScreenState extends State<BestBetScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
-                      Text('2 €', style: TextStyle(color: Colors.white24, fontSize: 13)),
-                      Text('100 €', style: TextStyle(color: Colors.white24, fontSize: 13)),
-                      Text('200 €', style: TextStyle(color: Colors.white24, fontSize: 13)),
+                      Text('2 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
+                      Text('100 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
+                      Text('200 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -807,7 +814,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                             style: TextStyle(
                               color: temp == v ? const Color(0xFFFFD700) : Colors.white60,
                               fontWeight: temp == v ? FontWeight.bold : FontWeight.normal,
-                              fontSize: 13,
+                              fontSize: 14,
                             ),
                           ),
                         ),
@@ -938,7 +945,7 @@ class _TopBetCard extends StatelessWidget {
                         const SizedBox(width: 4),
                         Text(
                           tab == 0 ? 'TOP ÉQUILIBRE' : tab == 1 ? 'PLUS SÛR' : 'PLUS RENTABLE',
-                          style: const TextStyle(color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
@@ -977,7 +984,7 @@ class _TopBetCard extends StatelessWidget {
                             border: Border.all(color: const Color(0xFFEF5350).withValues(alpha: 0.4)),
                           ),
                           child: const Text('Terminée',
-                              style: TextStyle(color: Color(0xFFEF5350), fontSize: 11, fontWeight: FontWeight.bold)),
+                              style: TextStyle(color: Color(0xFFEF5350), fontSize: 14, fontWeight: FontWeight.bold)),
                         )
                       else
                         Text(opp.reunion.lieu,
@@ -1013,7 +1020,7 @@ class _TopBetCard extends StatelessWidget {
                         if (p.driver.isNotEmpty)
                           Text(p.driver, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14)),
                         Text(opp.course.nom,
-                            style: const TextStyle(color: Colors.white30, fontSize: 13),
+                            style: const TextStyle(color: Colors.white30, fontSize: 14),
                             maxLines: 1, overflow: TextOverflow.ellipsis),
                       ],
                     ),
@@ -1084,7 +1091,7 @@ class _TopBetCard extends StatelessWidget {
                             border: Border.all(color: color.withValues(alpha: 0.35)),
                           ),
                           child: Text(label,
-                              style: TextStyle(color: color, fontSize: 12,
+                              style: TextStyle(color: color, fontSize: 14,
                                   fontWeight: FontWeight.bold)),
                         ),
                       );
@@ -1127,7 +1134,7 @@ class _TopBetCard extends StatelessWidget {
                       Icon(Icons.flag, color: Colors.white38, size: 16),
                       SizedBox(width: 8),
                       Text('Course terminée — Paris fermés',
-                          style: TextStyle(color: Colors.white38, fontSize: 13, fontWeight: FontWeight.bold)),
+                          style: TextStyle(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
@@ -1137,7 +1144,7 @@ class _TopBetCard extends StatelessWidget {
                   child: ElevatedButton.icon(
                     onPressed: onTap,
                     icon: const Icon(Icons.bar_chart, size: 15),
-                    label: const Text('Voir l\'analyse IA', style: TextStyle(fontSize: 13)),
+                    label: const Text('Voir l\'analyse IA', style: TextStyle(fontSize: 14)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1A2F3D),
                       foregroundColor: Colors.white60,
@@ -1157,7 +1164,7 @@ class _TopBetCard extends StatelessWidget {
                         icon: const Icon(Icons.euro, size: 16),
                         label: Text(
                           '💰 Parier ${mise.toStringAsFixed(0)}€',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF2E7D52),
@@ -1173,7 +1180,7 @@ class _TopBetCard extends StatelessWidget {
                       child: ElevatedButton.icon(
                         onPressed: onTap,
                         icon: const Icon(Icons.bar_chart, size: 15),
-                        label: const Text('Analyse', style: TextStyle(fontSize: 13)),
+                        label: const Text('Analyse', style: TextStyle(fontSize: 14)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFFFD700),
                           foregroundColor: Colors.black,
@@ -1288,7 +1295,7 @@ class _BetRow extends StatelessWidget {
                             border: Border.all(color: const Color(0xFFEF5350).withValues(alpha: 0.35)),
                           ),
                           child: const Text('🏁 Terminée',
-                              style: TextStyle(color: Color(0xFFEF5350), fontSize: 11)),
+                              style: TextStyle(color: Color(0xFFEF5350), fontSize: 14)),
                         ),
                       ],
                     ],
@@ -1302,7 +1309,7 @@ class _BetRow extends StatelessWidget {
                 Text('${opp.scoreConfiance.round()}%',
                     style: TextStyle(
                         color: opp.estTerminee ? Colors.white38 : confianceColor,
-                        fontSize: 13, fontWeight: FontWeight.bold)),
+                        fontSize: 14, fontWeight: FontWeight.bold)),
                 Text(gainEstime,
                     style: TextStyle(
                         color: opp.estTerminee ? Colors.white24 : const Color(0xFFFFD700),

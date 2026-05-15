@@ -65,8 +65,13 @@ class IaMemoryService extends ChangeNotifier {
   static const _statsLabelsKey  = 'ia_stats_labels_v1'; // ★ v9.0 Stats par label IA
   // ★ v10.37 : CourseKeys des 5 paris premium du jour (Conseil IA + Meilleur Pari + 3 Best Bets)
   // Sauvegardés le jour J, utilisés lors de l'analyse du soir pour décider hasBestBet
-  static const _premiumDuJourKey   = 'ia_premium_du_jour_v1';  // conservé (compat)
-  static const _premiumDuJourKeyV2 = 'ia_premium_du_jour_v2';  // nouveau format JSON
+  static const _premiumDuJourKey   = 'ia_premium_du_jour_v1';  // conservé (compat, lecture seule)
+  // ★ v10.38 : historique multi-jours {"entries":{"YYYY-MM-DD":[{courseKey,typePari,numeros}]}}
+  // Chaque jour J, home_screen et best_bet_screen ajoutent leurs 5 entrées premium.
+  // Le calendrier consulte l'historique pour tout jour passé.
+  // Purgé automatiquement après 90 jours.
+  static const _premiumHistoriqueKey = 'ia_premium_historique_v1';
+  static const _premiumHistoriqueMaxJours = 90;
   static const _maxPronostics   = 600;
   // ★ Lot 4 : Compression + purge automatique
   static const _maxPronosticsAge = 90;    // purger les pronostics > 90 jours sans résultat
@@ -84,10 +89,11 @@ class IaMemoryService extends ChangeNotifier {
   // ★ v9.91 : structure hiérarchique du journal
   final List<BilanSemaine>         _bilansSemaine = [];
 
-  // ★ v10.37 v1 (compat) : CourseKeys des 5 paris premium du jour
+  // ★ v10.37 v1 (compat, lecture seule)
   Set<String> _premiumCourseKeys = {};
-  // ★ v10.37 v2 : Pronostics premium du jour avec courseKey + typePari + numeros
-  List<PremiumPronosticDuJour> _premiumDuJour = [];
+  // ★ v10.38 : historique multi-jours — clé = 'YYYY-MM-DD', valeur = liste de pronostics premium
+  // Chargé une fois au démarrage depuis SP, mis à jour à chaque appel enregistrerPronosticsPremiumDuJour
+  Map<String, List<PremiumPronosticDuJour>> _premiumHistorique = {};
   BilanSemaine? _pendingBilanHebdo; // ★ v9.93 : bilan semaine en attente pour bulle
   final List<BilanMois>            _bilansMois    = [];
   final Map<String, StatsTypePari>    _statsTypes    = {}; // ★ clé = typePari
@@ -268,23 +274,21 @@ class IaMemoryService extends ChangeNotifier {
         // taux >= 0.20 et < 0.25
         palier = PalierCalendrier.orange;
       }
-          // ★ v10.37 v2 : hasBestBet — validation stricte du conseil premium exact
-      // Règle : ⭐ = au moins 1 des 5 widgets premium a affiché un conseil
-      //         (courseKey + typePari + numéros exacts) qui s'est révélé GAGNANT.
-      // On ne valide PAS :
-      //   - une autre course gagnante du même jour
-      //   - un autre pronostic IA sur la même course
-      //   - un résultat global IA favorable
-      // Si _premiumDuJour vide (données v2 absentes) → false. Jamais de fausse étoile.
+      // ★ v10.38 : hasBestBet — validation stricte via historique multi-jours
+      // Règle : ⭐ = au moins 1 des 5 widgets premium de CE JOUR (pas d'un autre jour)
+      //         a affiché un conseil (courseKey + typePari + numéros exacts) GAGNANT.
+      // Fallback : si aucune entrée historique pour ce jour → false (jamais fausse étoile).
+      final String dateJour = '$annee-${mois.toString().padLeft(2,'0')}-${entry.key.toString().padLeft(2,'0')}';
+      final List<PremiumPronosticDuJour> premiumCeJour =
+          _premiumHistorique[dateJour] ?? [];
+
       final bool hasBestBet;
-      if (_premiumDuJour.isEmpty) {
-        hasBestBet = false;
+      if (premiumCeJour.isEmpty) {
+        hasBestBet = false; // pas de données premium pour ce jour → pas d'étoile
       } else {
         hasBestBet = ag.pronostics.any((prono) {
-          // Pas de résultat réel → ne peut pas être gagnant
           if (!prono.resultatsReels) return false;
-
-          return _premiumDuJour.any((premium) =>
+          return premiumCeJour.any((premium) =>
               _premiumExactGagnant(premium: premium, prono: prono));
         });
       }
@@ -1027,9 +1031,9 @@ class IaMemoryService extends ChangeNotifier {
       }
 
       _loaded = true;
-      // ★ v10.37 : charger les paris premium du jour (v1 compat + v2 strict)
+      // ★ v10.37 v1 compat + v10.38 historique multi-jours
       await _chargerPremiumDuJour();
-      await _chargerPremiumDuJourV2();
+      await _chargerPremiumHistorique();
       _loadCompleter!.complete();
       _loadCompleter = null;
     } catch (e) {
@@ -4076,7 +4080,6 @@ class IaMemoryService extends ChangeNotifier {
   }
 
   // ★ v10.37 v1 : Conservé pour compatibilité (ne plus appeler directement)
-  // Préférer enregistrerPronosticsPremiumDuJour() pour le nouveau système v2
   Future<void> enregistrerParisPremiumDuJour(List<String> courseKeys) async {
     final todayKey = _todayKey();
     _premiumCourseKeys.addAll(courseKeys.where((k) => k.isNotEmpty));
@@ -4087,29 +4090,47 @@ class IaMemoryService extends ChangeNotifier {
     );
   }
 
-  // ★ v10.37 v2 : Enregistrer les pronostics premium avec courseKey + typePari + numeros
+  // ★ v10.38 : Enregistrer les pronostics premium dans l'historique multi-jours
   // Appelé depuis home_screen (Conseil IA + Meilleur Pari) et best_bet_screen (3 Best Bets).
-  // Remplace enregistrerParisPremiumDuJour() pour la validation stricte de l'étoile.
+  // Stocke courseKey + typePari + numéros pour le jour J, conservé 90 jours.
   Future<void> enregistrerPronosticsPremiumDuJour(
       List<PremiumPronosticDuJour> nouveaux) async {
     final today = _todayKey();
-    // Filtrer les entrées non-vides
     final valides = nouveaux.where((p) => p.courseKey.isNotEmpty).toList();
     if (valides.isEmpty) return;
 
-    // Supprimer les doublons sur courseKey
+    // Mettre à jour l'entrée du jour courant dans l'historique
+    final entreeJour = List<PremiumPronosticDuJour>.from(
+      _premiumHistorique[today] ?? [],
+    );
     for (final p in valides) {
-      _premiumDuJour.removeWhere((ex) => ex.courseKey == p.courseKey);
-      _premiumDuJour.add(p);
+      // Remplacer si même courseKey, sinon ajouter
+      entreeJour.removeWhere((ex) => ex.courseKey == p.courseKey);
+      entreeJour.add(p);
     }
+    _premiumHistorique[today] = entreeJour;
 
-    // Persister en JSON v2
+    // Purger les entrées de plus de 90 jours
+    final cutoff = DateTime.now().subtract(
+        const Duration(days: _premiumHistoriqueMaxJours));
+    _premiumHistorique.removeWhere((dateStr, _) {
+      try {
+        final d = DateTime.parse(dateStr);
+        return d.isBefore(cutoff);
+      } catch (_) { return true; }
+    });
+
+    // Persister l'historique complet
+    await _sauvegarderPremiumHistorique();
+  }
+
+  Future<void> _sauvegarderPremiumHistorique() async {
     final prefs = await SharedPreferences.getInstance();
     final json = {
-      'date': today,
-      'items': _premiumDuJour.map((p) => p.toJson()).toList(),
+      'entries': _premiumHistorique.map((date, items) =>
+          MapEntry(date, items.map((p) => p.toJson()).toList())),
     };
-    await prefs.setString(_premiumDuJourKeyV2, jsonEncode(json));
+    await prefs.setString(_premiumHistoriqueKey, jsonEncode(json));
   }
 
   String _todayKey() {
@@ -4149,7 +4170,7 @@ class IaMemoryService extends ChangeNotifier {
     return _estBonConseilParType(prono, typePariIa);
   }
 
-  // ★ v10.37 v1 : Charger les courseKeys v1 depuis SharedPreferences (compat)
+  // ★ v10.37 v1 : Charger les courseKeys v1 (compat, lecture seule)
   Future<void> _chargerPremiumDuJour() async {
     final prefs   = await SharedPreferences.getInstance();
     final stored  = prefs.getString(_premiumDuJourKey) ?? '';
@@ -4166,29 +4187,27 @@ class IaMemoryService extends ChangeNotifier {
     }
   }
 
-  // ★ v10.37 v2 : Charger les pronostics premium v2 depuis SharedPreferences
-  Future<void> _chargerPremiumDuJourV2() async {
+  // ★ v10.38 : Charger l'historique multi-jours depuis SharedPreferences
+  Future<void> _chargerPremiumHistorique() async {
     try {
       final prefs  = await SharedPreferences.getInstance();
-      final stored = prefs.getString(_premiumDuJourKeyV2) ?? '';
+      final stored = prefs.getString(_premiumHistoriqueKey) ?? '';
       if (stored.isEmpty) {
-        _premiumDuJour = []; // pas de v2 → fallback hasBestBet = false
+        _premiumHistorique = {};
         return;
       }
-      final decoded = jsonDecode(stored) as Map<String, dynamic>;
-      final date    = decoded['date'] as String? ?? '';
-      final today   = _todayKey();
-      if (date != today) {
-        // Nouveau jour → réinitialiser
-        _premiumDuJour = [];
-        return;
+      final decoded  = jsonDecode(stored) as Map<String, dynamic>;
+      final entries  = decoded['entries'] as Map<String, dynamic>? ?? {};
+      _premiumHistorique = {};
+      for (final kv in entries.entries) {
+        final items = (kv.value as List<dynamic>? ?? [])
+            .map((e) => PremiumPronosticDuJour.fromJson(
+                e as Map<String, dynamic>))
+            .toList();
+        _premiumHistorique[kv.key] = items;
       }
-      final items = decoded['items'] as List<dynamic>? ?? [];
-      _premiumDuJour = items
-          .map((e) => PremiumPronosticDuJour.fromJson(e as Map<String, dynamic>))
-          .toList();
     } catch (_) {
-      _premiumDuJour = []; // Erreur de parsing → sécurité : pas d'étoile
+      _premiumHistorique = {}; // Erreur de parsing → historique vide, pas d'étoile
     }
   }
 
