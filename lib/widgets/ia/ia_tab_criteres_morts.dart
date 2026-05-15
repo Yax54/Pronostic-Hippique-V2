@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../services/ia_audit_cache_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Onglet Critères Morts — lecture seule
@@ -28,6 +29,8 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
   bool _calcule = false;
   // Couverture Repos/Fraîcheur : % de chevaux avec joursRepos connu
   double _pctReposCouverture = 0.0;
+
+  final IaAuditCacheService _cache = IaAuditCacheService();
 
   static const Map<String, String> _labels = {
     'f':  'A — Forme récente',
@@ -54,31 +57,68 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
   @override
   void initState() {
     super.initState();
-    _calculer();
+    _chargerOuCalculer();
   }
 
-  void _calculer() {
+  // ── Cache : charger depuis le cache ou recalculer ★ v10.35 ───────────────
+  Future<void> _chargerOuCalculer() async {
+    final svc = IaMemoryService.instance;
+    final nbAvecResultat = svc.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+
+    // Tentative lecture cache
+    final valide = await _cache.isCacheValid(nbAvecResultat);
+    if (valide) {
+      final cached = await _cache.readCache();
+      final raw = cached?['auditCriteresVivants'];
+      if (raw is Map<String, dynamic>) {
+        final rawResultats   = raw['resultats']          as List?;
+        final nbPartants     = raw['nbPartants']         as int?;
+        final pctRepos       = (raw['pctReposCouverture'] as num?)?.toDouble();
+        if (rawResultats != null && rawResultats.isNotEmpty) {
+          final resultats = rawResultats
+              .map((e) => _CritereVitalite.fromJson(e as Map<String, dynamic>))
+              .toList();
+          if (mounted) {
+            setState(() {
+              _resultats          = resultats;
+              _nbPartants         = nbPartants ?? 0;
+              _pctReposCouverture = pctRepos   ?? 0.0;
+              _calcule            = true;
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    // Recalcul complet + mise en cache
+    await _calculer();
+  }
+
+  Future<void> _calculer() async {
     final svc = IaMemoryService.instance;
     final pronostics = svc.pronostics
         .where((p) => p.scoresCriteres.isNotEmpty)
         .toList();
 
     if (pronostics.isEmpty) {
-      setState(() { _calcule = true; });
+      if (mounted) setState(() { _calcule = true; });
       return;
     }
 
     // Compter : réel vs fallback 50
-    final Map<String, int> nbReel    = {};
+    final Map<String, int> nbReel     = {};
     final Map<String, int> nbFallback = {};
     int total = 0;
     // Couverture Repos : nbChevaux avec joursRepos > 0 dans les prono
-    int nbAvecRepos = 0;
+    int nbAvecRepos    = 0;
     int nbTotalChevaux = 0;
 
     for (final prono in pronostics) {
       for (final entry in prono.scoresCriteres.entries) {
-        final sc = entry.value;
+        final sc  = entry.value;
         final map = sc.toMap();
         for (final crit in _labels.keys) {
           final val = map[crit];
@@ -101,16 +141,16 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
 
     final resultats = <_CritereVitalite>[];
     for (final crit in _labels.keys) {
-      final reel     = nbReel[crit]    ?? 0;
-      final fallback = nbFallback[crit] ?? 0;
+      final reel      = nbReel[crit]    ?? 0;
+      final fallback  = nbFallback[crit] ?? 0;
       final totalCrit = reel + fallback;
       if (totalCrit == 0) continue;
       final pctReel = reel / totalCrit * 100;
       resultats.add(_CritereVitalite(
-        cle:      crit,
-        label:    _labels[crit]!,
-        pctReel:  pctReel,
-        nbReel:   reel,
+        cle:        crit,
+        label:      _labels[crit]!,
+        pctReel:    pctReel,
+        nbReel:     reel,
         nbFallback: fallback,
       ));
     }
@@ -118,14 +158,35 @@ class _IaTabCriteresMortsState extends State<IaTabCriteresMorts> {
     // Tri par % réel décroissant (les plus vivants en haut)
     resultats.sort((a, b) => b.pctReel.compareTo(a.pctReel));
 
-    setState(() {
-      _resultats  = resultats;
-      _nbPartants = total;
-      _calcule    = true;
-      _pctReposCouverture = nbTotalChevaux > 0
-          ? (nbAvecRepos / nbTotalChevaux * 100)
-          : 0.0;
-    });
+    final pctRepos = nbTotalChevaux > 0
+        ? (nbAvecRepos / nbTotalChevaux * 100)
+        : 0.0;
+
+    // ── Mise en cache ★ v10.35 ──────────────────────────────────────────────
+    final nbAvecResultat = svc.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
+    final cacheActuel = await _cache.readCache();
+    await _cache.writeCache(
+      nbPronosticsAvecResultat: nbAvecResultat,
+      auditUtiliteGlobal:   cacheActuel?['auditUtiliteGlobal'],
+      auditCriteresVivants: {
+        'resultats':          resultats.map((r) => r.toJson()).toList(),
+        'nbPartants':         total,
+        'pctReposCouverture': pctRepos,
+      },
+      auditCorrelations:    cacheActuel?['auditCorrelations'],
+      auditParDiscipline:   cacheActuel?['auditParDiscipline'],
+    );
+
+    if (mounted) {
+      setState(() {
+        _resultats          = resultats;
+        _nbPartants         = total;
+        _calcule            = true;
+        _pctReposCouverture = pctRepos;
+      });
+    }
   }
 
   // ── Export tableau complet ───────────────────────────────────────────────
@@ -417,6 +478,23 @@ class _CritereVitalite {
     required this.nbReel,
     required this.nbFallback,
   });
+
+  // ★ v10.35 : sérialisation pour le cache SharedPreferences
+  Map<String, dynamic> toJson() => {
+    'cle':        cle,
+    'label':      label,
+    'pctReel':    pctReel,
+    'nbReel':     nbReel,
+    'nbFallback': nbFallback,
+  };
+
+  factory _CritereVitalite.fromJson(Map<String, dynamic> j) => _CritereVitalite(
+    cle:        j['cle']        as String,
+    label:      j['label']      as String,
+    pctReel:    (j['pctReel']   as num).toDouble(),
+    nbReel:     j['nbReel']     as int,
+    nbFallback: j['nbFallback'] as int,
+  );
 
   String get statut {
     if (pctReel >= 80) return 'Vivant';

@@ -202,9 +202,16 @@ class _IaTabCorrelationsState extends State<IaTabCorrelations> {
 
 
     // Mise en cache ★ v10.33
+    // ★ v10.35 fix : utiliser nbAvecResultat (pronostics avec résultats réels)
+    // et non pronostics.length (pronostics avec scores, sans résultat forcément)
+    // Sinon le cache serait invalide dès qu'un nouveau pronostic sans résultat arrive.
+    final svcForCount = IaMemoryService.instance;
+    final nbAvecResultat = svcForCount.pronostics
+        .where((p) => p.resultatsReels && p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty)
+        .length;
     final cacheActuel = await _cache.readCache();
     await _cache.writeCache(
-      nbPronosticsAvecResultat: pronostics.length,
+      nbPronosticsAvecResultat: nbAvecResultat,
       auditUtiliteGlobal:   cacheActuel?['auditUtiliteGlobal'],
       auditCriteresVivants: cacheActuel?['auditCriteresVivants'],
       auditCorrelations: {
