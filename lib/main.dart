@@ -231,6 +231,7 @@ class _MainNavigationState extends State<MainNavigation> {
     // Écoute le NavigationNotifier pour changer d'onglet
     final currentIndex = context.watch<NavigationNotifier>().index;
     return Scaffold(
+      backgroundColor: const Color(0xFF0D1B2A), // ★ fix fond gris overscroll
       body: IndexedStack(index: currentIndex, children: _screens),
       bottomNavigationBar: _buildBottomNav(currentIndex),
     );

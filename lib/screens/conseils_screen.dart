@@ -843,8 +843,9 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
     };
 
     return ListView.builder(
-      // ★ v10.37 fix : padding bottom 20→100 pour couvrir la navbar Android
-      // et éviter le fond gris système qui transparaît en bas de liste
+      // ★ fix fond gris : ClampingScrollPhysics bloque l'overscroll Android
+      // qui révélait le fond du Scaffold parent (gris Material3)
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 100),
       itemCount: _coursesAvecPartants.length,
       itemBuilder: (ctx, i) {
