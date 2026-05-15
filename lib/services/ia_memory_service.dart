@@ -48,6 +48,7 @@ import '../models/zt_models.dart';
 // ─── Modèles de données extraits dans ia_memory_models.dart ──────────────────
 import 'ia_memory_models.dart';
 import 'ia_pronostic_engine.dart';
+import 'ia_audit_cache_service.dart'; // ★ v10.32 : invalidation cache audit
 
 class IaMemoryService extends ChangeNotifier {
   static final IaMemoryService _instance = IaMemoryService._();
@@ -2930,6 +2931,9 @@ class IaMemoryService extends ChangeNotifier {
       await _save();
 
       if (nbNouveauxResultats > 0) {
+        // ★ v10.32 : invalider le cache Audit IA (sans recalcul immédiat)
+        await IaAuditCacheService().invalidate();
+
         // ★ v9.93 POINT 4 : Détection journée atypique avant le gradient
         // Garde-fous stricts pour éviter le sur-apprentissage :
         //   1. Seuil très élevé : > 85% d'échecs ET >= 8 courses

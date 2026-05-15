@@ -1,3 +1,21 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  SimulationScreen — Laboratoire IA  ★ v10.32
+//
+//  LECTURE SEULE — aucune modification des poids, aucun apprentissage.
+//  "Enregistrer comme piste" → SimulationCandidateService (SharedPreferences),
+//  jamais IaMemoryService.
+//
+//  Nouveautés v10.32 :
+//  • Tailles de texte augmentées (lisibilité mobile)
+//  • Bandeau verdict agrandi avec emoji et phrase claire
+//  • Saisie manuelle coefficient (champ texte + slider synchronisés)
+//  • Bloc "Critères modifiés" et "Critères inactifs" (repliable)
+//  • Presets discipline-aware : Plat/Trot/Obstacle × prudent/agressif
+//  • Export PNG page entière via RepaintBoundary hors écran
+//  • Bouton "Mes pistes" → push navigation interne
+//  • Renommage "Enregistrer comme piste" + sous-texte sécurité
+// ═══════════════════════════════════════════════════════════════════════════
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -7,104 +25,143 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/simulation_models.dart';
+import '../models/simulation_candidate_model.dart';
 import '../services/simulation_service.dart';
+import '../services/simulation_candidate_service.dart';
 import '../widgets/ia/simulation_assistant_panel.dart';
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  SimulationScreen — Laboratoire IA  ★ v10.30
-//
-//  LECTURE SEULE — aucune modification des poids, aucun apprentissage.
-//  "Sauvegarder candidat" → SharedPreferences uniquement, jamais IaMemoryService.
-//
-//  Nouveautés v10.30 :
-//  • Sliders "modifiés seulement" — les 19 non touchés sont masqués
-//  • Ajout de critère via sélecteur "+" pour l'activer
-//  • Badge danger surpondération (≥2 critères > 1.6x ou 1 critère = 2.0)
-//  • Impact dominant détecté (top contributeurs positifs/négatifs)
-//  • Profils presets : Conservateur / Rentable / Outsider / Stable
-//  • Assistant Simulation panneau contextuel dynamique
-//  • Top 5 ROI / Stabilité / Outsiders depuis candidats sauvegardés
-// ═══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+//  Presets discipline-aware ★ v10.32
+// ══════════════════════════════════════════════════════════════════════════
 
-// ── Profils presets ──────────────────────────────────────────────────────────
 class _Preset {
-  final String            label;
-  final String            emoji;
-  final Color             color;
-  final String            tooltip;
+  final String label;
+  final String emoji;
+  final Color  color;
+  final String discipline;  // 'Plat' | 'Trot' | 'Obstacle' | 'Toutes'
+  final String type;        // 'prudent' | 'agressif'
   final Map<String, double> mults;
-  const _Preset(this.label, this.emoji, this.color, this.tooltip, this.mults);
+  const _Preset(this.label, this.emoji, this.color, this.discipline, this.type, this.mults);
 }
 
 const _presets = [
-  _Preset('Conservateur', '🛡️', Color(0xFF00E676),
-    'Amplifie les critères de régularité (Forme, Constance) et réduit le risque (Cote).',
-    {'f': 1.3, 'k': 1.3, 'c': 0.7, 'r': 1.2}),
-  _Preset('Rentable', '💰', Color(0xFFFFD700),
-    'Maximise le ROI : amplifie Divergence et réduit Gains (effet outsiders).',
-    {'dv': 1.4, 'g': 0.7, 'mc': 1.3, 'c': 0.8}),
-  _Preset('Outsider', '🎲', Color(0xFFFF9800),
-    'Recherche les chevaux surprises : Cote amplifiée, Forme réduite.',
-    {'c': 1.5, 'f': 0.6, 'dv': 1.3, 'pg': 1.2}),
-  _Preset('Stable', '📐', Color(0xFF00BCD4),
-    'Maximise Top3 : amplifie Forme, Distance, Hippodrome.',
-    {'f': 1.3, 'ds': 1.3, 'hp': 1.2, 'k': 1.2}),
+  // Plat
+  _Preset('Plat prudent',   '🛡️', Color(0xFF00E676), 'Plat',     'prudent',
+      {'dv': 1.20, 'g': 0.80, 'ds': 0.90}),
+  _Preset('Plat agressif',  '🚀', Color(0xFFEF5350), 'Plat',     'agressif',
+      {'dv': 1.35, 'g': 0.60, 'ds': 0.80}),
+  // Trot
+  _Preset('Trot prudent',   '🛡️', Color(0xFF00E676), 'Trot',     'prudent',
+      {'ds': 1.20, 'g': 1.10, 'j': 0.90}),
+  _Preset('Trot agressif',  '🚀', Color(0xFFEF5350), 'Trot',     'agressif',
+      {'ds': 1.30, 'g': 1.15, 'j': 0.85}),
+  // Obstacle
+  _Preset('Obstacle prudent',  '🛡️', Color(0xFF00E676), 'Obstacle', 'prudent',
+      {'f': 1.20, 'hp': 1.20, 'g': 0.80, 'dv': 0.80}),
+  _Preset('Obstacle agressif', '🚀', Color(0xFFEF5350), 'Obstacle', 'agressif',
+      {'f': 1.40, 'hp': 1.30, 'g': 0.60, 'dv': 0.70}),
 ];
 
-// ── Screen ───────────────────────────────────────────────────────────────────
+// Critères inactifs connus avec leurs raisons
+const _critersInactifs = <String, String>{
+  'tr':  'Terrain : données insuffisantes',
+  'rp':  'Repos : fallback 50',
+  'mc':  'Mouvement cote : historique absent',
+  'pd':  'Place départ : non alimenté',
+  'rc':  'Record : non exploitable',
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SimulationScreen
+// ══════════════════════════════════════════════════════════════════════════
+
 class SimulationScreen extends StatefulWidget {
-  const SimulationScreen({super.key});
+  // Pré-remplissage depuis "Mes pistes" → Rejouer
+  final String?              preloadDiscipline;
+  final Map<String, double>? preloadCoefficients;
+
+  const SimulationScreen({
+    super.key,
+    this.preloadDiscipline,
+    this.preloadCoefficients,
+  });
 
   @override
   State<SimulationScreen> createState() => _SimulationScreenState();
 }
 
 class _SimulationScreenState extends State<SimulationScreen> {
-  final GlobalKey _repaintKey = GlobalKey();
-  final SimulationService _svc = SimulationService.instance;
+  // Clé pour l'export PNG page entière
+  final GlobalKey _exportKey = GlobalKey();
+
+  final SimulationService          _svc  = SimulationService.instance;
+  final SimulationCandidateService _cSvc = SimulationCandidateService();
 
   // ── État ──────────────────────────────────────────────────────────────────
-  SimulationParams _params = const SimulationParams();
+  SimulationParams   _params    = const SimulationParams();
   SimulationResultat? _resultat;
   bool _enCours    = false;
   bool _showResult = false;
 
-  // Tous les critères vivants (clés courtes)
   List<String> _tousLesCriters = [];
+  final Set<String>    _critersActifs   = {};
+  final Map<String, double> _mults      = {};
 
-  // Critères "actifs" dans l'écran (ceux dont le slider est affiché)
-  // = ceux dont le multiplicateur ≠ 1.0 OU ajoutés manuellement
-  final Set<String> _critersActifs = {};
+  // Saisie manuelle en cours par critère (clé → TextEditingController)
+  final Map<String, TextEditingController> _textCtrls = {};
+  final Map<String, String?> _textErrors = {};
 
-  // Multiplicateurs courants (clé courte → valeur 0.5–2.0)
-  final Map<String, double> _mults = {};
-
-  // Candidats sauvegardés
+  // Candidats (pour panneau assistant — historique simple)
   List<Map<String, dynamic>> _candidats = [];
-  bool _showCandidats = false;
 
-  // Expansion sections
-  bool _presetExpanded  = false;
-  bool _assistantExpanded = true;
+  // Sections repliables
+  bool _presetExpanded      = false;
+  bool _assistantExpanded   = true;
+  bool _inactifsExpanded    = false;
 
   static const _disciplines = ['Toutes', 'Plat', 'Trot', 'Obstacle'];
-  static const Color _gold = Color(0xFFFFD700);
-  static const Color _bg   = Color(0xFF0D1B2A);
-  static const Color _cyan = Color(0xFF00E5FF);
+  static const Color _gold  = Color(0xFFFFD700);
+  static const Color _bg    = Color(0xFF0D1B2A);
+  static const Color _cyan  = Color(0xFF00E5FF);
+  static const Color _vert  = Color(0xFF00E676);
+  static const Color _rouge = Color(0xFFEF5350);
 
+  // ── Init ──────────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
     _tousLesCriters = _svc.critersVivants();
     _chargerCandidats();
+
+    // Pré-remplissage si "Rejouer" depuis Mes pistes
+    if (widget.preloadDiscipline != null) {
+      _params = _params.copyWith(discipline: widget.preloadDiscipline!);
+    }
+    if (widget.preloadCoefficients != null) {
+      for (final e in widget.preloadCoefficients!.entries) {
+        if (_tousLesCriters.contains(e.key) && (e.value - 1.0).abs() > 0.01) {
+          _mults[e.key]       = e.value;
+          _critersActifs.add(e.key);
+        }
+      }
+    }
   }
 
+  @override
+  void dispose() {
+    for (final c in _textCtrls.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ── Charger candidats (liste simple pour le panneau) ─────────────────────
   Future<void> _chargerCandidats() async {
     final c = await _svc.chargerCandidats();
     if (mounted) setState(() => _candidats = c);
   }
 
-  // ── Critères affichés = actifs (modifiés) ────────────────────────────────
+  // ── Critères affichés (modifiés ou ajoutés manuellement) ─────────────────
   List<String> get _critersAffiches => _tousLesCriters
       .where((k) => _critersActifs.contains(k) || (_mults[k] ?? 1.0) != 1.0)
       .toList();
@@ -113,14 +170,11 @@ class _SimulationScreenState extends State<SimulationScreen> {
   Future<void> _lancer() async {
     setState(() { _enCours = true; _showResult = false; });
     await Future.delayed(const Duration(milliseconds: 80));
-
     final params = SimulationParams(
       discipline:      _params.discipline,
       multiplicateurs: Map.from(_mults),
     );
-
     final res = await Future(() => _svc.simuler(params));
-
     setState(() {
       _resultat   = res;
       _params     = params;
@@ -130,20 +184,32 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   // ── Reset ─────────────────────────────────────────────────────────────────
-  void _reset() => setState(() {
-    _mults.clear();
-    _critersActifs.clear();
-    _showResult = false;
-    _resultat   = null;
-  });
-
-  // ── Appliquer preset ──────────────────────────────────────────────────────
-  void _appliquerPreset(_Preset p) {
+  void _reset() {
+    for (final c in _textCtrls.values) c.dispose();
+    _textCtrls.clear();
+    _textErrors.clear();
     setState(() {
       _mults.clear();
       _critersActifs.clear();
       _showResult = false;
       _resultat   = null;
+    });
+  }
+
+  // ── Appliquer preset ──────────────────────────────────────────────────────
+  void _appliquerPreset(_Preset p) {
+    for (final c in _textCtrls.values) c.dispose();
+    _textCtrls.clear();
+    _textErrors.clear();
+    setState(() {
+      _mults.clear();
+      _critersActifs.clear();
+      _showResult = false;
+      _resultat   = null;
+      // Ajuster la discipline si besoin
+      if (p.discipline != 'Toutes') {
+        _params = _params.copyWith(discipline: p.discipline);
+      }
       for (final e in p.mults.entries) {
         if (_tousLesCriters.contains(e.key)) {
           _mults[e.key]       = e.value;
@@ -153,45 +219,77 @@ class _SimulationScreenState extends State<SimulationScreen> {
     });
   }
 
-  // ── Test prudent / agressif ───────────────────────────────────────────────
+  // ── Test prudent / agressif depuis l'assistant ────────────────────────────
   void _testPrudent() {
-    setState(() {
-      for (final k in _critersActifs) {
-        final v = _mults[k] ?? 1.0;
-        // Ramène tous les multiplicateurs vers 1.0 de 30%
-        _mults[k] = 1.0 + (v - 1.0) * 0.5;
-      }
-      // Si rien d'actif, applique preset Conservateur
-      if (_critersActifs.isEmpty) _appliquerPreset(_presets[0]);
-      _showResult = false;
-      _resultat   = null;
-    });
+    final disc = _params.discipline;
+    // Cherche le preset prudent correspondant
+    final preset = _presets.firstWhere(
+      (p) => p.discipline == disc && p.type == 'prudent',
+      orElse: () => _presets.firstWhere((p) => p.type == 'prudent'),
+    );
+    _appliquerPreset(preset);
   }
 
   void _testAgressif() {
+    final disc = _params.discipline;
+    final preset = _presets.firstWhere(
+      (p) => p.discipline == disc && p.type == 'agressif',
+      orElse: () => _presets.firstWhere((p) => p.type == 'agressif'),
+    );
+    _appliquerPreset(preset);
+  }
+
+  // ── Saisie manuelle coefficient ★ v10.32 ──────────────────────────────────
+  TextEditingController _ctrlFor(String k) {
+    if (!_textCtrls.containsKey(k)) {
+      final val = _mults[k] ?? 1.0;
+      _textCtrls[k] = TextEditingController(text: val.toStringAsFixed(2));
+    }
+    return _textCtrls[k]!;
+  }
+
+  void _appliquerSaisie(String k) {
+    final ctrl = _ctrlFor(k);
+    final raw  = ctrl.text.trim().replaceAll(',', '.');
+    final val  = double.tryParse(raw);
+    if (val == null || val < 0.50 || val > 2.00) {
+      setState(() => _textErrors[k] = 'Entre 0.50 et 2.00');
+      return;
+    }
     setState(() {
-      for (final k in _critersActifs) {
-        final v = _mults[k] ?? 1.0;
-        // Amplifie de 30% supplémentaires
-        _mults[k] = (1.0 + (v - 1.0) * 1.5).clamp(0.5, 2.0);
-      }
-      if (_critersActifs.isEmpty) _appliquerPreset(_presets[1]);
-      _showResult = false;
-      _resultat   = null;
+      _textErrors[k] = null;
+      _mults[k]      = double.parse(val.toStringAsFixed(2));
+      ctrl.text      = val.toStringAsFixed(2);
     });
   }
 
-  // ── Export ────────────────────────────────────────────────────────────────
+  // ── Export PNG page entière ★ v10.32 ──────────────────────────────────────
   Future<void> _exporter() async {
     try {
-      final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) return;
+      // Laisser Flutter rendre le widget complet
+      await Future.delayed(const Duration(milliseconds: 150));
+
+      final boundary = _exportKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Lancez d\'abord une simulation.')));
+        }
+        return;
+      }
+
       final image    = await boundary.toImage(pixelRatio: 2.5);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) return;
-      final bytes    = byteData.buffer.asUint8List();
-      final dir      = await getTemporaryDirectory();
-      final file     = File('${dir.path}/simulation_ia.png');
+
+      final bytes = byteData.buffer.asUint8List();
+      final dir   = await getTemporaryDirectory();
+      final now   = DateTime.now();
+      final fname = 'simulation_ia_${_params.discipline}_'
+          '${now.year}${now.month.toString().padLeft(2,"0")}${now.day.toString().padLeft(2,"0")}'
+          '_${now.hour.toString().padLeft(2,"0")}${now.minute.toString().padLeft(2,"0")}.png';
+      final file  = File('${dir.path}/$fname');
       await file.writeAsBytes(bytes);
       await SharePlus.instance.share(ShareParams(
         files:   [XFile(file.path, mimeType: 'image/png')],
@@ -200,23 +298,68 @@ class _SimulationScreenState extends State<SimulationScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur export : $e')),
-        );
+          SnackBar(content: Text('Erreur export : $e')));
       }
     }
   }
 
-  // ── Sauvegarder candidat ──────────────────────────────────────────────────
-  Future<void> _sauvegarderCandidat() async {
-    if (_resultat == null) return;
+  // ── Enregistrer comme piste ★ v10.32 ──────────────────────────────────────
+  Future<void> _enregistrerPiste() async {
+    if (_resultat == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lancez d\'abord une simulation.')));
+      return;
+    }
     final nom = await _demanderNom();
     if (nom == null || nom.trim().isEmpty) return;
+
+    // Calcul score confiance (même logique que l'assistant)
+    final n = _resultat!.avant.nbCourses;
+    int score;
+    if (n < 30) score = 10;
+    else if (n < 50) score = 35;
+    else if (n < 150) score = 65;
+    else score = 85;
+    final dTop3 = _resultat!.apres.top3 - _resultat!.avant.top3;
+    final dRoi  = _resultat!.apres.roi  - _resultat!.avant.roi;
+    if (dTop3 > 0) score += 10;
+    if (dRoi  > 0) score += 10;
+    final nbMod = _mults.values.where((v) => (v - 1.0).abs() > 0.01).length;
+    if (nbMod > 3) score -= 15;
+    if (_mults.values.any((v) => v > 1.70)) score -= 20;
+    score = score.clamp(0, 100);
+
+    final candidate = SimulationCandidate(
+      id:             SimulationCandidateService.generateId(),
+      createdAt:      DateTime.now(),
+      discipline:     _params.discipline,
+      label:          nom.trim(),
+      coefficients:   Map.from(_mults),
+      top1Avant:      _resultat!.avant.top1,
+      top1Apres:      _resultat!.apres.top1,
+      top3Avant:      _resultat!.avant.top3,
+      top3Apres:      _resultat!.apres.top3,
+      top5Avant:      _resultat!.avant.top5,
+      top5Apres:      _resultat!.apres.top5,
+      roiAvant:       _resultat!.avant.roi,
+      roiApres:       _resultat!.apres.roi,
+      gainNetAvant:   _resultat!.avant.gainNet,
+      gainNetApres:   _resultat!.apres.gainNet,
+      outsidersAvant: _resultat!.avant.outsiders.toDouble(),
+      outsidersApres: _resultat!.apres.outsiders.toDouble(),
+      scoreConfiance: score,
+      verdict:        _resultat!.verdict,
+    );
+
+    await _cSvc.saveCandidate(candidate);
+    // Aussi mettre à jour la liste "ancienne" pour le panneau assistant
     await _svc.sauvegarderCandidat(_resultat!, nom.trim());
     await _chargerCandidats();
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✅ Candidat sauvegardé — aucun poids modifié'),
+          content: Text('✅ Piste enregistrée — aucun poids IA modifié'),
           backgroundColor: Color(0xFF2E7D32),
         ),
       );
@@ -231,17 +374,30 @@ class _SimulationScreenState extends State<SimulationScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A2744),
-        title: const Text('Nom du candidat', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: ctrl,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            hintText: 'Ex: Trot Distance +40%',
-            hintStyle: TextStyle(color: Colors.white38),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFFFFD700)),
+        title: const Text('Nom de la piste',
+          style: TextStyle(color: Colors.white, fontSize: 18)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: const InputDecoration(
+                hintText: 'Ex: Trot Distance +30%',
+                hintStyle: TextStyle(color: Colors.white38),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFFFFD700)),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 10),
+            const Text(
+              'Ne modifie pas l\'IA réelle.',
+              style: TextStyle(color: Colors.white38, fontSize: 12,
+                  fontStyle: FontStyle.italic),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -251,7 +407,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: _gold),
             onPressed: () => Navigator.pop(ctx, ctrl.text),
-            child: const Text('Sauvegarder', style: TextStyle(color: Colors.black)),
+            child: const Text('Enregistrer', style: TextStyle(color: Colors.black)),
           ),
         ],
       ),
@@ -269,7 +425,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A2744),
-        title: const Text('Ajouter un critère', style: TextStyle(color: Colors.white)),
+        title: const Text('Ajouter un critère',
+          style: TextStyle(color: Colors.white, fontSize: 18)),
         content: SizedBox(
           width: 280,
           child: ListView.builder(
@@ -280,7 +437,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
               return ListTile(
                 dense: true,
                 title: Text(kLabelsSimu[k] ?? k,
-                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  style: const TextStyle(color: Colors.white, fontSize: 15)),
                 onTap: () => Navigator.pop(ctx, k),
               );
             },
@@ -300,7 +457,19 @@ class _SimulationScreenState extends State<SimulationScreen> {
     }
   }
 
-  // ── Build principal ───────────────────────────────────────────────────────
+  // ── Navigation vers Mes pistes ★ v10.32 ───────────────────────────────────
+  Future<void> _ouvrirMesPistes() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _MesPistesScreen()),
+    );
+    // Rechargement au retour (une piste peut avoir été rejouée)
+    await _chargerCandidats();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  BUILD PRINCIPAL
+  // ═══════════════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -309,62 +478,68 @@ class _SimulationScreenState extends State<SimulationScreen> {
         backgroundColor: _bg,
         elevation: 0,
         title: const Text('🧪 Laboratoire IA',
-          style: TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 18)),
+          style: TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 20)),
         actions: [
-          // Badge candidats
-          if (_candidats.isNotEmpty)
-            IconButton(
-              icon: Badge(
-                label: Text('${_candidats.length}'),
-                child: const Icon(Icons.history, color: Colors.white70),
-              ),
-              onPressed: () => setState(() => _showCandidats = !_showCandidats),
-            ),
+          // Bouton Mes pistes ★ v10.32
+          TextButton.icon(
+            icon: const Icon(Icons.bookmarks_outlined, color: _cyan, size: 18),
+            label: const Text('Mes pistes',
+              style: TextStyle(color: _cyan, fontSize: 13, fontWeight: FontWeight.w600)),
+            onPressed: _ouvrirMesPistes,
+          ),
         ],
       ),
-      body: _showCandidats
-          ? _buildListeCandidats()
-          : SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildBandeauLecture(),
-                  _buildSecteurDiscipline(),
-                  _buildPresets(),
-                  _buildSecteurSliders(),
-                  _buildBoutonLancer(),
-                  if (_enCours) _buildChargement(),
-                  if (_showResult && _resultat != null) ...[
-                    RepaintBoundary(
-                      key: _repaintKey,
-                      child: Container(
-                        color: _bg,
-                        child: Column(
-                          children: [
-                            _buildVerdictBanner(_resultat!),
-                            _buildTableauComparaison(_resultat!),
-                            _buildBlocPeriode('Historique complet', _resultat!.avant, _resultat!.apres),
-                            _buildBlocPeriode('30 derniers jours',  _resultat!.avant30j, _resultat!.apres30j),
-                            _buildBlocPeriode('7 derniers jours',   _resultat!.avant7j,  _resultat!.apres7j),
-                            _buildFiabiliteBloc(_resultat!),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                  // ── Panneau assistant (toujours visible, dans le scroll) ──
-                  _buildAssistantSection(),
-                ],
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 50),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildBandeauLecture(),
+            _buildSecteurDiscipline(),
+            _buildPresets(),
+            _buildCriteresModifies(),
+            _buildSecteurSliders(),
+            _buildCriteresInactifs(),
+            _buildBoutonLancer(),
+            if (_enCours) _buildChargement(),
+
+            // ── Zone exportable page entière ★ v10.32 ─────────────────
+            if (_showResult && _resultat != null)
+              RepaintBoundary(
+                key: _exportKey,
+                child: Container(
+                  color: _bg,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildVerdictBanner(_resultat!),
+                      _buildTableauComparaison(_resultat!),
+                      _buildBlocPeriode('Historique complet',
+                          _resultat!.avant,   _resultat!.apres),
+                      _buildBlocPeriode('30 derniers jours',
+                          _resultat!.avant30j, _resultat!.apres30j),
+                      _buildBlocPeriode('7 derniers jours',
+                          _resultat!.avant7j,  _resultat!.apres7j),
+                      _buildFiabiliteBloc(_resultat!),
+                      // Métadonnées export
+                      _buildPiedExport(),
+                    ],
+                  ),
+                ),
               ),
-            ),
+
+            // ── Panneau assistant ──────────────────────────────────────
+            _buildAssistantSection(),
+          ],
+        ),
+      ),
     );
   }
 
   // ── Bandeau lecture seule ─────────────────────────────────────────────────
   Widget _buildBandeauLecture() => Container(
-    margin: const EdgeInsets.only(bottom: 10, top: 4),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    margin: const EdgeInsets.only(bottom: 12, top: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
     decoration: BoxDecoration(
       color: Colors.blue.withValues(alpha: 0.10),
       borderRadius: BorderRadius.circular(10),
@@ -372,12 +547,12 @@ class _SimulationScreenState extends State<SimulationScreen> {
     ),
     child: const Row(
       children: [
-        Icon(Icons.science_outlined, color: Colors.blue, size: 16),
+        Icon(Icons.science_outlined, color: Colors.blue, size: 18),
         SizedBox(width: 8),
         Expanded(
           child: Text(
             'Lecture seule — aucun poids modifié, aucun apprentissage',
-            style: TextStyle(color: Colors.blue, fontSize: 12),
+            style: TextStyle(color: Colors.blue, fontSize: 14),
           ),
         ),
       ],
@@ -389,19 +564,19 @@ class _SimulationScreenState extends State<SimulationScreen> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const Padding(
-        padding: EdgeInsets.only(bottom: 8),
+        padding: EdgeInsets.only(bottom: 10),
         child: Text('Discipline',
-          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
       ),
       Wrap(
-        spacing: 8,
+        spacing: 9,
         children: _disciplines.map((d) {
           final sel = _params.discipline == d;
           return ChoiceChip(
             label: Text(d, style: TextStyle(
-              color: sel ? Colors.black : Colors.white70,
+              color:      sel ? Colors.black : Colors.white70,
               fontWeight: sel ? FontWeight.bold : FontWeight.normal,
-              fontSize: 13,
+              fontSize:   15,
             )),
             selected: sel,
             selectedColor: _gold,
@@ -414,68 +589,143 @@ class _SimulationScreenState extends State<SimulationScreen> {
           );
         }).toList(),
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 16),
     ],
   );
 
-  // ── Profils presets ───────────────────────────────────────────────────────
-  Widget _buildPresets() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      GestureDetector(
-        onTap: () => setState(() => _presetExpanded = !_presetExpanded),
-        child: Row(
-          children: [
-            const Text('Profils rapides',
-              style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Icon(
-              _presetExpanded ? Icons.expand_less : Icons.expand_more,
-              color: Colors.white38, size: 18,
-            ),
-          ],
+  // ── Presets discipline-aware ★ v10.32 ─────────────────────────────────────
+  Widget _buildPresets() {
+    // Filtre les presets pertinents selon la discipline choisie
+    final disc     = _params.discipline;
+    final pertinents = _presets.where(
+      (p) => p.discipline == disc || disc == 'Toutes',
+    ).toList();
+    // Si Toutes, montre juste les presets d'une seule discipline
+    final affiches = disc == 'Toutes'
+        ? _presets.where((p) => p.discipline == 'Plat').toList()
+        : pertinents;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _presetExpanded = !_presetExpanded),
+          child: Row(
+            children: [
+              const Text('Profils rapides',
+                style: TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.bold)),
+              if (disc != 'Toutes')
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text('($disc)',
+                    style: const TextStyle(color: _gold, fontSize: 13)),
+                ),
+              const Spacer(),
+              Icon(_presetExpanded ? Icons.expand_less : Icons.expand_more,
+                color: Colors.white38, size: 20),
+            ],
+          ),
         ),
-      ),
-      if (_presetExpanded) ...[
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: _presets.map((p) => Tooltip(
-            message: p.tooltip,
-            child: OutlinedButton(
+        if (_presetExpanded) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 9,
+            runSpacing: 8,
+            children: affiches.map((p) => OutlinedButton(
               style: OutlinedButton.styleFrom(
                 foregroundColor: p.color,
-                side: BorderSide(color: p.color.withValues(alpha: 0.6)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                side: BorderSide(color: p.color.withValues(alpha: 0.65)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               onPressed: () => _appliquerPreset(p),
               child: Text('${p.emoji} ${p.label}',
-                style: TextStyle(fontSize: 12, color: p.color, fontWeight: FontWeight.w600)),
-            ),
-          )).toList(),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Les profils appliquent des multiplicateurs typiques — modifiez ensuite à la main.',
-          style: TextStyle(color: Colors.white24, fontSize: 10, fontStyle: FontStyle.italic),
-        ),
+                style: TextStyle(fontSize: 14, color: p.color, fontWeight: FontWeight.w600)),
+            )).toList(),
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'Les profils appliquent des multiplicateurs typiques — modifiez ensuite à la main.',
+            style: TextStyle(color: Colors.white24, fontSize: 12, fontStyle: FontStyle.italic),
+          ),
+        ],
+        const SizedBox(height: 14),
       ],
-      const SizedBox(height: 12),
-    ],
-  );
+    );
+  }
 
-  // ── Sliders — affichage critères modifiés seulement ───────────────────────
+  // ── Bloc "Critères modifiés" ★ v10.32 ─────────────────────────────────────
+  Widget _buildCriteresModifies() {
+    final modifies = _mults.entries
+        .where((e) => (e.value - 1.0).abs() > 0.01)
+        .toList();
+    if (modifies.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.03),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.tune, color: Colors.white24, size: 18),
+            SizedBox(width: 8),
+            Text('Aucun critère modifié.',
+              style: TextStyle(color: Colors.white38, fontSize: 15)),
+          ],
+        ),
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: _cyan.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _cyan.withValues(alpha: 0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Critères modifiés',
+            style: TextStyle(color: _cyan, fontSize: 15, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          ...modifies.map((e) {
+            final label = kLabelsSimu[e.key] ?? e.key;
+            final color = e.value > 1.0 ? _vert : _rouge;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Icon(e.value > 1.0 ? Icons.arrow_upward : Icons.arrow_downward,
+                    size: 14, color: color),
+                  const SizedBox(width: 6),
+                  Text(label,
+                    style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w500)),
+                  const Spacer(),
+                  Text('x${e.value.toStringAsFixed(2)}',
+                    style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── Sliders + saisie manuelle ★ v10.32 ────────────────────────────────────
   Widget _buildSecteurSliders() {
     if (_tousLesCriters.isEmpty) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 16),
+        padding: EdgeInsets.symmetric(vertical: 18),
         child: Text(
           'Pas encore assez de données pour détecter des critères vivants.',
-          style: TextStyle(color: Colors.white38, fontSize: 13),
+          style: TextStyle(color: Colors.white38, fontSize: 15),
           textAlign: TextAlign.center,
         ),
       );
@@ -486,222 +736,364 @@ class _SimulationScreenState extends State<SimulationScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── En-tête section sliders ─────────────────────────────────────
+        // ── En-tête ──────────────────────────────────────────────────────
         Row(
           children: [
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Multiplicateurs',
-                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 Text(
                   affiches.isEmpty
-                      ? 'Aucun critère modifié — appuie sur + pour commencer'
-                      : '${affiches.length} critère(s) actif(s) · ${_tousLesCriters.length - affiches.length} masqués',
-                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                      ? 'Appuie sur + pour commencer'
+                      : '${affiches.length} critère(s) actif(s)',
+                  style: const TextStyle(color: Colors.white38, fontSize: 12),
                 ),
               ],
             ),
             const Spacer(),
-            // Bouton réinitialiser
             if (affiches.isNotEmpty)
               TextButton.icon(
                 onPressed: _reset,
-                icon: const Icon(Icons.refresh, size: 13, color: Colors.white38),
-                label: const Text('Réinit.', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                icon: const Icon(Icons.refresh, size: 15, color: Colors.white38),
+                label: const Text('Réinit.', style: TextStyle(color: Colors.white38, fontSize: 13)),
                 style: TextButton.styleFrom(
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 ),
               ),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
+
         if (affiches.isEmpty)
-          // Aucun slider actif → invite à ajouter
           Container(
             margin: const EdgeInsets.symmetric(vertical: 8),
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.03),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.08),
-                style: BorderStyle.solid,
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.tune, color: Colors.white24, size: 18),
-                const SizedBox(width: 10),
+                const Icon(Icons.tune, color: Colors.white24, size: 20),
+                const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
                     'Tous les critères sont à leur valeur neutre (x1.0).\n'
-                    'Appuie sur "+" pour modifier un critère ou utilise un profil rapide.',
-                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                    'Appuie sur "+" ou utilise un profil rapide.',
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
                   ),
                 ),
               ],
             ),
           )
         else
-          // Sliders des critères actifs
-          ...affiches.map((k) => _buildSlider(k)),
+          ...affiches.map((k) => _buildSliderWithInput(k)),
 
-        // ── Bouton ajouter critère ──────────────────────────────────────
-        const SizedBox(height: 6),
+        // ── Bouton ajouter critère ────────────────────────────────────────
+        const SizedBox(height: 8),
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(
             foregroundColor: _cyan,
             side: BorderSide(color: _cyan.withValues(alpha: 0.4)),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             minimumSize: Size.zero,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          icon: const Icon(Icons.add, size: 14),
+          icon: const Icon(Icons.add, size: 16),
           label: Text(
             'Ajouter un critère (${_tousLesCriters.length - _critersAffiches.length} disponibles)',
-            style: const TextStyle(fontSize: 11),
+            style: const TextStyle(fontSize: 13),
           ),
           onPressed: _tousLesCriters.length > _critersAffiches.length
               ? _ajouterCritere
               : null,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
       ],
     );
   }
 
-  Widget _buildSlider(String k) {
+  // ── Slider + champ saisie manuelle ★ v10.32 ──────────────────────────────
+  Widget _buildSliderWithInput(String k) {
     final val   = _mults[k] ?? 1.0;
     final label = kLabelsSimu[k] ?? k;
     final isModified = (val - 1.0).abs() > 0.01;
     final color = val > 1.05
-        ? const Color(0xFF00E676)
+        ? _vert
         : val < 0.95
-            ? const Color(0xFFEF5350)
+            ? _rouge
             : Colors.white54;
+    final ctrl  = _ctrlFor(k);
+    final erreur = _textErrors[k];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          // Retirer du panneau si modif nulle
-          if (!isModified)
-            GestureDetector(
-              onTap: () => setState(() {
-                _mults.remove(k);
-                _critersActifs.remove(k);
-              }),
-              child: const Padding(
-                padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.close, size: 13, color: Colors.white24),
-              ),
-            )
-          else
-            const SizedBox(width: 17),
-          SizedBox(
-            width: 95,
-            child: Text(label,
-              style: TextStyle(
-                color: isModified ? Colors.white : Colors.white54,
-                fontSize: 11,
-                fontWeight: isModified ? FontWeight.w600 : FontWeight.normal,
-              )),
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.03),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isModified
+                ? color.withValues(alpha: 0.25)
+                : Colors.white.withValues(alpha: 0.06),
           ),
-          Expanded(
-            child: SliderTheme(
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Ligne label + bouton supprimer ─────────────────────────
+            Row(
+              children: [
+                if (!isModified)
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _mults.remove(k);
+                      _critersActifs.remove(k);
+                      _textCtrls[k]?.dispose();
+                      _textCtrls.remove(k);
+                      _textErrors.remove(k);
+                    }),
+                    child: const Padding(
+                      padding: EdgeInsets.only(right: 6),
+                      child: Icon(Icons.close, size: 15, color: Colors.white24),
+                    ),
+                  )
+                else
+                  const SizedBox(width: 21),
+                Text(label, style: TextStyle(
+                  color: isModified ? Colors.white : Colors.white54,
+                  fontSize: 16,
+                  fontWeight: isModified ? FontWeight.w600 : FontWeight.normal,
+                )),
+                const Spacer(),
+                // Valeur actuelle affichée à droite
+                Text('x${val.toStringAsFixed(2)}',
+                  style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 4),
+
+            // ── Slider ─────────────────────────────────────────────────
+            SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 activeTrackColor:   color,
                 thumbColor:         color,
                 inactiveTrackColor: Colors.white12,
                 overlayColor:       color.withValues(alpha: 0.15),
-                trackHeight:        3,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                trackHeight:        4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
               ),
               child: Slider(
-                value:    val,
-                min:      0.5,
-                max:      2.0,
+                value:     val,
+                min:       0.5,
+                max:       2.0,
                 divisions: 30,
-                onChanged: (v) => setState(() => _mults[k] = v),
+                onChanged: (v) {
+                  setState(() {
+                    _mults[k]  = v;
+                    ctrl.text  = v.toStringAsFixed(2);
+                    _textErrors[k] = null;
+                  });
+                },
               ),
             ),
-          ),
-          SizedBox(
-            width: 38,
-            child: Text(
-              'x${val.toStringAsFixed(1)}',
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.right,
+
+            // ── Saisie manuelle ★ v10.32 ───────────────────────────────
+            Row(
+              children: [
+                const Text('Coefficient : ',
+                  style: TextStyle(color: Colors.white54, fontSize: 14)),
+                SizedBox(
+                  width: 72,
+                  height: 34,
+                  child: TextField(
+                    controller: ctrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                      isDense:       true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: color.withValues(alpha: 0.4)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: color),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      errorBorder: OutlineInputBorder(
+                        borderSide: const BorderSide(color: _rouge),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    onSubmitted: (_) => _appliquerSaisie(k),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: color,
+                    side: BorderSide(color: color.withValues(alpha: 0.6)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => _appliquerSaisie(k),
+                  child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                ),
+                if (erreur != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(erreur,
+                      style: const TextStyle(color: _rouge, fontSize: 12)),
+                  ),
+                ],
+              ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ── Bouton lancer ─────────────────────────────────────────────────────────
+  // ── Critères inactifs (repliable) ★ v10.32 ────────────────────────────────
+  Widget _buildCriteresInactifs() {
+    final inactifs = _critersInactifs.entries
+        .where((e) => !_tousLesCriters.contains(e.key))
+        .toList();
+
+    // Ajoute aussi les critères vivants non proposés dans l'interface (trop rares)
+    if (inactifs.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _inactifsExpanded = !_inactifsExpanded),
+          child: Row(
+            children: [
+              const Text('Critères inactifs',
+                style: TextStyle(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
+              const SizedBox(width: 6),
+              Text('(${inactifs.length})',
+                style: const TextStyle(color: Colors.white24, fontSize: 13)),
+              const Spacer(),
+              Icon(_inactifsExpanded ? Icons.expand_less : Icons.expand_more,
+                color: Colors.white24, size: 18),
+            ],
+          ),
+        ),
+        if (_inactifsExpanded) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.02),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              children: inactifs.map((e) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    const Icon(Icons.block_outlined, size: 14, color: Colors.white24),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(e.value,
+                        style: const TextStyle(color: Colors.white38, fontSize: 14)),
+                    ),
+                  ],
+                ),
+              )).toList(),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Ces critères ne sont pas proposés dans la simulation.',
+            style: TextStyle(color: Colors.white24, fontSize: 12, fontStyle: FontStyle.italic),
+          ),
+        ],
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  // ── Bouton Lancer ─────────────────────────────────────────────────────────
   Widget _buildBoutonLancer() => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
+    padding: const EdgeInsets.symmetric(vertical: 10),
     child: SizedBox(
       width: double.infinity,
-      height: 48,
+      height: 52,
       child: ElevatedButton.icon(
         style: ElevatedButton.styleFrom(
           backgroundColor: _gold,
           foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        icon: const Icon(Icons.play_arrow_rounded, size: 22),
+        icon: const Icon(Icons.play_arrow_rounded, size: 24),
         label: const Text('Lancer la simulation',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
         onPressed: _enCours ? null : _lancer,
       ),
     ),
   );
 
   Widget _buildChargement() => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 24),
+    padding: EdgeInsets.symmetric(vertical: 28),
     child: Center(child: Column(children: [
       CircularProgressIndicator(color: _gold),
-      SizedBox(height: 12),
-      Text('Calcul en cours…', style: TextStyle(color: Colors.white54, fontSize: 13)),
+      SizedBox(height: 14),
+      Text('Calcul en cours…', style: TextStyle(color: Colors.white54, fontSize: 15)),
     ])),
   );
 
-  // ── Section assistant (expandable) ────────────────────────────────────────
+  // ── Pied export (métadonnées) ★ v10.32 ───────────────────────────────────
+  Widget _buildPiedExport() {
+    final now = DateTime.now();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      child: Text(
+        'Export Simulation IA — ${_params.discipline} — '
+        '${now.day.toString().padLeft(2,"0")}/${now.month.toString().padLeft(2,"0")}/${now.year} '
+        '${now.hour.toString().padLeft(2,"0")}:${now.minute.toString().padLeft(2,"0")}',
+        style: const TextStyle(color: Colors.white24, fontSize: 11),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  // ── Panneau assistant ─────────────────────────────────────────────────────
   Widget _buildAssistantSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      // Toggle expansion
       GestureDetector(
         onTap: () => setState(() => _assistantExpanded = !_assistantExpanded),
         child: Container(
-          margin: const EdgeInsets.only(top: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          margin: const EdgeInsets.only(top: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF00E5FF).withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.25)),
+            color: _cyan.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _cyan.withValues(alpha: 0.25)),
           ),
           child: Row(
             children: [
-              const Icon(Icons.auto_awesome, color: Color(0xFF00E5FF), size: 16),
+              const Icon(Icons.auto_awesome, color: _cyan, size: 18),
               const SizedBox(width: 8),
               const Text('Assistant Simulation',
-                style: TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold)),
+                style: TextStyle(color: _cyan, fontSize: 15, fontWeight: FontWeight.bold)),
               const Spacer(),
-              Icon(
-                _assistantExpanded ? Icons.expand_less : Icons.expand_more,
-                color: const Color(0xFF00E5FF), size: 18,
-              ),
+              Icon(_assistantExpanded ? Icons.expand_less : Icons.expand_more,
+                color: _cyan, size: 20),
             ],
           ),
         ),
@@ -715,36 +1107,65 @@ class _SimulationScreenState extends State<SimulationScreen> {
           onTestPrudent:  _testPrudent,
           onTestAgressif: _testAgressif,
           onReset:        _reset,
-          onSauvegarder:  _sauvegarderCandidat,
+          onSauvegarder:  _enregistrerPiste,
           onExporter:     _exporter,
         ),
     ],
   );
 
-  // ── Verdict ───────────────────────────────────────────────────────────────
+  // ── Verdict ★ v10.32 (gros bandeau) ──────────────────────────────────────
   Widget _buildVerdictBanner(SimulationResultat res) {
     final v = res.verdict;
     Color color;
-    if (v.startsWith('🟢'))      color = const Color(0xFF00E676);
-    else if (v.startsWith('🟡')) color = const Color(0xFFFFD700);
-    else if (v.startsWith('🟠')) color = const Color(0xFFFF9800);
-    else if (v.startsWith('🔴')) color = const Color(0xFFEF5350);
-    else                          color = Colors.white38;
+    String emoji;
+    String phrase;
+
+    if (v.startsWith('🟢')) {
+      color  = _vert;
+      emoji  = '🟢';
+      phrase = 'ROI et Top3 progressent : piste à surveiller.';
+    } else if (v.startsWith('🟡')) {
+      color  = _gold;
+      emoji  = '🟡';
+      phrase = 'Amélioration trop faible pour décider.';
+    } else if (v.startsWith('🟠')) {
+      color  = const Color(0xFFFF9800);
+      emoji  = '🟠';
+      phrase = 'ROI monte mais stabilité baisse.';
+    } else if (v.startsWith('🔴')) {
+      color  = _rouge;
+      emoji  = '🔴';
+      phrase = 'Réglage défavorable.';
+    } else {
+      color  = Colors.white38;
+      emoji  = '⚪';
+      phrase = 'Pas de signal clair.';
+    }
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.55), width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Verdict', style: TextStyle(color: color, fontSize: 11)),
-          const SizedBox(height: 4),
-          Text(v, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
+          Row(
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(v.replaceFirst(RegExp(r'^[🟢🟡🟠🔴⚪]\s*'), ''),
+                  style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(phrase,
+            style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 16)),
         ],
       ),
     );
@@ -755,62 +1176,87 @@ class _SimulationScreenState extends State<SimulationScreen> {
     final a = res.avant;
     final s = res.apres;
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: _gold.withValues(alpha: 0.10),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
             ),
             child: const Row(
               children: [
-                Expanded(flex: 3, child: Text('Mesure',      style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold))),
-                Expanded(flex: 2, child: Text('IA actuelle', style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                Expanded(flex: 2, child: Text('Simulation',  style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                Expanded(flex: 2, child: Text('Δ',           style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                Expanded(flex: 3, child: Text('Mesure',
+                  style: TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold))),
+                Expanded(flex: 2, child: Text('IA actuelle',
+                  style: TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center)),
+                Expanded(flex: 2, child: Text('Simulation',
+                  style: TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center)),
+                Expanded(flex: 2, child: Text('Δ',
+                  style: TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center)),
               ],
             ),
           ),
-          _ligneCompa('Courses testées', '${a.nbCourses}',            '${s.nbCourses}',            null),
-          _ligneCompa('Courses ROI',     '${a.nbCoursesRoi}',         '${s.nbCoursesRoi}',         null),
-          _ligneCompa('Top1 gagnant',    '${a.top1.toStringAsFixed(1)}%', '${s.top1.toStringAsFixed(1)}%', s.top1 - a.top1, pct: true),
-          _ligneCompa('Top3 touché',     '${a.top3.toStringAsFixed(1)}%', '${s.top3.toStringAsFixed(1)}%', s.top3 - a.top3, pct: true),
-          _ligneCompa('Top5 touché',     '${a.top5.toStringAsFixed(1)}%', '${s.top5.toStringAsFixed(1)}%', s.top5 - a.top5, pct: true),
-          _ligneCompa('ROI théorique',   '${a.roi.toStringAsFixed(1)}%',  '${s.roi.toStringAsFixed(1)}%',  s.roi - a.roi,  pct: true),
-          _ligneCompa('Gain net (€)',    '${a.gainNet.toStringAsFixed(2)}€', '${s.gainNet.toStringAsFixed(2)}€', s.gainNet - a.gainNet),
-          _ligneCompa('Outsiders Top3',  '${a.outsiders}',            '${s.outsiders}',            (s.outsiders - a.outsiders).toDouble()),
+          _ligneCompa('Courses testées', '${a.nbCourses}', '${s.nbCourses}', null),
+          _ligneCompa('Courses ROI', '${a.nbCoursesRoi}', '${s.nbCoursesRoi}', null),
+          _ligneCompa('Top1 gagnant',
+            '${a.top1.toStringAsFixed(1)}%', '${s.top1.toStringAsFixed(1)}%',
+            s.top1 - a.top1, pct: true),
+          _ligneCompa('Top3 touché',
+            '${a.top3.toStringAsFixed(1)}%', '${s.top3.toStringAsFixed(1)}%',
+            s.top3 - a.top3, pct: true),
+          _ligneCompa('Top5 touché',
+            '${a.top5.toStringAsFixed(1)}%', '${s.top5.toStringAsFixed(1)}%',
+            s.top5 - a.top5, pct: true),
+          _ligneCompa('ROI théorique',
+            '${a.roi.toStringAsFixed(1)}%', '${s.roi.toStringAsFixed(1)}%',
+            s.roi - a.roi, pct: true),
+          _ligneCompa('Gain net (€)',
+            '${a.gainNet.toStringAsFixed(2)}€', '${s.gainNet.toStringAsFixed(2)}€',
+            s.gainNet - a.gainNet),
+          _ligneCompa('Outsiders Top3',
+            '${a.outsiders}', '${s.outsiders}',
+            (s.outsiders - a.outsiders).toDouble()),
         ],
       ),
     );
   }
 
   Widget _ligneCompa(String label, String avant, String apres, double? delta, {bool pct = false}) {
-    Color deltaColor = Colors.white54;
-    String deltaStr  = '—';
+    Color  deltaColor = Colors.white54;
+    String deltaStr   = '—';
     if (delta != null) {
-      deltaStr  = (delta >= 0 ? '+' : '') + (pct ? '${delta.toStringAsFixed(1)}%' : delta.toStringAsFixed(2));
-      deltaColor = delta > 0.1 ? const Color(0xFF00E676)
-                 : delta < -0.1 ? const Color(0xFFEF5350)
-                 : Colors.white38;
+      deltaStr  = (delta >= 0 ? '+' : '') +
+          (pct ? '${delta.toStringAsFixed(1)}%' : delta.toStringAsFixed(2));
+      deltaColor = delta > 0.1 ? _vert : delta < -0.1 ? _rouge : Colors.white38;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
       ),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text(label,    style: const TextStyle(color: Colors.white70, fontSize: 12))),
-          Expanded(flex: 2, child: Text(avant,    style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
-          Expanded(flex: 2, child: Text(apres,    style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
-          Expanded(flex: 2, child: Text(deltaStr, style: TextStyle(color: deltaColor, fontSize: 12, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text(label,
+            style: const TextStyle(color: Colors.white70, fontSize: 15))),
+          Expanded(flex: 2, child: Text(avant,
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+            textAlign: TextAlign.center)),
+          Expanded(flex: 2, child: Text(apres,
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+            textAlign: TextAlign.center)),
+          Expanded(flex: 2, child: Text(deltaStr,
+            style: TextStyle(color: deltaColor, fontSize: 15, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -820,11 +1266,11 @@ class _SimulationScreenState extends State<SimulationScreen> {
   Widget _buildBlocPeriode(String titre, SimBloc avant, SimBloc apres) {
     if (avant.nbCourses == 0) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
@@ -832,18 +1278,26 @@ class _SimulationScreenState extends State<SimulationScreen> {
         children: [
           Row(
             children: [
-              Text(titre, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              Text(titre,
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
               const Spacer(),
-              Text(avant.fiabiliteLabel, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+              Text(avant.fiabiliteLabel,
+                style: const TextStyle(color: Colors.white54, fontSize: 12)),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Row(
             children: [
-              _miniStat('Top3', '${avant.top3.toStringAsFixed(0)}%', '${apres.top3.toStringAsFixed(0)}%', apres.top3 - avant.top3),
-              _miniStat('ROI',  '${avant.roi.toStringAsFixed(1)}%',  '${apres.roi.toStringAsFixed(1)}%',  apres.roi  - avant.roi),
-              _miniStat('Top1', '${avant.top1.toStringAsFixed(0)}%', '${apres.top1.toStringAsFixed(0)}%', apres.top1 - avant.top1),
-              _miniStat('n',    '${avant.nbCourses}',                '${apres.nbCourses}',                null),
+              _miniStat('Top3',
+                '${avant.top3.toStringAsFixed(0)}%', '${apres.top3.toStringAsFixed(0)}%',
+                apres.top3 - avant.top3),
+              _miniStat('ROI',
+                '${avant.roi.toStringAsFixed(1)}%', '${apres.roi.toStringAsFixed(1)}%',
+                apres.roi - avant.roi),
+              _miniStat('Top1',
+                '${avant.top1.toStringAsFixed(0)}%', '${apres.top1.toStringAsFixed(0)}%',
+                apres.top1 - avant.top1),
+              _miniStat('n', '${avant.nbCourses}', '${apres.nbCourses}', null),
             ],
           ),
         ],
@@ -852,18 +1306,19 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   Widget _miniStat(String label, String av, String ap, double? d) {
-    Color c = Colors.white38;
+    Color  c  = Colors.white38;
     String ds = '';
     if (d != null) {
-      c  = d > 0.5 ? const Color(0xFF00E676) : d < -0.5 ? const Color(0xFFEF5350) : Colors.white38;
+      c  = d > 0.5 ? _vert : d < -0.5 ? _rouge : Colors.white38;
       ds = (d >= 0 ? '↑' : '↓');
     }
     return Expanded(
       child: Column(
         children: [
-          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10)),
-          Text('$av→$ap', style: const TextStyle(color: Colors.white70, fontSize: 11)),
-          if (ds.isNotEmpty) Text(ds, style: TextStyle(color: c, fontSize: 14, fontWeight: FontWeight.bold)),
+          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          Text('$av→$ap', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          if (ds.isNotEmpty)
+            Text(ds, style: TextStyle(color: c, fontSize: 16, fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -871,88 +1326,317 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
   // ── Bloc fiabilité ────────────────────────────────────────────────────────
   Widget _buildFiabiliteBloc(SimulationResultat res) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    margin: const EdgeInsets.only(bottom: 14),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     decoration: BoxDecoration(
       color: Colors.white.withValues(alpha: 0.03),
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Fiabilité', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
+        const Text('Fiabilité',
+          style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
         _fiabLigne('<30 courses',    '⚠️ Très faible — non exploitable'),
         _fiabLigne('30–50 courses',  '🟡 Indicatif — prudence requise'),
         _fiabLigne('50–150 courses', '🟠 Intéressant — piste à surveiller'),
         _fiabLigne('>150 courses',   '🟢 Exploitable — résultat fiable'),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
           'Courses ROI : ${res.apres.nbCoursesRoi} (dividende ou cote disponibles)',
-          style: const TextStyle(color: Colors.white38, fontSize: 11),
+          style: const TextStyle(color: Colors.white38, fontSize: 13),
         ),
       ],
     ),
   );
 
   Widget _fiabLigne(String seuil, String desc) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 1),
+    padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(children: [
-      SizedBox(width: 90, child: Text(seuil, style: const TextStyle(color: Colors.white38, fontSize: 10))),
-      Text(desc, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+      SizedBox(width: 100, child: Text(seuil,
+        style: const TextStyle(color: Colors.white38, fontSize: 12))),
+      Expanded(child: Text(desc,
+        style: const TextStyle(color: Colors.white54, fontSize: 12))),
     ]),
   );
+}
 
-  // ── Liste candidats ───────────────────────────────────────────────────────
-  Widget _buildListeCandidats() => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+// ══════════════════════════════════════════════════════════════════════════
+//  _MesPistesScreen — Écran "Mes pistes" (push navigation) ★ v10.32
+// ══════════════════════════════════════════════════════════════════════════
+
+class _MesPistesScreen extends StatefulWidget {
+  const _MesPistesScreen();
+  @override
+  State<_MesPistesScreen> createState() => _MesPistesScreenState();
+}
+
+class _MesPistesScreenState extends State<_MesPistesScreen> {
+  final SimulationCandidateService _svc = SimulationCandidateService();
+  List<SimulationCandidate> _pistes = [];
+  bool _loading = true;
+
+  static const Color _gold  = Color(0xFFFFD700);
+  static const Color _bg    = Color(0xFF0D1B2A);
+  static const Color _cyan  = Color(0xFF00E5FF);
+  static const Color _vert  = Color(0xFF00E676);
+  static const Color _rouge = Color(0xFFEF5350);
+
+  @override
+  void initState() {
+    super.initState();
+    _charger();
+  }
+
+  Future<void> _charger() async {
+    final list = await _svc.listCandidates();
+    if (mounted) setState(() { _pistes = list; _loading = false; });
+  }
+
+  Future<void> _supprimer(String id) async {
+    await _svc.deleteCandidate(id);
+    await _charger();
+  }
+
+  Future<void> _rejouer(SimulationCandidate p) async {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => SimulationScreen(
+          preloadDiscipline:    p.discipline,
+          preloadCoefficients:  Map.of(p.coefficients),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _bg,
+        elevation: 0,
+        title: const Text('📋 Mes pistes',
+          style: TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 20)),
+        actions: [
+          if (_pistes.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep_outlined, color: Colors.white38),
+              tooltip: 'Tout effacer',
+              onPressed: () async {
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: const Color(0xFF1A2744),
+                    title: const Text('Effacer toutes les pistes ?',
+                      style: TextStyle(color: Colors.white, fontSize: 17)),
+                    content: const Text(
+                      'Cette action est irréversible.',
+                      style: TextStyle(color: Colors.white54, fontSize: 15)),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Annuler',
+                          style: TextStyle(color: Colors.white54))),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: _rouge),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Effacer tout',
+                          style: TextStyle(color: Colors.white))),
+                    ],
+                  ),
+                );
+                if (ok == true) {
+                  await _svc.clearCandidates();
+                  await _charger();
+                }
+              },
+            ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _gold))
+          : _pistes.isEmpty
+              ? _buildVide()
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 50),
+                  itemCount: _pistes.length,
+                  itemBuilder: (ctx, i) => _buildCarte(_pistes[i]),
+                ),
+    );
+  }
+
+  Widget _buildVide() => const Center(
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.bookmarks_outlined, color: Colors.white24, size: 60),
+        SizedBox(height: 16),
+        Text('Aucune piste enregistrée.',
+          style: TextStyle(color: Colors.white38, fontSize: 18)),
+        SizedBox(height: 8),
+        Text('Lancez une simulation et appuyez\nsur "Enregistrer comme piste".',
+          style: TextStyle(color: Colors.white24, fontSize: 15),
+          textAlign: TextAlign.center),
+      ],
+    ),
+  );
+
+  Widget _buildCarte(SimulationCandidate p) {
+    final dRoi  = p.roiApres  - p.roiAvant;
+    final dTop3 = p.top3Apres - p.top3Avant;
+    final colRoi  = dRoi  > 0 ? _vert : dRoi  < 0 ? _rouge : Colors.white54;
+    final colTop3 = dTop3 > 0 ? _vert : dTop3 < 0 ? _rouge : Colors.white54;
+    final scoreColor = p.scoreConfiance >= 70
+        ? _vert
+        : p.scoreConfiance >= 45
+            ? _gold
+            : p.scoreConfiance >= 20
+                ? Colors.orange
+                : _rouge;
+    final modifies = p.coefficientsModifies;
+
+    return Card(
+      color: const Color(0xFF1A2744),
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Journal des candidats',
-              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-            const Spacer(),
-            TextButton(
-              onPressed: () => setState(() => _showCandidats = false),
-              child: const Text('← Retour', style: TextStyle(color: _gold)),
+            // ── En-tête ────────────────────────────────────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: Text(p.label,
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 17, fontWeight: FontWeight.bold)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: scoreColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: scoreColor.withValues(alpha: 0.4)),
+                  ),
+                  child: Text('${p.scoreConfiance}/100',
+                    style: TextStyle(color: scoreColor, fontSize: 13, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text('${p.disciplineLabel} · ${p.dateLabel}',
+              style: const TextStyle(color: Colors.white38, fontSize: 13)),
+            const SizedBox(height: 10),
+
+            // ── Coefficients modifiés ──────────────────────────────────
+            if (modifies.isNotEmpty) ...[
+              Wrap(
+                spacing: 7, runSpacing: 5,
+                children: modifies.entries.map((e) {
+                  final label = kLabelsSimu[e.key] ?? e.key;
+                  final col   = e.value > 1.0 ? _vert : _rouge;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: col.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: col.withValues(alpha: 0.4)),
+                    ),
+                    child: Text('$label x${e.value.toStringAsFixed(2)}',
+                      style: TextStyle(color: col, fontSize: 13)),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // ── Métriques avant/après ──────────────────────────────────
+            Row(
+              children: [
+                _metriqueCard('Top3',
+                  '${p.top3Avant.toStringAsFixed(1)}%',
+                  '${p.top3Apres.toStringAsFixed(1)}%',
+                  dTop3, colTop3),
+                const SizedBox(width: 8),
+                _metriqueCard('ROI',
+                  '${p.roiAvant.toStringAsFixed(1)}%',
+                  '${p.roiApres.toStringAsFixed(1)}%',
+                  dRoi, colRoi),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // ── Verdict ────────────────────────────────────────────────
+            Text(p.verdict,
+              style: const TextStyle(color: Colors.white54, fontSize: 14,
+                  fontStyle: FontStyle.italic)),
+            const SizedBox(height: 12),
+
+            // ── Boutons ────────────────────────────────────────────────
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _cyan,
+                      side: BorderSide(color: _cyan.withValues(alpha: 0.5)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    icon: const Icon(Icons.replay, size: 16),
+                    label: const Text('Rejouer', style: TextStyle(fontSize: 14)),
+                    onPressed: () => _rejouer(p),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _rouge,
+                    side: BorderSide(color: _rouge.withValues(alpha: 0.5)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  ),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Supprimer', style: TextStyle(fontSize: 14)),
+                  onPressed: () => _supprimer(p.id),
+                ),
+              ],
             ),
           ],
         ),
       ),
-      Expanded(
-        child: ListView.builder(
-          itemCount: _candidats.length,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          itemBuilder: (ctx, i) {
-            final c       = _candidats[i];
-            final nom     = c['nom'] as String? ?? '—';
-            final date    = c['date'] as String? ?? '';
-            final verdict = (c['resultat'] as Map?)?['verdict'] as String? ?? '—';
-            final id      = c['id'] as String? ?? '';
-            final disc    = ((c['resultat'] as Map?)?['params'] as Map?)?['discipline'] as String? ?? '—';
+    );
+  }
 
-            return Card(
-              color: const Color(0xFF1A2744),
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                title: Text(nom,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text('$disc · $date\n$verdict',
-                  style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                isThreeLine: true,
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  onPressed: () async {
-                    await _svc.supprimerCandidat(id);
-                    await _chargerCandidats();
-                  },
-                ),
-              ),
-            );
-          },
+  Widget _metriqueCard(String titre, String av, String ap, double delta, Color col) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: col.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: col.withValues(alpha: 0.20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(titre, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            const SizedBox(height: 3),
+            Row(
+              children: [
+                Text('$av → $ap',
+                  style: const TextStyle(color: Colors.white, fontSize: 14)),
+                const Spacer(),
+                Text('${delta >= 0 ? "+" : ""}${delta.toStringAsFixed(1)}%',
+                  style: TextStyle(color: col, fontSize: 14, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ],
         ),
       ),
-    ],
-  );
+    );
+  }
 }
