@@ -90,6 +90,8 @@ class PronosticHippiqueApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Pronostic Hippique',
         debugShowCheckedModeBanner: false,
+        // ★ v10.39 fix définitif fond gris scroll : désactive GlowingOverscrollIndicator Android
+        scrollBehavior: const ScrollBehavior().copyWith(overscroll: false),
         locale: const Locale('fr', 'FR'),
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
@@ -116,9 +118,9 @@ class PronosticHippiqueApp extends StatelessWidget {
             surfaceDim:              const Color(0xFF0D1B2A),
             surfaceBright:           const Color(0xFF0D1B2A),
           ),
-          // ★ v10.38 fix : canvasColor + dialogBackground pour couvrir tous les cas
+          // ★ v10.38/v10.39 fix : canvasColor + dialogTheme pour couvrir tous les cas
           canvasColor:              const Color(0xFF0D1B2A),
-          dialogBackgroundColor:    const Color(0xFF0D1B2A),
+          dialogTheme: const DialogThemeData(backgroundColor: Color(0xFF0D1B2A)),
           scaffoldBackgroundColor:  const Color(0xFF0D1B2A),
           appBarTheme: const AppBarTheme(
             backgroundColor: Color(0xFF0D2818),
