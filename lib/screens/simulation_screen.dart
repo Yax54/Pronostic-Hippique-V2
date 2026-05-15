@@ -8,14 +8,50 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/simulation_models.dart';
 import '../services/simulation_service.dart';
+import '../widgets/ia/simulation_assistant_panel.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SimulationScreen — Laboratoire IA
+//  SimulationScreen — Laboratoire IA  ★ v10.30
 //
 //  LECTURE SEULE — aucune modification des poids, aucun apprentissage.
 //  "Sauvegarder candidat" → SharedPreferences uniquement, jamais IaMemoryService.
+//
+//  Nouveautés v10.30 :
+//  • Sliders "modifiés seulement" — les 19 non touchés sont masqués
+//  • Ajout de critère via sélecteur "+" pour l'activer
+//  • Badge danger surpondération (≥2 critères > 1.6x ou 1 critère = 2.0)
+//  • Impact dominant détecté (top contributeurs positifs/négatifs)
+//  • Profils presets : Conservateur / Rentable / Outsider / Stable
+//  • Assistant Simulation panneau contextuel dynamique
+//  • Top 5 ROI / Stabilité / Outsiders depuis candidats sauvegardés
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Profils presets ──────────────────────────────────────────────────────────
+class _Preset {
+  final String            label;
+  final String            emoji;
+  final Color             color;
+  final String            tooltip;
+  final Map<String, double> mults;
+  const _Preset(this.label, this.emoji, this.color, this.tooltip, this.mults);
+}
+
+const _presets = [
+  _Preset('Conservateur', '🛡️', Color(0xFF00E676),
+    'Amplifie les critères de régularité (Forme, Constance) et réduit le risque (Cote).',
+    {'f': 1.3, 'k': 1.3, 'c': 0.7, 'r': 1.2}),
+  _Preset('Rentable', '💰', Color(0xFFFFD700),
+    'Maximise le ROI : amplifie Divergence et réduit Gains (effet outsiders).',
+    {'dv': 1.4, 'g': 0.7, 'mc': 1.3, 'c': 0.8}),
+  _Preset('Outsider', '🎲', Color(0xFFFF9800),
+    'Recherche les chevaux surprises : Cote amplifiée, Forme réduite.',
+    {'c': 1.5, 'f': 0.6, 'dv': 1.3, 'pg': 1.2}),
+  _Preset('Stable', '📐', Color(0xFF00BCD4),
+    'Maximise Top3 : amplifie Forme, Distance, Hippodrome.',
+    {'f': 1.3, 'ds': 1.3, 'hp': 1.2, 'k': 1.2}),
+];
+
+// ── Screen ───────────────────────────────────────────────────────────────────
 class SimulationScreen extends StatefulWidget {
   const SimulationScreen({super.key});
 
@@ -33,8 +69,12 @@ class _SimulationScreenState extends State<SimulationScreen> {
   bool _enCours    = false;
   bool _showResult = false;
 
-  // Critères vivants (clés courtes)
-  List<String> _critersVivants = [];
+  // Tous les critères vivants (clés courtes)
+  List<String> _tousLesCriters = [];
+
+  // Critères "actifs" dans l'écran (ceux dont le slider est affiché)
+  // = ceux dont le multiplicateur ≠ 1.0 OU ajoutés manuellement
+  final Set<String> _critersActifs = {};
 
   // Multiplicateurs courants (clé courte → valeur 0.5–2.0)
   final Map<String, double> _mults = {};
@@ -43,26 +83,36 @@ class _SimulationScreenState extends State<SimulationScreen> {
   List<Map<String, dynamic>> _candidats = [];
   bool _showCandidats = false;
 
+  // Expansion sections
+  bool _presetExpanded  = false;
+  bool _assistantExpanded = true;
+
   static const _disciplines = ['Toutes', 'Plat', 'Trot', 'Obstacle'];
   static const Color _gold = Color(0xFFFFD700);
   static const Color _bg   = Color(0xFF0D1B2A);
+  static const Color _cyan = Color(0xFF00E5FF);
 
   @override
   void initState() {
     super.initState();
-    _critersVivants = _svc.critersVivants();
+    _tousLesCriters = _svc.critersVivants();
     _chargerCandidats();
   }
 
   Future<void> _chargerCandidats() async {
     final c = await _svc.chargerCandidats();
-    setState(() => _candidats = c);
+    if (mounted) setState(() => _candidats = c);
   }
+
+  // ── Critères affichés = actifs (modifiés) ────────────────────────────────
+  List<String> get _critersAffiches => _tousLesCriters
+      .where((k) => _critersActifs.contains(k) || (_mults[k] ?? 1.0) != 1.0)
+      .toList();
 
   // ── Lancer la simulation ──────────────────────────────────────────────────
   Future<void> _lancer() async {
     setState(() { _enCours = true; _showResult = false; });
-    await Future.delayed(const Duration(milliseconds: 80)); // laisser Flutter redessiner
+    await Future.delayed(const Duration(milliseconds: 80));
 
     final params = SimulationParams(
       discipline:      _params.discipline,
@@ -79,9 +129,53 @@ class _SimulationScreenState extends State<SimulationScreen> {
     });
   }
 
-  void _reset() {
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  void _reset() => setState(() {
+    _mults.clear();
+    _critersActifs.clear();
+    _showResult = false;
+    _resultat   = null;
+  });
+
+  // ── Appliquer preset ──────────────────────────────────────────────────────
+  void _appliquerPreset(_Preset p) {
     setState(() {
       _mults.clear();
+      _critersActifs.clear();
+      _showResult = false;
+      _resultat   = null;
+      for (final e in p.mults.entries) {
+        if (_tousLesCriters.contains(e.key)) {
+          _mults[e.key]       = e.value;
+          _critersActifs.add(e.key);
+        }
+      }
+    });
+  }
+
+  // ── Test prudent / agressif ───────────────────────────────────────────────
+  void _testPrudent() {
+    setState(() {
+      for (final k in _critersActifs) {
+        final v = _mults[k] ?? 1.0;
+        // Ramène tous les multiplicateurs vers 1.0 de 30%
+        _mults[k] = 1.0 + (v - 1.0) * 0.5;
+      }
+      // Si rien d'actif, applique preset Conservateur
+      if (_critersActifs.isEmpty) _appliquerPreset(_presets[0]);
+      _showResult = false;
+      _resultat   = null;
+    });
+  }
+
+  void _testAgressif() {
+    setState(() {
+      for (final k in _critersActifs) {
+        final v = _mults[k] ?? 1.0;
+        // Amplifie de 30% supplémentaires
+        _mults[k] = (1.0 + (v - 1.0) * 1.5).clamp(0.5, 2.0);
+      }
+      if (_critersActifs.isEmpty) _appliquerPreset(_presets[1]);
       _showResult = false;
       _resultat   = null;
     });
@@ -164,7 +258,49 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Sélecteur d'ajout de critère ──────────────────────────────────────────
+  Future<void> _ajouterCritere() async {
+    final disponibles = _tousLesCriters
+        .where((k) => !_critersActifs.contains(k) && (_mults[k] ?? 1.0) == 1.0)
+        .toList();
+    if (disponibles.isEmpty) return;
+
+    final choix = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2744),
+        title: const Text('Ajouter un critère', style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 280,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: disponibles.length,
+            itemBuilder: (ctx2, i) {
+              final k = disponibles[i];
+              return ListTile(
+                dense: true,
+                title: Text(kLabelsSimu[k] ?? k,
+                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+                onTap: () => Navigator.pop(ctx, k),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+
+    if (choix != null && mounted) {
+      setState(() => _critersActifs.add(choix));
+    }
+  }
+
+  // ── Build principal ───────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -175,7 +311,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
         title: const Text('🧪 Laboratoire IA',
           style: TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 18)),
         actions: [
-          // Candidats sauvegardés
+          // Badge candidats
           if (_candidats.isNotEmpty)
             IconButton(
               icon: Badge(
@@ -189,15 +325,16 @@ class _SimulationScreenState extends State<SimulationScreen> {
       body: _showCandidats
           ? _buildListeCandidats()
           : SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 32),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 40),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildBandeauLecture(),
                   _buildSecteurDiscipline(),
+                  _buildPresets(),
                   _buildSecteurSliders(),
-                  _buildBoutons(),
-                  if (_enCours)    _buildChargement(),
+                  _buildBoutonLancer(),
+                  if (_enCours) _buildChargement(),
                   if (_showResult && _resultat != null) ...[
                     RepaintBoundary(
                       key: _repaintKey,
@@ -210,13 +347,14 @@ class _SimulationScreenState extends State<SimulationScreen> {
                             _buildBlocPeriode('Historique complet', _resultat!.avant, _resultat!.apres),
                             _buildBlocPeriode('30 derniers jours',  _resultat!.avant30j, _resultat!.apres30j),
                             _buildBlocPeriode('7 derniers jours',   _resultat!.avant7j,  _resultat!.apres7j),
-                            _buildFiabilite(_resultat!),
+                            _buildFiabiliteBloc(_resultat!),
                           ],
                         ),
                       ),
                     ),
-                    _buildBoutonsResultat(),
                   ],
+                  // ── Panneau assistant (toujours visible, dans le scroll) ──
+                  _buildAssistantSection(),
                 ],
               ),
             ),
@@ -246,13 +384,14 @@ class _SimulationScreenState extends State<SimulationScreen> {
     ),
   );
 
-  // ── Sélecteur discipline ──────────────────────────────────────────────────
+  // ── Discipline ────────────────────────────────────────────────────────────
   Widget _buildSecteurDiscipline() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const Padding(
         padding: EdgeInsets.only(bottom: 8),
-        child: Text('Discipline', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+        child: Text('Discipline',
+          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
       ),
       Wrap(
         spacing: 8,
@@ -279,9 +418,59 @@ class _SimulationScreenState extends State<SimulationScreen> {
     ],
   );
 
-  // ── Sliders multiplicateurs ───────────────────────────────────────────────
+  // ── Profils presets ───────────────────────────────────────────────────────
+  Widget _buildPresets() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      GestureDetector(
+        onTap: () => setState(() => _presetExpanded = !_presetExpanded),
+        child: Row(
+          children: [
+            const Text('Profils rapides',
+              style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Icon(
+              _presetExpanded ? Icons.expand_less : Icons.expand_more,
+              color: Colors.white38, size: 18,
+            ),
+          ],
+        ),
+      ),
+      if (_presetExpanded) ...[
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: _presets.map((p) => Tooltip(
+            message: p.tooltip,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: p.color,
+                side: BorderSide(color: p.color.withValues(alpha: 0.6)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () => _appliquerPreset(p),
+              child: Text('${p.emoji} ${p.label}',
+                style: TextStyle(fontSize: 12, color: p.color, fontWeight: FontWeight.w600)),
+            ),
+          )).toList(),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Les profils appliquent des multiplicateurs typiques — modifiez ensuite à la main.',
+          style: TextStyle(color: Colors.white24, fontSize: 10, fontStyle: FontStyle.italic),
+        ),
+      ],
+      const SizedBox(height: 12),
+    ],
+  );
+
+  // ── Sliders — affichage critères modifiés seulement ───────────────────────
   Widget _buildSecteurSliders() {
-    if (_critersVivants.isEmpty) {
+    if (_tousLesCriters.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Text(
@@ -292,26 +481,94 @@ class _SimulationScreenState extends State<SimulationScreen> {
       );
     }
 
+    final affiches = _critersAffiches;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ── En-tête section sliders ─────────────────────────────────────
         Row(
           children: [
-            const Text('Multiplicateurs', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: _reset,
-              icon: const Icon(Icons.refresh, size: 14, color: Colors.white38),
-              label: const Text('Réinitialiser', style: TextStyle(color: Colors.white38, fontSize: 12)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Multiplicateurs',
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                Text(
+                  affiches.isEmpty
+                      ? 'Aucun critère modifié — appuie sur + pour commencer'
+                      : '${affiches.length} critère(s) actif(s) · ${_tousLesCriters.length - affiches.length} masqués',
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+              ],
             ),
+            const Spacer(),
+            // Bouton réinitialiser
+            if (affiches.isNotEmpty)
+              TextButton.icon(
+                onPressed: _reset,
+                icon: const Icon(Icons.refresh, size: 13, color: Colors.white38),
+                label: const Text('Réinit.', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                style: TextButton.styleFrom(
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                ),
+              ),
           ],
         ),
-        const Text(
-          '1.0 = neutre · Glissez pour amplifier ou réduire un critère',
-          style: TextStyle(color: Colors.white38, fontSize: 11),
+        const SizedBox(height: 4),
+        if (affiches.isEmpty)
+          // Aucun slider actif → invite à ajouter
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.08),
+                style: BorderStyle.solid,
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.tune, color: Colors.white24, size: 18),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Tous les critères sont à leur valeur neutre (x1.0).\n'
+                    'Appuie sur "+" pour modifier un critère ou utilise un profil rapide.',
+                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          // Sliders des critères actifs
+          ...affiches.map((k) => _buildSlider(k)),
+
+        // ── Bouton ajouter critère ──────────────────────────────────────
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _cyan,
+            side: BorderSide(color: _cyan.withValues(alpha: 0.4)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          icon: const Icon(Icons.add, size: 14),
+          label: Text(
+            'Ajouter un critère (${_tousLesCriters.length - _critersAffiches.length} disponibles)',
+            style: const TextStyle(fontSize: 11),
+          ),
+          onPressed: _tousLesCriters.length > _critersAffiches.length
+              ? _ajouterCritere
+              : null,
         ),
-        const SizedBox(height: 8),
-        ..._critersVivants.map((k) => _buildSlider(k)),
         const SizedBox(height: 8),
       ],
     );
@@ -320,6 +577,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
   Widget _buildSlider(String k) {
     final val   = _mults[k] ?? 1.0;
     final label = kLabelsSimu[k] ?? k;
+    final isModified = (val - 1.0).abs() > 0.01;
     final color = val > 1.05
         ? const Color(0xFF00E676)
         : val < 0.95
@@ -327,12 +585,31 @@ class _SimulationScreenState extends State<SimulationScreen> {
             : Colors.white54;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
+          // Retirer du panneau si modif nulle
+          if (!isModified)
+            GestureDetector(
+              onTap: () => setState(() {
+                _mults.remove(k);
+                _critersActifs.remove(k);
+              }),
+              child: const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Icon(Icons.close, size: 13, color: Colors.white24),
+              ),
+            )
+          else
+            const SizedBox(width: 17),
           SizedBox(
-            width: 100,
-            child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            width: 95,
+            child: Text(label,
+              style: TextStyle(
+                color: isModified ? Colors.white : Colors.white54,
+                fontSize: 11,
+                fontWeight: isModified ? FontWeight.w600 : FontWeight.normal,
+              )),
           ),
           Expanded(
             child: SliderTheme(
@@ -357,7 +634,11 @@ class _SimulationScreenState extends State<SimulationScreen> {
             width: 38,
             child: Text(
               'x${val.toStringAsFixed(1)}',
-              style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
               textAlign: TextAlign.right,
             ),
           ),
@@ -366,8 +647,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
-  // ── Bouton principal ──────────────────────────────────────────────────────
-  Widget _buildBoutons() => Padding(
+  // ── Bouton lancer ─────────────────────────────────────────────────────────
+  Widget _buildBoutonLancer() => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
     child: SizedBox(
       width: double.infinity,
@@ -393,6 +674,51 @@ class _SimulationScreenState extends State<SimulationScreen> {
       SizedBox(height: 12),
       Text('Calcul en cours…', style: TextStyle(color: Colors.white54, fontSize: 13)),
     ])),
+  );
+
+  // ── Section assistant (expandable) ────────────────────────────────────────
+  Widget _buildAssistantSection() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      // Toggle expansion
+      GestureDetector(
+        onTap: () => setState(() => _assistantExpanded = !_assistantExpanded),
+        child: Container(
+          margin: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF00E5FF).withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: Color(0xFF00E5FF), size: 16),
+              const SizedBox(width: 8),
+              const Text('Assistant Simulation',
+                style: TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Icon(
+                _assistantExpanded ? Icons.expand_less : Icons.expand_more,
+                color: const Color(0xFF00E5FF), size: 18,
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (_assistantExpanded)
+        SimulationAssistantPanel(
+          discipline: _params.discipline,
+          mults:      Map.from(_mults),
+          resultat:   _showResult ? _resultat : null,
+          candidats:  _candidats,
+          onTestPrudent:  _testPrudent,
+          onTestAgressif: _testAgressif,
+          onReset:        _reset,
+          onSauvegarder:  _sauvegarderCandidat,
+          onExporter:     _exporter,
+        ),
+    ],
   );
 
   // ── Verdict ───────────────────────────────────────────────────────────────
@@ -424,7 +750,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
-  // ── Tableau comparaison principal ─────────────────────────────────────────
+  // ── Tableau comparaison ───────────────────────────────────────────────────
   Widget _buildTableauComparaison(SimulationResultat res) {
     final a = res.avant;
     final s = res.apres;
@@ -437,7 +763,6 @@ class _SimulationScreenState extends State<SimulationScreen> {
       ),
       child: Column(
         children: [
-          // Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -446,10 +771,10 @@ class _SimulationScreenState extends State<SimulationScreen> {
             ),
             child: const Row(
               children: [
-                Expanded(flex: 3, child: Text('Mesure',        style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold))),
-                Expanded(flex: 2, child: Text('IA actuelle',   style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                Expanded(flex: 2, child: Text('Simulation',    style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
-                Expanded(flex: 2, child: Text('Δ',             style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                Expanded(flex: 3, child: Text('Mesure',      style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold))),
+                Expanded(flex: 2, child: Text('IA actuelle', style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                Expanded(flex: 2, child: Text('Simulation',  style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                Expanded(flex: 2, child: Text('Δ',           style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
               ],
             ),
           ),
@@ -482,16 +807,16 @@ class _SimulationScreenState extends State<SimulationScreen> {
       ),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12))),
-          Expanded(flex: 2, child: Text(avant, style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
-          Expanded(flex: 2, child: Text(apres, style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
+          Expanded(flex: 3, child: Text(label,    style: const TextStyle(color: Colors.white70, fontSize: 12))),
+          Expanded(flex: 2, child: Text(avant,    style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
+          Expanded(flex: 2, child: Text(apres,    style: const TextStyle(color: Colors.white,   fontSize: 12), textAlign: TextAlign.center)),
           Expanded(flex: 2, child: Text(deltaStr, style: TextStyle(color: deltaColor, fontSize: 12, fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
         ],
       ),
     );
   }
 
-  // ── Bloc par période ──────────────────────────────────────────────────────
+  // ── Blocs périodes ────────────────────────────────────────────────────────
   Widget _buildBlocPeriode(String titre, SimBloc avant, SimBloc apres) {
     if (avant.nbCourses == 0) return const SizedBox.shrink();
     return Container(
@@ -544,8 +869,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
-  // ── Fiabilité globale ─────────────────────────────────────────────────────
-  Widget _buildFiabilite(SimulationResultat res) => Container(
+  // ── Bloc fiabilité ────────────────────────────────────────────────────────
+  Widget _buildFiabiliteBloc(SimulationResultat res) => Container(
     margin: const EdgeInsets.only(bottom: 12),
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     decoration: BoxDecoration(
@@ -566,21 +891,6 @@ class _SimulationScreenState extends State<SimulationScreen> {
           'Courses ROI : ${res.apres.nbCoursesRoi} (dividende ou cote disponibles)',
           style: const TextStyle(color: Colors.white38, fontSize: 11),
         ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.orange.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-          ),
-          child: const Text(
-            '⚠️ La simulation mesure les performances sur l\'historique passé.\n'
-            'Un bon résultat sur l\'historique complet peut refléter du sur-apprentissage.\n'
-            'Validez toujours sur la période récente (30j/7j) avant de tirer des conclusions.',
-            style: TextStyle(color: Colors.orange, fontSize: 11),
-          ),
-        ),
       ],
     ),
   );
@@ -593,90 +903,56 @@ class _SimulationScreenState extends State<SimulationScreen> {
     ]),
   );
 
-  // ── Boutons après résultats ───────────────────────────────────────────────
-  Widget _buildBoutonsResultat() => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _gold,
-              side: const BorderSide(color: _gold),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            icon: const Icon(Icons.share, size: 16),
-            label: const Text('Export PNG', style: TextStyle(fontSize: 12)),
-            onPressed: _exporter,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1565C0),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            icon: const Icon(Icons.bookmark_add, size: 16, color: Colors.white),
-            label: const Text('Sauvegarder', style: TextStyle(color: Colors.white, fontSize: 12)),
-            onPressed: _sauvegarderCandidat,
-          ),
-        ),
-      ],
-    ),
-  );
-
   // ── Liste candidats ───────────────────────────────────────────────────────
-  Widget _buildListeCandidats() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const Text('Journal des candidats',
-                style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              TextButton(
-                onPressed: () => setState(() => _showCandidats = false),
-                child: const Text('← Retour', style: TextStyle(color: _gold)),
-              ),
-            ],
-          ),
+  Widget _buildListeCandidats() => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Text('Journal des candidats',
+              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+            const Spacer(),
+            TextButton(
+              onPressed: () => setState(() => _showCandidats = false),
+              child: const Text('← Retour', style: TextStyle(color: _gold)),
+            ),
+          ],
         ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: _candidats.length,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemBuilder: (ctx, i) {
-              final c       = _candidats[i];
-              final nom     = c['nom'] as String? ?? '—';
-              final date    = c['date'] as String? ?? '';
-              final verdict = (c['resultat'] as Map?)?['verdict'] as String? ?? '—';
-              final id      = c['id'] as String? ?? '';
-              final disc    = ((c['resultat'] as Map?)?['params'] as Map?)?['discipline'] as String? ?? '—';
+      ),
+      Expanded(
+        child: ListView.builder(
+          itemCount: _candidats.length,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          itemBuilder: (ctx, i) {
+            final c       = _candidats[i];
+            final nom     = c['nom'] as String? ?? '—';
+            final date    = c['date'] as String? ?? '';
+            final verdict = (c['resultat'] as Map?)?['verdict'] as String? ?? '—';
+            final id      = c['id'] as String? ?? '';
+            final disc    = ((c['resultat'] as Map?)?['params'] as Map?)?['discipline'] as String? ?? '—';
 
-              return Card(
-                color: const Color(0xFF1A2744),
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  title: Text(nom, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  subtitle: Text('$disc · $date\n$verdict',
-                    style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                  isThreeLine: true,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () async {
-                      await _svc.supprimerCandidat(id);
-                      await _chargerCandidats();
-                    },
-                  ),
+            return Card(
+              color: const Color(0xFF1A2744),
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                title: Text(nom,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: Text('$disc · $date\n$verdict',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                isThreeLine: true,
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  onPressed: () async {
+                    await _svc.supprimerCandidat(id);
+                    await _chargerCandidats();
+                  },
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 }
