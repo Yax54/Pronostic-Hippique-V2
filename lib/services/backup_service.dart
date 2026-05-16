@@ -4,7 +4,7 @@
 //
 //  ── INVENTAIRE COMPLET DES CLES SAUVEGARDEES ─────────────────────────────
 //
-//  🧠 MEMOIRE IA (ia_memory_service.dart) — 7 cles
+//  🧠 MEMOIRE IA (ia_memory_service.dart) — 9 cles
 //     ia_poids_v3          : Poids adaptatifs (19 criteres + PoidsIndices
 //                            [criteres/confiance/reussite] + momentum
 //                            + poidsParDiscipline) — COEUR de l'IA
@@ -22,6 +22,8 @@
 //                            nbGagnes, nbPerdus, gainNet)
 //     ia_precision_v2      : Precision IA par type de pari (StatsPrecisionParType)
 //     ia_seuils_v1         : Seuils de confiance adaptatifs (SeuilsConfianceAdaptatifs)
+//     ia_premium_historique_v1 : ★ v10.38 — Historique premium calendrier étoile (multi-jours)
+//     ia_premium_du_jour_v1    : ★ v10.38 — Ancien format compat lecture (migration)
 //
 //  🎯 CONFIG FUSION BestBet (fusion_config_service.dart) — 4 cles
 //     fusion_poids_confiance : Poids confiance (double)
@@ -70,7 +72,7 @@
 //     ia_audit_cache_v1 : Cache des 4 onglets Audit (Utilité, Morts,
 //                         Corrélations, Discipline). Optionnel — recalculable.
 //
-//  ── TOTAL : 38 CLES — COUVERTURE 100% ────────────────────────────────────
+//  ── TOTAL : 40 CLES — COUVERTURE 100% ────────────────────────────────────
 //
 //  ── CE QUE CONTIENT CHAQUE CLE ───────────────────────────────────────────
 //
@@ -102,6 +104,7 @@
 //     v7.2 : +cooldown bulle, +message jour, +heure analyse, +conseils notifiés
 //     v7.3 : +résumé hebdo lundi, +anti-doublon cote chute, retrait clé orpheline
 //     v7.4 : +bt_discipline, +bt_hippodrome, +flags transitoires ELO/conseils
+//     v7.6 : +ia_premium_historique_v1 (étoiles calendrier), +ia_premium_du_jour_v1 (compat)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -120,7 +123,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.5'; // ★ v10.35 : +simulation_candidates_v1 (Labo IA), +ia_audit_cache_v1 (Cache Audit)
+  static const _backupVersion = '7.6'; // ★ v10.44 : +ia_premium_historique_v1 (étoiles calendrier), +ia_premium_du_jour_v1 (compat)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -143,6 +146,9 @@ class BackupService {
     'ia_precision_v2',      // Précision IA par type de pari
     'ia_stats_labels_v1',   // ★ v9.0 : Stats par label IA
     'ia_seuils_v1',         // Seuils de confiance adaptatifs
+    // ★ v10.38 : Historique premium calendrier (étoiles multi-jours)
+    'ia_premium_historique_v1', // Historique premium calendrier étoile (non recalculable)
+    'ia_premium_du_jour_v1',    // Ancien format compat (lecture seule — migration vers _historique)
     // Note : ia_rapport_hebdo_v1 retiré (jamais écrit — clé orpheline v9.87)
   ];
 
