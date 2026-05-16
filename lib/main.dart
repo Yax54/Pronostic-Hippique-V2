@@ -21,6 +21,7 @@ import 'services/ia_personality_service.dart'; // ★ v9.85
 import 'services/ia_user_prefs_service.dart';  // ★ v9.85
 import 'services/ia_badges_service.dart';      // ★ v9.85
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
+import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
 
 // ─── NavigationNotifier — remplace le GlobalKey fragile ──────────────────────
 // Injecté dans le Provider : tout écran peut appeler
@@ -43,7 +44,8 @@ class NavigationNotifier extends ChangeNotifier {
   void goToAccueil()        => goTo(0);
   void goToProgramme()      => goTo(2); // ★ v10.26 : Conseils déplacé en index 1 → Prog. passe en 2
   void goToSimulation()     => goTo(7); // ★ Laboratoire IA
-  void goToAudit()          => goTo(8); // ★ Audit IA section principale
+  void goToRoiValue()        => goTo(8); // ★ v10.46 ROI/Value analytics
+  void goToAudit()          => goTo(9); // ★ Audit IA section principale
 
   // ★ v9.92 : onglet interne demandé à l'ouverture de MesParis
   int _mesParisPendingTab = 0;
@@ -172,8 +174,9 @@ class _MainNavigationState extends State<MainNavigation> {
       IaPerformanceScreen(alertService: alertSvc), // 5 — IA Stats
       const MesPariScreen(),      // 6 — Mes Paris
       const SimulationScreen(),    // 7 — Labo IA Simulation
-      const AuditScreen(),         // 8 — Audit IA
-      const ProfileScreen(),       // 9 — Profil
+      const RoiValueScreen(),        // 8 — ROI/Value ★ v10.46
+      const AuditScreen(),         // 9 — Audit IA
+      const ProfileScreen(),       // 10 — Profil
     ];
     Future.microtask(() {
       if (mounted) {
@@ -214,7 +217,8 @@ class _MainNavigationState extends State<MainNavigation> {
   }
 
   // ★ v10.26 : Onglets reordonnés + couleurs uniques par destination
-  // Ordre : 0=Accueil | 1=Conseils | 2=Programme | 3=Courses | 4=BestBet | 5=IAStats | 6=MesParis | 7=LaboIA | 8=Audit | 9=Profil
+  // ★ v10.46 : ROI/Value inséré en index 8 — Audit→9, Profil→10
+  // Ordre : 0=Accueil | 1=Conseils | 2=Programme | 3=Courses | 4=BestBet | 5=IAStats | 6=MesParis | 7=LaboIA | 8=ROI/Value | 9=Audit | 10=Profil
   static const List<_NavDef> _navItems = [
     _NavDef(icon: Icons.home_outlined,           activeIcon: Icons.home,             label: 'Accueil',   color: Color(0xFF4CAF7D)), // Vert app
     _NavDef(icon: Icons.auto_awesome_outlined,   activeIcon: Icons.auto_awesome,     label: 'Conseils',  color: Color(0xFF7C4DFF)), // Violet IA
@@ -224,6 +228,7 @@ class _MainNavigationState extends State<MainNavigation> {
     _NavDef(icon: Icons.psychology_outlined,     activeIcon: Icons.psychology,       label: 'IA Stats',  color: Color(0xFFE040FB)), // Rose/Magenta cerveau
     _NavDef(icon: Icons.track_changes_outlined,  activeIcon: Icons.track_changes,    label: 'Mes Paris', color: Color(0xFF00BCD4)), // Cyan suivi
     _NavDef(icon: Icons.science_outlined,        activeIcon: Icons.science,          label: 'Labo IA',   color: Color(0xFF00E5FF)), // Cyan — Labo Simulation
+    _NavDef(icon: Icons.trending_up_outlined,    activeIcon: Icons.trending_up,      label: 'ROI/Value', color: Color(0xFF4CAF50)), // Vert ROI ★ v10.46
     _NavDef(icon: Icons.find_in_page_outlined,   activeIcon: Icons.find_in_page,     label: 'Audit',     color: Color(0xFFFFD700)), // Or — Audit IA
     _NavDef(icon: Icons.person_outline,          activeIcon: Icons.person,           label: 'Profil',    color: Color(0xFFB0BEC5)), // Argent neutre
   ];
@@ -385,7 +390,7 @@ class _NavItem extends StatelessWidget {
     final activeColor = def.color;
     final inactiveColor = const Color(0xFF6B7B8A); // gris bleuté discret
 
-    // Badge orange sur Mes Paris (index 6) — Labo=7, Audit=8, Profil=9
+    // Badge orange sur Mes Paris (index 6) — Labo=7, ROI/Value=8, Audit=9, Profil=10 ★ v10.46
     final isMesParis = index == 6;
     final nbParisEnAttente = isMesParis
         ? context.select<PmuProvider, int>(
