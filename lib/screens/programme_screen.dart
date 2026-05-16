@@ -908,63 +908,64 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
   Widget _buildPartantsApercu(ZtCourse course) {
     final partantsIA = course.partantsParRangIA.take(3).toList();
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: const BoxDecoration(
         color: Color(0xFF0D1B2A),
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(14)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── 3 cartes chevaux — Expanded pour partager équitablement la largeur
           ...partantsIA.map((p) {
+            final scoreColor = Color(IaPronosticEngine.scoreColor(p.scoreIA));
             return Expanded(
               child: Container(
-                margin: const EdgeInsets.only(right: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                margin: const EdgeInsets.only(right: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
                 decoration: BoxDecoration(
                   color: const Color(0xFF132035),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: Color(IaPronosticEngine.scoreColor(p.scoreIA))
-                          .withValues(alpha: 0.3)),
+                  border: Border.all(color: scoreColor.withValues(alpha: 0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 20,
-                          height: 20,
-                          decoration: BoxDecoration(
-                            color: Color(IaPronosticEngine.scoreColor(p.scoreIA))
-                                .withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Center(
-                            child: Text(p.numero,
-                                style: TextStyle(
-                                    color: Color(
-                                        IaPronosticEngine.scoreColor(p.scoreIA)),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold)),
-                          ),
+                    // Numéro + nom sur 2 lignes pour éviter la troncature
+                    Row(children: [
+                      Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: scoreColor.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(3),
                         ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(p.nom,
-                              style: const TextStyle(color: Colors.white,
-                                  fontSize: 16, fontWeight: FontWeight.w600),
-                              overflow: TextOverflow.ellipsis, maxLines: 1),
+                        child: Center(
+                          child: Text(p.numero,
+                              style: TextStyle(
+                                  color: scoreColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold)),
                         ),
-                      ],
-                    ),
+                      ),
+                    ]),
                     const SizedBox(height: 3),
-                    if (p.driver.isNotEmpty)
+                    Text(p.nom,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1),
+                    if (p.driver.isNotEmpty) ...[
+                      const SizedBox(height: 2),
                       Text(p.driver,
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.5),
-                              fontSize: 14),
-                          overflow: TextOverflow.ellipsis, maxLines: 1),
+                              fontSize: 12),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1),
+                    ],
                     // Barre de score IA
                     const SizedBox(height: 4),
                     ClipRRect(
@@ -972,8 +973,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
                       child: LinearProgressIndicator(
                         value: p.scoreIA / 100,
                         backgroundColor: Colors.white.withValues(alpha: 0.1),
-                        valueColor: AlwaysStoppedAnimation(
-                            Color(IaPronosticEngine.scoreColor(p.scoreIA))),
+                        valueColor: AlwaysStoppedAnimation(scoreColor),
                         minHeight: 3,
                       ),
                     ),
@@ -982,13 +982,13 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
               ),
             );
           }).toList(),
-          // Bouton "voir tout"
+          // ── Bouton "voir tout"
           GestureDetector(
             onTap: () => _ouvrirCourse(
                 course,
                 _reunions[_activeTab < _reunions.length ? _activeTab : 0]),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color: const Color(0xFF4CAF7D).withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
@@ -996,12 +996,15 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
                     color: const Color(0xFF4CAF7D).withValues(alpha: 0.3)),
               ),
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text('${course.partants.length}',
-                      style: const TextStyle(color: Color(0xFF4CAF7D),
-                          fontSize: 14, fontWeight: FontWeight.bold)),
+                      style: const TextStyle(
+                          color: Color(0xFF4CAF7D),
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
                   const Text('voir\ntout',
-                      style: TextStyle(color: Colors.white38, fontSize: 14),
+                      style: TextStyle(color: Colors.white38, fontSize: 12),
                       textAlign: TextAlign.center),
                 ],
               ),

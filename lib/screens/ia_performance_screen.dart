@@ -2359,13 +2359,23 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 16)),
-            const Spacer(),
-            Text('$nb/$total', style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 4),
-            Text(pctStr, style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 16)),
-          ]),
+          // Ligne 1 : libellé + pourcentage (renvoi à la ligne si besoin)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14)),
+              Text(pctStr,
+                  style: TextStyle(
+                      color: color.withValues(alpha: 0.9),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+          // Ligne 2 : compteur nb/total
+          Text('$nb/$total',
+              style: TextStyle(color: color, fontSize: 14,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
           ClipRRect(
             borderRadius: BorderRadius.circular(3),
