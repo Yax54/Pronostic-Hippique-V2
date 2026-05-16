@@ -1675,7 +1675,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       shape: BoxShape.circle,
                     ),
                     child: Text('${i + 1}',
-                        style: TextStyle(color: scoreColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: TextStyle(color: scoreColor, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1695,7 +1695,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(3),
                             ),
                             child: const Text('Q+',
-                                style: TextStyle(color: Color(0xFFFFD700), fontSize: 9, fontWeight: FontWeight.bold)),
+                                style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold)),
                           ),
                       ]),
                       Row(children: [
@@ -1743,9 +1743,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static Widget _buildFormeBadgeInline(TendanceForme forme) {
     switch (forme) {
-      case TendanceForme.hausse:      return const Text('📈', style: TextStyle(fontSize: 10));
-      case TendanceForme.baisse:      return const Text('📉', style: TextStyle(fontSize: 10));
-      case TendanceForme.stable:      return const Text('➡️', style: TextStyle(fontSize: 9));
+      case TendanceForme.hausse:      return const Text('📈', style: TextStyle(fontSize: 14));
+      case TendanceForme.baisse:      return const Text('📉', style: TextStyle(fontSize: 14));
+      case TendanceForme.stable:      return const Text('➡️', style: TextStyle(fontSize: 14));
       case TendanceForme.insuffisant: return const SizedBox.shrink();
     }
   }
