@@ -427,34 +427,34 @@ class IaMemoryService extends ChangeNotifier {
   }
 
   Map<String, dynamic>? serieChaudePourType(String typePari) {
+    // ★ v10.42 fix : filtre élargi — on n'exige plus rangFavoriIaDansArrivee != null
+    // car les types multi-chevaux (Couplé, Tiercé, Quarté+, Quinté+) sont validés
+    // via topNIA + arriveeReelle dans _estBonConseilParType(), pas via rangFavori seul.
     final resolus = _pronostics
-        .where((p) => p.resultatsReels &&
-            p.typePariConseille == typePari &&
-            p.rangFavoriIaDansArrivee != null)
+        .where((p) => p.resultatsReels && p.typePariConseille == typePari)
         .toList()
       ..sort((a, b) => b.datePronostic.compareTo(a.datePronostic));
 
     if (resolus.isEmpty) return null;
 
+    // ★ v10.42 fix CRITIQUE : on remplace l'ancienne fonction locale isGagnant()
+    // (qui ne regardait que le rang du 1er cheval IA — trop permissive pour
+    // Couplé Placé, Couplé Gagnant, Tiercé, etc.) par _estBonConseilParType()
+    // qui applique les règles métier strictes par type de pari :
+    //   - Couplé Placé  : les 2 chevaux IA doivent être dans le top 3 réel
+    //   - Couplé Gagnant: les 2 chevaux IA doivent être dans le top 2 réel
+    //   - Tiercé        : au moins 2 des 3 chevaux IA dans le top 3 réel
+    //   - Quarté+       : au moins 3 des 4 chevaux IA dans le top 4 réel
+    //   - Quinté+       : au moins 4 des 5 chevaux IA dans le top 5 réel
+    //   - Simple Gagnant: le cheval IA doit être 1er
+    //   - Simple Placé  : le cheval IA doit être dans le top 3
     int serieCourante = 0;
-    bool isGagnant(IaPronostic p) {
-      final rang = p.rangFavoriIaDansArrivee!;
-      switch (typePari) {
-        case 'Simple Gagnant':
-        case 'Gagnant+Placé':   return rang == 1;
-        case 'Simple Placé':
-        case 'Couplé Placé':    return rang <= 3;
-        case 'Couplé Gagnant':  return rang <= 2;
-        case 'Tiercé':          return rang <= 3;
-        case 'Quarté+':         return rang <= 4;
-        case 'Quinté+':         return rang <= 5;
-        default:                return rang == 1;
-      }
-    }
-
     for (final p in resolus) {
-      if (isGagnant(p)) serieCourante++;
-      else break;
+      if (_estBonConseilParType(p, typePari)) {
+        serieCourante++;
+      } else {
+        break; // série interrompue — on s'arrête
+      }
     }
 
     if (serieCourante < 2) return null; // pas de série significative

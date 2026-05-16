@@ -1078,9 +1078,12 @@ class _TopBetCard extends StatelessWidget {
                       final chaud  = serie['chaud'] as bool;
                       final emoji  = chaud ? '🔥' : '✅';
                       final color  = chaud ? const Color(0xFFFF6D00) : const Color(0xFF4CAF7D);
+                      // ★ v10.42 : libellé explicitement "Série IA récente" pour
+                      // éviter la confusion — c'est une statistique historique par
+                      // type de pari, pas une promesse sur la course affichée.
                       final label  = chaud
-                          ? '$emoji Série de $n succès consécutifs en ${opp.typePari} !'
-                          : '$emoji $n succès consécutifs en ${opp.typePari}';
+                          ? '$emoji Série IA récente : $n succès en ${opp.typePari} !'
+                          : '$emoji Série IA récente : $n succès en ${opp.typePari}';
                       return Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Container(
