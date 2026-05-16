@@ -422,7 +422,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('⭐', style: TextStyle(fontSize: 12)),
+            const Text('⭐', style: TextStyle(fontSize: 16)),
             const SizedBox(width: 6),
             Text(
               'Best Bet — Conseil IA, Meilleur Pari ou Best Bet du jour réussi',
@@ -1460,20 +1460,20 @@ class _DetailJourSheet extends StatelessWidget {
                     border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(badgeEmoji, style: const TextStyle(fontSize: 11)),
+                    Text(badgeEmoji, style: const TextStyle(fontSize: 14)),
                     const SizedBox(width: 4),
                     if (score != null)
                       Text('${sc.toStringAsFixed(0)}',
                         style: TextStyle(
                           color: badgeColor,
-                          fontSize: 11,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
                         )),
                   ]),
                 ),
                 if (estPartiel)
                   const Text('Placé seul',
-                    style: TextStyle(color: Colors.white38, fontSize: 8)),
+                    style: TextStyle(color: Colors.white38, fontSize: 14)),
               ],
             );
           }),

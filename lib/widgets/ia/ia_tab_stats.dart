@@ -375,7 +375,7 @@ class IaTabStats extends StatelessWidget {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text('échantillon',
-                              style: const TextStyle(color: Colors.white30, fontSize: 12)),
+                              style: const TextStyle(color: Colors.white30, fontSize: 16)),
                         ),
                     ]),
                   ),

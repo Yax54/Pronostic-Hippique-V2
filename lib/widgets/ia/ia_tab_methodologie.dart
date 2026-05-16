@@ -373,7 +373,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                   Text(
                     'init: ${(defauts[c]! * 100).toStringAsFixed(0)}%  '
                     'â  actuel: ${(poids.getPoids(c) * 100).toStringAsFixed(1)}%',
-                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    style: const TextStyle(color: Colors.white38, fontSize: 16),
                   ),
                 ]),
                 const SizedBox(height: 5),
@@ -414,7 +414,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                               Text(dayLbl,
                                   style: TextStyle(
                                     color: isLast ? Colors.white54 : Colors.white24,
-                                    fontSize: 9,
+                                    fontSize: 14,
                                   )),
                             ],
                           ),
@@ -463,7 +463,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text('$fleche $pctDiff%',
-                    style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+                    style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ]),
           );
@@ -490,7 +490,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
             const Text(
               'L\'IA apprend aussi le meilleur mix entre les criteres (Î1), '
               'la confiance IA, et le taux historique par type de pari.',
-              style: TextStyle(color: Colors.white38, fontSize: 12),
+              style: TextStyle(color: Colors.white38, fontSize: 16),
             ),
             const SizedBox(height: 8),
             _buildLigneIndice('Score multicriteres (Î1)',
@@ -509,7 +509,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
         const Text(
           'Si rien ne bouge après 3+ semaines — les données API PMU '
           'atteignent peut-être leur limite prédictive.',
-          style: TextStyle(color: Colors.white24, fontSize: 12),
+          style: TextStyle(color: Colors.white24, fontSize: 16),
         ),
 
         // ★ v10.37 : Date de dernière mise à jour
@@ -533,7 +533,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
               'Dernière mise à jour : $label '
               '(${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')} '
               'à ${d.hour.toString().padLeft(2,'0')}h${d.minute.toString().padLeft(2,'0')})',
-              style: const TextStyle(color: Colors.white24, fontSize: 12),
+              style: const TextStyle(color: Colors.white24, fontSize: 16),
             );
           }),
         ],
@@ -562,7 +562,7 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
             style: TextStyle(color: c, fontSize: 14, fontWeight: FontWeight.bold)),
         const SizedBox(width: 6),
         Text('$fleche ${diff >= 0 ? '+' : ''}${(diff * 100).toStringAsFixed(1)}%',
-            style: TextStyle(color: c, fontSize: 12)),
+            style: TextStyle(color: c, fontSize: 16)),
       ]),
     );
   }

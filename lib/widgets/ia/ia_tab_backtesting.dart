@@ -235,7 +235,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   const SizedBox(height: 4),
                   const Text(
                     '👆 Touche une stratégie pour relancer la simulation avec ce type',
-                    style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 12,
+                    style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 16,
                         fontStyle: FontStyle.italic),
                   ),
                   const SizedBox(height: 12),
@@ -491,7 +491,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 4),
                 Text(
                   'Pour survivre à la pire série de ${r.seriePertMax} pertes consécutives avec mise initiale de ${_btMise.toStringAsFixed(0)} €.',
-                  style: const TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
+                  style: const TextStyle(color: Colors.white38, fontSize: 16, height: 1.4),
                 ),
               ],
             ),
@@ -499,7 +499,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           const SizedBox(height: 8),
           const Text(
             '⚠️ La martingale présente un risque de perte illimitée. Jouez de façon responsable.',
-            style: TextStyle(color: Colors.white24, fontSize: 12),
+            style: TextStyle(color: Colors.white24, fontSize: 16),
           ),
         ],
       ),
@@ -516,7 +516,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 16)),
           const SizedBox(height: 3),
           Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
         ]),
@@ -1158,7 +1158,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                     Text('Appliquer vers Conseils IA',
                         style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
                     Text('Pré-configurer les filtres depuis ce backtesting',
-                        style: TextStyle(color: Colors.white38, fontSize: 12)),
+                        style: TextStyle(color: Colors.white38, fontSize: 16)),
                   ],
                 ),
               ),
@@ -1290,7 +1290,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           const SizedBox(height: 4),
           const Text(
             '💡 Les filtres sont appliqués automatiquement à l\'ouverture de Conseils IA.',
-            style: TextStyle(color: Colors.white24, fontSize: 12),
+            style: TextStyle(color: Colors.white24, fontSize: 16),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1379,7 +1379,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text('📍 $_btDiscipline',
-                          style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 12)),
+                          style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 16)),
                     ),
                   if (_btHippodrome != null)
                     Container(
@@ -1389,7 +1389,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text('🏟️ $_btHippodrome',
-                          style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 12)),
+                          style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 16)),
                     ),
                 ]),
               ],
@@ -1630,7 +1630,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                         'Indicateur de risque réel pendant la simulation.',
                         style: TextStyle(
                           color: Colors.orange.withValues(alpha: 0.65),
-                          fontSize: 12,
+                          fontSize: 16,
                           height: 1.4,
                         ),
                       ),
@@ -1666,7 +1666,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 4),
                 const Text(
                   'Chaque montée = un pari gagné  ·  Chaque descente = une perte',
-                  style: TextStyle(color: Colors.white30, fontSize: 12),
+                  style: TextStyle(color: Colors.white30, fontSize: 16),
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
@@ -1681,7 +1681,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('Début\n0 €',
-                        style: TextStyle(color: Colors.white24, fontSize: 12), textAlign: TextAlign.center),
+                        style: TextStyle(color: Colors.white24, fontSize: 16), textAlign: TextAlign.center),
                     Column(children: [
                       Text(
                         '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €',
@@ -1690,10 +1690,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                         ),
                       ),
                       const Text('résultat final',
-                          style: TextStyle(color: Colors.white30, fontSize: 12)),
+                          style: TextStyle(color: Colors.white30, fontSize: 16)),
                     ]),
                     const Text('Fin',
-                        style: TextStyle(color: Colors.white24, fontSize: 12)),
+                        style: TextStyle(color: Colors.white24, fontSize: 16)),
                   ],
                 ),
               ],
@@ -1749,7 +1749,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                       fontSize: 14, fontWeight: FontWeight.w600)),
                               Text(
                                 '${stat.nbTotal} courses · ${stat.taux.toStringAsFixed(0)}% gagnées',
-                                style: const TextStyle(color: Colors.white38, fontSize: 12),
+                                style: const TextStyle(color: Colors.white38, fontSize: 16),
                               ),
                             ],
                           ),
@@ -1811,7 +1811,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 4),
                 const Text(
                   'Basé sur les vrais critères PMU (Couplé = 2 chevaux dans le top 2, etc.)',
-                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                  style: TextStyle(color: Colors.white38, fontSize: 16),
                 ),
                 const SizedBox(height: 12),
                 ...(() {
@@ -1860,10 +1860,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                               children: [
                                 Text('${stat.taux.toStringAsFixed(0)}% de réussite',
                                     style: const TextStyle(color: Colors.white54,
-                                        fontSize: 12)),
+                                        fontSize: 16)),
                                 Text('${stat.nbGagnes}/${stat.nbTotal} gagnés',
                                     style: const TextStyle(color: Colors.white38,
-                                        fontSize: 12)),
+                                        fontSize: 16)),
                               ],
                             )),
                             // ROI
@@ -1875,12 +1875,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                       color: stat.roi >= 0
                                           ? const Color(0xFF4CAF7D)
                                           : Colors.redAccent,
-                                      fontSize: 12,
+                                      fontSize: 16,
                                       fontWeight: FontWeight.w600,
                                     )),
                                 Text('Série max : ${stat.maxSerie}',
                                     style: const TextStyle(color: Colors.white38,
-                                        fontSize: 12)),
+                                        fontSize: 16)),
                               ],
                             )),
                             // Kelly
@@ -1900,7 +1900,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                   )),
                                 const Text('Kelly',
                                     style: TextStyle(color: Colors.white38,
-                                        fontSize: 9)),
+                                        fontSize: 14)),
                               ],
                             )),
                           ]),
@@ -1916,7 +1916,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                               child: Text(kellyTxt,
                                 style: const TextStyle(
                                     color: Color(0xFFB39DDB),
-                                    fontSize: 12)),
+                                    fontSize: 16)),
                             ),
                           ],
                         ],
@@ -1997,7 +1997,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                   style: const TextStyle(color: Colors.white70, fontSize: 14)),
                             ),
                             Text('${stat.nbTotal} courses',
-                                style: const TextStyle(color: Colors.white30, fontSize: 12)),
+                                style: const TextStyle(color: Colors.white30, fontSize: 16)),
                             const SizedBox(width: 10),
                             Text(
                               '${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)} €',
@@ -2026,7 +2026,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                           ]),
                           Text(
                             '${stat.taux.toStringAsFixed(0)}% de réussite',
-                            style: const TextStyle(color: Colors.white30, fontSize: 12),
+                            style: const TextStyle(color: Colors.white30, fontSize: 16),
                           ),
                         ],
                       ),
@@ -2058,7 +2058,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 ),
                 subtitle: Text(
                   '✅ ${r.nbGagnes} gagnées  ❌ ${r.nbPerdus} perdues',
-                  style: const TextStyle(color: Colors.white30, fontSize: 12),
+                  style: const TextStyle(color: Colors.white30, fontSize: 16),
                 ),
                 iconColor: Colors.white38,
                 collapsedIconColor: Colors.white24,
@@ -2096,7 +2096,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text('$dateStr · ${c.hippodrome}',
-                                        style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                                        style: const TextStyle(color: Colors.white38, fontSize: 16)),
                                     Text(c.nomCourse,
                                         style: const TextStyle(color: Colors.white70, fontSize: 14),
                                         maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -2107,7 +2107,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                 Text(gainStr,
                                     style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
                                 Text(c.typePariConseille,
-                                    style: const TextStyle(color: Colors.white30, fontSize: 12)),
+                                    style: const TextStyle(color: Colors.white30, fontSize: 16)),
                               ]),
                             ]),
                           );
@@ -2162,7 +2162,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
               style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 3),
           Text(label,
-              style: const TextStyle(color: Colors.white38, fontSize: 12),
+              style: const TextStyle(color: Colors.white38, fontSize: 16),
               textAlign: TextAlign.center),
           const SizedBox(height: 2),
           const Icon(Icons.touch_app, color: Colors.white12, size: 10),
@@ -2180,7 +2180,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(value, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
-        Text(label, style: const TextStyle(color: Colors.white30, fontSize: 12)),
+        Text(label, style: const TextStyle(color: Colors.white30, fontSize: 16)),
       ],
     );
   }
