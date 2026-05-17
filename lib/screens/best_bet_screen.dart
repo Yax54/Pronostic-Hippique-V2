@@ -1016,9 +1016,11 @@ class _TopBetCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(p.nom,
-                            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                            maxLines: 2, overflow: TextOverflow.ellipsis),
                         if (p.driver.isNotEmpty)
-                          Text(p.driver, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14)),
+                          Text(p.driver, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         Text(opp.course.nom,
                             style: const TextStyle(color: Colors.white30, fontSize: 14),
                             maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -1029,15 +1031,14 @@ class _TopBetCard extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // Métriques
-              Row(
+              // Métriques — Wrap pour petit écran
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
                 children: [
                   _metric('Score', '${score.round()}', confianceColor),
-                  const SizedBox(width: 8),
                   _metric('Confiance', '${opp.scoreConfiance.round()}%', confianceColor),
-                  const SizedBox(width: 8),
                   _metric('Cote', coteLabelStr, Colors.white60),
-                  const SizedBox(width: 8),
                   _metric('Gain estimé', gainEstime, const Color(0xFFFFD700)),
                 ],
               ),
@@ -1279,7 +1280,8 @@ class _BetRow extends StatelessWidget {
                 children: [
                   Text(p.nom, style: TextStyle(
                       color: opp.estTerminee ? Colors.white54 : Colors.white,
-                      fontSize: 14, fontWeight: FontWeight.w600)),
+                      fontSize: 14, fontWeight: FontWeight.w600),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
                   Text('${opp.course.nom} • ${opp.reunion.lieu} • ${opp.course.heure}',
                       style: const TextStyle(color: Colors.white38, fontSize: 14),
                       maxLines: 1, overflow: TextOverflow.ellipsis),

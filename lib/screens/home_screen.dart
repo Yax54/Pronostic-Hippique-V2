@@ -1230,10 +1230,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(cheval.nom,
-                              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+                              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                              maxLines: 2, overflow: TextOverflow.ellipsis),
                           if (cheval.driver.isNotEmpty)
                             Text(cheval.driver,
-                                style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14)),
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14),
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
                           const SizedBox(height: 4),
                           Text('${course.nom} • $lieu',
                               style: const TextStyle(color: Colors.white38, fontSize: 14),
