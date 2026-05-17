@@ -1680,8 +1680,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(color: scoreColor, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(width: 10),
+                  // ★ v10.52 : Expanded contraint pour éviter le débordement
+                  //   sous le badge score (texte sous-titre en maxLines:1 + ellipsis)
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      // Ligne 1 : nom de course + badge Q+
                       Row(children: [
                         Expanded(
                           child: Text(item.course.nom,
@@ -1700,28 +1703,39 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold)),
                           ),
                       ]),
+                      // Ligne 2 : lieu + heure + cheval (Expanded pour ne jamais passer sous le badge)
                       Row(children: [
-                        Text('${item.reunion.lieu} • $heureLabel',
-                            style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 14)),
+                        Expanded(
+                          child: Text(
+                            p1 != null
+                                ? '${item.reunion.lieu} • $heureLabel • N°${p1.numero} ${p1.nom.split(' ').first}'
+                                : '${item.reunion.lieu} • $heureLabel',
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 14),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         if (p1 != null) ...[
-                          const SizedBox(width: 5),
-                          Text('N°${p1.numero} ${p1.nom.split(' ').first}',
-                              style: const TextStyle(color: Colors.white38, fontSize: 14),
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                          const SizedBox(width: 3),
+                          const SizedBox(width: 4),
                           _buildFormeBadgeInline(p1.tendanceForme),
                         ],
                       ]),
                     ]),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: scoreColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
+                  // Badge score : largeur fixe pour ne jamais être poussé
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 52,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: scoreColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text('${score.round()}%',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: scoreColor, fontSize: 14, fontWeight: FontWeight.bold)),
                     ),
-                    child: Text('${score.round()}%',
-                        style: TextStyle(color: scoreColor, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ]),
               ),

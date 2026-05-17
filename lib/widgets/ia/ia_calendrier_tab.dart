@@ -327,7 +327,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         // ▶ Suivant
         _navBtn(Icons.chevron_right, _peutAvancer ? _avancer : null),
 
-        // ★ v10.51 : Bouton admin discret — reset étoile premium
+        // ★ v10.51/v10.52 : Bouton admin reset étoile — couleur visible
         const SizedBox(width: 4),
         Tooltip(
           message: 'Reset étoile premium',
@@ -336,13 +336,17 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             child: Container(
               padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
+                color: const Color(0xFFFFD54F).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFFFFD54F).withValues(alpha: 0.35),
+                  width: 1,
+                ),
               ),
-              child: Icon(
+              child: const Icon(
                 Icons.cleaning_services,
-                color: Colors.white.withValues(alpha: 0.35),
-                size: 18,
+                color: Color(0xFFFFD54F),
+                size: 20,
               ),
             ),
           ),
@@ -650,16 +654,21 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             _legendePuce(PalierCalendrier.gris,   '💤', 'Repos',    null),
           ],
         ),
-        // ★ v10.37 : Légende étoile Best Bet
+        // ★ v10.37/v10.52 : Légende étoile Best Bet — Expanded pour éviter overflow
         const SizedBox(height: 10),
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('⭐', style: TextStyle(fontSize: 16)),
             const SizedBox(width: 6),
-            Text(
-              'Best Bet — Conseil IA, Meilleur Pari ou Best Bet du jour réussi',
-              style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 14),
+            Expanded(
+              child: Text(
+                'Best Bet — Conseil IA, Meilleur Pari ou Best Bet du jour réussi',
+                style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 13),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                softWrap: true,
+              ),
             ),
           ],
         ),

@@ -458,40 +458,56 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
           color: Color(reunion.disciplineColor).withValues(alpha: 0.5),
         ),
       ),
+      // ★ v10.52 : Row responsif — chips en Wrap + SizedBox fixe compteur
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // Icône discipline
           Text(reunion.disciplineIcon, style: const TextStyle(fontSize: 36)),
           const SizedBox(width: 14),
+          // Zone centrale : nom + badges (Expanded pour absorber la largeur variable)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(reunion.lieu.toUpperCase(),
                     style: const TextStyle(color: Colors.white, fontSize: 18,
-                        fontWeight: FontWeight.w800, letterSpacing: 1)),
-                const SizedBox(height: 4),
-                Row(
+                        fontWeight: FontWeight.w800, letterSpacing: 1),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 6),
+                // Wrap : les badges se replient sur la ligne suivante si besoin
+                // → plus jamais de chevauchement avec le compteur droite
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     _chip(reunion.code, const Color(0xFF4CAF7D)),
-                    const SizedBox(width: 6),
                     _chip(reunion.discipline, Color(reunion.disciplineColor)),
-                    const SizedBox(width: 6),
-                    _chip('${reunion.courses.length} courses', Colors.white24),
+                    _chip('${reunion.courses.length} course${reunion.courses.length > 1 ? 's' : ''}', Colors.white24),
                   ],
                 ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('${reunion.totalPartants}',
-                  style: const TextStyle(color: Colors.white, fontSize: 28,
-                      fontWeight: FontWeight.bold)),
-              Text('chevaux', 
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
-                      fontSize: 14)),
-            ],
+          const SizedBox(width: 12),
+          // Compteur chevaux : largeur fixe pour ne jamais être poussé
+          SizedBox(
+            width: 72,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${reunion.totalPartants}',
+                    style: const TextStyle(color: Colors.white, fontSize: 28,
+                        fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                Text('chevaux',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 13),
+                    maxLines: 1),
+              ],
+            ),
           ),
         ],
       ),
