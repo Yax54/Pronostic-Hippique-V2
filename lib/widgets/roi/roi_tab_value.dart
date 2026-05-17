@@ -92,11 +92,14 @@ class RoiTabValue extends StatelessWidget {
         children: [
           // Ligne 1 : date + discipline + résultat
           Row(children: [
-            Text(v.date,
-                style: const TextStyle(color: Colors.white54, fontSize: 14)),
-            const SizedBox(width: 8),
+            Expanded(
+              child: Text(v.date,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 6),
             _chip(v.discipline, Colors.white24),
-            const Spacer(),
+            const SizedBox(width: 6),
             Text(badge, style: const TextStyle(fontSize: 16)),
           ]),
           const SizedBox(height: 6),
@@ -104,31 +107,37 @@ class RoiTabValue extends StatelessWidget {
           Text(v.courseNom,
               style: const TextStyle(color: Colors.white, fontSize: 16,
                   fontWeight: FontWeight.w600),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 4),
-          // Type pari + N° favori IA
-          Row(children: [
-            _chip(v.typePari, _purple.withValues(alpha: 0.4)),
-            const SizedBox(width: 8),
-            Text('N°${v.favoriIa}',
-                style: const TextStyle(color: Colors.white70, fontSize: 14)),
-          ]),
+          // Type pari + N° favori IA — Wrap pour éviter overflow sur petit écran
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _chip(v.typePari, _purple.withValues(alpha: 0.4)),
+              Text('N°${v.favoriIa}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 14)),
+            ],
+          ),
           const SizedBox(height: 8),
           // Stats : score IA / cote / divergence / retour
-          Row(children: [
-            _kv('Score IA', '${v.scoreIa.toStringAsFixed(0)}', Colors.amber),
-            const SizedBox(width: 12),
-            _kv('Cote', v.cote.toStringAsFixed(1), Colors.white70),
-            const SizedBox(width: 12),
-            _kv('Diverg.', '${v.divergence.toStringAsFixed(0)}', _purple),
-            const SizedBox(width: 12),
-            if (v.gagne)
-              _kv('Retour', '+${v.retour.toStringAsFixed(2)} €', couleur),
-          ]),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _kv('Score IA', '${v.scoreIa.toStringAsFixed(0)}', Colors.amber),
+              _kv('Cote', v.cote.toStringAsFixed(1), Colors.white70),
+              _kv('Diverg.', '${v.divergence.toStringAsFixed(0)}', _purple),
+              if (v.gagne)
+                _kv('Retour', '+${v.retour.toStringAsFixed(2)} €', couleur),
+            ],
+          ),
           const SizedBox(height: 6),
           Text(v.explication,
               style: TextStyle(color: couleur.withValues(alpha: 0.8),
-                  fontSize: 14)),
+                  fontSize: 14),
+              maxLines: 3, overflow: TextOverflow.ellipsis),
         ],
       ),
     );

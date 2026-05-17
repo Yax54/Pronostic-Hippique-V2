@@ -83,11 +83,14 @@ class RoiTabFauxFavoris extends StatelessWidget {
         children: [
           // Ligne 1 : date + discipline
           Row(children: [
-            Text(f.date,
-                style: const TextStyle(color: Colors.white54, fontSize: 14)),
-            const SizedBox(width: 8),
+            Expanded(
+              child: Text(f.date,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 6),
             _chip(f.discipline, Colors.white12),
-            const Spacer(),
+            const SizedBox(width: 6),
             const Text('❌ Perdant',
                 style: TextStyle(color: Colors.redAccent, fontSize: 14,
                     fontWeight: FontWeight.bold)),
@@ -97,22 +100,24 @@ class RoiTabFauxFavoris extends StatelessWidget {
           Text(f.courseNom,
               style: const TextStyle(color: Colors.white, fontSize: 16,
                   fontWeight: FontWeight.w600),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 4),
           // Type pari
           _chip(f.typePari, Colors.deepPurple.withValues(alpha: 0.4)),
           const SizedBox(height: 8),
-          // Stats
-          Row(children: [
-            _kv('N°', f.favoriIa, Colors.orange),
-            const SizedBox(width: 16),
-            _kv('Confiance', '${f.confianceIa.toStringAsFixed(0)}%',
-                f.confianceIa >= 90 ? Colors.redAccent : Colors.orange),
-            const SizedBox(width: 16),
-            _kv('Cote',
-                f.cote > 0 ? f.cote.toStringAsFixed(1) : '—',
-                Colors.white70),
-          ]),
+          // Stats — Wrap pour petit écran
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            children: [
+              _kv('N°', f.favoriIa, Colors.orange),
+              _kv('Confiance', '${f.confianceIa.toStringAsFixed(0)}%',
+                  f.confianceIa >= 90 ? Colors.redAccent : Colors.orange),
+              _kv('Cote',
+                  f.cote > 0 ? f.cote.toStringAsFixed(1) : '—',
+                  Colors.white70),
+            ],
+          ),
           const SizedBox(height: 6),
           // Raison
           Row(children: [

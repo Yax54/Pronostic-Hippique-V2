@@ -745,10 +745,13 @@ class _OffscreenTabContent extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text(v.date, style: const TextStyle(color: Colors.white54, fontSize: 14)),
-          const SizedBox(width: 8),
+          Expanded(
+            child: Text(v.date, style: const TextStyle(color: Colors.white54, fontSize: 14),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 6),
           _chip(v.discipline, Colors.white24),
-          const Spacer(),
+          const SizedBox(width: 6),
           Text(v.gagne ? '✅' : '❌', style: const TextStyle(fontSize: 16)),
         ]),
         const SizedBox(height: 6),
@@ -757,26 +760,30 @@ class _OffscreenTabContent extends StatelessWidget {
                 fontWeight: FontWeight.w600),
             maxLines: 2, overflow: TextOverflow.ellipsis),
         const SizedBox(height: 4),
-        Row(children: [
-          _chip(v.typePari, purple.withValues(alpha: 0.4)),
-          const SizedBox(width: 8),
-          Text('N°${v.favoriIa}',
-              style: const TextStyle(color: Colors.white70, fontSize: 14)),
-        ]),
+        Wrap(
+          spacing: 8, runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _chip(v.typePari, purple.withValues(alpha: 0.4)),
+            Text('N°${v.favoriIa}',
+                style: const TextStyle(color: Colors.white70, fontSize: 14)),
+          ],
+        ),
         const SizedBox(height: 8),
-        Row(children: [
-          _kv('Score IA', '${v.scoreIa.toStringAsFixed(0)}',   Colors.amber),
-          const SizedBox(width: 12),
-          _kv('Cote',     v.cote.toStringAsFixed(1),           Colors.white70),
-          const SizedBox(width: 12),
-          _kv('Diverg.',  '${v.divergence.toStringAsFixed(0)}', purple),
-          const SizedBox(width: 12),
-          if (v.gagne)
-            _kv('Retour', '+${v.retour.toStringAsFixed(2)} €', couleur),
-        ]),
+        Wrap(
+          spacing: 12, runSpacing: 8,
+          children: [
+            _kv('Score IA', '${v.scoreIa.toStringAsFixed(0)}',   Colors.amber),
+            _kv('Cote',     v.cote.toStringAsFixed(1),           Colors.white70),
+            _kv('Diverg.',  '${v.divergence.toStringAsFixed(0)}', purple),
+            if (v.gagne)
+              _kv('Retour', '+${v.retour.toStringAsFixed(2)} €', couleur),
+          ],
+        ),
         const SizedBox(height: 6),
         Text(v.explication,
-            style: TextStyle(color: couleur.withValues(alpha: 0.8), fontSize: 14)),
+            style: TextStyle(color: couleur.withValues(alpha: 0.8), fontSize: 14),
+            maxLines: 3, overflow: TextOverflow.ellipsis),
       ]),
     );
   }
@@ -830,10 +837,13 @@ class _OffscreenTabContent extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text(o.date, style: const TextStyle(color: Colors.white54, fontSize: 14)),
-          const SizedBox(width: 8),
+          Expanded(
+            child: Text(o.date, style: const TextStyle(color: Colors.white54, fontSize: 14),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 6),
           _chip(o.discipline, Colors.white12),
-          const Spacer(),
+          const SizedBox(width: 6),
           Text(o.detecteParIa ? '✅ Vu' : '❌ Raté',
               style: TextStyle(color: couleur, fontSize: 14,
                   fontWeight: FontWeight.bold)),
@@ -844,18 +854,19 @@ class _OffscreenTabContent extends StatelessWidget {
                 fontWeight: FontWeight.w600),
             maxLines: 2, overflow: TextOverflow.ellipsis),
         const SizedBox(height: 8),
-        Row(children: [
-          _kv('N°',        o.numero,                  Colors.amber),
-          const SizedBox(width: 16),
-          _kv('Cote',      o.cote.toStringAsFixed(1), Colors.amber),
-          const SizedBox(width: 16),
-          _kv('Rang réel', '${o.rangReel}ème',        Colors.white70),
-          const SizedBox(width: 16),
-          _kv('IA',        rangIaStr,                 couleur),
-        ]),
+        Wrap(
+          spacing: 16, runSpacing: 8,
+          children: [
+            _kv('N°',        o.numero,                  Colors.amber),
+            _kv('Cote',      o.cote.toStringAsFixed(1), Colors.amber),
+            _kv('Rang réel', '${o.rangReel}ème',        Colors.white70),
+            _kv('IA',        rangIaStr,                 couleur),
+          ],
+        ),
         const SizedBox(height: 6),
         Text(o.commentaire,
-            style: TextStyle(color: couleur.withValues(alpha: 0.8), fontSize: 14)),
+            style: TextStyle(color: couleur.withValues(alpha: 0.8), fontSize: 14),
+            maxLines: 3, overflow: TextOverflow.ellipsis),
       ]),
     );
   }
@@ -905,10 +916,13 @@ class _OffscreenTabContent extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text(f.date, style: const TextStyle(color: Colors.white54, fontSize: 14)),
-          const SizedBox(width: 8),
+          Expanded(
+            child: Text(f.date, style: const TextStyle(color: Colors.white54, fontSize: 14),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 6),
           _chip(f.discipline, Colors.white12),
-          const Spacer(),
+          const SizedBox(width: 6),
           const Text('❌ Perdant',
               style: TextStyle(color: Colors.redAccent, fontSize: 14,
                   fontWeight: FontWeight.bold)),
@@ -921,15 +935,16 @@ class _OffscreenTabContent extends StatelessWidget {
         const SizedBox(height: 4),
         _chip(f.typePari, Colors.deepPurple.withValues(alpha: 0.4)),
         const SizedBox(height: 8),
-        Row(children: [
-          _kv('N°',       f.favoriIa, Colors.orange),
-          const SizedBox(width: 16),
-          _kv('Confiance', '${f.confianceIa.toStringAsFixed(0)}%',
-              f.confianceIa >= 90 ? Colors.redAccent : Colors.orange),
-          const SizedBox(width: 16),
-          _kv('Cote', f.cote > 0 ? f.cote.toStringAsFixed(1) : '—',
-              Colors.white70),
-        ]),
+        Wrap(
+          spacing: 16, runSpacing: 8,
+          children: [
+            _kv('N°',       f.favoriIa, Colors.orange),
+            _kv('Confiance', '${f.confianceIa.toStringAsFixed(0)}%',
+                f.confianceIa >= 90 ? Colors.redAccent : Colors.orange),
+            _kv('Cote', f.cote > 0 ? f.cote.toStringAsFixed(1) : '—',
+                Colors.white70),
+          ],
+        ),
         const SizedBox(height: 6),
         Row(children: [
           const Icon(Icons.info_outline, color: Colors.white38, size: 14),

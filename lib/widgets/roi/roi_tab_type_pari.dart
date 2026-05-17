@@ -113,23 +113,26 @@ class RoiTabTypePari extends StatelessWidget {
               ),
             ),
           ]),
-          // Ligne 2 : gain net + cote moyenne (si données)
+          // Ligne 2 : gain net + cote moyenne — Wrap pour petit écran
           if (s.nbParisRoi > 0) ...[
             const SizedBox(height: 6),
-            Row(children: [
-              Text(
-                'Gain net : ${s.gainNet >= 0 ? '+' : ''}${s.gainNet.toStringAsFixed(2)} €',
-                style: TextStyle(
-                    color: s.gainNet >= 0 ? Colors.greenAccent : Colors.redAccent,
-                    fontSize: 14),
-              ),
-              const SizedBox(width: 16),
-              if (s.coteMoyenneGagnants > 0)
+            Wrap(
+              spacing: 16,
+              runSpacing: 4,
+              children: [
                 Text(
-                  'Cote moy. : ${s.coteMoyenneGagnants.toStringAsFixed(2)}',
-                  style: const TextStyle(color: Colors.amber, fontSize: 14),
+                  'Gain net : ${s.gainNet >= 0 ? '+' : ''}${s.gainNet.toStringAsFixed(2)} €',
+                  style: TextStyle(
+                      color: s.gainNet >= 0 ? Colors.greenAccent : Colors.redAccent,
+                      fontSize: 14),
                 ),
-            ]),
+                if (s.coteMoyenneGagnants > 0)
+                  Text(
+                    'Cote moy. : ${s.coteMoyenneGagnants.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.amber, fontSize: 14),
+                  ),
+              ],
+            ),
           ],
         ],
       ),

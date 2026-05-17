@@ -88,11 +88,14 @@ class RoiTabOutsiders extends StatelessWidget {
         children: [
           // Ligne 1 : date + discipline
           Row(children: [
-            Text(o.date,
-                style: const TextStyle(color: Colors.white54, fontSize: 14)),
-            const SizedBox(width: 8),
+            Expanded(
+              child: Text(o.date,
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 6),
             _chip(o.discipline, Colors.white12),
-            const Spacer(),
+            const SizedBox(width: 6),
             Text(badge,
                 style: TextStyle(color: couleur, fontSize: 14,
                     fontWeight: FontWeight.bold)),
@@ -102,22 +105,24 @@ class RoiTabOutsiders extends StatelessWidget {
           Text(o.courseNom,
               style: const TextStyle(color: Colors.white, fontSize: 16,
                   fontWeight: FontWeight.w600),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 8),
-          // Stats
-          Row(children: [
-            _kv('N°', o.numero, _amber),
-            const SizedBox(width: 16),
-            _kv('Cote', o.cote.toStringAsFixed(1), _amber),
-            const SizedBox(width: 16),
-            _kv('Rang réel', '${o.rangReel}ème', Colors.white70),
-            const SizedBox(width: 16),
-            _kv('IA', rangIaStr, couleur),
-          ]),
+          // Stats — Wrap pour petit écran
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            children: [
+              _kv('N°', o.numero, _amber),
+              _kv('Cote', o.cote.toStringAsFixed(1), _amber),
+              _kv('Rang réel', '${o.rangReel}ème', Colors.white70),
+              _kv('IA', rangIaStr, couleur),
+            ],
+          ),
           const SizedBox(height: 6),
           Text(o.commentaire,
               style: TextStyle(color: couleur.withValues(alpha: 0.8),
-                  fontSize: 14)),
+                  fontSize: 14),
+              maxLines: 3, overflow: TextOverflow.ellipsis),
         ],
       ),
     );

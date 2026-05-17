@@ -61,8 +61,10 @@ class RoiTabGlobal extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('ROI global',
-                  style: TextStyle(color: Colors.white70, fontSize: 16)),
+              const Expanded(
+                child: Text('ROI global',
+                    style: TextStyle(color: Colors.white70, fontSize: 16))),
+              const SizedBox(width: 8),
               Text(
                 '${s.roi >= 0 ? '+' : ''}${s.roi.toStringAsFixed(1)}%',
                 style: TextStyle(
@@ -101,9 +103,12 @@ class RoiTabGlobal extends StatelessWidget {
               child: Row(children: [
                 const Text('🎰', style: TextStyle(fontSize: 16)),
                 const SizedBox(width: 8),
-                Text(
-                  '${s.outsidersGagnants} outsider(s) gagnant(s) — cote ≥ 8.0',
-                  style: const TextStyle(color: Colors.amber, fontSize: 14),
+                Expanded(
+                  child: Text(
+                    '${s.outsidersGagnants} outsider(s) gagnant(s) — cote ≥ 8.0',
+                    style: const TextStyle(color: Colors.amber, fontSize: 14),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ]),
             ),
