@@ -326,8 +326,241 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
         // ▶ Suivant
         _navBtn(Icons.chevron_right, _peutAvancer ? _avancer : null),
+
+        // ★ v10.51 : Bouton admin discret — reset étoile premium
+        const SizedBox(width: 4),
+        Tooltip(
+          message: 'Reset étoile premium',
+          child: GestureDetector(
+            onTap: () => _ouvrirResetEtoile(context),
+            child: Container(
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.cleaning_services,
+                color: Colors.white.withValues(alpha: 0.35),
+                size: 18,
+              ),
+            ),
+          ),
+        ),
       ]),
     );
+  }
+
+  // ★ v10.51 — Reset étoile premium (outil admin/debug)
+  // Accessible via l'icône 🧹 dans le header du calendrier.
+  // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics.
+  Future<void> _ouvrirResetEtoile(BuildContext context) async {
+    // ── Étape 1 : choix du mode ──────────────────────────────────────────
+    final choix = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1B2A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                Icon(Icons.cleaning_services, color: Color(0xFFFFB74D), size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Reset étoile premium',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 4),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'Ne touche pas à la mémoire IA ni à l\'apprentissage.',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(color: Colors.white12, height: 1),
+            ListTile(
+              leading: const Icon(Icons.event, color: Color(0xFF42A5F5)),
+              title: const Text(
+                'Réinitialiser une date',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                'Choisir un jour précis',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(_, 'date'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.warning_amber, color: Color(0xFFEF5350)),
+              title: const Text(
+                'Réinitialiser toutes les étoiles premium',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                'Efface tout l\'historique premium',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(_, 'all'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    // ── Étape 2a : reset d'une date précise ─────────────────────────────
+    if (choix == 'date') {
+      final date = await showDatePicker(
+        context: context,
+        initialDate: _moisRef.copyWith(day: 1),
+        firstDate: DateTime(2024),
+        lastDate: DateTime.now().add(const Duration(days: 1)),
+        builder: (ctx, child) => Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Color(0xFFFFB74D),
+              onPrimary: Colors.black,
+              surface: Color(0xFF111F30),
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF0D1B2A),
+            ),
+          ),
+          child: child!,
+        ),
+      );
+
+      if (!mounted || date == null) return;
+
+      final j   = date.day.toString().padLeft(2, '0');
+      final m   = date.month.toString().padLeft(2, '0');
+      final an  = date.year.toString();
+
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF0A1628),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.star_border, color: Color(0xFFFFB74D)),
+            SizedBox(width: 8),
+            Text('Confirmer', style: TextStyle(color: Colors.white, fontSize: 17)),
+          ]),
+          content: Text(
+            'Supprimer uniquement l\'étoile premium du $j/$m/$an ?\n\n'
+            'Les autres jours, la mémoire IA et l\'apprentissage '
+            'ne sont pas modifiés.',
+            style: const TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(_, false),
+              child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(_, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFB74D),
+              ),
+              child: const Text('Supprimer',
+                  style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || ok != true) return;
+
+      await IaMemoryService.instance.resetPremiumPourDate(date);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Étoile premium du $j/$m/$an réinitialisée.'),
+          backgroundColor: const Color(0xFFFFB74D),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      setState(() {});
+    }
+
+    // ── Étape 2b : reset de TOUTES les étoiles ───────────────────────────
+    if (choix == 'all') {
+      if (!mounted) return;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF0A1628),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.warning_amber, color: Color(0xFFEF5350)),
+            SizedBox(width: 8),
+            Text('Zone dangereuse',
+                style: TextStyle(color: Colors.white, fontSize: 17)),
+          ]),
+          content: const Text(
+            'Supprimer TOUTES les étoiles premium historiques ?\n\n'
+            'Cette action est irréversible.\n'
+            'La mémoire IA, les poids et l\'apprentissage '
+            'ne sont PAS modifiés.',
+            style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(_, false),
+              child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(_, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF5350),
+              ),
+              child: const Text('Tout supprimer',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || ok != true) return;
+
+      await IaMemoryService.instance.resetToutesEtoilesPremium();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Toutes les étoiles premium ont été réinitialisées.'),
+          backgroundColor: Color(0xFFEF5350),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      setState(() {});
+    }
   }
 
   Widget _navBtn(IconData icon, VoidCallback? onTap) {

@@ -4317,6 +4317,73 @@ class IaMemoryService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ★ v10.51 — Reset étoile premium par date (outil admin/debug calendrier)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Supprime UNIQUEMENT l'étoile premium d'une date précise dans l'historique.
+  // Si la date est aujourd'hui → supprime aussi ia_premium_du_jour_v1.
+  // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics, résultats.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> resetPremiumPourDate(DateTime date) async {
+    // Construire la clé au même format que _todayKey() : "yyyy-MM-dd"
+    final keyDate =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1. Supprimer l'entrée de l'historique premium pour cette date
+    final raw = prefs.getString(_premiumHistoriqueKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        if (decoded.containsKey('entries')) {
+          // Format encapsulé {entries: {date: [...]}}
+          final entries = decoded['entries'] as Map<String, dynamic>? ?? {};
+          entries.remove(keyDate);
+          decoded['entries'] = entries;
+          await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
+        } else {
+          // Format plat {date: [...]} (compat)
+          decoded.remove(keyDate);
+          await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
+        }
+      } catch (_) {
+        // Parsing échoué → on laisse tel quel, pas de crash
+      }
+    }
+
+    // 2. Si c'est aujourd'hui → supprimer aussi ia_premium_du_jour_v1
+    final todayKey = _todayKey();
+    if (keyDate == todayKey) {
+      await prefs.remove(_premiumDuJourKey);
+      _premiumCourseKeys = {};
+    }
+
+    // 3. Rechargement mémoire + rafraîchissement UI
+    _premiumHistorique.remove(keyDate);
+    await _chargerPremiumHistorique();
+    notifyListeners();
+  }
+
+  // ★ v10.51 — Reset TOUTES les étoiles premium (outil admin/debug calendrier)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Supprime l'intégralité de l'historique premium ET le pronostic du jour.
+  // Identique au bouton "Réinitialiser étoiles premium" du profil, mais
+  // accessible directement depuis le calendrier IA.
+  // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics, résultats.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> resetToutesEtoilesPremium() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_premiumHistoriqueKey);
+    await prefs.remove(_premiumDuJourKey);
+    // Vider les caches mémoire
+    _premiumHistorique = {};
+    _premiumCourseKeys = {};
+    // Recharger (va lire les valeurs vides → état propre)
+    await _chargerPremiumDuJour();
+    await _chargerPremiumHistorique();
+    notifyListeners();
+  }
+
   // ★ Lot 4 ── Statistiques de compression ─────────────────────────────────
   /// Retourne la taille estimée des données IA en mémoire (pour affichage profil)
   Future<Map<String, dynamic>> statsCompression() async {
