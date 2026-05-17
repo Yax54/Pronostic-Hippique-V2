@@ -122,6 +122,7 @@ class _BestBetScreenState extends State<BestBetScreen>
       final premiums = <PremiumPronosticDuJour>[];
 
       // Chaque widget source est identifié explicitement pour l'historique étoile ⭐
+      // ★ v10.54 : log debug ajouté — trace sourceWidget/courseKey/typePari/numeros
       void ajouterPremium(_BetOpp? opp, String sourceWidget) {
         if (opp == null) return;
         final key = buildCourseKey(
@@ -136,6 +137,10 @@ class _BestBetScreenState extends State<BestBetScreen>
           numeros:      opp.numeros,
           sourceWidget: sourceWidget,
         ));
+        // ★ v10.54 : log debug enregistrement premium
+        debugPrint('[Premium][$sourceWidget] courseKey=$key'
+            ' | typePari=${opp.typePari}'
+            ' | numeros=${opp.numeros} (${opp.numeros.length} cheval(aux))');
       }
 
       ajouterPremium(topEquilibre, 'topEquilibre');

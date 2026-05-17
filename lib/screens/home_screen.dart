@@ -197,6 +197,63 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _declencherBulleMatinale());
   }
 
+  // ★ v10.54 — Calcul du typePari réel + numéros complets depuis la course.
+  // Même logique que best_bet_screen._calculerOpportunites() et ia_memory_service.
+  // Couche LECTURE uniquement — ne modifie ni l'IA ni les données PMU brutes.
+  // Retourne les numéros (List<String>) adaptés au nombre de chevaux du pari.
+  ({String tp, List<String> nums}) _typePariEtNumerosPourCourse(ZtCourse course) {
+    final sorted   = course.partantsParRangIA;
+    if (sorted.isEmpty) return (tp: '', nums: []);
+
+    final top        = sorted.first;
+    final scoreConf  = top.scoreIA;
+    final score2nd   = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
+    final ecart12    = (scoreConf - score2nd).abs();
+    final estEquil   = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
+    final coteTop    = top.coteDecimale;
+    final seuils     = IaMemoryService.instance.seuilsConfiance;
+
+    final String typePari;
+    if (course.isQuinte) {
+      typePari = 'Quinté+';
+    } else if (course.isQuarte) {
+      typePari = 'Quarté+';
+    } else if (estEquil && scoreConf >= seuils.seuilCoupleGagnant) {
+      typePari = 'Couplé Gagnant';
+    } else if (estEquil && scoreConf >= seuils.seuilCouplePlace) {
+      typePari = 'Couplé Placé';
+    } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
+      typePari = 'Simple Gagnant';
+    } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop > 8.0) {
+      typePari = 'Gagnant+Placé';
+    } else if (scoreConf >= seuils.seuilSimplePlace) {
+      typePari = 'Simple Placé';
+    } else if (scoreConf >= seuils.seuilGagnantPlace) {
+      typePari = 'Gagnant+Placé';
+    } else if (scoreConf >= seuils.seuilTierce) {
+      typePari = 'Tiercé';
+    } else {
+      typePari = 'À surveiller';
+    }
+
+    // Nombre de chevaux selon le type de pari (identique à best_bet_screen)
+    final int nbNum = typePari == 'Quinté+'
+        ? 5
+        : typePari == 'Quarté+'
+            ? 4
+            : (typePari == 'Tiercé' ||
+                   typePari == 'Tiercé Ordre' ||
+                   typePari == 'Tiercé Désordre')
+                ? 3
+                : (typePari == 'Couplé Gagnant' ||
+                       typePari == 'Couplé Placé')
+                    ? 2
+                    : 1;
+
+    final nums = sorted.take(nbNum).map((p) => p.numero).toList();
+    return (tp: typePari, nums: nums);
+  }
+
   Future<void> _declencherBulleMatinale() async {
     await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
@@ -206,8 +263,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final conseil   = _conseilIACached;
     final meilleur  = _meilleurPariCached;
 
-    // ★ v10.37 v2 : Enregistrer les 2 conseils premium de l'accueil
-    // avec courseKey + typePari + numéros exacts affichés dans le widget.
+    // ★ v10.54 : Enregistrer les 2 conseils premium de l'accueil
+    // typePari + numeros calculés dynamiquement depuis la course réelle
+    // (plus de dépendance aux pronostics IA mémorisés → données toujours cohérentes).
     // → Validation stricte de l'étoile ⭐ calendrier (pas de fausse étoile).
     final premiums = <PremiumPronosticDuJour>[];
 
@@ -219,19 +277,19 @@ class _HomeScreenState extends State<HomeScreen> {
         dateStr:     conseil.course!.dateStr,
       );
       if (keyConseil.isNotEmpty) {
-        // typePari : chercher dans les pronostics IA enregistrés
-        final pronoConseil = IaMemoryService.instance.pronostics
-            .where((p) => p.courseKey == keyConseil)
-            .lastOrNull;
-        final typePariConseil = pronoConseil?.typePariConseille ?? '';
-        // Numéros : les N premiers top3 affichés dans le widget Conseil IA
-        final numerosConseil = conseil.top3.map((p) => p.numero).toList();
+        // ★ v10.54 : typePari + numeros calculés depuis la course réelle
+        final (tp: typePariConseil, nums: numerosConseil) =
+            _typePariEtNumerosPourCourse(conseil.course!);
         premiums.add(PremiumPronosticDuJour(
           courseKey:    keyConseil,
           typePari:     typePariConseil,
           numeros:      numerosConseil,
           sourceWidget: 'conseilJour',
         ));
+        // ★ v10.54 : log debug enregistrement premium
+        debugPrint('[Premium][conseilJour] courseKey=$keyConseil'
+            ' | typePari=$typePariConseil'
+            ' | numeros=$numerosConseil (${numerosConseil.length} cheval(aux))');
       }
     }
 
@@ -244,18 +302,21 @@ class _HomeScreenState extends State<HomeScreen> {
         dateStr:     meilleur.course!.dateStr,
       );
       if (keyMeilleur.isNotEmpty) {
-        final pronoMeilleur = IaMemoryService.instance.pronostics
-            .where((p) => p.courseKey == keyMeilleur)
-            .lastOrNull;
-        final typePariMeilleur = pronoMeilleur?.typePariConseille ?? '';
-        // Numéros : le favori affiché dans le widget Meilleur Pari
-        final numerosMeilleur = [meilleur.cheval!.numero];
+        // ★ v10.54 : typePari + numeros calculés depuis la course réelle
+        // CORRECTION BUG : avant → [meilleur.cheval!.numero] (1 seul)
+        // après → tous les chevaux du pari conseillé (ex: 4 pour Quarté+)
+        final (tp: typePariMeilleur, nums: numerosMeilleur) =
+            _typePariEtNumerosPourCourse(meilleur.course!);
         premiums.add(PremiumPronosticDuJour(
           courseKey:    keyMeilleur,
           typePari:     typePariMeilleur,
           numeros:      numerosMeilleur,
           sourceWidget: 'meilleurPari',
         ));
+        // ★ v10.54 : log debug enregistrement premium
+        debugPrint('[Premium][meilleurPari] courseKey=$keyMeilleur'
+            ' | typePari=$typePariMeilleur'
+            ' | numeros=$numerosMeilleur (${numerosMeilleur.length} cheval(aux))');
       }
     }
 
