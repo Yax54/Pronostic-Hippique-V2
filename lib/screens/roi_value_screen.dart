@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 //  roi_value_screen.dart — Écran ROI / Value Analytics
 //  ★ v10.46 — Module 100% LECTURE SEULE
+//  ★ v10.47 — Export PNG par onglet (RepaintBoundary + SharePlus)
 //
 //  ⚠️ Aucune écriture dans IaMemoryService, poids ou SharedPreferences.
 //  Ce module est un radar ROI, pas un pilote automatique.
@@ -13,7 +14,14 @@
 //    4 Faux favoris
 // ══════════════════════════════════════════════════════════════════════════════
 
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
 import '../models/roi_value_models.dart';
 import '../services/roi_value_service.dart';
 import '../widgets/roi/roi_tab_global.dart';
@@ -38,6 +46,21 @@ class _RoiValueScreenState extends State<RoiValueScreen>
   late TabController _tabController;
   RoiValueFilters _filters = const RoiValueFilters();
 
+  // ── Clés RepaintBoundary — une par onglet ──────────────────────────────────
+  final List<GlobalKey> _exportKeys = List.generate(5, (_) => GlobalKey());
+
+  // ── Labels onglets (pour le nom de fichier export) ─────────────────────────
+  static const _tabLabels = [
+    'global', 'type_pari', 'value', 'outsiders', 'faux_favoris',
+  ];
+  static const _tabTitles = [
+    '🌐 Vue globale',
+    '🎯 Type de pari',
+    '💎 Value',
+    '🎰 Outsiders',
+    '⚠️ Faux favoris',
+  ];
+
   // Options filtres
   static const _disciplines = ['Toutes', 'Plat', 'Trot', 'Obstacle'];
   static const _periodes    = ['complet', '30j', '7j'];
@@ -46,6 +69,8 @@ class _RoiValueScreenState extends State<RoiValueScreen>
     'Couplé Gagnant', 'Couplé Placé',
     'Tiercé', 'Quarté+', 'Quinté+',
   ];
+
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -57,6 +82,59 @@ class _RoiValueScreenState extends State<RoiValueScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  // ─── Export PNG de l'onglet actif ──────────────────────────────────────────
+  Future<void> _exporter() async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+
+    try {
+      // Laisser Flutter finir le rendu
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      final tabIdx  = _tabController.index;
+      final key     = _exportKeys[tabIdx];
+      final label   = _tabLabels[tabIdx];
+      final title   = _tabTitles[tabIdx];
+
+      final boundary = key.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+
+      if (boundary == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Erreur : widget non rendu.')));
+        }
+        return;
+      }
+
+      final image    = await boundary.toImage(pixelRatio: 2.5);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+
+      final bytes = byteData.buffer.asUint8List();
+      final dir   = await getTemporaryDirectory();
+      final now   = DateTime.now();
+      final fname = 'roi_value_${label}_'
+          '${now.year}${now.month.toString().padLeft(2, "0")}${now.day.toString().padLeft(2, "0")}'
+          '_${now.hour.toString().padLeft(2, "0")}${now.minute.toString().padLeft(2, "0")}.png';
+      final file  = File('${dir.path}/$fname');
+      await file.writeAsBytes(bytes);
+
+      await SharePlus.instance.share(ShareParams(
+        files:   [XFile(file.path, mimeType: 'image/png')],
+        subject: 'ROI/Value $title — ${_filters.periode} — Pronostic Hippique',
+      ));
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur export : $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   @override
@@ -74,6 +152,22 @@ class _RoiValueScreenState extends State<RoiValueScreen>
               fontWeight: FontWeight.bold),
         ),
         actions: [
+          // ── Bouton Export PNG ──────────────────────────────────────────────
+          Tooltip(
+            message: 'Exporter l\'onglet en PNG',
+            child: IconButton(
+              onPressed: _exporting ? null : _exporter,
+              icon: _exporting
+                  ? const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    )
+                  : const Icon(Icons.ios_share, color: Colors.white, size: 22),
+            ),
+          ),
           // Nb pronostics source
           Container(
             margin: const EdgeInsets.only(right: 12),
@@ -133,20 +227,91 @@ class _RoiValueScreenState extends State<RoiValueScreen>
         children: [
           // ── Filtres ────────────────────────────────────────────────────────
           _buildFiltres(),
-          // ── Contenu onglets ────────────────────────────────────────────────
+          // ── Contenu onglets avec RepaintBoundary ───────────────────────────
           Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
-                RoiTabGlobal(filters: _filters),
-                RoiTabTypePari(filters: _filters),
-                RoiTabValue(filters: _filters),
-                RoiTabOutsiders(filters: _filters),
-                RoiTabFauxFavoris(filters: _filters),
+                // Chaque onglet est enveloppé dans un RepaintBoundary dédié
+                // + en-tête d'export (nom onglet + filtres + date)
+                _wrapExport(0, RoiTabGlobal(filters: _filters)),
+                _wrapExport(1, RoiTabTypePari(filters: _filters)),
+                _wrapExport(2, RoiTabValue(filters: _filters)),
+                _wrapExport(3, RoiTabOutsiders(filters: _filters)),
+                _wrapExport(4, RoiTabFauxFavoris(filters: _filters)),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ─── Enveloppe RepaintBoundary avec en-tête export ─────────────────────────
+  Widget _wrapExport(int tabIdx, Widget child) {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.day.toString().padLeft(2, "0")}/'
+        '${now.month.toString().padLeft(2, "0")}/'
+        '${now.year}  '
+        '${now.hour.toString().padLeft(2, "0")}:'
+        '${now.minute.toString().padLeft(2, "0")}';
+
+    // Résumé filtres actifs
+    final filtreStr = [
+      '📅 ${_filters.periode}',
+      if (_filters.discipline != 'Toutes') '🏇 ${_filters.discipline}',
+      if (_filters.typePari   != 'Tous')   '🎯 ${_filters.typePari}',
+    ].join('  •  ');
+
+    return RepaintBoundary(
+      key: _exportKeys[tabIdx],
+      child: Container(
+        color: _bg,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── En-tête visible sur l'export PNG ────────────────────────────
+            Container(
+              width: double.infinity,
+              color: const Color(0xFF0D1B2A),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _tabTitles[tabIdx],
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        dateStr,
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  if (filtreStr.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      filtreStr,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 13),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            // ── Contenu onglet ───────────────────────────────────────────────
+            Expanded(child: child),
+          ],
+        ),
       ),
     );
   }
