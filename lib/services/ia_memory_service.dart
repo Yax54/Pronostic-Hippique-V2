@@ -288,8 +288,9 @@ class IaMemoryService extends ChangeNotifier {
       } else {
         hasBestBet = ag.pronostics.any((prono) {
           if (!prono.resultatsReels) return false;
+          // ★ v10.50 : appel direct (plus de délégation via _premiumExactGagnant)
           return premiumCeJour.any((premium) =>
-              _premiumExactGagnant(premium: premium, prono: prono));
+              _estPremiumExactGagnantStrict(premium: premium, prono: prono));
         });
       }
 
@@ -4142,40 +4143,7 @@ class IaMemoryService extends ChangeNotifier {
     return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
-  // ★ v10.37 v2 : Validation stricte du conseil premium exact
-  // Retourne true UNIQUEMENT si :
-  //   1. courseKey identique (même course)
-  //   2. typePari identique (même type de pari affiché dans le widget)
-  //   3. numéros conseillés identiques (même sélection exacte, ordre IA)
-  //   4. ce pronostic IA est effectivement gagnant (_estBonConseilParType)
-  // → Jamais de fausse étoile sur une autre course ou un autre pronostic.
-  bool _premiumExactGagnant({
-    required PremiumPronosticDuJour premium,
-    required IaPronostic prono,
-  }) {
-    // 1. Même course
-    if (premium.courseKey != prono.courseKey) return false;
-
-    // 2. Même type de pari (strict — pas de tolérance)
-    final typePariIa = prono.typePariConseille ?? '';
-    if (premium.typePari != typePariIa) return false;
-
-    // 3. Numéros identiques : on compare premium.numeros avec les N premiers
-    //    de topNIA (classement IA au moment du pronostic), N = len(premium.numeros)
-    if (premium.numeros.isEmpty) return false;
-    final topIA = prono.topNIA.take(premium.numeros.length).toList();
-    if (topIA.length != premium.numeros.length) return false;
-    // Comparaison ordonnée — l'ordre IA est significatif (rang 1 ≠ rang 2)
-    for (var i = 0; i < premium.numeros.length; i++) {
-      if (topIA[i] != premium.numeros[i]) return false;
-    }
-
-    // 4. Ce conseil exact est-il gagnant selon son type de pari ?
-    //    ★ v10.49 : délègue à _estPremiumExactGagnantStrict (jamais permissif)
-    return _estPremiumExactGagnantStrict(prono, typePariIa);
-  }
-
-  // ★ v10.49 — Validation dédiée étoile calendrier premium
+  // ★ v10.50 — Validation dédiée étoile calendrier premium
   // ══════════════════════════════════════════════════════════════════════════
   // RÈGLE ABSOLUE : jamais de fallback permissif.
   // Si l'arrivée réelle est insuffisante → false. Point.
@@ -4183,105 +4151,115 @@ class IaMemoryService extends ChangeNotifier {
   // NE PAS MODIFIER : _estBonConseilParType() reste inchangée (apprentissage,
   // statistiques globales, gradient). Cette fonction est UNIQUEMENT pour l'étoile.
   //
+  // ★ v10.50 : Refactor complet — switch exact → contains() robuste.
+  //   Raison : les variantes 'Tiercé Désordre', 'Quarté+ Ordre', 'Quarté+ Désordre',
+  //   'Quinté+ Ordre', 'Quinté+ Désordre' tombaient toutes en default:false avec
+  //   le switch exact de v10.49.
+  //
+  // ⚠️ ATTENTION : "Désordre" contient "ordre" → tester isDesordre EN PREMIER.
+  //
+  // Signature : named params (premium + prono) — plus cohérente avec l'appelant.
+  //
   // Règles strictes par type :
   //   Simple Gagnant  : numéro conseillé = 1er réel exact
   //   Simple Placé    : numéro conseillé dans les 3 premiers réels
-  //   Couplé Gagnant  : les 2 numéros IA dans les 2 premiers réels (ordre libre)
-  //   Couplé Placé    : les 2 numéros IA dans les 3 premiers réels
-  //   Trio            : les 3 numéros IA dans les 3 premiers réels (ordre libre)
-  //   Tiercé          : les 3 numéros IA dans les 3 premiers réels (ordre libre)
-  //   Tiercé Ordre    : les 3 numéros IA dans les 3 premiers réels, ordre exact
-  //   Quarté+         : les 4 numéros IA dans les 4 premiers réels
-  //                     si "Ordre" → ordre exact obligatoire
-  //   Quinté+         : les 5 numéros IA dans les 5 premiers réels
-  //                     si "Ordre" → ordre exact obligatoire
+  //   Couplé Gagnant  : les 2 numéros premium dans les 2 premiers réels (ordre libre)
+  //   Couplé Placé    : les 2 numéros premium dans les 3 premiers réels
+  //   Trio            : les 3 numéros premium dans les 3 premiers réels (ordre libre)
+  //   Tiercé          : les 3 numéros premium dans les 3 premiers réels (ordre libre)
+  //   Tiercé Ordre    : les 3 numéros premium, ordre exact
+  //   Tiercé Désordre : les 3 numéros premium dans les 3 premiers réels (ordre libre)
+  //   Quarté+ Ordre   : les 4 numéros premium, ordre exact
+  //   Quarté+ Désordre: les 4 numéros premium dans les 4 premiers réels (ordre libre)
+  //   Quarté+         : les 4 numéros premium dans les 4 premiers réels (ordre libre)
+  //   Quinté+ Ordre   : les 5 numéros premium, ordre exact
+  //   Quinté+ Désordre: les 5 numéros premium dans les 5 premiers réels (ordre libre)
+  //   Quinté+         : les 5 numéros premium dans les 5 premiers réels (ordre libre)
   //   default         : false (jamais de tolérance sur type inconnu)
   // ══════════════════════════════════════════════════════════════════════════
-  bool _estPremiumExactGagnantStrict(IaPronostic p, String typePari) {
-    final arrivee = p.arriveeReelle;
-    final topIA   = p.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
+  bool _estPremiumExactGagnantStrict({
+    required PremiumPronosticDuJour premium,
+    required IaPronostic prono,
+  }) {
+    if (premium.courseKey != prono.courseKey) return false;
+    final type = premium.typePari.trim();
+    final typeLower = type.toLowerCase();
 
-    switch (typePari) {
+    // premium.numeros est List<String> (ex: ['3','7','1']) → convertir en List<int>
+    final nums = premium.numeros
+        .map((s) => int.tryParse(s))
+        .whereType<int>()
+        .toList();
+    if (nums.isEmpty) return false;
 
-      case 'Simple Gagnant':
-        if (arrivee == null || arrivee.isEmpty) return false;
-        if (topIA.isEmpty) return false;
-        // Numéro conseillé (rang 1 IA) = 1er réel exact
-        return topIA[0] == arrivee[0];
+    // prono.arriveeReelle est List<int>? → gérer le null avant .toList()
+    final rawArrivee = prono.arriveeReelle;
+    if (rawArrivee == null || rawArrivee.isEmpty) return false;
+    final arrivee = List<int>.from(rawArrivee);
 
-      case 'Simple Placé':
-      case 'Gagnant+Placé':
-        if (arrivee == null || arrivee.length < 3) return false;
-        if (topIA.isEmpty) return false;
-        // Numéro conseillé dans les 3 premiers réels
-        return arrivee.take(3).contains(topIA[0]);
-
-      case 'Couplé Gagnant':
-        if (arrivee == null || arrivee.length < 2) return false;
-        if (topIA.length < 2) return false;
-        // Les 2 numéros IA sont dans les 2 premiers réels (ordre libre)
-        final top2Reel = arrivee.take(2).toSet();
-        return top2Reel.contains(topIA[0]) && top2Reel.contains(topIA[1]);
-
-      case 'Couplé Placé':
-        if (arrivee == null || arrivee.length < 3) return false;
-        if (topIA.length < 2) return false;
-        // Les 2 numéros IA sont dans les 3 premiers réels
-        final top3Reel = arrivee.take(3).toSet();
-        final nbDans = topIA.take(2).where((n) => top3Reel.contains(n)).length;
-        return nbDans >= 2;
-
-      case 'Trio':
-        if (arrivee == null || arrivee.length < 3) return false;
-        if (topIA.length < 3) return false;
-        // Les 3 numéros IA sont dans les 3 premiers réels (ordre libre)
-        final top3Set = arrivee.take(3).toSet();
-        return topIA.take(3).every((n) => top3Set.contains(n));
-
-      case 'Tiercé':
-        if (arrivee == null || arrivee.length < 3) return false;
-        if (topIA.length < 3) return false;
-        // Les 3 numéros IA sont dans les 3 premiers réels (ordre libre)
-        final top3Set = arrivee.take(3).toSet();
-        return topIA.take(3).every((n) => top3Set.contains(n));
-
-      case 'Tiercé Ordre':
-        if (arrivee == null || arrivee.length < 3) return false;
-        if (topIA.length < 3) return false;
-        // Ordre exact obligatoire
-        return topIA[0] == arrivee[0] &&
-               topIA[1] == arrivee[1] &&
-               topIA[2] == arrivee[2];
-
-      case 'Quarté+':
-        if (arrivee == null || arrivee.length < 4) return false;
-        if (topIA.length < 4) return false;
-        if (typePari.contains('Ordre')) {
-          // Ordre exact
-          return topIA[0] == arrivee[0] && topIA[1] == arrivee[1] &&
-                 topIA[2] == arrivee[2] && topIA[3] == arrivee[3];
-        }
-        // Ordre libre : les 4 numéros IA dans les 4 premiers réels
-        final top4Set = arrivee.take(4).toSet();
-        return topIA.take(4).every((n) => top4Set.contains(n));
-
-      case 'Quinté+':
-        if (arrivee == null || arrivee.length < 5) return false;
-        if (topIA.length < 5) return false;
-        if (typePari.contains('Ordre')) {
-          // Ordre exact
-          return topIA[0] == arrivee[0] && topIA[1] == arrivee[1] &&
-                 topIA[2] == arrivee[2] && topIA[3] == arrivee[3] &&
-                 topIA[4] == arrivee[4];
-        }
-        // Ordre libre : les 5 numéros IA dans les 5 premiers réels
-        final top5Set = arrivee.take(5).toSet();
-        return topIA.take(5).every((n) => top5Set.contains(n));
-
-      default:
-        // Type inconnu → jamais d'étoile (pas de tolérance)
-        return false;
+    // Helpers locaux — opèrent tous sur List<int>
+    bool sameSet(List<int> a, List<int> b) {
+      if (a.length != b.length) return false;
+      final aa = [...a]..sort();
+      final bb = [...b]..sort();
+      for (var i = 0; i < aa.length; i++) {
+        if (aa[i] != bb[i]) return false;
+      }
+      return true;
     }
+
+    bool sameOrder(List<int> a, List<int> b) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
+    }
+
+    // ⚠️ isDesordre DOIT être testé AVANT isOrdre :
+    //    "Désordre" contient "ordre" → sans ce garde-fou, isOrdre serait true pour Désordre !
+    final isDesordre = typeLower.contains('désordre') || typeLower.contains('desordre');
+    final isOrdre = typeLower.contains('ordre') && !isDesordre;
+
+    if (typeLower.contains('simple gagnant')) {
+      return nums.length >= 1 && arrivee.length >= 1 && nums.first == arrivee.first;
+    }
+    if (typeLower.contains('simple placé') || typeLower.contains('simple place')) {
+      return nums.length >= 1 && arrivee.take(3).contains(nums.first);
+    }
+    if (typeLower.contains('couplé gagnant') || typeLower.contains('couple gagnant')) {
+      if (nums.length < 2 || arrivee.length < 2) return false;
+      return sameSet(nums.take(2).toList(), arrivee.take(2).toList());
+    }
+    if (typeLower.contains('couplé placé') || typeLower.contains('couple placé') ||
+        typeLower.contains('couplé place') || typeLower.contains('couple place')) {
+      if (nums.length < 2 || arrivee.length < 3) return false;
+      final top3 = arrivee.take(3).toSet();
+      return nums.take(2).every(top3.contains);
+    }
+    if (typeLower.contains('trio')) {
+      if (nums.length < 3 || arrivee.length < 3) return false;
+      return sameSet(nums.take(3).toList(), arrivee.take(3).toList());
+    }
+    if (typeLower.contains('tiercé') || typeLower.contains('tierce')) {
+      if (nums.length < 3 || arrivee.length < 3) return false;
+      final a = nums.take(3).toList();
+      final b = arrivee.take(3).toList();
+      return isOrdre ? sameOrder(a, b) : sameSet(a, b);
+    }
+    if (typeLower.contains('quarté') || typeLower.contains('quarte')) {
+      if (nums.length < 4 || arrivee.length < 4) return false;
+      final a = nums.take(4).toList();
+      final b = arrivee.take(4).toList();
+      return isOrdre ? sameOrder(a, b) : sameSet(a, b);
+    }
+    if (typeLower.contains('quinté') || typeLower.contains('quinte')) {
+      if (nums.length < 5 || arrivee.length < 5) return false;
+      final a = nums.take(5).toList();
+      final b = arrivee.take(5).toList();
+      return isOrdre ? sameOrder(a, b) : sameSet(a, b);
+    }
+    return false;
   }
 
   // ★ v10.37 v1 : Charger les courseKeys v1 (compat, lecture seule)
@@ -4323,6 +4301,20 @@ class IaMemoryService extends ChangeNotifier {
     } catch (_) {
       _premiumHistorique = {}; // Erreur de parsing → historique vide, pas d'étoile
     }
+  }
+
+  // ★ v10.50 — Rechargement des données premium depuis SharedPreferences
+  // Utilisé après purge manuelle (bouton "Réinitialiser étoiles premium")
+  // pour vider immédiatement les caches mémoire et déclencher un rebuild UI.
+  Future<void> rechargerDonneesPremium() async {
+    // Vider les caches mémoire (les clés SP ont déjà été supprimées par l'appelant)
+    _premiumCourseKeys = {};
+    _premiumHistorique = {};
+    // Recharger depuis SP (va lire les valeurs vides/absentes → reset effectif)
+    await _chargerPremiumDuJour();
+    await _chargerPremiumHistorique();
+    // Notifier les listeners pour rafraîchir le calendrier et l'UI
+    notifyListeners();
   }
 
   // ★ Lot 4 ── Statistiques de compression ─────────────────────────────────

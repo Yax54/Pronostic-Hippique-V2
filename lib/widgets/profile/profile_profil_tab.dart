@@ -1082,6 +1082,14 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
           iconColor: const Color(0xFFEF5350),
           onTap: () => _confirmerEffacerTout(context, provider),
         ),
+        // ★ v10.50 : Purge données stale étoiles premium
+        ProfileSettingItem(
+          icon: Icons.star_border,
+          label: 'Réinitialiser étoiles premium',
+          subtitle: 'Supprime uniquement l\'historique et le pronostic premium du jour',
+          iconColor: const Color(0xFFFFB74D),
+          onTap: () => _confirmerReinitialisationPremium(context),
+        ),
         ProfileSettingItem(
           icon: Icons.info_outline,
           label: 'À propos',
@@ -1130,6 +1138,68 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
         ),
         const SizedBox(height: 20),
       ]),
+    );
+  }
+
+  // ★ v10.50 — Purge ciblée : uniquement ia_premium_historique_v1 + ia_premium_du_jour_v1
+  // Ne touche PAS : mémoire IA, poids, apprentissage, pronostics.
+  void _confirmerReinitialisationPremium(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0A1628),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.star_border, color: Color(0xFFFFB74D)),
+          SizedBox(width: 8),
+          Text('Réinitialiser étoiles ?',
+              style: TextStyle(color: Colors.white, fontSize: 17)),
+        ]),
+        content: const Text(
+          'Ceci supprime uniquement :\n'
+          '• Historique premium (étoiles calendrier)\n'
+          '• Pronostic premium du jour\n\n'
+          'Les pronostics IA, la mémoire, les poids et l\'apprentissage ne sont PAS modifiés.\n\n'
+          'Action irréversible.',
+          style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _executerReinitialisationPremium();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFFB74D),
+            ),
+            child: const Text('Réinitialiser',
+                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _executerReinitialisationPremium() async {
+    const keyHistorique = 'ia_premium_historique_v1';
+    const keyDuJour     = 'ia_premium_du_jour_v1';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(keyHistorique);
+    await prefs.remove(keyDuJour);
+    // Forcer le rechargement des données premium en mémoire
+    await IaMemoryService.instance.rechargerDonneesPremium();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✅ Étoiles premium réinitialisées'),
+        backgroundColor: Color(0xFFFFB74D),
+        duration: Duration(seconds: 3),
+      ),
     );
   }
 
