@@ -18,6 +18,7 @@ import '../providers/pmu_provider.dart';
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
 import 'course_detail_screen.dart';
+import '../utils/discipline_utils.dart'; // ★ v10.53 — normalisation UI discipline
 
 // ── Clés SharedPreferences ─────────────────────────────────────────
 const _kTypesParis     = 'conseils_filtres_types_paris';
@@ -198,15 +199,14 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
   }
 
   List<String> get _disciplinesDisponibles {
+    // ★ v10.53 — normaliserDisciplineUI() : Trot/Monté/Plat/Obstacle (labels stables)
+    // Évite les doublons type 'TROT ATTELE' / 'trot attelé' / 'Course attelée'
     final set = <String>{};
     for (final r in _reunions) {
-      if (r.discipline.isNotEmpty) set.add(_capitalise(r.discipline));
+      if (r.discipline.isNotEmpty) set.add(normaliserDisciplineUI(r.discipline));
     }
     return set.toList()..sort();
   }
-
-  String _capitalise(String s) =>
-      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1).toLowerCase();
 
   // ── Accesseur filtré et trié ──────────────────────────────────────
   List<({ZtCourse course, ZtReunion reunion})> get _coursesAvecPartants {
@@ -225,7 +225,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
           ? item.course.partantsParRangIA.first.scoreIA
           : 0.0;
       final hippo = item.reunion.lieu.toUpperCase();
-      final disc  = _capitalise(item.reunion.discipline);
+      final disc  = normaliserDisciplineUI(item.reunion.discipline); // ★ v10.53
 
       // Type de pari (multi)
       if (_selectedTypesParis.isNotEmpty && !_selectedTypesParis.contains(typePari)) return false;
@@ -914,7 +914,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
             final score    = item.course.partantsParRangIA.isNotEmpty
                 ? item.course.partantsParRangIA.first.scoreIA : 0.0;
             final hippo    = item.reunion.lieu.toUpperCase();
-            final disc     = _capitalise(item.reunion.discipline);
+            final disc     = normaliserDisciplineUI(item.reunion.discipline); // ★ v10.53
             if (tmpTypes.isNotEmpty && !tmpTypes.contains(typePari)) return false;
             if (tmpConf > 0 && score < tmpConf)                      return false;
             if (tmpHipps.isNotEmpty && !tmpHipps.contains(hippo))    return false;
