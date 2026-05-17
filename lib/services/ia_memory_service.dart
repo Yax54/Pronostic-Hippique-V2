@@ -4262,6 +4262,25 @@ class IaMemoryService extends ChangeNotifier {
     return false;
   }
 
+  /// ★ v10.55 — Wrapper public pour premium_utils.dart (évite de dupliquer la logique).
+  /// Délègue directement à _estPremiumExactGagnantStrict — ne modifie rien.
+  bool estPremiumGagnantStrict({
+    required PremiumPronosticDuJour premium,
+    required IaPronostic prono,
+  }) => _estPremiumExactGagnantStrict(premium: premium, prono: prono);
+
+  /// ★ v10.55 — Getter public pour accéder aux premiums d'un jour spécifique.
+  /// Utilisé par ia_calendrier_tab pour afficher le badge doré sur les cartes.
+  /// Retourne une liste vide si aucun premium n'a été enregistré ce jour-là.
+  List<PremiumPronosticDuJour> premiumsPourDate(int annee, int mois, int jour) {
+    final dateKey = '${annee.toString().padLeft(4, '0')}-'
+        '${mois.toString().padLeft(2, '0')}-'
+        '${jour.toString().padLeft(2, '0')}';
+    return List<PremiumPronosticDuJour>.unmodifiable(
+      _premiumHistorique[dateKey] ?? const [],
+    );
+  }
+
   // ★ v10.37 v1 : Charger les courseKeys v1 (compat, lecture seule)
   Future<void> _chargerPremiumDuJour() async {
     final prefs   = await SharedPreferences.getInstance();

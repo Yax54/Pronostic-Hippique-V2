@@ -16,6 +16,7 @@ import '../services/ia_memory_models.dart' show PremiumPronosticDuJour;
 import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
+import '../utils/premium_utils.dart' show typePariEtNumerosPourCourse, nbNumerosPourTypePari; // ★ v10.55
 
 import 'course_detail_screen.dart';
 
@@ -241,21 +242,9 @@ class _BestBetScreenState extends State<BestBetScreen>
           conseil = 'Course très ouverte (${scoreConf.round()}/100). Mise minimale ou abstention conseillée.';
         }
 
-        // ★ v10.37 : Calculer les numéros conseillés selon le type de pari
-        final int nbNum = typePari == 'Quinté+'
-            ? 5
-            : typePari == 'Quarté+'
-                ? 4
-                : (typePari == 'Tiercé' ||
-                       typePari == 'Tiercé Ordre' ||
-                       typePari == 'Tiercé Désordre')
-                    ? 3
-                    : (typePari == 'Couplé Gagnant' ||
-                           typePari == 'Couplé Placé')
-                        ? 2
-                        : 1;
+        // ★ v10.55 : délègue à premium_utils (source unique de vérité)
         final numeros = sorted
-            .take(nbNum)
+            .take(nbNumerosPourTypePari(typePari))
             .map((p) => p.numero)
             .toList();
 

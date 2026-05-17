@@ -20,6 +20,13 @@ import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../utils/premium_utils.dart' // ★ v10.55 — badge doré Premium calendrier
+    show
+        PremiumPronosticDuJour,
+        estPremiumGagnantPourCarte,
+        sourcePremiumPourCarte,
+        decorationCartePremium,
+        badgePremium;
 import 'ia_widgets_communs.dart';
 
 // ── Constantes couleurs ────────────────────────────────────────────────────
@@ -1525,6 +1532,11 @@ class _DetailJourSheet extends StatelessWidget {
             .estBonConseil(p, p.typePariConseille ?? ''))
         .toList();
 
+    // ★ v10.55 — Récupérer les premiums enregistrés ce jour-là
+    // pour afficher le badge doré sur les cartes correspondantes.
+    final premiumsDuJour = IaMemoryService.instance
+        .premiumsPourDate(moisRef.year, moisRef.month, dd.jour);
+
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
       minChildSize:     0.4,
@@ -1611,7 +1623,7 @@ class _DetailJourSheet extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     )),
                   const SizedBox(height: 10),
-                  ...bons.map((p) => _buildPronosticCard(context, p)),
+                  ...bons.map((p) => _buildPronosticCard(context, p, premiumsDuJour)),
                 ],
               ],
             ),
@@ -1638,7 +1650,12 @@ class _DetailJourSheet extends StatelessWidget {
   }
 
   // ★ v10.27 : Card plus grande, titre blanc (jamais vert sur fond vert), contraste renforcé
-  Widget _buildPronosticCard(BuildContext context, IaPronostic p) {
+  // ★ v10.55 : badge doré ⭐ Premium si ce prono correspond à un widget premium gagnant strict.
+  Widget _buildPronosticCard(
+    BuildContext context,
+    IaPronostic p,
+    List<PremiumPronosticDuJour> premiumsDuJour,
+  ) {
     final type   = p.typePariConseille ?? 'Inconnu';
     final favNom = p.favoriIaNom ?? '?';
     final rang   = p.rangFavoriIaDansArrivee;
@@ -1651,17 +1668,22 @@ class _DetailJourSheet extends StatelessWidget {
         ? p.arriveeReelle!.take(3).map((e) => 'N°$e').join('-')
         : '—';
 
+    // ★ v10.55 — Détection premium gagnant strict (délègue à IaMemoryService)
+    final isPremium = estPremiumGagnantPourCarte(
+      prono: p,
+      premiumsDuJour: premiumsDuJour,
+    );
+    final sourceP = isPremium
+        ? sourcePremiumPourCarte(prono: p, premiumsDuJour: premiumsDuJour)
+        : null;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        // ★ v10.30 : fond neutre sombre — pas de couleur verte
-        color: const Color(0xFF0D1B2A),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color: Colors.white.withValues(alpha: 0.10), width: 1.0),
-      ),
+      decoration: decorationCartePremium(isPremium: isPremium),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ★ v10.55 — Badge doré affiché uniquement si premium gagnant strict
+        if (isPremium) badgePremium(sourceP),
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
         Row(children: [
           Expanded(

@@ -19,6 +19,7 @@ import 'ia_journal_screen.dart';                // ★ v9.89
 import '../services/alert_service.dart';         // ★ v10.23
 import '../main.dart' show NavigationNotifier;   // ★ v10.23
 import 'ia_performance_screen.dart';             // ★ v10.27 : raccourci calendrier
+import '../utils/premium_utils.dart';            // ★ v10.55 : helpers premium centralisés
 
 
 class HomeScreen extends StatefulWidget {
@@ -197,62 +198,8 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _declencherBulleMatinale());
   }
 
-  // ★ v10.54 — Calcul du typePari réel + numéros complets depuis la course.
-  // Même logique que best_bet_screen._calculerOpportunites() et ia_memory_service.
-  // Couche LECTURE uniquement — ne modifie ni l'IA ni les données PMU brutes.
-  // Retourne les numéros (List<String>) adaptés au nombre de chevaux du pari.
-  ({String tp, List<String> nums}) _typePariEtNumerosPourCourse(ZtCourse course) {
-    final sorted   = course.partantsParRangIA;
-    if (sorted.isEmpty) return (tp: '', nums: []);
-
-    final top        = sorted.first;
-    final scoreConf  = top.scoreIA;
-    final score2nd   = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-    final ecart12    = (scoreConf - score2nd).abs();
-    final estEquil   = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
-    final coteTop    = top.coteDecimale;
-    final seuils     = IaMemoryService.instance.seuilsConfiance;
-
-    final String typePari;
-    if (course.isQuinte) {
-      typePari = 'Quinté+';
-    } else if (course.isQuarte) {
-      typePari = 'Quarté+';
-    } else if (estEquil && scoreConf >= seuils.seuilCoupleGagnant) {
-      typePari = 'Couplé Gagnant';
-    } else if (estEquil && scoreConf >= seuils.seuilCouplePlace) {
-      typePari = 'Couplé Placé';
-    } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-      typePari = 'Simple Gagnant';
-    } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop > 8.0) {
-      typePari = 'Gagnant+Placé';
-    } else if (scoreConf >= seuils.seuilSimplePlace) {
-      typePari = 'Simple Placé';
-    } else if (scoreConf >= seuils.seuilGagnantPlace) {
-      typePari = 'Gagnant+Placé';
-    } else if (scoreConf >= seuils.seuilTierce) {
-      typePari = 'Tiercé';
-    } else {
-      typePari = 'À surveiller';
-    }
-
-    // Nombre de chevaux selon le type de pari (identique à best_bet_screen)
-    final int nbNum = typePari == 'Quinté+'
-        ? 5
-        : typePari == 'Quarté+'
-            ? 4
-            : (typePari == 'Tiercé' ||
-                   typePari == 'Tiercé Ordre' ||
-                   typePari == 'Tiercé Désordre')
-                ? 3
-                : (typePari == 'Couplé Gagnant' ||
-                       typePari == 'Couplé Placé')
-                    ? 2
-                    : 1;
-
-    final nums = sorted.take(nbNum).map((p) => p.numero).toList();
-    return (tp: typePari, nums: nums);
-  }
+  // ★ v10.55 — Délègue à premium_utils (helper centralisé — plus de duplication).
+  // Ancienne fonction locale _typePariEtNumerosPourCourse supprimée.
 
   Future<void> _declencherBulleMatinale() async {
     await Future.delayed(const Duration(seconds: 2));
@@ -279,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (keyConseil.isNotEmpty) {
         // ★ v10.54 : typePari + numeros calculés depuis la course réelle
         final (tp: typePariConseil, nums: numerosConseil) =
-            _typePariEtNumerosPourCourse(conseil.course!);
+            typePariEtNumerosPourCourse(conseil.course!); // ★ v10.55 → premium_utils
         premiums.add(PremiumPronosticDuJour(
           courseKey:    keyConseil,
           typePari:     typePariConseil,
@@ -306,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // CORRECTION BUG : avant → [meilleur.cheval!.numero] (1 seul)
         // après → tous les chevaux du pari conseillé (ex: 4 pour Quarté+)
         final (tp: typePariMeilleur, nums: numerosMeilleur) =
-            _typePariEtNumerosPourCourse(meilleur.course!);
+            typePariEtNumerosPourCourse(meilleur.course!); // ★ v10.55 → premium_utils
         premiums.add(PremiumPronosticDuJour(
           courseKey:    keyMeilleur,
           typePari:     typePariMeilleur,
@@ -1187,17 +1134,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Meilleur Pari ─────────────────────────────────────────────────
+  // ★ v10.55 : affiche le VRAI type de pari + TOUS les numéros conseillés.
+  // Plus d'ambiguïté : un Quarté+ affiche 4 numéros, un Simple 1 numéro, etc.
   Widget _buildMeilleurPari() {
     final pari = _meilleurPariCached;
     if (pari.course == null || pari.cheval == null) return const SizedBox();
-    final course = pari.course!;
-    final cheval = pari.cheval!;
+    final course  = pari.course!;
+    final cheval  = pari.cheval!;
     final reunion = pari.reunion;
-    final lieu = reunion?.lieu ?? '';
+    final lieu    = reunion?.lieu ?? '';
 
-    // Calcul confiance v5.0 — utilise exclusivement confianceIA (formule enrichie 10 critères)
-    // La nouvelle formule combine : qualité absolue favori (40%) + domination (40%) + cohésion top3 (20%)
-    // → cohérence garantie avec la page détail (même getter confianceIA)
+    // ★ v10.55 : typePari réel + numéros complets via helper centralisé
+    final (:tp, :nums) = typePariEtNumerosPourCourse(course);
+    final typePari     = tp.isEmpty ? 'Simple Gagnant' : tp;
+    final numeros      = nums.isEmpty ? [cheval.numero] : nums;
+    final emoji        = emojiPourTypePari(typePari);
+
+    // Confiance
     final confianceCourse = course.confianceIA;
     final confiance = confianceCourse > 0 ? confianceCourse.round() : cheval.scoreIA.round();
     final confianceColor = confiance >= 80
@@ -1232,106 +1185,129 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Badge + course
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFD700).withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6)),
-                      ),
-                      child: const Row(
-                        children: [
-                          Text('⭐', style: TextStyle(fontSize: 14)),
-                          SizedBox(width: 4),
-                          Text('BEST BET', style: TextStyle(color: Color(0xFFFFD700), fontSize: 14, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
+                // ── Ligne 1 : badge type pari + heure + favori ──────
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6)),
                     ),
-                    const Spacer(),
-                    // ★ v9.5 : Bouton favori Meilleur Pari
-                    if (reunion != null)
-                      FavoriButton(
-                        numR:      int.tryParse(reunion.code.replaceAll('R', '')) ?? 1,
-                        numC:      course.numCourse,
-                        nomCourse: course.nom,
-                        hippodrome: lieu,
-                        scoreIA:   cheval.scoreIA,
-                        heure:     course.heure,
-                        distance:  course.distance,
-                        prix:      course.prix,
-                        size: 22,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(emoji, style: const TextStyle(fontSize: 14)),
+                      const SizedBox(width: 5),
+                      Text(typePari,
+                          style: const TextStyle(
+                              color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  const Spacer(),
+                  if (reunion != null)
+                    FavoriButton(
+                      numR:       int.tryParse(reunion.code.replaceAll('R', '')) ?? 1,
+                      numC:       course.numCourse,
+                      nomCourse:  course.nom,
+                      hippodrome: lieu,
+                      scoreIA:    cheval.scoreIA,
+                      heure:      course.heure,
+                      distance:   course.distance,
+                      prix:       course.prix,
+                      size: 22,
+                    ),
+                  Text(course.heure,
+                      style: const TextStyle(
+                          color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 14),
+
+                // ── Bloc numéros du pari : adapté au type ───────────
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFFFFD700).withValues(alpha: 0.25)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Numéros en gros
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: numeros.map((num) {
+                          final isFirst = num == numeros.first;
+                          return Container(
+                            width: 44, height: 44,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: isFirst
+                                  ? const LinearGradient(
+                                      colors: [Color(0xFFFFD700), Color(0xFFFFA000)])
+                                  : null,
+                              color: isFirst ? null
+                                  : const Color(0xFFFFD700).withValues(alpha: 0.15),
+                              border: Border.all(
+                                color: const Color(0xFFFFD700).withValues(
+                                    alpha: isFirst ? 0.0 : 0.4)),
+                            ),
+                            child: Center(
+                              child: Text(num,
+                                  style: TextStyle(
+                                    color: isFirst ? Colors.black : const Color(0xFFFFD700),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  )),
+                            ),
+                          );
+                        }).toList(),
                       ),
-                    Text(course.heure,
-                        style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.bold)),
-                  ],
+                      const SizedBox(height: 8),
+                      // Cheval principal (nom + driver)
+                      Text(cheval.nom,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      if (cheval.driver.isNotEmpty)
+                        Text(cheval.driver,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      Text('${course.nom} • $lieu',
+                          style: const TextStyle(color: Colors.white38, fontSize: 13),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 12),
 
-                // Cheval star
-                Row(
-                  children: [
-                    Container(
-                      width: 52, height: 52,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: const LinearGradient(colors: [Color(0xFFFFD700), Color(0xFFFFA000)]),
-                        boxShadow: [BoxShadow(color: const Color(0xFFFFD700).withValues(alpha: 0.4), blurRadius: 12)],
-                      ),
-                      child: Center(
-                        child: Text(cheval.numero,
-                            style: const TextStyle(color: Colors.black, fontSize: 20, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(cheval.nom,
-                              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
-                              maxLines: 2, overflow: TextOverflow.ellipsis),
-                          if (cheval.driver.isNotEmpty)
-                            Text(cheval.driver,
-                                style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14),
-                                maxLines: 1, overflow: TextOverflow.ellipsis),
-                          const SizedBox(height: 4),
-                          Text('${course.nom} • $lieu',
-                              style: const TextStyle(color: Colors.white38, fontSize: 14),
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // Métriques
-                Row(
-                  children: [
-                    _metrique('Score IA', '${cheval.scoreIA.round()}/100', confianceColor),
-                    const SizedBox(width: 12),
-                    _metrique('Confiance', confianceLabel, confianceColor),
-                    const SizedBox(width: 12),
-                    if (cheval.cote.isNotEmpty && cheval.cote != '?')
-                      _metrique('Cote', '×${cheval.cote}', Colors.white70),
-                  ],
-                ),
+                // ── Métriques ────────────────────────────────────────
+                Row(children: [
+                  _metrique('Score IA', '${cheval.scoreIA.round()}/100', confianceColor),
+                  const SizedBox(width: 10),
+                  _metrique('Confiance', confianceLabel, confianceColor),
+                  const SizedBox(width: 10),
+                  if (numeros.length > 1)
+                    _metrique('Chevaux', '${numeros.length}', Colors.white54),
+                  if (numeros.length == 1 && cheval.cote.isNotEmpty && cheval.cote != '?')
+                    _metrique('Cote', '×${cheval.cote}', Colors.white70),
+                ]),
 
                 if (cheval.explicationIA.isNotEmpty) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.04),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(
-                      cheval.explicationIA,
-                      style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
-                    ),
+                    child: Text(cheval.explicationIA,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 13, height: 1.4)),
                   ),
                 ],
 
@@ -1628,7 +1604,42 @@ class _HomeScreenState extends State<HomeScreen> {
       top3 = all;
     }
 
-    if (top3.isEmpty) return const SizedBox.shrink();
+    // ★ v10.55 : état vide visible au lieu de SizedBox.shrink().
+    // Toutes les courses sont passées (ou aucune donnée) → le widget reste présent,
+    // avec un message clair. NE PAS masquer complètement Journée Express.
+    // Note : ce n'est PAS lié aux filtres critères (_buildBandeauConseilIA gère ça).
+    if (top3.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0F2027), Color(0xFF1A1A3A)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.2)),
+        ),
+        child: Row(children: [
+          Text(isMatin ? '☀️' : '🌙', style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Journée Express',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 4),
+              Text(
+                isMatin
+                    ? 'Aucune course disponible pour le moment'
+                    : 'Toutes les courses du jour sont terminées',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+              ),
+            ]),
+          ),
+        ]),
+      );
+    }
 
     final items = top3.take(3).toList();
     final source = conseilCourses.isNotEmpty ? '🎯 Selon tes critères' : '🏆 Meilleures scores IA';
