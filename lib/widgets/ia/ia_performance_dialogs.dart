@@ -415,8 +415,9 @@ class IaDialogDetailTypePariState extends State<IaDialogDetailTypePari> {
                 ],
               )),
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('$nbBons/$nbTotal',
-                    style: TextStyle(color: widget.green, fontSize: 16,
+                // ★ v10.58 : libellé harmonisé avec ia_dialog_detail_type_pari
+                Text('$nbBons gagnants / $nbTotal',
+                    style: TextStyle(color: widget.green, fontSize: 14,
                         fontWeight: FontWeight.bold)),
                 Text('$taux% réussite',
                     style: const TextStyle(color: Colors.white38, fontSize: 10)),

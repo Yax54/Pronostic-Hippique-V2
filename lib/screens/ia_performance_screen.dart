@@ -3833,7 +3833,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
               // ★ v9.6 : Détail course par course (expandable)
               if (r.coursesDetail.isNotEmpty) ...[
                 const SizedBox(height: 16),
-                _buildDetailCourses(r.coursesDetail),
+                // ★ v10.58 : passe nbCoursesAnalysees pour expliquer le delta
+                _buildDetailCourses(r.coursesDetail, r.nbCoursesAnalysees),
               ],
 
               // ★ v9.6 : Stats par type de pari du jour
@@ -4091,7 +4092,18 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   }
 
   // ★ v9.6 : Détail course par course (expandable)
-  Widget _buildDetailCourses(List<CourseDetailRapport> courses) {
+  // ★ v10.58 : nbTotal = nbCoursesAnalysees (toutes courses traitées)
+  //            courses.length = courses avec résultat exploitable (resultatsReels)
+  //            Le delta (nbTotal - courses.length) = courses sans résultat officiel encore disponible
+  Widget _buildDetailCourses(List<CourseDetailRapport> courses, [int nbTotal = 0]) {
+    final int nbAnalysables = courses.length;
+    final int nbExclues = nbTotal > nbAnalysables ? nbTotal - nbAnalysables : 0;
+
+    // Titre clair : distingue analysables / totales si delta > 0
+    final String titreCours = nbExclues > 0
+        ? '$nbAnalysables courses analysables / $nbTotal totales'
+        : 'Détail des $nbAnalysables courses';
+
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
@@ -4100,13 +4112,40 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         title: Row(children: [
           const Icon(Icons.list_alt_rounded, color: Colors.white54, size: 16),
           const SizedBox(width: 8),
-          Text('Détail des ${courses.length} courses',
-              style: const TextStyle(color: Colors.white70, fontSize: 15,
-                  fontWeight: FontWeight.bold)),
+          Expanded(
+            child: Text(titreCours,
+                style: const TextStyle(color: Colors.white70, fontSize: 15,
+                    fontWeight: FontWeight.bold)),
+          ),
         ]),
         iconColor: Colors.white38,
         collapsedIconColor: Colors.white24,
-        children: courses.map((c) => _buildLigneCourse(c)).toList(),
+        children: [
+          // ★ v10.58 : note d'exclusion si delta détecté
+          if (nbExclues > 0)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+              ),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.info_outline_rounded, color: Colors.orange, size: 14),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$nbExclues course(s) exclue(s) : résultat officiel non disponible '
+                    'au moment de l\'analyse (course annulée, non partante, '
+                    'ou résultat incomplet).',
+                    style: const TextStyle(color: Colors.orange, fontSize: 13),
+                  ),
+                ),
+              ]),
+            ),
+          ...courses.map((c) => _buildLigneCourse(c)),
+        ],
       ),
     );
   }
@@ -4199,37 +4238,86 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     final icon   = gagn ? '🥇' : ok ? '✅' : rang != null ? '❌' : '❌';
     final rangTxt = c.rangFavoriIa != null ? '${c.rangFavoriIa}ème' : '—';
 
+    // ★ v10.58 : layout corrigé — Expanded pour les textes longs + Flexible pour la colonne droite
+    //            fontSize réduit à 13/12 pour éviter le débordement
+    //            maxLines + overflow: ellipsis sur tous les champs texte long
     return Container(
-      margin: const EdgeInsets.only(bottom: 5),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.20)),
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25), width: 1),
       ),
-      child: Row(children: [
-        Text(icon, style: const TextStyle(fontSize: 14)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(c.nomCourse,
-                style: const TextStyle(color: Colors.white, fontSize: 16,
-                    fontWeight: FontWeight.bold),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            Text('${c.hippodrome}${c.heure.isNotEmpty ? " · ${c.heure}" : ""}  '
-                 '${c.typePariConseille.isNotEmpty ? "· ${c.typePariConseille}" : ""}',
-                style: const TextStyle(color: Colors.white38, fontSize: 16)),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('N°${c.favoriIaNumero ?? "?"}${c.favoriIaNom != null ? " ${c.favoriIaNom}" : ""} → $rangTxt',
-              style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Icône résultat (largeur fixe 22px) ──────────────────────
+          SizedBox(
+            width: 22,
+            child: Text(icon, style: const TextStyle(fontSize: 15)),
+          ),
+          const SizedBox(width: 8),
+          // ── Bloc texte central (Expanded pour prendre tout l'espace) ─
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Nom course : maxLines 1 + ellipsis
+                Text(
+                  c.nomCourse.isNotEmpty ? c.nomCourse : '—',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                // Hippodrome · heure · type pari : maxLines 2 + ellipsis
+                Text(
+                  [
+                    if (c.hippodrome.isNotEmpty) c.hippodrome,
+                    if (c.heure.isNotEmpty) c.heure,
+                    if (c.typePariConseille.isNotEmpty) c.typePariConseille,
+                  ].join(' · '),
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
+                ),
+                const SizedBox(height: 4),
+                // Favori IA + rang
+                Text(
+                  'N°${c.favoriIaNumero ?? "?"}'
+                  '${c.favoriIaNom != null && c.favoriIaNom!.isNotEmpty ? " ${c.favoriIaNom}" : ""}'
+                  ' → $rangTxt',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // ── Arrivée réelle (Flexible, alignée à droite) ──────────────
           if (c.arriveeReelle.isNotEmpty)
-            Text('Arr: ${c.arriveeReelle.take(3).map((n) => "N°$n").join("-")}',
-                style: const TextStyle(color: Colors.white24, fontSize: 16)),
-        ]),
-      ]),
+            Flexible(
+              child: Text(
+                'Arr:\n${c.arriveeReelle.take(5).join("-")}',
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+                textAlign: TextAlign.right,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
