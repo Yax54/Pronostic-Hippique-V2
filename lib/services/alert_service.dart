@@ -1207,9 +1207,10 @@ class AlertService extends ChangeNotifier {
       if (score >= 55 && score2 >= 45 && score3 >= 35) return 'Tiercé';
       if (score >= 45) return 'Couplé Gagnant';
       return 'À surveiller';
-    } else if (score >= 65 && score2 >= 60 && score3 >= 55 && score4 >= 50 && course.partants.length >= 10) {
-      return 'Quarté+';
     } else if (estEquilibre && score >= 75) {
+      // ★ v10.56 : branche "Quarté+ par scores+partants" supprimée — PMU only.
+      // Quarté+ uniquement si course.isQuarte == true (détection PMU réelle).
+      // Fallback intelligent : mêmes chevaux IA, type rétrogradé PMU-compatible.
       return 'Couplé Gagnant';
     } else if (estEquilibre && score >= 60) {
       return 'Couplé Placé';

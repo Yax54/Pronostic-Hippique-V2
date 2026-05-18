@@ -311,9 +311,9 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       if (score >= 55 && score2 >= 45 && score3 >= 35) return 'Tiercé';
       if (score >= 45) return 'Couplé Gagnant';
       return 'À surveiller';
-    } else if (score >= 65 && score2 >= 60 && score3 >= 55 && score4 >= 50 && course.partants.length >= 10) {
-      return 'Quarté+';
     } else if (estEquilibre && score >= 75) {
+      // ★ v10.56 : branche "Quarté+ par scores+partants" supprimée — PMU only.
+      // Quarté+ uniquement si course.isQuarte == true (détection PMU réelle).
       return 'Couplé Gagnant';
     } else if (estEquilibre && score >= 60) {
       return 'Couplé Placé';
@@ -1293,10 +1293,11 @@ class _ConseilCard extends StatelessWidget {
       } else {
         typePari = 'À surveiller'; iconPari = '🚫'; sousTitrePari = 'Scores insuffisants — passer';
       }
-    } else if (score >= 65 && score2 >= 60 && score3 >= 55 && score4 >= 50 && course.partants.length >= 10) {
-      typePari = 'Quarté+'; iconPari = '4️⃣'; sousTitrePari = '4 candidats fiables détectés';
     } else if (estEquilibre && score >= 75) {
-      typePari = 'Couplé Gagnant'; iconPari = '💑';
+      // ★ v10.56 : branche "Quarté+ par scores+partants" supprimée — PMU only.
+      // Quarté+ uniquement si course.isQuarte == true (détection PMU réelle).
+      // Fallback intelligent : mêmes chevaux IA, type rétrogradé Couplé Gagnant.
+      typePari = 'Couplé Gagnant'; iconPari = '💑'; sousTitrePari = '4 candidats IA fiables — Quarté+ non disponible PMU';
     } else if (estEquilibre && score >= 60) {
       typePari = 'Couplé Placé'; iconPari = '💑🎯';
     } else if (score >= 80 && cote <= 8.0) {

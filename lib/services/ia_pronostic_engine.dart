@@ -736,12 +736,13 @@ class IaPronosticEngine {
 
     if (score1 >= 80 && ecart12 >= 30)
       return 'Simple gagnant — favori IA très dominant (N°${sorted[0].numero})';
+    // ★ v10.56 : "Quarté+ par scores+partants" supprimé — PMU only.
+    // Quarté+ uniquement si course.isQuarte == true (géré dans la branche isQuarte ci-dessus).
+    // Fallback : mêmes chevaux IA, Tiercé (pari disponible PMU sans condition officielle).
     if (score1 >= 70 && score2 >= 62 && score3 >= 57 && score4 >= 52 && nbPartants >= 10)
-      return 'Quarté+ conseillé — 4 candidats fiables (N°${sorted[0].numero}, ${sorted[1].numero}, ${sorted[2].numero}, ${sorted[3].numero})';
+      return 'Tiercé conseillé — 4 candidats IA fiables (N°${sorted[0].numero}, ${sorted[1].numero}, ${sorted[2].numero}) — Quarté+ non disponible PMU';
     if (score1 >= 65 && score2 >= 58 && score3 >= 57)
-      return nbPartants <= 8
-          ? 'Tiercé dans l\'ordre — 3 candidats fiables'
-          : 'Tiercé ou Quarté+ dans l\'ordre — 3 candidats fiables';
+      return 'Tiercé dans l\'ordre — 3 candidats fiables';
     if (score1 >= 65 && score2 >= 52)
       return 'Couplé gagnant N°${sorted[0].numero}–N°${sorted[1].numero} — 3ᵉ place incertaine (${score3.toStringAsFixed(0)}/100)';
     if (score1 >= 65)
