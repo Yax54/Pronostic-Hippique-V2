@@ -20,14 +20,12 @@ import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
-import '../../utils/premium_utils.dart' // ★ v10.55/v10.57 — badge + séries Premium
+import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
     show
         estPremiumGagnantPourCarte,
-        sourcePremiumPourCarte,
-        decorationCartePremium,
-        badgePremium,
-        labelSourcePremium; // ★ v10.57 — badge séries
+        sourcePremiumPourCarte;
 // Note : PremiumPronosticDuJour vient de ia_memory_models.dart (déjà importé)
+// Note : labelSourcePremium, decorationCartePremium, badgePremium remplacés par code inline v10.59
 import 'ia_widgets_communs.dart';
 
 // ── Constantes couleurs ────────────────────────────────────────────────────
@@ -1562,10 +1560,8 @@ class _DetailJourSheet extends StatelessWidget {
     final premiumsDuJour = IaMemoryService.instance
         .premiumsPourDate(moisRef.year, moisRef.month, dd.jour);
 
-    // ★ v10.57 — Séries premium : calculées à partir de ce jour, triées décroissant.
-    // Sécurités : 1 vote/jour/widget, jours calendaires stricts, ≥ 2 pour afficher.
-    final dateRef = DateTime(moisRef.year, moisRef.month, dd.jour);
-    final streaks = IaMemoryService.instance.calculerToutesStreaksPremium(dateRef);
+    // ★ v10.59 — Séries premium calculées mais NON affichées dans l'UI (rollback visuel).
+    // Les méthodes calculerStreakPremium / calculerToutesStreaksPremium restent intactes.
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
@@ -1635,13 +1631,7 @@ class _DetailJourSheet extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
               children: [
 
-                // ★ v10.57 — Bandeau séries premium actives (≥ 2 jours consécutifs)
-                // Trié du plus grand au plus petit. Basé sur validation stricte PMU.
-                if (streaks.isNotEmpty) ...[
-                  ...streaks.map((s) => _buildStreakBadge(s)),
-                  const SizedBox(height: 14),
-                ],
-
+                // ★ v10.59 — Pas de bandeau streak dans cette version (rollback visuel).
                 if (bons.isEmpty)
                   const Center(
                     child: Padding(
@@ -1671,28 +1661,8 @@ class _DetailJourSheet extends StatelessWidget {
     );
   }
 
-  // ★ v10.57 — Badge doré pour une série premium active.
-  Widget _buildStreakBadge(PremiumStreak streak) {
-    final label = labelSourcePremium(streak.sourceWidget);
-    final msg   = '${streak.emoji} $label : ${streak.jours} jour${streak.jours > 1 ? 's' : ''} gagnants consécutifs';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0x33FFD700),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFD700), width: 1.2),
-      ),
-      child: Text(
-        msg,
-        style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w800,
-          color: Color(0xFFFFD700),
-        ),
-      ),
-    );
-  }
+  // ★ v10.59 — _buildStreakBadge supprimé (rollback visuel v10.57).
+  // Les données streak restent calculées dans IaMemoryService mais ne s'affichent pas ici.
 
   /// ★ v10.26 : Descriptif dynamique du taux affiché dans le BottomSheet
   static String _descriptifTaux(double taux, PalierCalendrier palier) {
@@ -1738,13 +1708,50 @@ class _DetailJourSheet extends StatelessWidget {
         ? sourcePremiumPourCarte(prono: p, premiumsDuJour: premiumsDuJour)
         : null;
 
+    // ★ v10.59 — Restauration exacte du design screenshot :
+    //   fond doré translucide 0x1AFFD700, bordure dorée 2.2px,
+    //   badge pill "⭐ Premium — Plus Sûr" via _labelSourcePremium().
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
-      decoration: decorationCartePremium(isPremium: isPremium),
+      decoration: BoxDecoration(
+        color: isPremium
+            ? const Color(0x1AFFD700)
+            : const Color(0xFF142030),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isPremium
+              ? const Color(0xFFFFD700)
+              : const Color(0xFF26384D),
+          width: isPremium ? 2.2 : 1.2,
+        ),
+      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ★ v10.55 — Badge doré affiché uniquement si premium gagnant strict
-        if (isPremium) badgePremium(sourceP),
+        // ★ v10.59 — Badge premium pill exactement comme le screenshot
+        if (isPremium) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0x26FFD700),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: const Color(0x99FFD700),
+                width: 1,
+              ),
+            ),
+            child: Text(
+              '⭐ Premium — ${_labelSourcePremium(sourceP)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFFFD700),
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
         Row(children: [
           Expanded(
@@ -1925,6 +1932,18 @@ class _DetailJourSheet extends StatelessWidget {
         ],
       ]),
     );
+  }
+
+  // ★ v10.59 — Helper local (identique à labelSourcePremium de premium_utils mais privé à ce widget)
+  String _labelSourcePremium(String? source) {
+    switch (source) {
+      case 'conseilJour':    return 'Conseil IA du jour';
+      case 'meilleurPari':   return 'Meilleur Pari du jour';
+      case 'topEquilibre':   return 'Top Équilibre';
+      case 'plusSur':        return 'Plus Sûr';
+      case 'plusRentable':   return 'Plus Rentable';
+      default:               return 'Premium';
+    }
   }
 
   Widget _pill(String text, Color bg, Color fg) {
