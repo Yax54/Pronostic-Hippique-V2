@@ -1560,8 +1560,9 @@ class _DetailJourSheet extends StatelessWidget {
     final premiumsDuJour = IaMemoryService.instance
         .premiumsPourDate(moisRef.year, moisRef.month, dd.jour);
 
-    // ★ v10.59 — Séries premium calculées mais NON affichées dans l'UI (rollback visuel).
-    // Les méthodes calculerStreakPremium / calculerToutesStreaksPremium restent intactes.
+    // ★ v10.60 — Date de la bulle calendrier = référence historique exacte pour le streak.
+    // Ne PAS utiliser DateTime.now() : les anciennes bulles doivent garder leur phrase.
+    final dateRef = DateTime(moisRef.year, moisRef.month, dd.jour);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
@@ -1651,7 +1652,7 @@ class _DetailJourSheet extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     )),
                   const SizedBox(height: 10),
-                  ...bons.map((p) => _buildPronosticCard(context, p, premiumsDuJour)),
+                  ...bons.map((p) => _buildPronosticCard(context, p, premiumsDuJour, dateRef)),
                 ],
               ],
             ),
@@ -1682,10 +1683,12 @@ class _DetailJourSheet extends StatelessWidget {
 
   // ★ v10.27 : Card plus grande, titre blanc (jamais vert sur fond vert), contraste renforcé
   // ★ v10.55 : badge doré ⭐ Premium si ce prono correspond à un widget premium gagnant strict.
+  // ★ v10.60 : phrase dynamique série — calcul streak sur dateRef (date de la bulle, pas aujourd'hui)
   Widget _buildPronosticCard(
     BuildContext context,
     IaPronostic p,
     List<PremiumPronosticDuJour> premiumsDuJour,
+    DateTime dateRef,
   ) {
     final type   = p.typePariConseille ?? 'Inconnu';
     final favNom = p.favoriIaNom ?? '?';
@@ -1708,6 +1711,16 @@ class _DetailJourSheet extends StatelessWidget {
         ? sourcePremiumPourCarte(prono: p, premiumsDuJour: premiumsDuJour)
         : null;
 
+    // ★ v10.60 — Streak calculé à la date de la bulle (historique exact, pas DateTime.now()).
+    // Une seule source concernée : celle du widget premium de cette carte.
+    // streakJours == 0 si non premium ou série < 2.
+    final int streakJours = (isPremium && sourceP != null)
+        ? IaMemoryService.instance.calculerStreakPremium(
+            sourceWidget:   sourceP,
+            dateReference:  dateRef,
+          ).jours
+        : 0;
+
     // ★ v10.59 — Restauration exacte du design screenshot :
     //   fond doré translucide 0x1AFFD700, bordure dorée 2.2px,
     //   badge pill "⭐ Premium — Plus Sûr" via _labelSourcePremium().
@@ -1728,6 +1741,7 @@ class _DetailJourSheet extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // ★ v10.59 — Badge premium pill exactement comme le screenshot
+        // ★ v10.60 — Phrase série sous le badge (streak ≥ 2, date historique exacte)
         if (isPremium) ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -1750,6 +1764,27 @@ class _DetailJourSheet extends StatelessWidget {
               ),
             ),
           ),
+          // ★ v10.60 — Phrase dynamique série : visible si streak ≥ 2 à cette date
+          if (streakJours >= 2) ...[
+            const SizedBox(height: 4),
+            Text(
+              '🔥 Ce pari est gagnant depuis '
+              '$streakJours jour${streakJours > 1 ? 's' : ''} consécutifs',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFFFB347),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                shadows: [
+                  Shadow(
+                    color: Color(0x66FF9800),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
         ],
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
