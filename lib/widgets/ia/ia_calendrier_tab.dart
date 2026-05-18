@@ -20,13 +20,14 @@ import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
-import '../../utils/premium_utils.dart' // ★ v10.55 — badge doré Premium calendrier
+import '../../utils/premium_utils.dart' // ★ v10.55/v10.57 — badge + séries Premium
     show
-        PremiumPronosticDuJour,
         estPremiumGagnantPourCarte,
         sourcePremiumPourCarte,
         decorationCartePremium,
-        badgePremium;
+        badgePremium,
+        labelSourcePremium; // ★ v10.57 — badge séries
+// Note : PremiumPronosticDuJour vient de ia_memory_models.dart (déjà importé)
 import 'ia_widgets_communs.dart';
 
 // ── Constantes couleurs ────────────────────────────────────────────────────
@@ -1126,8 +1127,25 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     final types = nbByType.keys.toList()
       ..sort((a, b) => (nbByType[b] ?? 0).compareTo(nbByType[a] ?? 0));
 
+    // ★ v10.57 — Libellé de filtre actif pour éviter la confusion "8/14 = 814"
+    const _nomsMoisStats = [
+      '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+    ];
+    final now           = DateTime.now();
+    final estMoisActuel = _moisRef.year == now.year && _moisRef.month == now.month;
+    final labelPeriode  = estMoisActuel
+        ? "Aujourd'hui — ${_nomsMoisStats[_moisRef.month]} ${_moisRef.year}"
+        : '${_nomsMoisStats[_moisRef.month]} ${_moisRef.year}';
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       iaSectionTitle('🎯 Précision par type de pari'),
+      const SizedBox(height: 6),
+      // ★ v10.57 — En-tête filtre actif
+      Text(
+        'Filtre : $labelPeriode',
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
+      ),
       const SizedBox(height: 10),
       Container(
         padding: const EdgeInsets.all(14),
@@ -1153,7 +1171,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                     child: Text(t,
                       style: const TextStyle(color: Colors.white70, fontSize: 14)),
                   ),
-                  Text('$bons/$nb',
+                  // ★ v10.57 : "$bons gagnants / $nb" au lieu de "$bons/$nb"
+                  Text('$bons / $nb',
                     style: TextStyle(
                       color: col,
                       fontSize: 14,
@@ -1167,6 +1186,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                       style: TextStyle(color: col, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ]),
+                const SizedBox(height: 3),
+                // ★ v10.57 — Sous-libellé "N gagnants / M pronostics"
+                Text(
+                  '$bons gagnant${bons > 1 ? 's' : ''} sur $nb pronostic${nb > 1 ? 's' : ''}',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.38), fontSize: 12),
+                ),
                 const SizedBox(height: 5),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(3),
@@ -1537,6 +1562,11 @@ class _DetailJourSheet extends StatelessWidget {
     final premiumsDuJour = IaMemoryService.instance
         .premiumsPourDate(moisRef.year, moisRef.month, dd.jour);
 
+    // ★ v10.57 — Séries premium : calculées à partir de ce jour, triées décroissant.
+    // Sécurités : 1 vote/jour/widget, jours calendaires stricts, ≥ 2 pour afficher.
+    final dateRef = DateTime(moisRef.year, moisRef.month, dd.jour);
+    final streaks = IaMemoryService.instance.calculerToutesStreaksPremium(dateRef);
+
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
       minChildSize:     0.4,
@@ -1604,6 +1634,14 @@ class _DetailJourSheet extends StatelessWidget {
               controller: ctrl,
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
               children: [
+
+                // ★ v10.57 — Bandeau séries premium actives (≥ 2 jours consécutifs)
+                // Trié du plus grand au plus petit. Basé sur validation stricte PMU.
+                if (streaks.isNotEmpty) ...[
+                  ...streaks.map((s) => _buildStreakBadge(s)),
+                  const SizedBox(height: 14),
+                ],
+
                 if (bons.isEmpty)
                   const Center(
                     child: Padding(
@@ -1629,6 +1667,29 @@ class _DetailJourSheet extends StatelessWidget {
             ),
           ),
         ]),
+      ),
+    );
+  }
+
+  // ★ v10.57 — Badge doré pour une série premium active.
+  Widget _buildStreakBadge(PremiumStreak streak) {
+    final label = labelSourcePremium(streak.sourceWidget);
+    final msg   = '${streak.emoji} $label : ${streak.jours} jour${streak.jours > 1 ? 's' : ''} gagnants consécutifs';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x33FFD700),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFD700), width: 1.2),
+      ),
+      child: Text(
+        msg,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w800,
+          color: Color(0xFFFFD700),
+        ),
       ),
     );
   }

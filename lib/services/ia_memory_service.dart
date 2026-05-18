@@ -4281,6 +4281,90 @@ class IaMemoryService extends ChangeNotifier {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  ★ v10.57 — SÉRIES PREMIUM GAGNANTES
+  //
+  //  Règles strictes :
+  //   • 1 seule victoire comptée par jour et par sourceWidget (dédoublonnage)
+  //   • Jours calendaires consécutifs uniquement (gap = série brisée)
+  //   • Validation via _estPremiumExactGagnantStrict() — jamais via score/couleur
+  //   • Série affichée à partir de 2 jours gagnants consécutifs
+  //   • Ne touche PAS : apprentissage IA, poids, reset, analyseJourneeComplete
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Vérifie si un sourceWidget donné a eu AU MOINS UN pronostic premium
+  /// gagnant strict ce jour-là. Dédoublonne : plusieurs entrées = 1 seul vote.
+  bool _premiumSourceGagnantLeJour(String sourceWidget, String dateKey) {
+    final premiumsDuJour = _premiumHistorique[dateKey] ?? [];
+    // Garder uniquement les entrées pour ce widget (dédoublonnage par courseKey)
+    final seen = <String>{};
+    for (final p in premiumsDuJour) {
+      if (p.sourceWidget != sourceWidget) continue;
+      if (!seen.add(p.courseKey)) continue; // doublon même course → skip
+      final prono = getPronostic(p.courseKey);
+      if (prono == null) continue;
+      if (_estPremiumExactGagnantStrict(premium: p, prono: prono)) return true;
+    }
+    return false;
+  }
+
+  /// Calcule la série de victoires consécutives pour un sourceWidget donné,
+  /// en remontant jour par jour à partir de [dateReference] (inclus).
+  ///
+  /// Sécurités :
+  ///   • Un seul vote par jour/widget (dédoublonnage courseKey)
+  ///   • Gap d'un seul jour = série brisée immédiatement
+  ///   • Limite à 90 jours (= _premiumHistoriqueMaxJours) pour éviter boucle infinie
+  PremiumStreak calculerStreakPremium({
+    required String sourceWidget,
+    required DateTime dateReference,
+  }) {
+    int streak = 0;
+    DateTime cursor = DateTime(
+      dateReference.year,
+      dateReference.month,
+      dateReference.day,
+    );
+
+    for (int i = 0; i < _premiumHistoriqueMaxJours; i++) {
+      final dateKey = '${cursor.year.toString().padLeft(4, '0')}-'
+          '${cursor.month.toString().padLeft(2, '0')}-'
+          '${cursor.day.toString().padLeft(2, '0')}';
+
+      if (!_premiumSourceGagnantLeJour(sourceWidget, dateKey)) break;
+
+      streak++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+
+    return PremiumStreak(
+      sourceWidget: sourceWidget,
+      jours: streak,
+      dateFin: dateReference,
+    );
+  }
+
+  /// Calcule les séries actives pour tous les 5 widgets premium,
+  /// triées du plus grand streak au plus petit, filtrées à ≥ 2 jours.
+  /// Utilisé par ia_calendrier_tab pour afficher le bandeau séries.
+  List<PremiumStreak> calculerToutesStreaksPremium(DateTime dateReference) {
+    const sources = [
+      'conseilJour',
+      'meilleurPari',
+      'topEquilibre',
+      'plusSur',
+      'plusRentable',
+    ];
+    return sources
+        .map((s) => calculerStreakPremium(
+              sourceWidget: s,
+              dateReference: dateReference,
+            ))
+        .where((s) => s.actif) // ≥ 2 jours
+        .toList()
+      ..sort((a, b) => b.jours.compareTo(a.jours)); // tri décroissant
+  }
+
   // ★ v10.37 v1 : Charger les courseKeys v1 (compat, lecture seule)
   Future<void> _chargerPremiumDuJour() async {
     final prefs   = await SharedPreferences.getInstance();

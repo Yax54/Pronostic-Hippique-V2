@@ -423,13 +423,12 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
                       style: const TextStyle(color: Colors.white38, fontSize: 13)),
                 ],
               )),
+              // ★ v10.57 : libéllé explicité pour éviter la confusion "8/14 = 814"
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('$nbBons/$nbTotal',
-                    // ★ v10.36 : 16→18
-                    style: TextStyle(color: widget.green, fontSize: 18,
+                Text('$nbBons gagnants / $nbTotal',
+                    style: TextStyle(color: widget.green, fontSize: 16,
                         fontWeight: FontWeight.bold)),
-                Text('$taux% réussite',
-                    // ★ v10.36 : 10→13
+                Text('$taux% de réussite',
                     style: const TextStyle(color: Colors.white38, fontSize: 13)),
               ]),
             ]),

@@ -16,7 +16,7 @@ import '../services/ia_memory_models.dart' show PremiumPronosticDuJour;
 import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
-import '../utils/premium_utils.dart' show typePariEtNumerosPourCourse, nbNumerosPourTypePari; // ★ v10.55
+import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55 (typePariEtNumerosPourCourse non utilisé ici)
 
 import 'course_detail_screen.dart';
 

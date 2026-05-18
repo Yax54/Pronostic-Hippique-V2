@@ -165,6 +165,31 @@ class PremiumPronosticDuJour {
   }
 }
 
+// ─── ★ v10.57 : Série premium gagnante ───────────────────────────────────────
+// Calculée par IaMemoryService.calculerStreakPremium() — lecture seule.
+// Affichée dans ia_calendrier_tab quand jours >= 2.
+class PremiumStreak {
+  final String   sourceWidget; // 'conseilJour' | 'meilleurPari' | etc.
+  final int      jours;        // nombre de jours consécutifs gagnants
+  final DateTime dateFin;      // dernier jour de la série (date de référence)
+
+  const PremiumStreak({
+    required this.sourceWidget,
+    required this.jours,
+    required this.dateFin,
+  });
+
+  /// La série est affichable seulement à partir de 2 jours consécutifs.
+  bool get actif => jours >= 2;
+
+  /// Emoji selon la longueur de la série.
+  String get emoji {
+    if (jours >= 5) return '🏆';
+    if (jours >= 3) return '🔥';
+    return '⭐';
+  }
+}
+
 // ─── Modèle d'un pronostic enregistré ────────────────────────────────────────
 
 class IaPronostic {
