@@ -107,6 +107,8 @@
 //     v7.4 : +bt_discipline, +bt_hippodrome, +flags transitoires ELO/conseils
 //     v7.6 : +ia_premium_historique_v1 (étoiles calendrier), +ia_premium_du_jour_v1 (compat)
 //     v7.7 : +premium_widgets_selection_jour_v1 (figeage 5 widgets premium du jour)
+//     v7.8 : +ia_narrative_memory_v1 (mémoire narrative anti-répétition)
+//     v7.9 : +ia_narrative_daily_cache_v1 (cache journalier narratif anti-rebuild)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -125,7 +127,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.8'; // ★ v10.65 : +ia_narrative_memory_v1 (mémoire narrative anti-répétition)
+  static const _backupVersion = '7.9'; // ★ v10.66 : +ia_narrative_daily_cache_v1 (cache narratif journalier anti-rebuild)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -206,6 +208,9 @@ class BackupService {
     // ★ v10.65 : Mémoire narrative anti-répétition (secondaire — recréable si absente)
     // Si absente dans un ancien backup : créée vide automatiquement, jamais crash
     'ia_narrative_memory_v1',
+    // ★ v10.66 : Cache narratif journalier (secondaire — recréable proprement si absent)
+    // En cas d'absence dans un ancien backup → reset cache uniquement, jamais bloquer la restauration
+    'ia_narrative_daily_cache_v1',
     // ★ v10.371-audit : flags transitoires (one-shot — restaurer évite un recalcul inutile)
     'elo_orphelins_purges_v1',   // Flag purge ELO orphelins (elo_service)
     'conseils_inject_pending',   // Flag injection conseils en attente
@@ -780,6 +785,26 @@ class BackupService {
       } catch (e) {
         if (kDebugMode) {
           debugPrint('[Backup] ia_narrative_memory_v1 compat (ignoré) : $e');
+        }
+      }
+
+      // ★ v10.66 — Compatibilité cache narratif journalier (secondaire — recréable)
+      // Si ia_narrative_daily_cache_v1 est absente dans un ancien backup :
+      //   → reset du cache uniquement → régénération normale au prochain affichage du Journal IA
+      //   → ne jamais bloquer la restauration principale
+      try {
+        final configGroupe = data['configIA'] as Map<String, dynamic>?;
+        final hasDailyCache = configGroupe != null &&
+            configGroupe.containsKey('ia_narrative_daily_cache_v1');
+        if (!hasDailyCache) {
+          await prefs.remove('ia_narrative_daily_cache_v1');
+          if (kDebugMode) {
+            debugPrint('[Backup] ia_narrative_daily_cache_v1 absente → cache narratif reset (compat)');
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[Backup] ia_narrative_daily_cache_v1 compat (ignoré) : $e');
         }
       }
 

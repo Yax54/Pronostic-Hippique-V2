@@ -1,7 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA NARRATIVE MEMORY SERVICE — v10.65
+//  IA NARRATIVE MEMORY SERVICE — v10.66
 //  Gestion de la mémoire narrative légère (anti-répétition).
 //  Clé SharedPreferences : 'ia_narrative_memory_v1'
+//
+//  ★ v10.66 : Cache journalier anti-rebuild
+//    - obtenirOuGenererNarratifDuJour() : cache-first pattern
+//    - _dateKey() : helper format 'YYYY-MM-DD'
+//    - reason = 'analyseJournee' : force régénération après analyse du soir
+//    - Cache figé pour toute la journée — seul le message est figé
 //
 //  RÈGLES SÉCURITÉ :
 //  - Fallback automatique vers mémoire vide si données absentes/corrompues
@@ -14,6 +20,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ia_narrative_memory_models.dart';
+import '../models/ia_narrative_models.dart';
+import '../services/ia_narrative_engine.dart';
 
 class IaNarrativeMemoryService {
   static const _key = 'ia_narrative_memory_v1';
@@ -114,6 +122,102 @@ class IaNarrativeMemoryService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_key);
+    } catch (_) {}
+  }
+
+  // ── ★ v10.66 : Cache journalier anti-rebuild ──────────────────────────────
+
+  /// Formate une date en 'YYYY-MM-DD' pour la clé de cache journalier.
+  static String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Cache-first : retourne le message narratif du jour sans régénération inutile.
+  ///
+  /// CACHE HIT : même date → retourne le message figé immédiatement.
+  /// CACHE MISS : date différente, absent, corrompu → génère avec genererResumeV3().
+  /// FORCE REFRESH : [reason] = 'analyseJournee' → bypass le cache (soir post-analyse).
+  ///
+  /// Le cache ne bloque PAS : apprentissage IA, résultats, premium, ROI.
+  Future<String> obtenirOuGenererNarratifDuJour({
+    required DateTime date,
+    required IaNarrativeContext context,
+    String? reason,
+  }) async {
+    try {
+      final prefs   = await SharedPreferences.getInstance();
+      final dateKey = _dateKey(date);
+
+      // ── Vérifier le cache (sauf force-refresh) ────────────────────────────
+      if (reason != 'analyseJournee') {
+        final raw = prefs.getString(iaNarrativeDailyCacheKey);
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            final cache = IaNarrativeDailyCache.fromJson(
+                jsonDecode(raw) as Map<String, dynamic>);
+            // Cache hit : même date ET message non vide → retourner directement
+            if (cache.dateKey == dateKey && cache.message.trim().isNotEmpty) {
+              if (kDebugMode) {
+                debugPrint('[NarrativeCache] Cache hit — message figé du $dateKey');
+              }
+              return cache.message;
+            }
+          } catch (e) {
+            // Cache corrompu → reset propre uniquement (ne bloque pas)
+            await prefs.remove(iaNarrativeDailyCacheKey);
+            if (kDebugMode) {
+              debugPrint('[NarrativeCache] Cache corrompu → reset : $e');
+            }
+          }
+        }
+      } else {
+        if (kDebugMode) {
+          debugPrint('[NarrativeCache] Force-refresh (reason=analyseJournee)');
+        }
+      }
+
+      // ── Générer V3 (nouveau message) ──────────────────────────────────────
+      final result = await IaNarrativeEngine.genererResumeV3(context);
+
+      // ── Sauvegarder le cache journalier ───────────────────────────────────
+      if (result.message.isNotEmpty) {
+        try {
+          await prefs.setString(
+            iaNarrativeDailyCacheKey,
+            jsonEncode(IaNarrativeDailyCache(
+              dateKey    : dateKey,
+              message    : result.message,
+              templateIds: result.templateIds,
+              createdAt  : DateTime.now(),
+            ).toJson()),
+          );
+          if (kDebugMode) {
+            debugPrint('[NarrativeCache] Cache écrit pour $dateKey');
+          }
+        } catch (e) {
+          // Erreur d'écriture cache non bloquante
+          if (kDebugMode) {
+            debugPrint('[NarrativeCache] Erreur écriture cache (ignorée) : $e');
+          }
+        }
+      }
+
+      return result.message;
+    } catch (e) {
+      // Fallback ultime — la narration est secondaire
+      if (kDebugMode) {
+        debugPrint('[NarrativeCache] Erreur globale → fallback sobre : $e');
+      }
+      return context.nbCoursesJour > 0
+          ? '${context.pseudoAffiche}, l\'analyse du jour continue d\'enrichir les données.'
+          : 'Les données continuent d\'être analysées.';
+    }
+  }
+
+  /// Efface le cache journalier narratif (pour debug ou réinitialisation).
+  Future<void> reinitialiserCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(iaNarrativeDailyCacheKey);
     } catch (_) {}
   }
 }

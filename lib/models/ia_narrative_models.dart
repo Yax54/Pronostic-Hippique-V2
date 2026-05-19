@@ -1,10 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA NARRATIVE MODELS — v10.65
+//  IA NARRATIVE MODELS — v10.66
 //  Couche narrative d'affichage uniquement.
 //  Ne modifie aucun calcul IA, aucun poids, aucun pronostic.
 //
 //  v10.65 : ajout taux7j, taux7jPrecedent, meilleureDiscipline,
 //           widgetPremiumLePlusStable, progression7j, regression7j
+//  v10.66 : ajout typePariLePlusStable, typePariLePlusInstable,
+//           signalExpertDisponible, getter aTypePari
 // ═══════════════════════════════════════════════════════════════════════════
 
 class IaNarrativeContext {
@@ -42,6 +44,18 @@ class IaNarrativeContext {
   /// Vide si non disponible.
   final String widgetPremiumLePlusStable;
 
+  // ── ★ v10.66 : Type de pari & signal expert ───────────────────────────────
+  /// Type de pari le plus stable sur 14 jours (ex : 'Simple Gagnant').
+  /// Null si données insuffisantes.
+  final String? typePariLePlusStable;
+
+  /// Type de pari le moins stable sur 14 jours (ex : 'Quinté+').
+  /// Null si données insuffisantes.
+  final String? typePariLePlusInstable;
+
+  /// Vrai si au moins un signal expert est calculable (discipline ou typePari disponible).
+  final bool signalExpertDisponible;
+
   const IaNarrativeContext({
     required this.pseudoUtilisateur,
     required this.nbCoursesJour,
@@ -59,6 +73,9 @@ class IaNarrativeContext {
     this.taux7jPrecedent = 0.0,
     this.meilleureDiscipline = '',
     this.widgetPremiumLePlusStable = '',
+    this.typePariLePlusStable,
+    this.typePariLePlusInstable,
+    this.signalExpertDisponible = false,
   });
 
   // ── Taux calculés ─────────────────────────────────────────────────────────
@@ -108,6 +125,12 @@ class IaNarrativeContext {
       streakTopEquilibre >= 2 ||
       streakPlusRentable >= 2 ||
       streakConseilJour >= 2;
+
+  // ── ★ v10.66 : Getters type de pari ──────────────────────────────────────
+
+  /// Vrai si un type de pari stable est disponible.
+  bool get aTypePari =>
+      typePariLePlusStable != null && typePariLePlusStable!.isNotEmpty;
 
   // ── Pseudo à afficher ─────────────────────────────────────────────────────
 

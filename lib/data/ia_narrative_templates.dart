@@ -1,10 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA NARRATIVE TEMPLATES — v10.65
+//  IA NARRATIVE TEMPLATES — v10.66
 //  Templates avec ID pour l'anti-répétition.
 //  Règles UX : max 2 phrases, ton analytique, jamais "je ressens/pense".
 //  {pseudo}     → pseudo utilisateur
 //  {discipline} → meilleure discipline IA
 //  {widget}     → widget premium le plus stable
+//  {typePari}   → ★ v10.66 : type de pari le plus stable
 // ═══════════════════════════════════════════════════════════════════════════
 
 class IaNarrativeTemplate {
@@ -160,6 +161,54 @@ class IaNarrativeTemplates {
     IaNarrativeTemplate(
       id: 'premium_4',
       text: 'La série premium en cours renforce la cohérence des sélections, {pseudo}.',
+    ),
+  ];
+
+  // ── ★ v10.66 : Discipline forte V3 (ton plus expert) ─────────────────────
+  static const List<IaNarrativeTemplate> disciplineForteV3 = [
+    IaNarrativeTemplate(
+      id: 'v3_discipline_1',
+      text: '{pseudo}, le {discipline} ressort comme le signal le plus stable récemment.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_discipline_2',
+      text: 'Les courses {discipline} offrent les signaux les plus réguliers en ce moment.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_discipline_3',
+      text: 'Sur les 14 derniers jours, {discipline} concentre les meilleures performances.',
+    ),
+  ];
+
+  // ── ★ v10.66 : Widget stable V3 (ton plus expert) ────────────────────────
+  static const List<IaNarrativeTemplate> widgetStableV3 = [
+    IaNarrativeTemplate(
+      id: 'v3_widget_1',
+      text: 'Le widget {widget} reste le repère le plus fiable sur les derniers jours.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_widget_2',
+      text: '{widget} confirme une bonne régularité dans les sélections récentes.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_widget_3',
+      text: '{pseudo}, {widget} ressort comme le signal premium le plus constant actuellement.',
+    ),
+  ];
+
+  // ── ★ v10.66 : Type de pari V3 ───────────────────────────────────────────
+  static const List<IaNarrativeTemplate> typePariV3 = [
+    IaNarrativeTemplate(
+      id: 'v3_typepari_1',
+      text: 'Les paris {typePari} montrent une meilleure cohérence récemment.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_typepari_2',
+      text: '{pseudo}, les signaux sont plus nets sur les paris {typePari}.',
+    ),
+    IaNarrativeTemplate(
+      id: 'v3_typepari_3',
+      text: 'Sur la période récente, les {typePari} affichent la meilleure régularité.',
     ),
   ];
 

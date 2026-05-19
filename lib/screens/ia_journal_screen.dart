@@ -1,8 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA JOURNAL SCREEN — v10.65
+//  IA JOURNAL SCREEN — v10.66
 //  ★ v9.91  : structure hiérarchique 3 niveaux
 //  ★ v10.64 : IA Narrative Engine V1 — carte narrative dynamique en tête de journal
 //  ★ v10.65 : IA Narrative Engine V2 — mémoire anti-répétition, tendances 7j, discipline forte
+//  ★ v10.66 : IA Narrative Engine V3 — cache journalier anti-rebuild, type de pari, signal expert
 // ═══════════════════════════════════════════════════════════════════════════
 import 'dart:convert';
 import 'dart:math';
@@ -11,9 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/ia_memory_service.dart';
 import '../services/ia_memory_models.dart';
 import '../services/ia_personality_service.dart';
-import '../models/ia_narrative_models.dart';      // ★ v10.64
-import '../services/ia_narrative_engine.dart';    // ★ v10.65
-import '../widgets/ia_narrative_card.dart';        // ★ v10.64
+import '../models/ia_narrative_models.dart';               // ★ v10.64
+import '../services/ia_narrative_memory_service.dart';     // ★ v10.66 : cache-first
+import '../widgets/ia_narrative_card.dart';                 // ★ v10.64
 
 class IaJournalScreen extends StatefulWidget {
   const IaJournalScreen({super.key});
@@ -25,8 +26,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
   // Clés de dépliage : 'mois-YYYY-MM' | 'sem-YYYY-MM-DD'
   final Set<String> _expanded = {};
 
-  // ★ v10.65 — Cache narratif async (refraisé à chaque ouverture du journal)
-  String _pseudoUtilisateur = '';
+  // ★ v10.66 — Cache narratif journalier (figé pour toute la journée)
   String? _messageNarratif;          // null = chargement en cours
   bool   _narratifCharge = false;
 
@@ -46,18 +46,22 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
     final rapports = IaMemoryService.instance.rapports;
     final ctx = _buildNarrativeContext(rapports, pseudo);
 
-    // 3. Générer le message V2 (async, anti-répétition)
-    final msg = await IaNarrativeEngine.genererResumeV2(ctx);
+    // 3. ★ v10.66 : Cache-first — message figé pour toute la journée
+    //    Évite les changements de phrase à chaque rebuild du widget.
+    final msg = await IaNarrativeMemoryService().obtenirOuGenererNarratifDuJour(
+      date   : DateTime.now(),
+      context: ctx,
+      // reason: 'analyseJournee'  // décommenter si déclenché après analyse du soir
+    );
 
     if (!mounted) return;
     setState(() {
-      _pseudoUtilisateur = pseudo;
-      _messageNarratif   = msg;
-      _narratifCharge    = true;
+      _messageNarratif = msg;
+      _narratifCharge  = true;
     });
   }
 
-  // ★ v10.65 — Construit le contexte narratif depuis les données existantes
+  // ★ v10.66 — Construit le contexte narratif depuis les données existantes
   IaNarrativeContext _buildNarrativeContext(
     List<RapportJournalier> rapports,
     String pseudo,
@@ -174,6 +178,44 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
     final streakSur       = svc.calculerStreakPremium(sourceWidget: 'plusSur',        dateReference: today);
     final streakRentable  = svc.calculerStreakPremium(sourceWidget: 'plusRentable',   dateReference: today);
 
+    // ── ★ v10.66 : Type de pari le plus stable sur 14 jours ──────────────
+    // Agrège les stats par type de pari depuis parTypePari des rapports 14j.
+    // Sélectionne le type avec le meilleur taux de réussite moyen.
+    String? typePariStable;
+    String? typePariInstable;
+    try {
+      final rapports14j = rapports.where((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return today.difference(d).inDays <= 14 && r.parTypePari.isNotEmpty;
+      }).toList();
+
+      if (rapports14j.isNotEmpty) {
+        final tauxParType = <String, List<double>>{};
+        for (final r in rapports14j) {
+          for (final tp in r.parTypePari) {
+            if (tp.typePari.isNotEmpty && tp.nbPronostiques > 0) {
+              tauxParType.putIfAbsent(tp.typePari, () => []);
+              tauxParType[tp.typePari]!.add(tp.tauxGagnant);
+            }
+          }
+        }
+        if (tauxParType.isNotEmpty) {
+          // Trier par taux moyen décroissant
+          final sorted = tauxParType.entries.toList()
+            ..sort((a, b) {
+              final moyA = a.value.reduce((x, y) => x + y) / a.value.length;
+              final moyB = b.value.reduce((x, y) => x + y) / b.value.length;
+              return moyB.compareTo(moyA);
+            });
+          typePariStable   = sorted.first.key;                    // meilleur taux
+          if (sorted.length > 1) typePariInstable = sorted.last.key; // pire taux
+        }
+      }
+    } catch (_) {}
+
+    // Signal expert disponible si discipline ou typePari est connu
+    final signalExpert = meilleureDiscipline.isNotEmpty || typePariStable != null;
+
     return IaNarrativeContext(
       pseudoUtilisateur:          pseudo,
       nbCoursesJour:              rapportJour?.nbAvecResultat ?? 0,
@@ -195,6 +237,9 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       taux7jPrecedent:            taux7jPrecedent,
       meilleureDiscipline:        meilleureDiscipline,
       widgetPremiumLePlusStable:  widgetStable,
+      typePariLePlusStable:       typePariStable,       // ★ v10.66
+      typePariLePlusInstable:     typePariInstable,     // ★ v10.66
+      signalExpertDisponible:     signalExpert,         // ★ v10.66
     );
   }
 
