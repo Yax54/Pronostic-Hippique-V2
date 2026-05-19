@@ -1,15 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA JOURNAL SCREEN — v9.91
-//  ★ v9.91 : structure hiérarchique 3 niveaux
-//            Bilan Mois (replié) → Bilan Semaine (replié) → Rapports journaliers
-//            Semaine en cours toujours visible directement
+//  IA JOURNAL SCREEN — v10.64
+//  ★ v9.91  : structure hiérarchique 3 niveaux
+//  ★ v10.64 : IA Narrative Engine V1 — carte narrative dynamique en tête de journal
 // ═══════════════════════════════════════════════════════════════════════════
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/ia_memory_service.dart';
 import '../services/ia_memory_models.dart';
 import '../services/ia_personality_service.dart';
+import '../models/ia_narrative_models.dart';      // ★ v10.64
+import '../services/ia_narrative_engine.dart';    // ★ v10.64
+import '../widgets/ia_narrative_card.dart';        // ★ v10.64
 
 class IaJournalScreen extends StatefulWidget {
   const IaJournalScreen({super.key});
@@ -20,6 +23,82 @@ class IaJournalScreen extends StatefulWidget {
 class _IaJournalScreenState extends State<IaJournalScreen> {
   // Clés de dépliage : 'mois-YYYY-MM' | 'sem-YYYY-MM-DD'
   final Set<String> _expanded = {};
+
+  // ★ v10.64 — Narrative Engine : pseudo utilisateur chargé en async
+  String _pseudoUtilisateur = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _chargerPseudo();
+  }
+
+  Future<void> _chargerPseudo() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _pseudoUtilisateur = prefs.getString('profil_nom') ?? '';
+      });
+    }
+  }
+
+  // ★ v10.64 — Construit le contexte narratif depuis les données existantes
+  IaNarrativeContext _buildNarrativeContext(
+    List<RapportJournalier> rapports,
+  ) {
+    final now   = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final hier  = today.subtract(const Duration(days: 1));
+
+    // Rapport d'aujourd'hui
+    RapportJournalier? rapportJour;
+    try {
+      rapportJour = rapports.firstWhere((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return d == today;
+      });
+    } catch (_) {
+      rapportJour = null;
+    }
+
+    // Rapport d'hier
+    RapportJournalier? rapportHier;
+    try {
+      rapportHier = rapports.firstWhere((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return d == hier;
+      });
+    } catch (_) {
+      rapportHier = null;
+    }
+
+    // Streaks premium (lecture seule)
+    final svc = IaMemoryService.instance;
+    final streakConseil   = svc.calculerStreakPremium(sourceWidget: 'conseilJour',    dateReference: today);
+    final streakMeilleur  = svc.calculerStreakPremium(sourceWidget: 'meilleurPari',   dateReference: today);
+    final streakEquilibre = svc.calculerStreakPremium(sourceWidget: 'topEquilibre',   dateReference: today);
+    final streakSur       = svc.calculerStreakPremium(sourceWidget: 'plusSur',        dateReference: today);
+    final streakRentable  = svc.calculerStreakPremium(sourceWidget: 'plusRentable',   dateReference: today);
+
+    return IaNarrativeContext(
+      pseudoUtilisateur:    _pseudoUtilisateur,
+      nbCoursesJour:        rapportJour?.nbAvecResultat ?? 0,
+      nbBonnesCoursesJour:  rapportJour != null
+          ? ((rapportJour.tauxGagnant / 100) * rapportJour.nbAvecResultat).round()
+          : 0,
+      nbCoursesHier:        rapportHier?.nbAvecResultat ?? 0,
+      nbBonnesCoursesHier:  rapportHier != null
+          ? ((rapportHier.tauxGagnant / 100) * rapportHier.nbAvecResultat).round()
+          : 0,
+      roiJour:              0,
+      roiHier:              0,
+      streakPlusSur:        streakSur.jours,
+      streakMeilleurPari:   streakMeilleur.jours,
+      streakTopEquilibre:   streakEquilibre.jours,
+      streakPlusRentable:   streakRentable.jours,
+      streakConseilJour:    streakConseil.jours,
+    );
+  }
 
   static const _dark   = Color(0xFF0D1B2A);
   static const _card   = Color(0xFF111F30);
@@ -72,6 +151,13 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
               children: [
+                // ── ★ v10.64 : Carte narrative IA ────────────────────────
+                IaNarrativeCard(
+                  message: IaNarrativeEngine.genererResume(
+                    _buildNarrativeContext(rapports),
+                  ),
+                ),
+
                 // ── Bilan hebdo (semaine en cours) ───────────────────────
                 if (hebdo != null) _buildBilanHebdo(hebdo, ia),
 
