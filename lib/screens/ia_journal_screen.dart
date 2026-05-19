@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA JOURNAL SCREEN — v10.64
+//  IA JOURNAL SCREEN — v10.65
 //  ★ v9.91  : structure hiérarchique 3 niveaux
 //  ★ v10.64 : IA Narrative Engine V1 — carte narrative dynamique en tête de journal
+//  ★ v10.65 : IA Narrative Engine V2 — mémoire anti-répétition, tendances 7j, discipline forte
 // ═══════════════════════════════════════════════════════════════════════════
 import 'dart:convert';
 import 'dart:math';
@@ -11,7 +12,7 @@ import '../services/ia_memory_service.dart';
 import '../services/ia_memory_models.dart';
 import '../services/ia_personality_service.dart';
 import '../models/ia_narrative_models.dart';      // ★ v10.64
-import '../services/ia_narrative_engine.dart';    // ★ v10.64
+import '../services/ia_narrative_engine.dart';    // ★ v10.65
 import '../widgets/ia_narrative_card.dart';        // ★ v10.64
 
 class IaJournalScreen extends StatefulWidget {
@@ -24,33 +25,48 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
   // Clés de dépliage : 'mois-YYYY-MM' | 'sem-YYYY-MM-DD'
   final Set<String> _expanded = {};
 
-  // ★ v10.64 — Narrative Engine : pseudo utilisateur chargé en async
+  // ★ v10.65 — Cache narratif async (refraisé à chaque ouverture du journal)
   String _pseudoUtilisateur = '';
+  String? _messageNarratif;          // null = chargement en cours
+  bool   _narratifCharge = false;
 
   @override
   void initState() {
     super.initState();
-    _chargerPseudo();
+    _initialiserNarratif();
   }
 
-  Future<void> _chargerPseudo() async {
+  Future<void> _initialiserNarratif() async {
+    // 1. Charger le pseudo
     final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _pseudoUtilisateur = prefs.getString('profil_nom') ?? '';
-      });
-    }
+    if (!mounted) return;
+    final pseudo = prefs.getString('profil_nom') ?? '';
+
+    // 2. Construire le contexte (synchrone) sur les rapports en mémoire
+    final rapports = IaMemoryService.instance.rapports;
+    final ctx = _buildNarrativeContext(rapports, pseudo);
+
+    // 3. Générer le message V2 (async, anti-répétition)
+    final msg = await IaNarrativeEngine.genererResumeV2(ctx);
+
+    if (!mounted) return;
+    setState(() {
+      _pseudoUtilisateur = pseudo;
+      _messageNarratif   = msg;
+      _narratifCharge    = true;
+    });
   }
 
-  // ★ v10.64 — Construit le contexte narratif depuis les données existantes
+  // ★ v10.65 — Construit le contexte narratif depuis les données existantes
   IaNarrativeContext _buildNarrativeContext(
     List<RapportJournalier> rapports,
+    String pseudo,
   ) {
     final now   = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final hier  = today.subtract(const Duration(days: 1));
 
-    // Rapport d'aujourd'hui
+    // ── Rapport d'aujourd'hui ────────────────────────────────────────────
     RapportJournalier? rapportJour;
     try {
       rapportJour = rapports.firstWhere((r) {
@@ -61,7 +77,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       rapportJour = null;
     }
 
-    // Rapport d'hier
+    // ── Rapport d'hier ───────────────────────────────────────────────────
     RapportJournalier? rapportHier;
     try {
       rapportHier = rapports.firstWhere((r) {
@@ -72,8 +88,86 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       rapportHier = null;
     }
 
-    // Streaks premium (lecture seule)
+    // ── ★ v10.65 : Tendances 7 jours ────────────────────────────────────
+    // Rapports des 7 derniers jours (J-1 à J-7)
+    // Rapports des 7 jours précédents (J-8 à J-14)
+    double taux7j = 0.0;
+    double taux7jPrecedent = 0.0;
+
+    try {
+      final rapports7j = rapports.where((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        final diff = today.difference(d).inDays;
+        return diff >= 1 && diff <= 7 && r.nbAvecResultat > 0;
+      }).toList();
+
+      final rapportsPrecedents = rapports.where((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        final diff = today.difference(d).inDays;
+        return diff >= 8 && diff <= 14 && r.nbAvecResultat > 0;
+      }).toList();
+
+      if (rapports7j.isNotEmpty) {
+        taux7j = rapports7j.fold(0.0, (s, r) => s + r.tauxGagnant) /
+            rapports7j.length / 100;
+      }
+      if (rapportsPrecedents.isNotEmpty) {
+        taux7jPrecedent = rapportsPrecedents.fold(
+                0.0, (s, r) => s + r.tauxGagnant) /
+            rapportsPrecedents.length / 100;
+      }
+    } catch (_) {}
+
+    // ── ★ v10.65 : Meilleure discipline ─────────────────────────────────
+    String meilleureDiscipline = '';
+    try {
+      final rapports14j = rapports.where((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return today.difference(d).inDays <= 14 && r.parDiscipline.isNotEmpty;
+      }).toList();
+
+      if (rapports14j.isNotEmpty) {
+        // Agréger taux par discipline
+        final tauxParDisc = <String, List<double>>{};
+        for (final r in rapports14j) {
+          for (final disc in r.parDiscipline) {
+            if (disc.discipline.isNotEmpty && disc.nbCourses > 0) {
+              tauxParDisc.putIfAbsent(disc.discipline, () => []);
+              tauxParDisc[disc.discipline]!.add(disc.tauxGagnant);
+            }
+          }
+        }
+        if (tauxParDisc.isNotEmpty) {
+          meilleureDiscipline = tauxParDisc.entries
+              .reduce((a, b) {
+                final moyA = a.value.reduce((x, y) => x + y) / a.value.length;
+                final moyB = b.value.reduce((x, y) => x + y) / b.value.length;
+                return moyA > moyB ? a : b;
+              })
+              .key;
+        }
+      }
+    } catch (_) {}
+
+    // ── ★ v10.65 : Widget premium le plus stable ─────────────────────────
     final svc = IaMemoryService.instance;
+    String widgetStable = '';
+    try {
+      const sources = [
+        'conseilJour', 'meilleurPari', 'topEquilibre', 'plusSur', 'plusRentable'
+      ];
+      int maxJours = 0;
+      for (final src in sources) {
+        final s = svc.calculerStreakPremium(
+          sourceWidget: src, dateReference: today);
+        if (s.jours > maxJours) {
+          maxJours   = s.jours;
+          widgetStable = s.jours >= 2 ? src : '';
+        }
+      }
+    } catch (_) {}
+
+    // ── Streaks premium (lecture seule) ──────────────────────────────────
     final streakConseil   = svc.calculerStreakPremium(sourceWidget: 'conseilJour',    dateReference: today);
     final streakMeilleur  = svc.calculerStreakPremium(sourceWidget: 'meilleurPari',   dateReference: today);
     final streakEquilibre = svc.calculerStreakPremium(sourceWidget: 'topEquilibre',   dateReference: today);
@@ -81,22 +175,26 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
     final streakRentable  = svc.calculerStreakPremium(sourceWidget: 'plusRentable',   dateReference: today);
 
     return IaNarrativeContext(
-      pseudoUtilisateur:    _pseudoUtilisateur,
-      nbCoursesJour:        rapportJour?.nbAvecResultat ?? 0,
-      nbBonnesCoursesJour:  rapportJour != null
+      pseudoUtilisateur:          pseudo,
+      nbCoursesJour:              rapportJour?.nbAvecResultat ?? 0,
+      nbBonnesCoursesJour:        rapportJour != null
           ? ((rapportJour.tauxGagnant / 100) * rapportJour.nbAvecResultat).round()
           : 0,
-      nbCoursesHier:        rapportHier?.nbAvecResultat ?? 0,
-      nbBonnesCoursesHier:  rapportHier != null
+      nbCoursesHier:              rapportHier?.nbAvecResultat ?? 0,
+      nbBonnesCoursesHier:        rapportHier != null
           ? ((rapportHier.tauxGagnant / 100) * rapportHier.nbAvecResultat).round()
           : 0,
-      roiJour:              0,
-      roiHier:              0,
-      streakPlusSur:        streakSur.jours,
-      streakMeilleurPari:   streakMeilleur.jours,
-      streakTopEquilibre:   streakEquilibre.jours,
-      streakPlusRentable:   streakRentable.jours,
-      streakConseilJour:    streakConseil.jours,
+      roiJour:                    0,
+      roiHier:                    0,
+      streakPlusSur:              streakSur.jours,
+      streakMeilleurPari:         streakMeilleur.jours,
+      streakTopEquilibre:         streakEquilibre.jours,
+      streakPlusRentable:         streakRentable.jours,
+      streakConseilJour:          streakConseil.jours,
+      taux7j:                     taux7j,
+      taux7jPrecedent:            taux7jPrecedent,
+      meilleureDiscipline:        meilleureDiscipline,
+      widgetPremiumLePlusStable:  widgetStable,
     );
   }
 
@@ -151,11 +249,13 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
               children: [
-                // ── ★ v10.64 : Carte narrative IA ────────────────────────
+                // ── ★ v10.65 : Carte narrative IA (V2 async, anti-répétition) ──
                 IaNarrativeCard(
-                  message: IaNarrativeEngine.genererResume(
-                    _buildNarrativeContext(rapports),
-                  ),
+                  // Si le message narratif est prêt : l'afficher.
+                  // En cours de chargement : phrase courte sobre (jamais vide).
+                  message: _narratifCharge && _messageNarratif != null
+                      ? _messageNarratif!
+                      : '',
                 ),
 
                 // ── Bilan hebdo (semaine en cours) ───────────────────────

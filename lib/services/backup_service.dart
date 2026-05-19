@@ -125,7 +125,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.7'; // ★ v10.62 : +premium_widgets_selection_jour_v1 (figeage 5 widgets premium)
+  static const _backupVersion = '7.8'; // ★ v10.65 : +ia_narrative_memory_v1 (mémoire narrative anti-répétition)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -203,6 +203,9 @@ class BackupService {
     // ★ v10.34/v10.35 : Flags migration précision (recalcul après fix Couplé)
     'ia_precision_migrated_v2',
     'ia_precision_migrated_v3',
+    // ★ v10.65 : Mémoire narrative anti-répétition (secondaire — recréable si absente)
+    // Si absente dans un ancien backup : créée vide automatiquement, jamais crash
+    'ia_narrative_memory_v1',
     // ★ v10.371-audit : flags transitoires (one-shot — restaurer évite un recalcul inutile)
     'elo_orphelins_purges_v1',   // Flag purge ELO orphelins (elo_service)
     'conseils_inject_pending',   // Flag injection conseils en attente
@@ -758,6 +761,26 @@ class BackupService {
       if (kDebugMode) {
         debugPrint('[Backup] Import complet — $total cles restaurees '
             '($nbParisCount paris, $nbPronosticsIA pronostics) — format v$backupVer');
+      }
+
+      // ★ v10.65 — Compatibilité mémoire narrative (secondaire)
+      // Si ia_narrative_memory_v1 est absente dans un ancien backup :
+      //   → supprimer la clé existante pour repartir proprement sur mémoire vide
+      //   → ne jamais crasher — la narration est secondaire
+      try {
+        final configGroupe = data['configIA'] as Map<String, dynamic>?;
+        final hasNarrativeMemory = configGroupe != null &&
+            configGroupe.containsKey('ia_narrative_memory_v1');
+        if (!hasNarrativeMemory) {
+          await prefs.remove('ia_narrative_memory_v1');
+          if (kDebugMode) {
+            debugPrint('[Backup] ia_narrative_memory_v1 absente → mémoire narrative vide (compat)');
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[Backup] ia_narrative_memory_v1 compat (ignoré) : $e');
+        }
       }
 
       // ★ v10.26c — Recharger la RAM IaMemoryService depuis les SharedPreferences restaurées
