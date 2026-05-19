@@ -12,7 +12,7 @@ import '../services/zone_turf_service.dart';
 import '../services/data_refresh_service.dart';
 import '../services/alert_service.dart';
 import '../services/ia_memory_service.dart' show IaMemoryService;
-import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, PremiumStreak;
+import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, PremiumStreak, SelectionWidgetPremiumDuJour;
 import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
@@ -104,7 +104,8 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   // ★ v10.37 v2 : Enregistrer les 3 Best Bets avec courseKey + typePari + numéros
-  void _enregistrerBestBetsPremium() {
+  // ★ v10.62 : +figeage des 3 widgets premium BestBet (get-or-create, idempotent)
+  Future<void> _enregistrerBestBetsPremium() async {
     try {
       final opps = _calculerOpportunites();
       if (opps.isEmpty) return;
@@ -151,6 +152,44 @@ class _BestBetScreenState extends State<BestBetScreen>
       if (premiums.isNotEmpty) {
         IaMemoryService.instance.enregistrerPronosticsPremiumDuJour(premiums);
       }
+
+      // ★ v10.62 — Figeage des 3 widgets premium BestBet (get-or-create)
+      // Sécurité : ne fige que si courseKey + typePari + numeros sont valides.
+      final aujourd = DateTime.now();
+      final dateKeyAujourd = '${aujourd.year}-${aujourd.month.toString().padLeft(2,'0')}-${aujourd.day.toString().padLeft(2,'0')}';
+
+      Future<void> figerBetOpp(_BetOpp? opp, String sourceWidget) async {
+        if (opp == null) return;
+        final key = buildCourseKey(
+          reunionCode: opp.reunion.code,
+          numCourse:   opp.course.numCourse,
+          dateStr:     opp.course.dateStr,
+        );
+        if (key.isEmpty || opp.typePari.isEmpty || opp.numeros.isEmpty) return;
+        await IaMemoryService.instance.obtenirOuCreerSelectionWidgetPremiumDuJour(
+          date:         aujourd,
+          sourceWidget: sourceWidget,
+          calculerSelection: () => SelectionWidgetPremiumDuJour(
+            dateKey:      dateKeyAujourd,
+            sourceWidget: sourceWidget,
+            courseKey:    key,
+            typePari:     opp.typePari,
+            numeros:      opp.numeros,
+            nomCourse:    opp.course.nom,
+            hippodrome:   opp.reunion.lieu,
+            heure:        opp.course.heure,
+            chevalNom:    opp.favori.nom,
+            score:        opp.scoreConfiance,
+            createdAt:    aujourd,
+          ),
+        );
+      }
+
+      await figerBetOpp(topEquilibre, 'topEquilibre');
+      await figerBetOpp(plusSur,      'plusSur');
+      await figerBetOpp(plusRentable, 'plusRentable');
+      // — Fin figeage v10.62 —
+
     } catch (_) {}
   }
 

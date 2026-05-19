@@ -72,6 +72,18 @@ class IaMemoryService extends ChangeNotifier {
   // Purgé automatiquement après 90 jours.
   static const _premiumHistoriqueKey = 'ia_premium_historique_v1';
   static const _premiumHistoriqueMaxJours = 90;
+  // ★ v10.62 : Clé figeage des 5 widgets premium du jour (distincte de l'historique calendrier)
+  // Format : {"YYYY-MM-DD": {"conseilJour": {...}, "meilleurPari": {...}, ...}}
+  // Ne remplace PAS ia_premium_historique_v1 ni ia_premium_du_jour_v1.
+  static const premiumWidgetsSelectionKey = 'premium_widgets_selection_jour_v1';
+  // ★ v10.62 : Set des 5 sourceWidgets autorisés pour le figeage
+  static const Set<String> sourcesWidgetsPremiumFiges = {
+    'conseilJour',
+    'meilleurPari',
+    'topEquilibre',
+    'plusSur',
+    'plusRentable',
+  };
   static const _maxPronostics   = 600;
   // ★ Lot 4 : Compression + purge automatique
   static const _maxPronosticsAge = 90;    // purger les pronostics > 90 jours sans résultat
@@ -4143,6 +4155,10 @@ class IaMemoryService extends ChangeNotifier {
     return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
+  /// Formate une date quelconque au format 'YYYY-MM-DD' (clé SharedPreferences).
+  String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   // ★ v10.50 — Validation dédiée étoile calendrier premium
   // ══════════════════════════════════════════════════════════════════════════
   // RÈGLE ABSOLUE : jamais de fallback permissif.
@@ -4486,6 +4502,179 @@ class IaMemoryService extends ChangeNotifier {
     await _chargerPremiumHistorique();
     notifyListeners();
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  v10.62 — FIGEAGE DES 5 WIDGETS PREMIUM DU JOUR
+  //  Clé : premium_widgets_selection_jour_v1
+  //  Format : {"YYYY-MM-DD": {"conseilJour": {...}, "meilleurPari": {...}, ...}}
+  //  RÈGLE : date + sourceWidget = UNE SEULE sélection officielle (idempotent).
+  //  Ne concerne PAS les pronostics généraux, le calendrier, ni l'analyse journée.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Retourne true si [sourceWidget] fait partie des 5 widgets premium autorisés.
+  bool estSourceWidgetPremiumFigee(String sourceWidget) =>
+      sourcesWidgetsPremiumFiges.contains(sourceWidget);
+
+  /// Charge toutes les sélections figées pour [date] depuis SharedPreferences.
+  /// Retourne une Map {sourceWidget → SelectionWidgetPremiumDuJour}.
+  /// Les entrées dont le sourceWidget n'est pas dans [sourcesWidgetsPremiumFiges]
+  /// sont ignorées silencieusement (sécurité anti-corruption).
+  Future<Map<String, SelectionWidgetPremiumDuJour>>
+      chargerSelectionsWidgetsPremiumDuJour(DateTime date) async {
+    try {
+      final prefs   = await SharedPreferences.getInstance();
+      final raw     = prefs.getString(premiumWidgetsSelectionKey);
+      final dateKey = _dateKey(date);
+
+      if (raw == null || raw.isEmpty) return {};
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return {};
+
+      final entries = decoded[dateKey];
+      if (entries is! Map<String, dynamic>) return {};
+
+      final result = <String, SelectionWidgetPremiumDuJour>{};
+      for (final entry in entries.entries) {
+        if (!estSourceWidgetPremiumFigee(entry.key)) continue;
+        try {
+          final sel = SelectionWidgetPremiumDuJour.fromJson(
+              Map<String, dynamic>.from(entry.value as Map));
+          if (sel.estValide) result[entry.key] = sel;
+        } catch (_) {}
+      }
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Sauvegarde [selection] dans SharedPreferences.
+  /// IDEMPOTENT : si une sélection valide existe déjà pour cette date + sourceWidget,
+  /// elle n'est PAS remplacée (règle de figeage).
+  /// Préconditions vérifiées avant écriture :
+  ///   • sourceWidget dans [sourcesWidgetsPremiumFiges]
+  ///   • courseKey non vide
+  ///   • typePari non vide
+  ///   • numeros non vide
+  Future<void> sauvegarderSelectionWidgetPremiumDuJour(
+      SelectionWidgetPremiumDuJour selection) async {
+    if (!estSourceWidgetPremiumFigee(selection.sourceWidget)) {
+      if (kDebugMode) {
+        debugPrint('[PremiumFigeage] ⛔ sourceWidget invalide : ${selection.sourceWidget}');
+      }
+      return;
+    }
+    if (!selection.estValide) {
+      if (kDebugMode) {
+        debugPrint('[PremiumFigeage] ⛔ Sélection invalide — '
+            'courseKey=${selection.courseKey} typePari=${selection.typePari} '
+            'numeros=${selection.numeros}');
+      }
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw   = prefs.getString(premiumWidgetsSelectionKey);
+
+      Map<String, dynamic> root = {};
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) root = Map<String, dynamic>.from(decoded);
+      }
+
+      final dateEntries = Map<String, dynamic>.from(
+          root[selection.dateKey] as Map? ?? {});
+
+      // ─ Règle critique : une date + un des 5 widgets = une seule sélection ─
+      final existant = dateEntries[selection.sourceWidget];
+      if (existant != null) {
+        // Vérifier que l'existant est valide (non corrompu)
+        try {
+          final s = SelectionWidgetPremiumDuJour.fromJson(
+              Map<String, dynamic>.from(existant as Map));
+          if (s.estValide) {
+            if (kDebugMode) {
+              debugPrint('[PremiumFigeage] ✅ Déjà figé — ${selection.sourceWidget} '
+                  '@ ${selection.dateKey} (courseKey=${s.courseKey})');
+            }
+            return; // déjà figé et valide → on ne touche pas
+          }
+          // existant corrompu → on remplace
+          if (kDebugMode) {
+            debugPrint('[PremiumFigeage] ⚠️ Entrée corrompue remplacée — '
+                '${selection.sourceWidget} @ ${selection.dateKey}');
+          }
+        } catch (_) {
+          // parse échoué → entrée corrompue, on remplace
+        }
+      }
+
+      dateEntries[selection.sourceWidget] = selection.toJson();
+      root[selection.dateKey] = dateEntries;
+
+      await prefs.setString(premiumWidgetsSelectionKey, jsonEncode(root));
+      if (kDebugMode) {
+        debugPrint('[PremiumFigeage] 💾 Sauvegardé — ${selection.sourceWidget} '
+            '@ ${selection.dateKey} | courseKey=${selection.courseKey} '
+            '| typePari=${selection.typePari} | numeros=${selection.numeros}');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[PremiumFigeage] ❌ Erreur sauvegarde : $e');
+    }
+  }
+
+  /// Pattern get-or-create pour un widget premium.
+  ///
+  /// Si une sélection valide existe déjà pour [date] + [sourceWidget] → la retourne.
+  /// Si aucune sélection valide → appelle [calculerSelection], sauvegarde si valide,
+  ///   et la retourne.
+  /// Si [calculerSelection] retourne une sélection invalide → la retourne SANS
+  ///   sauvegarder (autoriser un nouveau calcul plus tard dans la journée).
+  ///
+  /// Throw [ArgumentError] si [sourceWidget] n'est pas dans [sourcesWidgetsPremiumFiges].
+  Future<SelectionWidgetPremiumDuJour> obtenirOuCreerSelectionWidgetPremiumDuJour({
+    required DateTime date,
+    required String sourceWidget,
+    required SelectionWidgetPremiumDuJour Function() calculerSelection,
+  }) async {
+    if (!estSourceWidgetPremiumFigee(sourceWidget)) {
+      throw ArgumentError(
+          'obtenirOuCreerSelectionWidgetPremiumDuJour: '
+          'sourceWidget "$sourceWidget" non autorisé. '
+          'Utiliser uniquement les 5 widgets premium.');
+    }
+
+    // 1. Charger les sélections existantes pour ce jour
+    final existantes = await chargerSelectionsWidgetsPremiumDuJour(date);
+    final dejaSauvegardee = existantes[sourceWidget];
+    if (dejaSauvegardee != null) {
+      if (kDebugMode) {
+        debugPrint('[PremiumFigeage] 🔒 Figé retourné — $sourceWidget '
+            '@ ${_dateKey(date)} (courseKey=${dejaSauvegardee.courseKey})');
+      }
+      return dejaSauvegardee;
+    }
+
+    // 2. Calculer une nouvelle sélection
+    final nouvelle = calculerSelection();
+
+    // 3. Ne sauvegarder que si la sélection est valide
+    if (!nouvelle.estValide) {
+      if (kDebugMode) {
+        debugPrint('[PremiumFigeage] ⏳ Sélection invalide — $sourceWidget '
+            '@ ${_dateKey(date)} : pas de sauvegarde (recalcul autorisé)');
+      }
+      return nouvelle; // retourner sans figer
+    }
+
+    // 4. Sauvegarder (idempotent — double protection)
+    await sauvegarderSelectionWidgetPremiumDuJour(nouvelle);
+    return nouvelle;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
 
   // ★ Lot 4 ── Statistiques de compression ─────────────────────────────────
   /// Retourne la taille estimée des données IA en mémoire (pour affichage profil)

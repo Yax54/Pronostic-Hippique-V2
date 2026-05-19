@@ -190,6 +190,78 @@ class PremiumStreak {
   }
 }
 
+// ─── Modèle de sélection figée d'un widget premium pour le jour J ────────────
+// ★ v10.62 : utilisé pour figer les 5 widgets premium (conseilJour, meilleurPari,
+//            topEquilibre, plusSur, plusRentable) une seule fois par jour.
+//            Stocké dans 'premium_widgets_selection_jour_v1'.
+//            Ne concerne PAS les pronostics généraux ni le calendrier.
+
+class SelectionWidgetPremiumDuJour {
+  final String dateKey;       // 'YYYY-MM-DD' — date de référence du widget
+  final String sourceWidget;  // l'un des 5 : conseilJour|meilleurPari|topEquilibre|plusSur|plusRentable
+  final String courseKey;     // clé unique de la course (non vide)
+  final String typePari;      // type de pari valide (non vide)
+  final List<String> numeros; // numéros de chevaux (non vide)
+  final String? nomCourse;
+  final String? hippodrome;
+  final String? heure;
+  final String? chevalNom;
+  final double? score;
+  final DateTime createdAt;
+
+  const SelectionWidgetPremiumDuJour({
+    required this.dateKey,
+    required this.sourceWidget,
+    required this.courseKey,
+    required this.typePari,
+    required this.numeros,
+    required this.createdAt,
+    this.nomCourse,
+    this.hippodrome,
+    this.heure,
+    this.chevalNom,
+    this.score,
+  });
+
+  /// Vérifie que la sélection contient les données minimales obligatoires.
+  bool get estValide =>
+      dateKey.isNotEmpty &&
+      sourceWidget.isNotEmpty &&
+      courseKey.isNotEmpty &&
+      typePari.isNotEmpty &&
+      numeros.isNotEmpty;
+
+  Map<String, dynamic> toJson() => {
+        'dateKey':      dateKey,
+        'sourceWidget': sourceWidget,
+        'courseKey':    courseKey,
+        'typePari':     typePari,
+        'numeros':      numeros,
+        'nomCourse':    nomCourse,
+        'hippodrome':   hippodrome,
+        'heure':        heure,
+        'chevalNom':    chevalNom,
+        'score':        score,
+        'createdAt':    createdAt.toIso8601String(),
+      };
+
+  factory SelectionWidgetPremiumDuJour.fromJson(Map<String, dynamic> json) {
+    return SelectionWidgetPremiumDuJour(
+      dateKey:      json['dateKey']      as String? ?? '',
+      sourceWidget: json['sourceWidget'] as String? ?? '',
+      courseKey:    json['courseKey']    as String? ?? '',
+      typePari:     json['typePari']     as String? ?? '',
+      numeros:      List<String>.from(json['numeros'] as List? ?? const []),
+      nomCourse:    json['nomCourse']    as String?,
+      hippodrome:   json['hippodrome']   as String?,
+      heure:        json['heure']        as String?,
+      chevalNom:    json['chevalNom']    as String?,
+      score:        (json['score']       as num?)?.toDouble(),
+      createdAt:    DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
 // ─── Modèle d'un pronostic enregistré ────────────────────────────────────────
 
 class IaPronostic {

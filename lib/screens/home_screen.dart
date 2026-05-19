@@ -8,7 +8,7 @@ import '../models/zt_models.dart';
 import '../services/data_refresh_service.dart';
 import '../services/ia_personality_service.dart';  // ★ v9.85
 import '../services/ia_memory_service.dart';       // ★ v9.89
-import '../services/ia_memory_models.dart' show PremiumPronosticDuJour; // ★ v10.37
+import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, SelectionWidgetPremiumDuJour; // ★ v10.37/v10.62
 import '../widgets/ia/ia_bubble_widget.dart';       // ★ v9.85
 import '../widgets/ia/ia_speech_widget.dart';       // ★ v9.85
 import '../widgets/arrivee_reelle_widget.dart';
@@ -272,6 +272,77 @@ class _HomeScreenState extends State<HomeScreen> {
     if (premiums.isNotEmpty) {
       await IaMemoryService.instance.enregistrerPronosticsPremiumDuJour(premiums);
     }
+
+    // ★ v10.62 — Figeage des widgets premium Home (conseilJour + meilleurPari)
+    // Pattern get-or-create : sauvegarde uniquement si valide, idempotent.
+    // Ne bloque pas les autres widgets, ni l'analyse, ni les cours générales.
+    final aujourd = DateTime.now();
+    final dateKeyAujourd = '${aujourd.year}-${aujourd.month.toString().padLeft(2,'0')}-${aujourd.day.toString().padLeft(2,'0')}';
+
+    // ── Conseil IA du Jour ──────────────────────────────────────────────────
+    if (conseil.course != null && conseil.reunion != null) {
+      final keyConseil = buildCourseKey(
+        reunionCode: conseil.reunion!.code,
+        numCourse:   conseil.course!.numCourse,
+        dateStr:     conseil.course!.dateStr,
+      );
+      if (keyConseil.isNotEmpty) {
+        final (tp: tpConseil, nums: numsConseil) =
+            typePariEtNumerosPourCourse(conseil.course!);
+        if (tpConseil.isNotEmpty && numsConseil.isNotEmpty) {
+          await IaMemoryService.instance.obtenirOuCreerSelectionWidgetPremiumDuJour(
+            date:        aujourd,
+            sourceWidget: 'conseilJour',
+            calculerSelection: () => SelectionWidgetPremiumDuJour(
+              dateKey:     dateKeyAujourd,
+              sourceWidget: 'conseilJour',
+              courseKey:   keyConseil,
+              typePari:    tpConseil,
+              numeros:     numsConseil,
+              nomCourse:   conseil.course!.nom,
+              hippodrome:  conseil.reunion!.lieu,
+              heure:       conseil.course!.heure,
+              score:       conseil.course!.confianceIA,
+              createdAt:   aujourd,
+            ),
+          );
+        }
+      }
+    }
+
+    // ── Meilleur Pari du Jour ───────────────────────────────────────────────
+    if (meilleur.course != null && meilleur.reunion != null &&
+        meilleur.cheval != null) {
+      final keyMeilleur = buildCourseKey(
+        reunionCode: meilleur.reunion!.code,
+        numCourse:   meilleur.course!.numCourse,
+        dateStr:     meilleur.course!.dateStr,
+      );
+      if (keyMeilleur.isNotEmpty) {
+        final (tp: tpMeilleur, nums: numsMeilleur) =
+            typePariEtNumerosPourCourse(meilleur.course!);
+        if (tpMeilleur.isNotEmpty && numsMeilleur.isNotEmpty) {
+          await IaMemoryService.instance.obtenirOuCreerSelectionWidgetPremiumDuJour(
+            date:        aujourd,
+            sourceWidget: 'meilleurPari',
+            calculerSelection: () => SelectionWidgetPremiumDuJour(
+              dateKey:     dateKeyAujourd,
+              sourceWidget: 'meilleurPari',
+              courseKey:   keyMeilleur,
+              typePari:    tpMeilleur,
+              numeros:     numsMeilleur,
+              nomCourse:   meilleur.course!.nom,
+              hippodrome:  meilleur.reunion!.lieu,
+              heure:       meilleur.course!.heure,
+              chevalNom:   meilleur.cheval!.nom,
+              score:       meilleur.cheval!.scoreIA,
+              createdAt:   aujourd,
+            ),
+          );
+        }
+      }
+    }
+    // ── Fin figeage v10.62 ──────────────────────────────────────────────────
 
     // ★ v10.23 : recalcul immédiat + résumé Conseil IA matinal
     final nbConseil = await AlertService.instance.recalculerCoursesConseilIA(reunions);
