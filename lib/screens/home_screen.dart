@@ -37,6 +37,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ZtReunion> get _reunions =>
       DataRefreshService.instance.reunions;
 
+  // ★ v10.63 : écoute NavigationNotifier pour recalculer le bandeau Conseils IA
+  // au retour de la page Conseils (index 1 → index 0).
+  int _dernierIndexNav = 0;
+
   // ★ fix #7 : cache pour éviter recalcul O(n²) à chaque rebuild
   List<ZtReunion>? _cachedReunionsPourCalc;
   ({ZtCourse? course, ZtPartant? cheval, ZtReunion? reunion})? _cachedMeilleurPari;
@@ -197,7 +201,35 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // ★ v9.85 : Bulle matinale de l'IA au 1er chargement du jour
-    WidgetsBinding.instance.addPostFrameCallback((_) => _declencherBulleMatinale());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _declencherBulleMatinale();
+      // ★ v10.63 : écouter les changements de navigation pour synchroniser le bandeau
+      final navNotifier = context.read<NavigationNotifier>();
+      navNotifier.addListener(_onNavigationChange);
+    });
+  }
+
+  @override
+  void dispose() {
+    // ★ v10.63 : retirer le listener pour éviter les fuites mémoire
+    final navNotifier = context.read<NavigationNotifier>();
+    navNotifier.removeListener(_onNavigationChange);
+    super.dispose();
+  }
+
+  /// ★ v10.63 : détecté le retour vers Home depuis Conseils IA
+  /// → force recalcul du bandeau pour afficher l'état à jour.
+  void _onNavigationChange() {
+    final navNotifier = context.read<NavigationNotifier>();
+    final nouvelIndex = navNotifier.index;
+    // Retour sur Home (0) depuis Conseils IA (1) ou autre onglet
+    if (nouvelIndex == 0 && _dernierIndexNav != 0) {
+      final reunions = DataRefreshService.instance.reunions;
+      if (reunions.isNotEmpty) {
+        AlertService.instance.recalculerCoursesConseilIA(reunions);
+      }
+    }
+    _dernierIndexNav = nouvelIndex;
   }
 
   // ★ v10.55 — Délègue à premium_utils (helper centralisé — plus de duplication).
@@ -691,173 +723,277 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── ★ v10.23 : Bandeau dynamique Conseil IA ──────────────────────
+  // ★ v10.63 — Bandeau Conseils IA : logique 3 états SANS FutureBuilder
+  // Toutes les données viennent des getters synchrones d'AlertService
+  // (mis à jour par recalculerCoursesConseilIA() à chaque refresh/retour).
   Widget _buildBandeauConseilIA() {
-    // ★ fix : context.watch pour rebuild automatique quand AlertService notifie
-    final alertSvc = context.watch<AlertService>();
-    final courses  = alertSvc.coursesConseilIA;
+    final alertSvc = context.watch<AlertService>(); // rebuild auto sur notifyListeners()
 
-    return FutureBuilder<Map<String, dynamic>>(
-      future: alertSvc.getCriteresConseilIA(),
-      builder: (context, snap) {
-        final criteres   = snap.data;
-        final filtresActifs = criteres != null && (criteres['actifs'] as bool? ?? false);
-        final nb         = courses.length;
+    // ── Lire l'état depuis les getters synchrones ────────────────────
+    final filtresActifs = alertSvc.conseilsFiltresActifs;
+    final types         = alertSvc.conseilsFiltresTypesParis;
+    final hippos        = alertSvc.conseilsFiltresHippodromes;
+    final discs         = alertSvc.conseilsFiltresDisciplines;
+    final confMin       = alertSvc.conseilsFiltresConfianceMin;
 
-        // ── Résumé des critères actifs pour l'affichage ──────────────
-        String criteresLabel = '';
-        if (filtresActifs) {
-          final parts = <String>[];
-          final types  = (criteres['types']  as List?)?.cast<String>() ?? [];
-          final hippos = (criteres['hippos'] as List?)?.cast<String>() ?? [];
-          final discs  = (criteres['discs']  as List?)?.cast<String>() ?? [];
-          final conf   = criteres['confMin'] as int? ?? 0;
-          if (types.isNotEmpty)  parts.add(types.take(2).join(' / '));
-          if (conf > 0)          parts.add('≥$conf%');
-          if (hippos.isNotEmpty) parts.add(hippos.take(2).join(' / '));
-          if (discs.isNotEmpty)  parts.add(discs.take(2).join(' / '));
-          criteresLabel = parts.join(' · ');
-        }
+    final aucunCritere  = types.isEmpty && hippos.isEmpty &&
+        discs.isEmpty && confMin <= 0;
 
-        // ── État : filtres non activés ───────────────────────────────
-        if (!filtresActifs) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111F30),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-            ),
-            child: Row(
-              children: [
-                const Text('⚙️', style: TextStyle(fontSize: 16)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Filtres critères non activés — configure-les dans Conseils IA',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 14),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => context.read<NavigationNotifier>().goTo(1),
-                  child: const Text('Configurer →',
-                      style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, fontWeight: FontWeight.bold)),
-                ),
-              ],
-            ),
-          );
-        }
+    // Liste filtrée (état 3) ou liste totale (état 2)
+    final coursesFiltrees   = alertSvc.coursesConseilIA;
+    final totalCoursesIA    = alertSvc.toutesCoursesConseilIA.length;
 
-        // ── État : filtres actifs, 0 course ─────────────────────────
-        if (nb == 0) {
-          // ★ v10.37 fix : cliquable même à 0 course → redirige vers Conseils IA
-          return GestureDetector(
-            onTap: () => context.read<NavigationNotifier>().goTo(1),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF111F30),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFF6D00).withValues(alpha: 0.3)),
-              ),
-              child: Row(
-                children: [
-                  const Text('😶', style: TextStyle(fontSize: 16)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Aucune course actuelle dans tes critères',
-                            style: TextStyle(color: Colors.white60, fontSize: 15, fontWeight: FontWeight.w600)),
-                        if (criteresLabel.isNotEmpty)
-                          Text(criteresLabel,
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 14)),
-                      ],
-                    ),
-                  ),
-                  // Flèche pour indiquer que c'est cliquable
-                  const Icon(Icons.chevron_right, color: Colors.white24, size: 16),
-                ],
-              ),
-            ),
-          );
-        }
+    // Résumé des critères pour sous-titre (états 3 et 4)
+    String criteresLabel = '';
+    if (filtresActifs && !aucunCritere) {
+      final parts = <String>[];
+      if (types.isNotEmpty)  parts.add(types.take(2).join(' / '));
+      if (confMin > 0)       parts.add('≥$confMin%');
+      if (hippos.isNotEmpty) parts.add(hippos.take(2).join(' / '));
+      if (discs.isNotEmpty)  parts.add(discs.take(2).join(' / '));
+      criteresLabel = parts.join(' · ');
+    }
 
-        // ── État : filtres actifs, X courses ─────────────────────────
-        return GestureDetector(
-          onTap: () => context.read<NavigationNotifier>().goTo(1), // ★ fix → Conseils IA
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  const Color(0xFF1A3A2A),
-                  const Color(0xFF0D2218),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.6), width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                // Icône + compteur
-                Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4CAF7D).withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.5)),
-                  ),
-                  child: Center(
-                    child: Text('$nb',
-                        style: const TextStyle(
-                            color: Color(0xFF4CAF7D),
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Texte
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '🎯 $nb course${nb > 1 ? 's correspondent' : ' correspond'} à tes critères',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      if (criteresLabel.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(criteresLabel,
-                            style: TextStyle(
-                                color: const Color(0xFF4CAF7D).withValues(alpha: 0.8),
-                                fontSize: 14),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ],
-                    ],
-                  ),
-                ),
-                // Flèche
-                const Icon(Icons.arrow_forward_ios, color: Color(0xFF4CAF7D), size: 14),
-              ],
-            ),
+    // ══════════════════════════════════════════════════════════════════
+    // ÉTAT 1 — Bouton OFF
+    // ══════════════════════════════════════════════════════════════════
+    if (!filtresActifs) {
+      return GestureDetector(
+        onTap: () => context.read<NavigationNotifier>().goTo(1),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111F30),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
           ),
-        );
-      },
+          child: Row(
+            children: [
+              const Text('⚙️', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Filtres critères non activés',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.45),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    Text('Configure-les dans Conseils IA',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            fontSize: 13)),
+                  ],
+                ),
+              ),
+              const Text('Configurer →',
+                  style: TextStyle(
+                      color: Color(0xFF7C4DFF),
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ÉTAT 2 — Bouton ON + aucun critère → "Tous les conseils IA"
+    // RÈGLE : ON sans critère ≠ "filtres non activés"
+    // ══════════════════════════════════════════════════════════════════
+    if (aucunCritere) {
+      final nb = totalCoursesIA > 0 ? totalCoursesIA : coursesFiltrees.length;
+      return GestureDetector(
+        onTap: () => context.read<NavigationNotifier>().goTo(1),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF1A3A2A),
+                const Color(0xFF0D2218),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: const Color(0xFF4CAF7D).withValues(alpha: 0.6),
+                width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF7D).withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: const Color(0xFF4CAF7D).withValues(alpha: 0.5)),
+                ),
+                child: const Center(
+                  child: Icon(Icons.auto_awesome,
+                      color: Color(0xFF4CAF7D), size: 20),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      nb > 0
+                          ? '$nb courses IA disponibles'
+                          : 'Courses IA disponibles',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text('Tous les conseils IA',
+                        style: TextStyle(
+                            color: Color(0xFF4CAF7D), fontSize: 13)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios,
+                  color: Color(0xFF4CAF7D), size: 14),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ÉTAT 3a — Bouton ON + critères + 0 résultat
+    // ══════════════════════════════════════════════════════════════════
+    if (coursesFiltrees.isEmpty) {
+      return GestureDetector(
+        onTap: () => context.read<NavigationNotifier>().goTo(1),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111F30),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: const Color(0xFFFF6D00).withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Text('😶', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Aucune course actuelle dans tes critères',
+                        style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    if (criteresLabel.isNotEmpty)
+                      Text(criteresLabel,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.white24, size: 16),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ÉTAT 3b — Bouton ON + critères + X résultats ✅
+    // ══════════════════════════════════════════════════════════════════
+    final nb = coursesFiltrees.length;
+    return GestureDetector(
+      onTap: () => context.read<NavigationNotifier>().goTo(1),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A3A2A), Color(0xFF0D2218)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: const Color(0xFF4CAF7D).withValues(alpha: 0.6),
+              width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFF4CAF7D).withValues(alpha: 0.2),
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: const Color(0xFF4CAF7D).withValues(alpha: 0.5)),
+              ),
+              child: Center(
+                child: Text('$nb',
+                    style: const TextStyle(
+                        color: Color(0xFF4CAF7D),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '🎯 $nb course${nb > 1 ? 's correspondent' : ' correspond'} à tes critères',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  if (criteresLabel.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(criteresLabel,
+                        style: TextStyle(
+                            color: const Color(0xFF4CAF7D).withValues(alpha: 0.8),
+                            fontSize: 13),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios,
+                color: Color(0xFF4CAF7D), size: 14),
+          ],
+        ),
+      ),
     );
   }
 

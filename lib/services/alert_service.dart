@@ -1103,46 +1103,89 @@ class AlertService extends ChangeNotifier {
     return _coursesMatchingConseils;
   }
 
-  // Cache synchrone des courses matchant les critères — mis à jour par
-  // checkCoursesConseilIA() depuis DataRefreshService.
-  List<({ZtCourse course, ZtReunion reunion})> _coursesMatchingConseils = [];
+  // ★ v10.63 : caches synchrones pour bandeau Home (sans FutureBuilder)
+  // mis à jour par recalculerCoursesConseilIA() après chaque refresh/changement.
+  List<({ZtCourse course, ZtReunion reunion})> _coursesMatchingConseils    = [];
+  List<({ZtCourse course, ZtReunion reunion})> _toutesCoursesConseilIALst  = [];
+  bool     _conseilsFiltresActifs      = true;
+  List<String> _conseilsFiltresTypes   = [];
+  List<String> _conseilsFiltresHippos  = [];
+  List<String> _conseilsFiltresDiscs   = [];
+  int      _conseilsFiltresConfMin     = 0;
+
+  // Getters synchrones utilisés par _buildBandeauConseilIA() via context.watch
+  bool         get conseilsFiltresActifs      => _conseilsFiltresActifs;
+  List<String> get conseilsFiltresTypesParis  => _conseilsFiltresTypes;
+  List<String> get conseilsFiltresHippodromes => _conseilsFiltresHippos;
+  List<String> get conseilsFiltresDisciplines => _conseilsFiltresDiscs;
+  int          get conseilsFiltresConfianceMin => _conseilsFiltresConfMin;
+
+  /// Toutes les courses IA disponibles AVANT filtres (bouton ON + aucun critère).
+  List<({ZtCourse course, ZtReunion reunion})> get toutesCoursesConseilIA => _toutesCoursesConseilIALst;
 
   /// Recalcule les courses correspondant aux critères Conseils IA.
-  /// Appelé après chaque refresh. Retourne le nombre de courses trouvées.
+  /// ★ v10.63 : logique 3 états (OFF / ON+aucunCritère / ON+critères)
+  /// Appelé après chaque refresh ET au retour de la page Conseils IA.
   Future<int> recalculerCoursesConseilIA(List<ZtReunion> reunions) async {
-    final prefs    = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
 
-    // ★ v9.93 : si le bouton ON/OFF Conseils IA est sur OFF,
-    // on vide la liste → pas d'alerte Dernière chance.
-    // Important : les 2 systèmes restent INDÉPENDANTS —
-    // l'option "Alerte Conseil IA" dans Mes Paris fonctionne toujours.
+    // ── Lire l'état bouton ON/OFF ──────────────────────────────────────
     final filtresActifs = prefs.getBool('conseils_filtres_actifs') ?? true;
+    final types   = prefs.getStringList('conseils_filtres_types_paris')  ?? [];
+    final hippos  = prefs.getStringList('conseils_filtres_hippodromes')  ?? [];
+    final discs   = prefs.getStringList('conseils_filtres_disciplines')  ?? [];
+    final confMin = prefs.getInt('conseils_filtres_confiance_min')       ?? 0;
+
+    // Mettre à jour les caches synchrones (lus par le bandeau Home)
+    _conseilsFiltresActifs   = filtresActifs;
+    _conseilsFiltresTypes    = types;
+    _conseilsFiltresHippos   = hippos;
+    _conseilsFiltresDiscs    = discs;
+    _conseilsFiltresConfMin  = confMin;
+
+    // ── Construire la liste de TOUTES les courses IA (avant filtres) ──
+    // Utilisée par le cas ON+aucun critère pour afficher le vrai total.
+    final toutesIA = <({ZtCourse course, ZtReunion reunion})>[];
+    for (final r in reunions) {
+      for (final c in r.courses) {
+        if (c.partants.isNotEmpty) toutesIA.add((course: c, reunion: r));
+      }
+    }
+    _toutesCoursesConseilIALst = toutesIA;
+
+    // ── État 1 : bouton OFF → liste vide (pas d'alerte Dernière chance) ──
     if (!filtresActifs) {
       _coursesMatchingConseils = [];
       notifyListeners();
       return 0;
     }
 
-    final types    = prefs.getStringList('conseils_filtres_types_paris')  ?? [];
-    final hippos   = prefs.getStringList('conseils_filtres_hippodromes')  ?? [];
-    final discs    = prefs.getStringList('conseils_filtres_disciplines')  ?? [];
-    final confMin  = prefs.getInt('conseils_filtres_confiance_min')       ?? 0;
+    // ── État 2 : bouton ON + aucun critère → toutes les courses IA ──
+    // RÈGLE MÉTIER : ON sans critère = "Tous les conseils IA"
+    final aucunCritere = types.isEmpty && hippos.isEmpty &&
+        discs.isEmpty && confMin <= 0;
+    if (aucunCritere) {
+      _coursesMatchingConseils = toutesIA;
+      notifyListeners();
+      return toutesIA.length;
+    }
 
-    final result   = <({ZtCourse course, ZtReunion reunion})>[];
-
+    // ── État 3 : bouton ON + critères → filtrage ──────────────────────
+    final result = <({ZtCourse course, ZtReunion reunion})>[];
     for (final r in reunions) {
       for (final c in r.courses) {
         if (c.partants.isEmpty) continue;
-        final score   = c.partantsParRangIA.isNotEmpty ? c.partantsParRangIA.first.scoreIA : 0.0;
+        final score    = c.partantsParRangIA.isNotEmpty
+            ? c.partantsParRangIA.first.scoreIA : 0.0;
         final typePari = _getTypePariPourCourse(c);
-        final hippo   = r.lieu.toUpperCase();
-        final disc    = r.discipline.isEmpty ? '' :
-            r.discipline[0].toUpperCase() + r.discipline.substring(1).toLowerCase();
+        final hippo    = r.lieu.toUpperCase();
+        final disc     = r.discipline.isEmpty ? ''
+            : r.discipline[0].toUpperCase() + r.discipline.substring(1).toLowerCase();
 
-        if (types.isNotEmpty  && !types.contains(typePari)) continue;
-        if (confMin > 0       && score < confMin)           continue;
-        if (hippos.isNotEmpty && !hippos.contains(hippo))   continue;
-        if (discs.isNotEmpty  && !discs.contains(disc))     continue;
+        if (types.isNotEmpty   && !types.contains(typePari))  continue;
+        if (confMin > 0        && score < confMin)            continue;
+        if (hippos.isNotEmpty  && !hippos.contains(hippo))    continue;
+        if (discs.isNotEmpty   && !discs.contains(disc))      continue;
 
         result.add((course: c, reunion: r));
       }
@@ -1153,22 +1196,24 @@ class AlertService extends ChangeNotifier {
     return result.length;
   }
 
-  /// Getter public pour le bandeau HomeScreen.
+  /// Getter public pour le bandeau HomeScreen (liste filtrée selon état actuel).
   List<({ZtCourse course, ZtReunion reunion})> get coursesConseilIA => _coursesMatchingConseils;
 
-  /// Résumé des critères actifs pour l'affichage (bandeau + UI alertes).
+  /// Résumé des critères actifs pour l'affichage (rétrocompatibilité).
+  /// ★ v10.63 : lit correctement le bouton ON/OFF ('conseils_filtres_actifs').
   Future<Map<String, dynamic>> getCriteresConseilIA() async {
     final prefs   = await SharedPreferences.getInstance();
+    final actifs  = prefs.getBool('conseils_filtres_actifs') ?? true;
     final types   = prefs.getStringList('conseils_filtres_types_paris')  ?? [];
     final hippos  = prefs.getStringList('conseils_filtres_hippodromes')  ?? [];
     final discs   = prefs.getStringList('conseils_filtres_disciplines')  ?? [];
     final confMin = prefs.getInt('conseils_filtres_confiance_min')       ?? 0;
     return {
+      'actifs':   actifs,   // bouton ON/OFF réel
       'types':    types,
       'hippos':   hippos,
       'discs':    discs,
       'confMin':  confMin,
-      'actifs':   types.isNotEmpty || hippos.isNotEmpty || discs.isNotEmpty || confMin > 0,
     };
   }
 
