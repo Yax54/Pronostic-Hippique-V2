@@ -885,12 +885,16 @@ class _TopBetCard extends StatelessWidget {
     final p = opp.favori;
     final score = tab == 0 ? opp.scoreComposite : tab == 1 ? opp.scoreConfiance : opp.scoreGain;
 
-    // ★ v10.61 — Streak selon le tab actif (topEquilibre / plusSur / plusRentable)
-    final String sourceWidgetStreak = tab == 0 ? 'topEquilibre'
-                                    : tab == 1 ? 'plusSur'
-                                    :             'plusRentable';
-    final PremiumStreak streakBestBet = streakPourSource(
-      sourceWidget:  sourceWidgetStreak,
+    // ★ v10.61 — Streak INDÉPENDANT par widget (chaque _TopBetCard reçoit son propre tab)
+    // Tab 0 = Top Équilibre → 'topEquilibre'
+    // Tab 1 = Plus Sûr      → 'plusSur'
+    // Tab 2 = Plus Rentable → 'plusRentable'
+    // Aucun partage entre les 3 : streakCetteCarteUniquement est local à ce build()
+    final String _sourceWidgetCetteCarte = tab == 0 ? 'topEquilibre'
+                                         : tab == 1 ? 'plusSur'
+                                         :             'plusRentable';
+    final PremiumStreak streakCetteCarteUniquement = streakPourSource(
+      sourceWidget:  _sourceWidgetCetteCarte,
       dateReference: DateTime.now(),
     );
 
@@ -998,8 +1002,8 @@ class _TopBetCard extends StatelessWidget {
                   ),
                 ],
               ),
-              // ★ v10.61 — Phrase série premium (si streak ≥ 2)
-              buildPremiumStreakPhrase(streak: streakBestBet),
+              // ★ v10.61 — Phrase série premium PROPRE À CETTE CARTE (si streak ≥ 2)
+              buildPremiumStreakPhrase(streak: streakCetteCarteUniquement),
               const SizedBox(height: 14),
 
               // Cheval
