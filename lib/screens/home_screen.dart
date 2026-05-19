@@ -20,6 +20,8 @@ import '../services/alert_service.dart';         // ★ v10.23
 import '../main.dart' show NavigationNotifier;   // ★ v10.23
 import 'ia_performance_screen.dart';             // ★ v10.27 : raccourci calendrier
 import '../utils/premium_utils.dart';            // ★ v10.55 : helpers premium centralisés
+import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
+import '../services/ia_memory_models.dart' show PremiumStreak; // ★ v10.61
 
 
 class HomeScreen extends StatefulWidget {
@@ -798,6 +800,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final lieu = reunion?.lieu ?? '';
     // ── Statut course : terminée si l'heure de départ est passée ──
     final courseTerminee = course.heureDateTime.isBefore(DateTime.now());
+    // ★ v10.61 — Streak conseilJour à la date du widget
+    final PremiumStreak streakConseil = streakPourSource(
+      sourceWidget: 'conseilJour',
+      dateReference: DateTime.now(),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -962,6 +969,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         _confianceBadgeHome(course.confianceIA),
                       ],
                     ),
+                    // ★ v10.61 — Phrase série premium conseilJour (si streak ≥ 2)
+                    buildPremiumStreakPhrase(streak: streakConseil),
                     const SizedBox(height: 8),
                     // Ligne PMU si cotes disponibles
                     if (course.pronosticPMU.isNotEmpty) ...[
@@ -1150,6 +1159,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final numeros      = nums.isEmpty ? [cheval.numero] : nums;
     final emoji        = emojiPourTypePari(typePari);
 
+    // ★ v10.61 — Streak meilleurPari à la date du widget
+    final PremiumStreak streakMeilleurPari = streakPourSource(
+      sourceWidget: 'meilleurPari',
+      dateReference: DateTime.now(),
+    );
+
     // Confiance
     final confianceCourse = course.confianceIA;
     final confiance = confianceCourse > 0 ? confianceCourse.round() : cheval.scoreIA.round();
@@ -1219,6 +1234,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(
                           color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.bold)),
                 ]),
+                // ★ v10.61 — Phrase série premium meilleurPari (si streak ≥ 2)
+                buildPremiumStreakPhrase(streak: streakMeilleurPari),
                 const SizedBox(height: 14),
 
                 // ── Bloc numéros du pari : adapté au type ───────────

@@ -24,6 +24,7 @@ import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gag
     show
         estPremiumGagnantPourCarte,
         sourcePremiumPourCarte;
+import '../../utils/premium_streak_ui.dart'; // ★ v10.61 — helper commun phrase série
 // Note : PremiumPronosticDuJour vient de ia_memory_models.dart (déjà importé)
 // Note : labelSourcePremium, decorationCartePremium, badgePremium remplacés par code inline v10.59
 import 'ia_widgets_communs.dart';
@@ -1711,15 +1712,11 @@ class _DetailJourSheet extends StatelessWidget {
         ? sourcePremiumPourCarte(prono: p, premiumsDuJour: premiumsDuJour)
         : null;
 
-    // ★ v10.60 — Streak calculé à la date de la bulle (historique exact, pas DateTime.now()).
-    // Une seule source concernée : celle du widget premium de cette carte.
-    // streakJours == 0 si non premium ou série < 2.
-    final int streakJours = (isPremium && sourceP != null)
-        ? IaMemoryService.instance.calculerStreakPremium(
-            sourceWidget:   sourceP,
-            dateReference:  dateRef,
-          ).jours
-        : 0;
+    // ★ v10.60/v10.61 — Streak calculé à la date de la bulle (historique exact).
+    // Utilise le helper commun premium_streak_ui.dart (même source que Home/BestBet).
+    final PremiumStreak? streakCarte = (isPremium && sourceP != null)
+        ? streakPourSource(sourceWidget: sourceP, dateReference: dateRef)
+        : null;
 
     // ★ v10.59 — Restauration exacte du design screenshot :
     //   fond doré translucide 0x1AFFD700, bordure dorée 2.2px,
@@ -1764,27 +1761,8 @@ class _DetailJourSheet extends StatelessWidget {
               ),
             ),
           ),
-          // ★ v10.60 — Phrase dynamique série : visible si streak ≥ 2 à cette date
-          if (streakJours >= 2) ...[
-            const SizedBox(height: 4),
-            Text(
-              '🔥 Ce pari est gagnant depuis '
-              '$streakJours jour${streakJours > 1 ? 's' : ''} consécutifs',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFFFB347),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                shadows: [
-                  Shadow(
-                    color: Color(0x66FF9800),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-            ),
-          ],
+          // ★ v10.61 — Phrase série via helper commun (même rendu que Home/BestBet)
+          buildPremiumStreakPhrase(streak: streakCarte),
           const SizedBox(height: 14),
         ],
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)

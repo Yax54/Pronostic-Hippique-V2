@@ -12,11 +12,12 @@ import '../services/zone_turf_service.dart';
 import '../services/data_refresh_service.dart';
 import '../services/alert_service.dart';
 import '../services/ia_memory_service.dart' show IaMemoryService;
-import '../services/ia_memory_models.dart' show PremiumPronosticDuJour;
+import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, PremiumStreak;
 import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
-import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55 (typePariEtNumerosPourCourse non utilisé ici)
+import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55
+import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
 
 import 'course_detail_screen.dart';
 
@@ -883,6 +884,16 @@ class _TopBetCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = opp.favori;
     final score = tab == 0 ? opp.scoreComposite : tab == 1 ? opp.scoreConfiance : opp.scoreGain;
+
+    // ★ v10.61 — Streak selon le tab actif (topEquilibre / plusSur / plusRentable)
+    final String sourceWidgetStreak = tab == 0 ? 'topEquilibre'
+                                    : tab == 1 ? 'plusSur'
+                                    :             'plusRentable';
+    final PremiumStreak streakBestBet = streakPourSource(
+      sourceWidget:  sourceWidgetStreak,
+      dateReference: DateTime.now(),
+    );
+
     final confianceColor = opp.scoreConfiance >= 80
         ? const Color(0xFF00E676)
         : opp.scoreConfiance >= 65
@@ -987,6 +998,8 @@ class _TopBetCard extends StatelessWidget {
                   ),
                 ],
               ),
+              // ★ v10.61 — Phrase série premium (si streak ≥ 2)
+              buildPremiumStreakPhrase(streak: streakBestBet),
               const SizedBox(height: 14),
 
               // Cheval
