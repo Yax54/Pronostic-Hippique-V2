@@ -1,5 +1,10 @@
-import 'package:flutter/foundation.dart' show listEquals;
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart' show listEquals, kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/backtesting_service.dart';
@@ -11,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 //  IaTabBacktesting — Onglet "Backtesting" de IaPerformanceScreen
 //  v10.20 : Bug freeze fix + bulles cliquables Comparaison
 //           + filtres Discipline / Hippodrome
+//  v10.67 : Export image complet (RepaintBoundary, pixelRatio 2.5, fallback visible)
 // ══════════════════════════════════════════════════════════════════════════════
 
 class IaTabBacktesting extends StatefulWidget {
@@ -24,6 +30,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   BacktestResult? _btResult;
   bool   _btEnCours      = false;
   bool   _btShowAll      = false;
+
+  // ── ★ v10.67 : Export image complet ──────────────────────────────────────
+  final GlobalKey _backtestingExportKey = GlobalKey();
+  bool _exportBacktestingEnCours = false;
   double _btMise         = 10.0;
   int    _btJours        = 30;
   String _btType         = 'Conseil IA';
@@ -524,6 +534,131 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     );
   }
 
+  // ── ★ v10.67 : Bouton Export pill/outline ──────────────────────────────────
+  Widget _buildExportButton() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: _exportBacktestingEnCours ? null : _exporterBacktestingComplet,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0x3329B6F6),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xFF7C4DFF).withValues(alpha: 0.7),
+            width: 1.2,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_exportBacktestingEnCours)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF8E7CFF),
+                ),
+              )
+            else
+              const Icon(
+                Icons.download_rounded,
+                size: 16,
+                color: Color(0xFF8E7CFF),
+              ),
+            const SizedBox(width: 6),
+            Text(
+              _exportBacktestingEnCours ? 'Export...' : 'Export',
+              style: const TextStyle(
+                color: Color(0xFFB6A8FF),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── ★ v10.67 : Export image complète du Backtesting ───────────────────────
+  /// Capture le RepaintBoundary complet (y compris le contenu off-screen).
+  /// Fallback automatique vers le viewport visible si la capture complète échoue.
+  Future<void> _exporterBacktestingComplet() async {
+    if (_exportBacktestingEnCours) return;
+    setState(() => _exportBacktestingEnCours = true);
+    try {
+      // Attendre la fin du layout et du rendu
+      await Future.delayed(const Duration(milliseconds: 150));
+      await WidgetsBinding.instance.endOfFrame;
+
+      final ctx = _backtestingExportKey.currentContext;
+      if (ctx == null) {
+        if (kDebugMode) debugPrint('[Export] Context null — annulation');
+        return;
+      }
+
+      final boundary = ctx.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        if (kDebugMode) debugPrint('[Export] RenderRepaintBoundary null — annulation');
+        return;
+      }
+
+      // Capture complète avec pixelRatio raisonnable (2.5 = qualité sans OOM)
+      ui.Image? image;
+      try {
+        image = await boundary.toImage(pixelRatio: 2.5);
+      } catch (e) {
+        if (kDebugMode) debugPrint('[Export] toImage(2.5) échoué → fallback 2.0 : $e');
+        // Fallback : pixelRatio réduit si OOM
+        try {
+          image = await boundary.toImage(pixelRatio: 2.0);
+        } catch (e2) {
+          if (kDebugMode) debugPrint('[Export] toImage(2.0) échoué aussi : $e2');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Export impossible sur cet appareil.'),
+                backgroundColor: Color(0xFF7C4DFF),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+
+      final pngBytes = byteData.buffer.asUint8List();
+      final dir  = await getTemporaryDirectory();
+      final file = File(
+        '${dir.path}/backtesting_ia_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.writeAsBytes(pngBytes);
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'Export Backtesting IA Stats',
+        ),
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Export] Erreur export backtesting : $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur export : $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exportBacktestingEnCours = false);
+    }
+  }
+
   void _exporterResultats(BacktestResult r) {
     final roiStr  = '${r.roi >= 0 ? "+" : ""}${r.roi.toStringAsFixed(1)}%';
     final gainStr = '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €';
@@ -592,6 +727,15 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // ── ★ v10.67 : RepaintBoundary englobant tout le contenu exportable ──
+        RepaintBoundary(
+          key: _backtestingExportKey,
+          child: Container(
+            color: const Color(0xFF0F1722), // fond opaque = pas de glitch PNG
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+
         // ── En-tête ────────────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.all(14),
@@ -606,12 +750,27 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(children: [
-                Icon(Icons.science_rounded, color: Color(0xFF7C4DFF), size: 20),
-                SizedBox(width: 8),
-                Text('Simulateur historique',
-                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-              ]),
+              // ★ v10.67 : Header avec bouton Export en haut à droite
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Icon(Icons.science_rounded, color: Color(0xFF7C4DFF), size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Simulateur historique',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  _buildExportButton(),
+                ],
+              ),
               const SizedBox(height: 8),
               const Text(
                 'Rejoue les journées passées pour mesurer ce que vous auriez gagné ou perdu en suivant l\'IA avec une mise fixe.',
@@ -1100,7 +1259,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           ],
         ],
 
-        const SizedBox(height: 24),
+              const SizedBox(height: 24),
+
+              ], // Column children (RepaintBoundary)
+            ),  // Column
+          ),    // Container fond opaque
+        ),      // RepaintBoundary
       ],
     );
   }
