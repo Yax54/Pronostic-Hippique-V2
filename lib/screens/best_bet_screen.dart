@@ -64,11 +64,71 @@ class _BestBetScreenState extends State<BestBetScreen>
   double _mise      = 10.0;
   double _bankroll  = 200.0; // ★ v9.93 : bankroll pour Kelly Criterion
 
+  // ★ v10.69 : Sélections figées du jour pour les 3 widgets BestBet
+  // CLÉ : l'UI lit ces sélections EN PRIORITÉ 1 avant tout recalcul.
+  Map<String, SelectionWidgetPremiumDuJour> _selectionsFigees = {};
+  bool _selectionsFigeesChargees = false;
+
   @override
   void initState() {
     super.initState();
     _tabCtrl = TabController(length: 3, vsync: this);
     _charger();
+    _chargerSelectionsFigees();
+  }
+
+  /// Charge les sélections figées du jour depuis SharedPreferences.
+  Future<void> _chargerSelectionsFigees() async {
+    try {
+      final sels = await IaMemoryService.instance
+          .chargerSelectionsWidgetsPremiumDuJour(DateTime.now());
+      if (!mounted) return;
+      setState(() {
+        _selectionsFigees = sels;
+        _selectionsFigeesChargees = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() { _selectionsFigeesChargees = true; });
+    }
+  }
+
+  /// Recherche la [_BetOpp] figée du jour pour un [sourceWidget] donné.
+  /// Retourne null si absente ou si la course n'est pas dans `_reunions`.
+  _BetOpp? _trouverOppFigee(String sourceWidget) {
+    if (!_selectionsFigeesChargees) return null;
+    final sel = _selectionsFigees[sourceWidget];
+    if (sel == null || !sel.estValide) return null;
+    try {
+      for (final r in _reunions) {
+        for (final c in r.courses) {
+          final key = buildCourseKey(
+            reunionCode: r.code,
+            numCourse: c.numCourse,
+            dateStr: c.dateStr,
+          );
+          if (key == sel.courseKey) {
+            // Retrouvé → reconstruire un _BetOpp minimal depuis la course figée
+            final partants = c.partantsParRangIA;
+            if (partants.isEmpty) return null;
+            final top = partants.first;
+            return _BetOpp(
+              course:         c,
+              reunion:        r,
+              favori:         top,
+              scoreComposite: top.scoreIA,
+              scoreConfiance: top.scoreIA,
+              scoreGain:      top.scoreIA,
+              typePari:       sel.typePari,
+              conseil:        'Sélection figée du ${sel.dateKey}',
+              numeros:        sel.numeros,
+              estTerminee:    c.heureDateTime.isBefore(DateTime.now()),
+            );
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   @override
@@ -190,6 +250,10 @@ class _BestBetScreenState extends State<BestBetScreen>
       await figerBetOpp(plusRentable, 'plusRentable');
       // — Fin figeage v10.62 —
 
+      // ★ v10.69 : recharger les sélections figées APRÈS leur création
+      // pour que _sortedBy() les lise immédiatement au prochain build.
+      _chargerSelectionsFigees();
+
     } catch (_) {}
   }
 
@@ -306,13 +370,40 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   List<_BetOpp> _sortedBy(int tab, List<_BetOpp> all) {
+    // ★ v10.69 : PRIORITÉ 1 — sélection figée du jour pour ce tab
+    // Si elle existe et est valide, elle est forcée en tête de liste.
+    // Les autres opportunités suivent normalement (résultat inchangé pour tout sauf la carte TOP).
+    final String sourceWidget = tab == 0 ? 'topEquilibre'
+                              : tab == 1 ? 'plusSur'
+                              :             'plusRentable';
+    final oppFigee = _trouverOppFigee(sourceWidget);
+
     final list = List<_BetOpp>.from(all);
     switch (tab) {
       case 0: list.sort((a, b) => b.scoreComposite.compareTo(a.scoreComposite)); break;
       case 1: list.sort((a, b) => b.scoreConfiance.compareTo(a.scoreConfiance)); break;
       case 2: list.sort((a, b) => b.scoreGain.compareTo(a.scoreGain)); break;
     }
-    return list;
+
+    if (oppFigee == null) return list;
+
+    // La sélection figée est valide : la mettre en position 0.
+    // Clé de la course figée pour dédoublonner dans la liste dynamique.
+    final keyFigee = buildCourseKey(
+      reunionCode: oppFigee.reunion.code,
+      numCourse:   oppFigee.course.numCourse,
+      dateStr:     oppFigee.course.dateStr,
+    );
+    // Retirer cette course de la liste dynamique si elle y est déjà (doublon)
+    list.removeWhere((o) {
+      final key = buildCourseKey(
+        reunionCode: o.reunion.code,
+        numCourse: o.course.numCourse,
+        dateStr: o.course.dateStr,
+      );
+      return key == keyFigee;
+    });
+    return [oppFigee, ...list];
   }
 
   @override
@@ -321,7 +412,12 @@ class _BestBetScreenState extends State<BestBetScreen>
     final svc = context.watch<DataRefreshService>();
     if (!_loading && svc.reunions.isNotEmpty && _reunions != svc.reunions) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() { _reunions = svc.reunions; });
+        if (mounted) {
+          setState(() { _reunions = svc.reunions; });
+          // ★ v10.69 : recharger les sélections figées après mise à jour des réunions
+          // pour que _trouverOppFigee() retrouve les courses dans le nouveau _reunions
+          _chargerSelectionsFigees();
+        }
       });
     }
     return Scaffold(

@@ -56,6 +56,12 @@ class _HomeScreenState extends State<HomeScreen> {
   IaNarrativeAccueilResult? _narratifAccueil;
   bool _narratifAccueilCharge = false;
 
+  // ★ v10.69 : Sélections figées du jour lues depuis premium_widgets_selection_jour_v1
+  // CLÉ : chargerSelectionsWidgetsPremiumDuJour() → appelé AU DÉMARRAGE et après chaque refresh
+  // L'UI lit cette map EN PRIORITÉ 1 avant tout recalcul dynamique.
+  Map<String, SelectionWidgetPremiumDuJour> _selectionsFigees = {};
+  bool _selectionsFigeesChargees = false;
+
   ({ZtCourse? course, ZtPartant? cheval, ZtReunion? reunion}) get _meilleurPariCached {
     final reunions = _reunions;
     if (_cachedMeilleurPari != null && identical(_cachedReunionsPourCalc, reunions)) {
@@ -218,6 +224,8 @@ class _HomeScreenState extends State<HomeScreen> {
       navNotifier.addListener(_onNavigationChange);
       // ★ v10.68 : charger le narratif accueil (glow IA)
       _chargerNarratifAccueil();
+      // ★ v10.69 : charger immédiatement les sélections figées
+      _chargerSelectionsFigees();
     });
   }
 
@@ -246,6 +254,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ★ v10.55 — Délègue à premium_utils (helper centralisé — plus de duplication).
   // Ancienne fonction locale _typePariEtNumerosPourCourse supprimée.
+
+  // ── ★ v10.69 : Chargement des sélections figées ──────────────────────────
+
+  /// Charge depuis SharedPreferences les sélections figées du jour pour
+  /// conseilJour et meilleurPari.
+  /// PRIORITÉ 1 : ces sélections sont affichées telles quelles — sans recalcul.
+  /// Rappelé après chaque _declencherBulleMatinale() pour garantir la cohérence.
+  Future<void> _chargerSelectionsFigees() async {
+    try {
+      final sels = await IaMemoryService.instance
+          .chargerSelectionsWidgetsPremiumDuJour(DateTime.now());
+      if (!mounted) return;
+      setState(() {
+        _selectionsFigees = sels;
+        _selectionsFigeesChargees = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() { _selectionsFigeesChargees = true; });
+    }
+  }
 
   // ── ★ v10.68 : Présence IA Accueil ───────────────────────────────────────
 
@@ -578,6 +607,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     // Ignorer nbConseil — seulement pour déclencher le recalcul
     debugPrint('[HomeScreen] Conseil IA : $nbConseil courses trouvées');
+
+    // ★ v10.69 : recharger les sélections figées APRÈS leur création (get-or-create)
+    // Les widgets _buildConseilIA() et _buildMeilleurPari() les liront maintenant.
+    _chargerSelectionsFigees();
   }
 
   @override
@@ -1192,12 +1225,45 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── ★ v10.69 : Helper — retrouve la ZtCourse correspondant à une sélection figée ──
+  /// Cherche dans `_reunions` la course dont le courseKey correspond à [sel].
+  /// Retourne null si introuvable (fallback → recalcul dynamique).
+  ({ZtCourse? course, ZtReunion? reunion}) _trouverCourseFigee(
+      SelectionWidgetPremiumDuJour sel) {
+    try {
+      for (final r in _reunions) {
+        for (final c in r.courses) {
+          final key = buildCourseKey(
+            reunionCode: r.code,
+            numCourse: c.numCourse,
+            dateStr: c.dateStr,
+          );
+          if (key == sel.courseKey) return (course: c, reunion: r);
+        }
+      }
+    } catch (_) {}
+    return (course: null, reunion: null);
+  }
+
   // ── Conseil IA ────────────────────────────────────────────────────
   Widget _buildConseilIA() {
+    // ★ v10.69 : PRIORITÉ 1 — sélection figée du jour (si disponible et retrouvée)
+    ZtCourse? courseFigee;
+    ZtReunion? reunionFigee;
+    if (_selectionsFigeesChargees) {
+      final sel = _selectionsFigees['conseilJour'];
+      if (sel != null && sel.estValide) {
+        final found = _trouverCourseFigee(sel);
+        courseFigee  = found.course;
+        reunionFigee = found.reunion;
+      }
+    }
+
     final conseil = _conseilIACached;
-    if (conseil.course == null) return const SizedBox();
-    final course = conseil.course!;
-    final reunion = conseil.reunion;
+    // Utiliser la course figée si retrouvée, sinon recalcul dynamique
+    if (courseFigee == null && conseil.course == null) return const SizedBox();
+    final course = courseFigee ?? conseil.course!;
+    final reunion = reunionFigee ?? conseil.reunion;
     final top3 = conseil.top3;
     final lieu = reunion?.lieu ?? '';
     // ── Statut course : terminée si l'heure de départ est passée ──
@@ -1548,17 +1614,38 @@ class _HomeScreenState extends State<HomeScreen> {
   // ★ v10.55 : affiche le VRAI type de pari + TOUS les numéros conseillés.
   // Plus d'ambiguïté : un Quarté+ affiche 4 numéros, un Simple 1 numéro, etc.
   Widget _buildMeilleurPari() {
+    // ★ v10.69 : PRIORITÉ 1 — sélection figée du jour (si disponible et retrouvée)
+    ZtCourse? courseFigee;
+    ZtReunion? reunionFigee;
+    if (_selectionsFigeesChargees) {
+      final sel = _selectionsFigees['meilleurPari'];
+      if (sel != null && sel.estValide) {
+        final found = _trouverCourseFigee(sel);
+        courseFigee  = found.course;
+        reunionFigee = found.reunion;
+      }
+    }
+
     final pari = _meilleurPariCached;
-    if (pari.course == null || pari.cheval == null) return const SizedBox();
-    final course  = pari.course!;
-    final cheval  = pari.cheval!;
-    final reunion = pari.reunion;
+    // Utiliser la course figée si retrouvée, sinon recalcul dynamique
+    if (courseFigee == null && (pari.course == null || pari.cheval == null)) {
+      return const SizedBox();
+    }
+    final course  = courseFigee ?? pari.course!;
+    // Cheval : depuis le recalcul dynamique ou 1er partant IA de la course figée
+    // Si les deux sont absents (course vide) → on n'affiche pas le widget
+    final partants = course.partantsParRangIA;
+    final ZtPartant? chevalNullable = pari.cheval ?? (partants.isNotEmpty ? partants.first : null);
+    if (chevalNullable == null) return const SizedBox();
+    final ZtPartant cheval = chevalNullable;
+    final reunion = reunionFigee ?? pari.reunion;
     final lieu    = reunion?.lieu ?? '';
 
     // ★ v10.55 : typePari réel + numéros complets via helper centralisé
     final (:tp, :nums) = typePariEtNumerosPourCourse(course);
     final typePari     = tp.isEmpty ? 'Simple Gagnant' : tp;
-    final numeros      = nums.isEmpty ? [cheval.numero] : nums;
+    // ★ v10.69 : cheval garanti non-null après le guard ci-dessus
+    final numeros      = nums.isNotEmpty ? nums : [cheval.numero];
     final emoji        = emojiPourTypePari(typePari);
 
     // ★ v10.61 — Streak meilleurPari à la date du widget
