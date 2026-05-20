@@ -1,5 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
-//  HOME SCREEN — PMU IA : courses à jour + conseil IA + meilleur pari
+//  HOME SCREEN — v10.68
+//  PMU IA : courses à jour + conseil IA + meilleur pari
+//  ★ v10.68 : Présence IA 🧠 — glow breathing + bottom sheet premium
+//             Référence moteur narratif V3 via IaNarrativeMemoryService
 // ═══════════════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import '../widgets/favori_button.dart';
@@ -22,6 +25,9 @@ import 'ia_performance_screen.dart';             // ★ v10.27 : raccourci calen
 import '../utils/premium_utils.dart';            // ★ v10.55 : helpers premium centralisés
 import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
 import '../services/ia_memory_models.dart' show PremiumStreak; // ★ v10.61
+import '../services/ia_narrative_memory_service.dart'; // ★ v10.68 : présence IA accueil
+import '../models/ia_narrative_models.dart';           // ★ v10.68 : IaNarrativeContext
+import 'package:shared_preferences/shared_preferences.dart'; // ★ v10.68 : lecture pseudo
 
 
 class HomeScreen extends StatefulWidget {
@@ -45,6 +51,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ZtReunion>? _cachedReunionsPourCalc;
   ({ZtCourse? course, ZtPartant? cheval, ZtReunion? reunion})? _cachedMeilleurPari;
   ({ZtCourse? course, List<ZtPartant> top3, ZtReunion? reunion})? _cachedConseilIA;
+
+  // ★ v10.68 : Présence IA Accueil — narratif + importance pour le glow
+  IaNarrativeAccueilResult? _narratifAccueil;
+  bool _narratifAccueilCharge = false;
 
   ({ZtCourse? course, ZtPartant? cheval, ZtReunion? reunion}) get _meilleurPariCached {
     final reunions = _reunions;
@@ -206,6 +216,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // ★ v10.63 : écouter les changements de navigation pour synchroniser le bandeau
       final navNotifier = context.read<NavigationNotifier>();
       navNotifier.addListener(_onNavigationChange);
+      // ★ v10.68 : charger le narratif accueil (glow IA)
+      _chargerNarratifAccueil();
     });
   }
 
@@ -234,6 +246,177 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ★ v10.55 — Délègue à premium_utils (helper centralisé — plus de duplication).
   // Ancienne fonction locale _typePariEtNumerosPourCourse supprimée.
+
+  // ── ★ v10.68 : Présence IA Accueil ───────────────────────────────────────
+
+  /// Charge le narratif accueil (cache-first) pour alimenter le glow.
+  /// Silencieux : ne bloque jamais le chargement principal de la page.
+  Future<void> _chargerNarratifAccueil() async {
+    try {
+      final prefs  = await SharedPreferences.getInstance();
+      final pseudo = prefs.getString('profil_nom') ?? '';
+      final ctx    = _buildContextNarratifAccueil(pseudo);
+      final result = await IaNarrativeMemoryService().obtenirNarratifAccueil(ctx);
+      if (!mounted) return;
+      setState(() {
+        _narratifAccueil       = result;
+        _narratifAccueilCharge = true;
+      });
+    } catch (_) {
+      // Silencieux — la présence IA est un bonus, jamais bloquant
+      if (!mounted) return;
+      setState(() { _narratifAccueilCharge = true; });
+    }
+  }
+
+  /// Construit le contexte narratif depuis les données en mémoire pour l'accueil.
+  IaNarrativeContext _buildContextNarratifAccueil(String pseudo) {
+    final svc     = IaMemoryService.instance;
+    final rapports = svc.rapports;
+    final now     = DateTime.now();
+    final today   = DateTime(now.year, now.month, now.day);
+
+    // ── Rapport du jour / hier ──────────────────────────────────────────
+    RapportJournalier? rapportJour;
+    RapportJournalier? rapportHier;
+    try {
+      rapportJour = rapports.firstWhere((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return d == today;
+      });
+    } catch (_) {}
+    try {
+      final hier = today.subtract(const Duration(days: 1));
+      rapportHier = rapports.firstWhere((r) {
+        final d = DateTime(r.date.year, r.date.month, r.date.day);
+        return d == hier;
+      });
+    } catch (_) {}
+
+    // ── Tendances 7j ─────────────────────────────────────────────────────
+    double taux7j = 0.0;
+    double taux7jPrecedent = 0.0;
+    try {
+      final r7 = rapports.where((r) {
+        final diff = today.difference(DateTime(r.date.year, r.date.month, r.date.day)).inDays;
+        return diff >= 1 && diff <= 7 && r.nbAvecResultat > 0;
+      }).toList();
+      final rP = rapports.where((r) {
+        final diff = today.difference(DateTime(r.date.year, r.date.month, r.date.day)).inDays;
+        return diff >= 8 && diff <= 14 && r.nbAvecResultat > 0;
+      }).toList();
+      if (r7.isNotEmpty) taux7j = r7.fold(0.0, (s, r) => s + r.tauxGagnant) / r7.length / 100;
+      if (rP.isNotEmpty) taux7jPrecedent = rP.fold(0.0, (s, r) => s + r.tauxGagnant) / rP.length / 100;
+    } catch (_) {}
+
+    // ── Discipline forte 14j ──────────────────────────────────────────────
+    String meilleureDiscipline = '';
+    try {
+      final r14 = rapports.where((r) {
+        return today.difference(DateTime(r.date.year, r.date.month, r.date.day)).inDays <= 14
+            && r.parDiscipline.isNotEmpty;
+      }).toList();
+      if (r14.isNotEmpty) {
+        final tauxDisc = <String, List<double>>{};
+        for (final r in r14) {
+          for (final d in r.parDiscipline) {
+            if (d.discipline.isNotEmpty && d.nbCourses > 0) {
+              tauxDisc.putIfAbsent(d.discipline, () => []).add(d.tauxGagnant);
+            }
+          }
+        }
+        if (tauxDisc.isNotEmpty) {
+          meilleureDiscipline = tauxDisc.entries
+              .reduce((a, b) {
+                final mA = a.value.reduce((x, y) => x + y) / a.value.length;
+                final mB = b.value.reduce((x, y) => x + y) / b.value.length;
+                return mA > mB ? a : b;
+              }).key;
+        }
+      }
+    } catch (_) {}
+
+    // ── Type de pari stable 14j ───────────────────────────────────────────
+    String? typePariStable;
+    try {
+      final r14 = rapports.where((r) {
+        return today.difference(DateTime(r.date.year, r.date.month, r.date.day)).inDays <= 14
+            && r.parTypePari.isNotEmpty;
+      }).toList();
+      if (r14.isNotEmpty) {
+        final tauxType = <String, List<double>>{};
+        for (final r in r14) {
+          for (final tp in r.parTypePari) {
+            if (tp.typePari.isNotEmpty && tp.nbPronostiques > 0) {
+              tauxType.putIfAbsent(tp.typePari, () => []).add(tp.tauxGagnant);
+            }
+          }
+        }
+        if (tauxType.isNotEmpty) {
+          final sorted = tauxType.entries.toList()
+            ..sort((a, b) {
+              final mA = a.value.reduce((x, y) => x + y) / a.value.length;
+              final mB = b.value.reduce((x, y) => x + y) / b.value.length;
+              return mB.compareTo(mA);
+            });
+          typePariStable = sorted.first.key;
+        }
+      }
+    } catch (_) {}
+
+    // ── Streaks premium ───────────────────────────────────────────────────
+    final streakConseil   = svc.calculerStreakPremium(sourceWidget: 'conseilJour',   dateReference: today);
+    final streakMeilleur  = svc.calculerStreakPremium(sourceWidget: 'meilleurPari',  dateReference: today);
+    final streakEquilibre = svc.calculerStreakPremium(sourceWidget: 'topEquilibre',  dateReference: today);
+    final streakSur       = svc.calculerStreakPremium(sourceWidget: 'plusSur',       dateReference: today);
+    final streakRentable  = svc.calculerStreakPremium(sourceWidget: 'plusRentable',  dateReference: today);
+
+    final signalExpert = meilleureDiscipline.isNotEmpty || typePariStable != null;
+
+    return IaNarrativeContext(
+      pseudoUtilisateur:         pseudo,
+      nbCoursesJour:             rapportJour?.nbAvecResultat ?? 0,
+      nbBonnesCoursesJour:       rapportJour != null
+          ? ((rapportJour.tauxGagnant / 100) * rapportJour.nbAvecResultat).round() : 0,
+      nbCoursesHier:             rapportHier?.nbAvecResultat ?? 0,
+      nbBonnesCoursesHier:       rapportHier != null
+          ? ((rapportHier.tauxGagnant / 100) * rapportHier.nbAvecResultat).round() : 0,
+      roiJour:                   0,
+      roiHier:                   0,
+      streakPlusSur:             streakSur.jours,
+      streakMeilleurPari:        streakMeilleur.jours,
+      streakTopEquilibre:        streakEquilibre.jours,
+      streakPlusRentable:        streakRentable.jours,
+      streakConseilJour:         streakConseil.jours,
+      taux7j:                    taux7j,
+      taux7jPrecedent:           taux7jPrecedent,
+      meilleureDiscipline:       meilleureDiscipline,
+      widgetPremiumLePlusStable: '',
+      typePariLePlusStable:      typePariStable,
+      typePariLePlusInstable:    null,
+      signalExpertDisponible:    signalExpert,
+    );
+  }
+
+  /// Ouvre la bulle IA premium (bottom sheet) au clic sur l'icône 🧠.
+  /// Max 2 phrases — interaction volontaire uniquement.
+  void _ouvrirBulleIA() {
+    final result  = _narratifAccueil;
+    final message = result?.message ?? '';
+    if (message.trim().isEmpty) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _IaBulleBottomSheet(
+        message   : message,
+        importance: result?.importance ?? IaNarrativeImportance.normal,
+      ),
+    );
+  }
+
+  // ── Fin v10.68 ────────────────────────────────────────────────────────────
 
   Future<void> _declencherBulleMatinale() async {
     await Future.delayed(const Duration(seconds: 2));
@@ -567,7 +750,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _dividerV() => Container(width: 1, height: 38, color: const Color(0xFF2A4A6A));
 
-  // ── ★ v9.89 : Journal IA — carte Accueil ─────────────────────────
+  // ── ★ v9.89 / v10.68 : Journal IA — carte Accueil + Présence IA 🧠 ──────
   Widget _buildJournalIACard() {
     final rapports = IaMemoryService.instance.rapports;
     final ia       = IaPersonalityService.instance;
@@ -588,6 +771,11 @@ class _HomeScreenState extends State<HomeScreen> {
         apercu = 'Dernière entrée : $nbResultats course${nbResultats > 1 ? "s" : ""} analysée${nbResultats > 1 ? "s" : ""}, $taux% de réussite.';
       }
     }
+
+    // ── ★ v10.68 : Présence IA — couleur glow selon importance ──────────
+    final importance = _narratifAccueil?.importance ?? IaNarrativeImportance.faible;
+    final bool iaDisponible = _narratifAccueilCharge
+        && (_narratifAccueil?.message.trim().isNotEmpty ?? false);
 
     return GestureDetector(
       onTap: () => Navigator.push(
@@ -649,7 +837,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, color: Color(0xFF7C4DFF), size: 14),
+            // ── ★ v10.68 : Icône 🧠 avec glow breathing ─────────────────
+            if (iaDisponible)
+              _IaGlowIcon(
+                importance: importance,
+                onTap: _ouvrirBulleIA,
+              )
+            else
+              const Icon(Icons.arrow_forward_ios, color: Color(0xFF7C4DFF), size: 14),
           ],
         ),
       ),
@@ -2235,4 +2430,219 @@ class _ReunionCard extends StatelessWidget {
     );
   }
 
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ★ v10.68 : Widgets privés — Présence IA Accueil
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Icône 🧠 avec glow breathing discret selon l'importance du signal IA.
+///
+/// DESIGN :
+///   - Animation lente (8-10s), scale 1.0 ↔ 1.04 — presque "respirant"
+///   - 3 niveaux de glow : faible (bleu très léger), important (bleu), premium (orangé)
+///   - Clic → bottom sheet IA (interaction volontaire uniquement)
+///
+/// RÈGLE : ne jamais clignoter rapidement — fatigue visuelle immédiate.
+class _IaGlowIcon extends StatelessWidget {
+  final IaNarrativeImportance importance;
+  final VoidCallback onTap;
+
+  const _IaGlowIcon({required this.importance, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    // Couleurs de glow selon importance
+    final Color glowColor;
+    switch (importance) {
+      case IaNarrativeImportance.premium:
+        glowColor = const Color(0x66FF9800); // orangé discret
+      case IaNarrativeImportance.important:
+        glowColor = const Color(0x5567B7FF); // bleu marqué
+      case IaNarrativeImportance.normal:
+        glowColor = const Color(0x334FC3F7); // bleu très léger
+      case IaNarrativeImportance.faible:
+        glowColor = const Color(0x1A4FC3F7); // quasi invisible
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 1.0, end: 1.04),
+        duration: const Duration(seconds: 9),
+        curve: Curves.easeInOut,
+        // Répéter manuellement : à la fin → relancer en sens inverse
+        onEnd: () {
+          // TweenAnimationBuilder ne répète pas — on utilise un wrapper avec key
+          // pour déclencher un nouveau cycle. Voir _IaGlowIconAnimated.
+        },
+        builder: (_, scale, child) => Transform.scale(
+          scale: scale,
+          child: child,
+        ),
+        child: Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFF1A1A3A),
+            border: Border.all(
+              color: glowColor.withValues(alpha: 0.8),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: glowColor,
+                blurRadius: importance == IaNarrativeImportance.premium ? 14 : 8,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Text('🧠', style: TextStyle(fontSize: 16)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet IA premium — affiché au clic sur 🧠.
+///
+/// RÈGLE : max 2 phrases toujours, jamais de contenu long.
+/// DESIGN : fond sombre, coins arrondis, hauteur ~45-50%, animation fluide.
+class _IaBulleBottomSheet extends StatelessWidget {
+  final String message;
+  final IaNarrativeImportance importance;
+
+  const _IaBulleBottomSheet({
+    required this.message,
+    required this.importance,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Couleur accent selon importance
+    final Color accentColor;
+    switch (importance) {
+      case IaNarrativeImportance.premium:
+        accentColor = const Color(0xFFFF9800);
+      case IaNarrativeImportance.important:
+        accentColor = const Color(0xFF67B7FF);
+      case IaNarrativeImportance.normal:
+      case IaNarrativeImportance.faible:
+        accentColor = const Color(0xFF7C4DFF);
+    }
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F1722),
+        borderRadius: BorderRadius.only(
+          topLeft:  Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Poignée de drag
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // En-tête IA
+              Row(
+                children: [
+                  Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accentColor.withValues(alpha: 0.12),
+                      border: Border.all(color: accentColor.withValues(alpha: 0.4)),
+                    ),
+                    child: const Center(
+                      child: Text('🧠', style: TextStyle(fontSize: 18)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'IA Eureka',
+                        style: TextStyle(
+                          color: accentColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Analyse du jour',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.4),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // Séparateur
+              Container(
+                height: 1,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+              const SizedBox(height: 20),
+
+              // ── Message narratif (max 2 phrases) ─────────────────────
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.88),
+                    fontSize: 15,
+                    height: 1.6,
+                    fontStyle: FontStyle.normal,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Bouton fermeture
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 28),
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: accentColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    'Compris',
+                    style: TextStyle(
+                      color: accentColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

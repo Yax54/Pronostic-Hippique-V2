@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA NARRATIVE MEMORY SERVICE — v10.66
+//  IA NARRATIVE MEMORY SERVICE — v10.68
 //  Gestion de la mémoire narrative légère (anti-répétition).
 //  Clé SharedPreferences : 'ia_narrative_memory_v1'
 //
@@ -8,6 +8,11 @@
 //    - _dateKey() : helper format 'YYYY-MM-DD'
 //    - reason = 'analyseJournee' : force régénération après analyse du soir
 //    - Cache figé pour toute la journée — seul le message est figé
+//
+//  ★ v10.68 : Présence IA Accueil
+//    - IaNarrativeImportance : enum faible/normal/important/premium
+//    - obtenirNarratifAccueil() : message + niveau pour le glow de la Home
+//    - Importance rare : important/premium réservés aux vraies progressions
 //
 //  RÈGLES SÉCURITÉ :
 //  - Fallback automatique vers mémoire vide si données absentes/corrompues
@@ -22,6 +27,31 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/ia_narrative_memory_models.dart';
 import '../models/ia_narrative_models.dart';
 import '../services/ia_narrative_engine.dart';
+
+// ── ★ v10.68 : Niveau d'importance de la présence IA Accueil ──────────────
+/// Détermine l'intensité du glow et la pertinence du message narratif.
+/// RÈGLE RARE : important/premium réservés aux vraies progressions/séries.
+/// - faible   : IA silencieuse, glow très discret (neutre quotidien)
+/// - normal   : signal léger disponible, breathing doux
+/// - important: vraie progression 7j, série ≥3, discipline forte
+/// - premium  : grosse série ≥5, signal exceptionnel, audit majeur
+enum IaNarrativeImportance {
+  faible,
+  normal,
+  important,
+  premium,
+}
+
+/// Résultat complet retourné par [IaNarrativeMemoryService.obtenirNarratifAccueil].
+/// Contient le message (max 2 phrases) + le niveau d'importance pour le glow.
+class IaNarrativeAccueilResult {
+  final String message;
+  final IaNarrativeImportance importance;
+  const IaNarrativeAccueilResult({
+    required this.message,
+    required this.importance,
+  });
+}
 
 class IaNarrativeMemoryService {
   static const _key = 'ia_narrative_memory_v1';
@@ -219,5 +249,75 @@ class IaNarrativeMemoryService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(iaNarrativeDailyCacheKey);
     } catch (_) {}
+  }
+
+  // ── ★ v10.68 : Présence IA Accueil ────────────────────────────────────────
+
+  /// Retourne le message narratif du jour + son niveau d'importance pour
+  /// alimenter le glow de la Home.
+  ///
+  /// CACHE-FIRST : réutilise le cache journalier si disponible.
+  /// IMPORTANCE RARE : important/premium uniquement si vrai signal exceptionnel.
+  ///
+  /// Calcule l'importance selon :
+  ///   - premium  : streak ≥ 5 jours sur n'importe quel widget premium
+  ///   - important: progression 7j confirmée (+5pp) OU streak ≥ 3 jours
+  ///   - normal   : données disponibles mais signal faible
+  ///   - faible   : aucune donnée exploitable
+  Future<IaNarrativeAccueilResult> obtenirNarratifAccueil(
+    IaNarrativeContext context,
+  ) async {
+    try {
+      // ── 1. Récupérer le message depuis le cache journalier ─────────────
+      final message = await obtenirOuGenererNarratifDuJour(
+        date   : DateTime.now(),
+        context: context,
+      );
+
+      // ── 2. Calculer le niveau d'importance ──────────────────────────────
+      final importance = _calculerImportance(context);
+
+      return IaNarrativeAccueilResult(
+        message   : message,
+        importance: importance,
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[NarrativeAccueil] Erreur → fallback faible : $e');
+      }
+      return const IaNarrativeAccueilResult(
+        message   : '',
+        importance: IaNarrativeImportance.faible,
+      );
+    }
+  }
+
+  /// Calcule l'importance du signal IA pour le glow Accueil.
+  /// RÈGLE : important/premium rares — évite la fatigue visuelle.
+  IaNarrativeImportance _calculerImportance(IaNarrativeContext ctx) {
+    // ── Premium : grosse série ≥ 5 jours sur un widget ────────────────────
+    final maxStreak = [
+      ctx.streakConseilJour,
+      ctx.streakMeilleurPari,
+      ctx.streakTopEquilibre,
+      ctx.streakPlusRentable,
+      ctx.streakPlusSur,
+    ].fold<int>(0, (max, s) => s > max ? s : max);
+
+    if (maxStreak >= 5) return IaNarrativeImportance.premium;
+
+    // ── Important : vraie progression 7j (+5pp) OU série ≥ 3 ─────────────
+    final progression7j = ctx.taux7j - ctx.taux7jPrecedent;
+    if (progression7j >= 0.05 || maxStreak >= 3) {
+      return IaNarrativeImportance.important;
+    }
+
+    // ── Normal : données disponibles (au moins une course analysée) ────────
+    if (ctx.nbCoursesJour > 0 || ctx.nbCoursesHier > 0) {
+      return IaNarrativeImportance.normal;
+    }
+
+    // ── Faible : aucune donnée exploitable ────────────────────────────────
+    return IaNarrativeImportance.faible;
   }
 }

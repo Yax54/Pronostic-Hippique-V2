@@ -1,20 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  IA JOURNAL SCREEN — v10.66
+//  IA JOURNAL SCREEN — v10.68
 //  ★ v9.91  : structure hiérarchique 3 niveaux
 //  ★ v10.64 : IA Narrative Engine V1 — carte narrative dynamique en tête de journal
 //  ★ v10.65 : IA Narrative Engine V2 — mémoire anti-répétition, tendances 7j, discipline forte
 //  ★ v10.66 : IA Narrative Engine V3 — cache journalier anti-rebuild, type de pari, signal expert
+//  ★ v10.68 : Suppression carte narrative journal — moteur conservé, affiché en Home uniquement
+//            Cohérence taux : taux réel strict + explication TOP 3 IA dans _genererTexte()
 // ═══════════════════════════════════════════════════════════════════════════
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/ia_memory_service.dart';
 import '../services/ia_memory_models.dart';
 import '../services/ia_personality_service.dart';
-import '../models/ia_narrative_models.dart';               // ★ v10.64
-import '../services/ia_narrative_memory_service.dart';     // ★ v10.66 : cache-first
-import '../widgets/ia_narrative_card.dart';                 // ★ v10.64
+// ★ v10.68 : imports narratifs supprimés du Journal (moteur conservé, affiché en Home)
 
 class IaJournalScreen extends StatefulWidget {
   const IaJournalScreen({super.key});
@@ -26,221 +25,9 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
   // Clés de dépliage : 'mois-YYYY-MM' | 'sem-YYYY-MM-DD'
   final Set<String> _expanded = {};
 
-  // ★ v10.66 — Cache narratif journalier (figé pour toute la journée)
-  String? _messageNarratif;          // null = chargement en cours
-  bool   _narratifCharge = false;
-
   @override
   void initState() {
     super.initState();
-    _initialiserNarratif();
-  }
-
-  Future<void> _initialiserNarratif() async {
-    // 1. Charger le pseudo
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    final pseudo = prefs.getString('profil_nom') ?? '';
-
-    // 2. Construire le contexte (synchrone) sur les rapports en mémoire
-    final rapports = IaMemoryService.instance.rapports;
-    final ctx = _buildNarrativeContext(rapports, pseudo);
-
-    // 3. ★ v10.66 : Cache-first — message figé pour toute la journée
-    //    Évite les changements de phrase à chaque rebuild du widget.
-    final msg = await IaNarrativeMemoryService().obtenirOuGenererNarratifDuJour(
-      date   : DateTime.now(),
-      context: ctx,
-      // reason: 'analyseJournee'  // décommenter si déclenché après analyse du soir
-    );
-
-    if (!mounted) return;
-    setState(() {
-      _messageNarratif = msg;
-      _narratifCharge  = true;
-    });
-  }
-
-  // ★ v10.66 — Construit le contexte narratif depuis les données existantes
-  IaNarrativeContext _buildNarrativeContext(
-    List<RapportJournalier> rapports,
-    String pseudo,
-  ) {
-    final now   = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final hier  = today.subtract(const Duration(days: 1));
-
-    // ── Rapport d'aujourd'hui ────────────────────────────────────────────
-    RapportJournalier? rapportJour;
-    try {
-      rapportJour = rapports.firstWhere((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        return d == today;
-      });
-    } catch (_) {
-      rapportJour = null;
-    }
-
-    // ── Rapport d'hier ───────────────────────────────────────────────────
-    RapportJournalier? rapportHier;
-    try {
-      rapportHier = rapports.firstWhere((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        return d == hier;
-      });
-    } catch (_) {
-      rapportHier = null;
-    }
-
-    // ── ★ v10.65 : Tendances 7 jours ────────────────────────────────────
-    // Rapports des 7 derniers jours (J-1 à J-7)
-    // Rapports des 7 jours précédents (J-8 à J-14)
-    double taux7j = 0.0;
-    double taux7jPrecedent = 0.0;
-
-    try {
-      final rapports7j = rapports.where((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        final diff = today.difference(d).inDays;
-        return diff >= 1 && diff <= 7 && r.nbAvecResultat > 0;
-      }).toList();
-
-      final rapportsPrecedents = rapports.where((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        final diff = today.difference(d).inDays;
-        return diff >= 8 && diff <= 14 && r.nbAvecResultat > 0;
-      }).toList();
-
-      if (rapports7j.isNotEmpty) {
-        taux7j = rapports7j.fold(0.0, (s, r) => s + r.tauxGagnant) /
-            rapports7j.length / 100;
-      }
-      if (rapportsPrecedents.isNotEmpty) {
-        taux7jPrecedent = rapportsPrecedents.fold(
-                0.0, (s, r) => s + r.tauxGagnant) /
-            rapportsPrecedents.length / 100;
-      }
-    } catch (_) {}
-
-    // ── ★ v10.65 : Meilleure discipline ─────────────────────────────────
-    String meilleureDiscipline = '';
-    try {
-      final rapports14j = rapports.where((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        return today.difference(d).inDays <= 14 && r.parDiscipline.isNotEmpty;
-      }).toList();
-
-      if (rapports14j.isNotEmpty) {
-        // Agréger taux par discipline
-        final tauxParDisc = <String, List<double>>{};
-        for (final r in rapports14j) {
-          for (final disc in r.parDiscipline) {
-            if (disc.discipline.isNotEmpty && disc.nbCourses > 0) {
-              tauxParDisc.putIfAbsent(disc.discipline, () => []);
-              tauxParDisc[disc.discipline]!.add(disc.tauxGagnant);
-            }
-          }
-        }
-        if (tauxParDisc.isNotEmpty) {
-          meilleureDiscipline = tauxParDisc.entries
-              .reduce((a, b) {
-                final moyA = a.value.reduce((x, y) => x + y) / a.value.length;
-                final moyB = b.value.reduce((x, y) => x + y) / b.value.length;
-                return moyA > moyB ? a : b;
-              })
-              .key;
-        }
-      }
-    } catch (_) {}
-
-    // ── ★ v10.65 : Widget premium le plus stable ─────────────────────────
-    final svc = IaMemoryService.instance;
-    String widgetStable = '';
-    try {
-      const sources = [
-        'conseilJour', 'meilleurPari', 'topEquilibre', 'plusSur', 'plusRentable'
-      ];
-      int maxJours = 0;
-      for (final src in sources) {
-        final s = svc.calculerStreakPremium(
-          sourceWidget: src, dateReference: today);
-        if (s.jours > maxJours) {
-          maxJours   = s.jours;
-          widgetStable = s.jours >= 2 ? src : '';
-        }
-      }
-    } catch (_) {}
-
-    // ── Streaks premium (lecture seule) ──────────────────────────────────
-    final streakConseil   = svc.calculerStreakPremium(sourceWidget: 'conseilJour',    dateReference: today);
-    final streakMeilleur  = svc.calculerStreakPremium(sourceWidget: 'meilleurPari',   dateReference: today);
-    final streakEquilibre = svc.calculerStreakPremium(sourceWidget: 'topEquilibre',   dateReference: today);
-    final streakSur       = svc.calculerStreakPremium(sourceWidget: 'plusSur',        dateReference: today);
-    final streakRentable  = svc.calculerStreakPremium(sourceWidget: 'plusRentable',   dateReference: today);
-
-    // ── ★ v10.66 : Type de pari le plus stable sur 14 jours ──────────────
-    // Agrège les stats par type de pari depuis parTypePari des rapports 14j.
-    // Sélectionne le type avec le meilleur taux de réussite moyen.
-    String? typePariStable;
-    String? typePariInstable;
-    try {
-      final rapports14j = rapports.where((r) {
-        final d = DateTime(r.date.year, r.date.month, r.date.day);
-        return today.difference(d).inDays <= 14 && r.parTypePari.isNotEmpty;
-      }).toList();
-
-      if (rapports14j.isNotEmpty) {
-        final tauxParType = <String, List<double>>{};
-        for (final r in rapports14j) {
-          for (final tp in r.parTypePari) {
-            if (tp.typePari.isNotEmpty && tp.nbPronostiques > 0) {
-              tauxParType.putIfAbsent(tp.typePari, () => []);
-              tauxParType[tp.typePari]!.add(tp.tauxGagnant);
-            }
-          }
-        }
-        if (tauxParType.isNotEmpty) {
-          // Trier par taux moyen décroissant
-          final sorted = tauxParType.entries.toList()
-            ..sort((a, b) {
-              final moyA = a.value.reduce((x, y) => x + y) / a.value.length;
-              final moyB = b.value.reduce((x, y) => x + y) / b.value.length;
-              return moyB.compareTo(moyA);
-            });
-          typePariStable   = sorted.first.key;                    // meilleur taux
-          if (sorted.length > 1) typePariInstable = sorted.last.key; // pire taux
-        }
-      }
-    } catch (_) {}
-
-    // Signal expert disponible si discipline ou typePari est connu
-    final signalExpert = meilleureDiscipline.isNotEmpty || typePariStable != null;
-
-    return IaNarrativeContext(
-      pseudoUtilisateur:          pseudo,
-      nbCoursesJour:              rapportJour?.nbAvecResultat ?? 0,
-      nbBonnesCoursesJour:        rapportJour != null
-          ? ((rapportJour.tauxGagnant / 100) * rapportJour.nbAvecResultat).round()
-          : 0,
-      nbCoursesHier:              rapportHier?.nbAvecResultat ?? 0,
-      nbBonnesCoursesHier:        rapportHier != null
-          ? ((rapportHier.tauxGagnant / 100) * rapportHier.nbAvecResultat).round()
-          : 0,
-      roiJour:                    0,
-      roiHier:                    0,
-      streakPlusSur:              streakSur.jours,
-      streakMeilleurPari:         streakMeilleur.jours,
-      streakTopEquilibre:         streakEquilibre.jours,
-      streakPlusRentable:         streakRentable.jours,
-      streakConseilJour:          streakConseil.jours,
-      taux7j:                     taux7j,
-      taux7jPrecedent:            taux7jPrecedent,
-      meilleureDiscipline:        meilleureDiscipline,
-      widgetPremiumLePlusStable:  widgetStable,
-      typePariLePlusStable:       typePariStable,       // ★ v10.66
-      typePariLePlusInstable:     typePariInstable,     // ★ v10.66
-      signalExpertDisponible:     signalExpert,         // ★ v10.66
-    );
   }
 
   static const _dark   = Color(0xFF0D1B2A);
@@ -294,14 +81,8 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
               children: [
-                // ── ★ v10.65 : Carte narrative IA (V2 async, anti-répétition) ──
-                IaNarrativeCard(
-                  // Si le message narratif est prêt : l'afficher.
-                  // En cours de chargement : phrase courte sobre (jamais vide).
-                  message: _narratifCharge && _messageNarratif != null
-                      ? _messageNarratif!
-                      : '',
-                ),
+                // ── ★ v10.68 : Carte narrative supprimée du Journal
+                // Le moteur narratif V3 est conservé — affiché en Home uniquement.
 
                 // ── Bilan hebdo (semaine en cours) ───────────────────────
                 if (hebdo != null) _buildBilanHebdo(hebdo, ia),
@@ -742,6 +523,11 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
     return '${date.day} ${mois[date.month]} ${date.year}';
   }
 
+  // ── ★ v10.68 : Cohérence taux — taux réel strict + explication TOP 3 IA ──
+  // RÈGLE OFFICIELLE :
+  //   • Taux affiché = taux réel (pronostics 1er rang gagnants / total)
+  //   • TOP 3 IA = base technique d'apprentissage, expliqué séparément
+  //   • NE PAS modifier la logique IA, gradient descent, poids, scoring
   String _genererTexte(RapportJournalier rapport, IaPersonalityService ia) {
     final rng         = Random();
     final nbCourses   = rapport.nbAvecResultat;
@@ -758,6 +544,7 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
 
     final buf = StringBuffer();
 
+    // ── Journée en cours sans résultats ──────────────────────────────────
     if (isToday && nbCourses == 0) {
       final nbTotal = rapport.nbCoursesAnalysees;
       if (nbTotal > 0) {
@@ -770,53 +557,82 @@ class _IaJournalScreenState extends State<IaJournalScreen> {
       return 'Journée sans courses terminées à analyser.';
     }
 
-    final intros = isToday
-        ? ['Bilan partiel : $nbCourses course${nbCourses > 1 ? "s" : ""} avec résultat officiel (journée en cours).']
-        : [
-            'J\'ai analysé $nbCourses course${nbCourses > 1 ? "s" : ""} avec résultat officiel.',
-            '$nbCourses course${nbCourses > 1 ? "s" : ""} terminée${nbCourses > 1 ? "s" : ""} pour cette journée.',
-          ];
-    buf.write(intros[rng.nextInt(intros.length)]);
+    // ── ★ v10.68 : Taux réel strict ──────────────────────────────────────
+    // Calcul du nombre de pronostics gagnants (arrondi depuis le taux)
+    final nbGagnants = ((tauxGagnant / 100) * nbCourses).round();
+    final tauxStr    = tauxGagnant.toStringAsFixed(0);
 
-    buf.write(' Sur $nbCourses avec résultat officiel, ');
-    if (tauxGagnant >= 70) {
-      buf.write('mon favori a gagné dans ${tauxGagnant.toStringAsFixed(0)}% des cas — excellente journée.');
-    } else if (tauxGagnant >= 50) {
-      buf.write('mon favori a gagné dans ${tauxGagnant.toStringAsFixed(0)}% des cas. Satisfaisant.');
-    } else if (tauxGagnant >= 30) {
-      buf.write('mon taux était de ${tauxGagnant.toStringAsFixed(0)}%. Journée difficile.');
+    // Phrase 1 : taux réel strict (ex : "4 pronostics gagnants sur 25 courses (16%).")
+    if (isToday) {
+      buf.write('Bilan partiel : $nbGagnants pronostic${nbGagnants > 1 ? "s" : ""} gagnant${nbGagnants > 1 ? "s" : ""}'
+          ' sur $nbCourses course${nbCourses > 1 ? "s" : ""} ($tauxStr%) — journée en cours.');
     } else {
-      buf.write('je n\'ai réussi qu\'à ${tauxGagnant.toStringAsFixed(0)}%. J\'ai du travail.');
+      final intros = [
+        '$nbGagnants pronostic${nbGagnants > 1 ? "s" : ""} gagnant${nbGagnants > 1 ? "s" : ""}'
+            ' sur $nbCourses course${nbCourses > 1 ? "s" : ""} ($tauxStr%).',
+        'Sur $nbCourses course${nbCourses > 1 ? "s" : ""} analysée${nbCourses > 1 ? "s" : ""},'
+            ' $nbGagnants pronostic${nbGagnants > 1 ? "s" : ""} gagnant${nbGagnants > 1 ? "s" : ""}'
+            ' — taux réel $tauxStr%.',
+      ];
+      buf.write(intros[rng.nextInt(intros.length)]);
     }
-    if (tauxTop3 >= 70) buf.write(' Top 3 à ${tauxTop3.toStringAsFixed(0)}% — bonne calibration.');
 
+    // ── ★ v10.68 : Explication TOP 3 IA (uniquement si écart significatif) ─
+    // Le TOP 3 reste la base technique d'apprentissage — on l'explique ici.
+    // Affiché uniquement si l'écart taux strict / TOP 3 ≥ 5 points.
+    final ecartTop3 = tauxTop3 - tauxGagnant;
+    if (ecartTop3 >= 5) {
+      final tauxTop3Str = tauxTop3.toStringAsFixed(0);
+      if (tauxGagnant < 40) {
+        buf.write(' Le taux TOP 3 IA atteint $tauxTop3Str%, ce qui montre que les sélections'
+            ' restent proches des arrivées malgré une journée difficile.');
+      } else if (tauxGagnant >= 40 && tauxGagnant < 60) {
+        buf.write(' Le taux TOP 3 IA atteint $tauxTop3Str%, confirmant une bonne calibration'
+            ' des sélections.');
+      } else {
+        buf.write(' Le taux TOP 3 IA atteint $tauxTop3Str% — excellente cohérence entre'
+            ' les sélections et les arrivées.');
+      }
+    }
+
+    // ── Détail courses notables (optionnel, si données disponibles) ───────
     if (courses.isNotEmpty) {
       try {
         final confirmees = courses.where((c) => c.favoriTop3).toList();
         final ratees     = courses.where((c) => !c.favoriTop3).toList();
-        if (confirmees.isNotEmpty) {
+        if (confirmees.isNotEmpty && tauxGagnant >= 50) {
           final c = confirmees[rng.nextInt(confirmees.length)];
-          if (c.nomCourse.isNotEmpty) buf.write(' ${c.nomCourse} m\'a confirmé mes critères.');
-        } else if (ratees.isNotEmpty) {
+          if (c.nomCourse.isNotEmpty) buf.write(' ${c.nomCourse} confirme les critères de sélection.');
+        } else if (ratees.isNotEmpty && tauxGagnant < 30) {
           final c = ratees[rng.nextInt(ratees.length)];
-          if (c.nomCourse.isNotEmpty) buf.write(' ${c.nomCourse} m\'a surprise — je vais revoir ce type de course.');
+          if (c.nomCourse.isNotEmpty) buf.write(' ${c.nomCourse} sort des patterns habituels.');
         }
       } catch (_) {}
     }
 
-    if (nbPoids > 0) buf.write(' J\'ai mis à jour $nbPoids paramètre${nbPoids > 1 ? "s" : ""} de mon algorithme.');
+    // ── Mises à jour algorithme ───────────────────────────────────────────
+    if (nbPoids > 0) {
+      buf.write(' $nbPoids paramètre${nbPoids > 1 ? "s" : ""}'
+          ' algorithmique${nbPoids > 1 ? "s" : ""} mis à jour.');
+    }
 
+    // ── Meilleure discipline ──────────────────────────────────────────────
     if (disciplines.isNotEmpty) {
       try {
         final meilleure = disciplines.reduce((a, b) => a.tauxGagnant > b.tauxGagnant ? a : b);
-        if (meilleure.discipline.isNotEmpty && meilleure.tauxGagnant > 0) {
-          buf.write(' Meilleure discipline : ${meilleure.discipline} (${meilleure.tauxGagnant.toStringAsFixed(0)}%).');
+        if (meilleure.discipline.isNotEmpty && meilleure.tauxGagnant > tauxGagnant + 10) {
+          buf.write(' Meilleure discipline : ${meilleure.discipline}'
+              ' (${meilleure.tauxGagnant.toStringAsFixed(0)}%).');
         }
       } catch (_) {}
     }
 
-    if (note.contains('Excellente')) buf.write(' Une journée dont je suis fière.');
-    else if (note.contains('Faible')) buf.write(' Je retiens les leçons pour m\'améliorer.');
+    // ── Note journée ──────────────────────────────────────────────────────
+    if (note.contains('Excellente') && tauxGagnant >= 60) {
+      buf.write(' Journée de référence à retenir.');
+    } else if (note.contains('Faible') && tauxGagnant < 25) {
+      buf.write(' Les données enrichissent l\'apprentissage pour les prochaines journées.');
+    }
 
     return buf.toString();
   }
