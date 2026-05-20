@@ -137,6 +137,13 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // ignore: unused_field
   bool _showRefreshFlash = false; // ★ v10.26d : _flashKey/_dernierRefresh supprimés (unused_field)
 
+  // ★ v10.70 : Filtre période pour "Précision par type de pari"
+  // Indépendant du mois calendrier — chaque écran a son propre filtre
+  // 'today' | '7j' | '30j' | '60j' | 'all' | 'custom'
+  String _statsFiltreType = '30j'; // défaut = 30j (cohérent avec vue mensuelle)
+  DateTime? _statsFiltreDebut;
+  DateTime? _statsFiltreFin;
+
   // ── Noms mois / jours ─────────────────────────────────────────────────
   static const _nomsMois = [
     '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -1102,111 +1109,332 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  STATS PAR TYPE DE PARI — barres visuelles
+  //  STATS PAR TYPE DE PARI — ★ v10.70 : filtres indépendants
   // ══════════════════════════════════════════════════════════════════════
-  Widget _buildStatsByType(Map<int, DonneeJourCalendrier> data) {
-    // Agréger par type de pari
+
+  // Helpers période pour _buildStatsByType
+  static DateTime _debutJour(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
+  static DateTime _finJour(DateTime d) =>
+      DateTime(d.year, d.month, d.day, 23, 59, 59, 999);
+
+  bool _estDansPeriodeStats(DateTime date) {
+    final now = DateTime.now();
+    switch (_statsFiltreType) {
+      case 'today':
+        final d = _debutJour(now);
+        final f = _finJour(now);
+        return !date.isBefore(d) && !date.isAfter(f);
+      case '7j':
+        final f = _finJour(now);
+        final d = _debutJour(now).subtract(const Duration(days: 6));
+        return !date.isBefore(d) && !date.isAfter(f);
+      case '30j':
+        final f = _finJour(now);
+        final d = _debutJour(now).subtract(const Duration(days: 29));
+        return !date.isBefore(d) && !date.isAfter(f);
+      case '60j':
+        final f = _finJour(now);
+        final d = _debutJour(now).subtract(const Duration(days: 59));
+        return !date.isBefore(d) && !date.isAfter(f);
+      case 'all':
+        return true;
+      case 'custom':
+        if (_statsFiltreDebut == null || _statsFiltreFin == null) return true;
+        return !date.isBefore(_statsFiltreDebut!) && !date.isAfter(_statsFiltreFin!);
+      default:
+        return true;
+    }
+  }
+
+  String get _labelFiltreStats {
+    const mois = ['','Jan','Fév','Mar','Avr','Mai','Juin','Juil','Aoû','Sep','Oct','Nov','Déc'];
+    final now = DateTime.now();
+    switch (_statsFiltreType) {
+      case 'today': return "Filtre : Aujourd'hui ${now.day} ${mois[now.month]}";
+      case '7j':    return 'Filtre : 7 derniers jours';
+      case '30j':   return 'Filtre : 30 derniers jours';
+      case '60j':   return 'Filtre : 60 derniers jours';
+      case 'all':   return 'Filtre : Total historique';
+      case 'custom':
+        if (_statsFiltreDebut != null && _statsFiltreFin != null) {
+          final fmt = (DateTime d) =>
+              '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+          return 'Filtre : ${fmt(_statsFiltreDebut!)} → ${fmt(_statsFiltreFin!)}';
+        }
+        return 'Filtre : Période personnalisée';
+      default: return 'Filtre : 30 derniers jours';
+    }
+  }
+
+  Widget _buildStatsByType(Map<int, DonneeJourCalendrier> _unusedData) {
+    // ★ v10.70 : On calcule depuis TOUS les pronostics avec résultat,
+    // filtrés par la période choisie — indépendamment du mois calendrier
+    final mem = IaMemoryService.instance;
+    final tousPronostics = mem.pronosticsAvecResultat;
+
     final Map<String, int> nbByType   = {};
     final Map<String, int> bonsbyType = {};
 
-    for (final d in data.values) {
-      for (final p in d.pronostics) {
-        final t = p.typePariConseille ?? '';
-        if (t.isEmpty || t == 'Inconnu' || t == 'À surveiller') continue;
-        nbByType[t]    = (nbByType[t]    ?? 0) + 1;
-        if (IaMemoryService.instance.estBonConseil(p, t)) {
-          bonsbyType[t] = (bonsbyType[t] ?? 0) + 1;
-        }
+    for (final p in tousPronostics) {
+      // Filtrer par période
+      final dateCours = p.datePronostic;
+      if (!_estDansPeriodeStats(dateCours)) continue;
+
+      final t = p.typePariConseille ?? '';
+      if (t.isEmpty || t == 'Inconnu' || t == 'A surveiller') continue;
+      nbByType[t]    = (nbByType[t]    ?? 0) + 1;
+      if (mem.estBonConseil(p, t)) {
+        bonsbyType[t] = (bonsbyType[t] ?? 0) + 1;
       }
     }
-
-    if (nbByType.isEmpty) return const SizedBox();
 
     // Trier par nb décroissant
     final types = nbByType.keys.toList()
       ..sort((a, b) => (nbByType[b] ?? 0).compareTo(nbByType[a] ?? 0));
 
-    // ★ v10.57 — Libellé de filtre actif pour éviter la confusion "8/14 = 814"
-    const _nomsMoisStats = [
-      '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
-    ];
-    final now           = DateTime.now();
-    final estMoisActuel = _moisRef.year == now.year && _moisRef.month == now.month;
-    final labelPeriode  = estMoisActuel
-        ? "Aujourd'hui — ${_nomsMoisStats[_moisRef.month]} ${_moisRef.year}"
-        : '${_nomsMoisStats[_moisRef.month]} ${_moisRef.year}';
-
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      iaSectionTitle('🎯 Précision par type de pari'),
+      iaSectionTitle('📊 Précision par type de pari'),
+      const SizedBox(height: 8),
+
+      // ── Chips filtres ────────────────────────────────────────────────
+      _buildChipsFiltreStats(),
       const SizedBox(height: 6),
-      // ★ v10.57 — En-tête filtre actif
+
+      // ── Libellé filtre actif ─────────────────────────────────────────
       Text(
-        'Filtre : $labelPeriode',
-        style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
+        _labelFiltreStats,
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
       ),
       const SizedBox(height: 10),
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _cCard,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-        ),
-        child: Column(
-          children: types.map((t) {
-            final nb   = nbByType[t]   ?? 0;
-            final bons = bonsbyType[t] ?? 0;
-            final tx   = nb > 0 ? bons / nb : 0.0;
-            final col  = tx >= 0.30 ? _cGreen
-                       : tx >= 0.25 ? _cYellow
-                       : tx >= 0.20 ? _cOrange
-                       : _cRed;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(
-                    child: Text(t,
-                      style: const TextStyle(color: Colors.white70, fontSize: 14)),
+
+      if (types.isEmpty)
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _cCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.info_outline, color: Colors.white38, size: 14),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Aucun pronostic avec résultat sur cette période.',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
+              ),
+            ),
+          ]),
+        )
+      else
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _cCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+          ),
+          child: Column(
+            children: types.asMap().entries.map((entry) {
+              final isLast = entry.key == types.length - 1;
+              final t    = entry.value;
+              final nb   = nbByType[t]   ?? 0;
+              final bons = bonsbyType[t] ?? 0;
+              final tx   = nb > 0 ? bons / nb : 0.0;
+              final col  = tx >= 0.30 ? _cGreen
+                         : tx >= 0.25 ? _cYellow
+                         : tx >= 0.20 ? _cOrange
+                         : _cRed;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(t,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          )),
+                      ),
+                      Text('$bons / $nb',
+                        style: TextStyle(
+                          color: col, fontSize: 15, fontWeight: FontWeight.w800)),
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        width: 46,
+                        child: Text('${(tx * 100).toStringAsFixed(0)}%',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: col, fontSize: 15, fontWeight: FontWeight.w800)),
+                      ),
+                    ]),
                   ),
-                  // ★ v10.57 : "$bons gagnants / $nb" au lieu de "$bons/$nb"
-                  Text('$bons / $nb',
+                  Text(
+                    '$bons gagnant${bons > 1 ? 's' : ''} sur $nb pronostic${nb > 1 ? 's' : ''}',
                     style: TextStyle(
-                      color: col,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    )),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 44,
-                    child: Text('${(tx * 100).toStringAsFixed(0)}%',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(color: col, fontSize: 14, fontWeight: FontWeight.bold)),
+                      color: Colors.white.withValues(alpha: 0.42), fontSize: 12),
                   ),
-                ]),
-                const SizedBox(height: 3),
-                // ★ v10.57 — Sous-libellé "N gagnants / M pronostics"
-                Text(
-                  '$bons gagnant${bons > 1 ? 's' : ''} sur $nb pronostic${nb > 1 ? 's' : ''}',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.38), fontSize: 12),
-                ),
-                const SizedBox(height: 5),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: tx.clamp(0.0, 1.0),
-                    minHeight: 5,
-                    backgroundColor: Colors.white.withValues(alpha: 0.07),
-                    valueColor: AlwaysStoppedAnimation<Color>(col),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: tx.clamp(0.0, 1.0),
+                      minHeight: 4,
+                      backgroundColor: Colors.white.withValues(alpha: 0.07),
+                      valueColor: AlwaysStoppedAnimation<Color>(col),
+                    ),
                   ),
-                ),
-              ]),
-            );
-          }).toList(),
+                  if (!isLast) ...[
+                    const SizedBox(height: 10),
+                    Divider(height: 1, color: Colors.white.withValues(alpha: 0.07)),
+                    const SizedBox(height: 10),
+                  ] else
+                    const SizedBox(height: 4),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+    ]);
+  }
+
+  // ── Chips filtre période pour Précision par type de pari ─────────────
+  Widget _buildChipsFiltreStats() {
+    return Wrap(
+      spacing: 7,
+      runSpacing: 7,
+      children: [
+        _chipStatFiltre("Aujourd'hui", 'today'),
+        _chipStatFiltre('7j',   '7j'),
+        _chipStatFiltre('30j',  '30j'),
+        _chipStatFiltre('60j',  '60j'),
+        _chipStatFiltre('Total','all'),
+        _chipStatFiltrePeriode(),
+      ],
+    );
+  }
+
+  Widget _chipStatFiltre(String label, String valeur) {
+    final actif = _statsFiltreType == valeur;
+    return GestureDetector(
+      onTap: () => setState(() => _statsFiltreType = valeur),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: actif
+              ? const Color(0x337C4DFF)
+              : const Color(0x2218202A),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: actif
+                ? const Color(0xFFFFD93D)
+                : const Color(0x445C6B7A),
+            width: actif ? 1.5 : 1.0,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: actif
+                ? const Color(0xFFFFD93D)
+                : Colors.white.withValues(alpha: 0.72),
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
         ),
       ),
-    ]);
+    );
+  }
+
+  Widget _chipStatFiltrePeriode() {
+    final actif = _statsFiltreType == 'custom';
+    String label = 'Période';
+    if (actif && _statsFiltreDebut != null && _statsFiltreFin != null) {
+      final fmt = (DateTime d) =>
+          '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+      label = '${fmt(_statsFiltreDebut!)}→${fmt(_statsFiltreFin!)}';
+    }
+    return GestureDetector(
+      onTap: () => _choisirPeriodeStats(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: actif
+              ? const Color(0x337C4DFF)
+              : const Color(0x2218202A),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: actif
+                ? const Color(0xFFFFD93D)
+                : const Color(0xFF7C4DFF),
+            width: actif ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.calendar_month,
+              size: 12,
+              color: actif
+                  ? const Color(0xFFFFD93D)
+                  : const Color(0xFF7C4DFF)),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: actif
+                  ? const Color(0xFFFFD93D)
+                  : const Color(0xFF7C4DFF),
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _choisirPeriodeStats() async {
+    final now = DateTime.now();
+    final debut = await showDatePicker(
+      context: context,
+      initialDate: _statsFiltreDebut ?? now,
+      firstDate: DateTime(2024),
+      lastDate: now,
+      helpText: 'DATE DE DEBUT',
+      confirmText: 'VALIDER',
+      cancelText: 'ANNULER',
+      builder: (ctx, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(primary: Color(0xFF7C4DFF)),
+        ),
+        child: child!,
+      ),
+    );
+    if (debut == null || !mounted) return;
+    final fin = await showDatePicker(
+      context: context,
+      initialDate: _statsFiltreFin ?? now,
+      firstDate: debut,
+      lastDate: now,
+      helpText: 'DATE DE FIN',
+      confirmText: 'VALIDER',
+      cancelText: 'ANNULER',
+      builder: (ctx, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(primary: Color(0xFF7C4DFF)),
+        ),
+        child: child!,
+      ),
+    );
+    if (fin == null || !mounted) return;
+    setState(() {
+      _statsFiltreType  = 'custom';
+      _statsFiltreDebut = debut;
+      _statsFiltreFin   = _finJour(fin);
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════

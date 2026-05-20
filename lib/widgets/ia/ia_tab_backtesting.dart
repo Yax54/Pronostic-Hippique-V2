@@ -1462,7 +1462,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     );
   }
 
-  // ★ v10.70 : Bloc traçabilité — Signaux IA détectés / Affichés en Premium / Gagnants stricts
+  // ★ v10.70 CORRECTIF : Bloc traçabilité UI harmonisée premium
   Widget _buildTraceabiliteBacktesting(BacktestResult r) {
     // Signaux IA détectés = courses simulées par le backtesting sur la période
     final signauxDetectes = r.nbTotal;
@@ -1478,9 +1478,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     for (int i = 0; i < _btJours; i++) {
       final jour = maintenant.subtract(Duration(days: i));
       final premiums = mem.premiumsPourDate(jour.year, jour.month, jour.day);
-      // Compter les jours ayant au moins 1 premium correspondant au type actif
       final aUnPremiumDuType = premiums.any((p) {
-        if (_btType == 'Conseil IA') return true; // tous types acceptés
+        if (_btType == 'Conseil IA') return true;
         return p.typePari == _btType;
       });
       if (aUnPremiumDuType) affichesPremium++;
@@ -1488,12 +1487,22 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      margin: const EdgeInsets.only(top: 4),
+      margin: const EdgeInsets.only(top: 14, bottom: 14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF142030),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x334FC3F7)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0x334FC3F7),
+          width: 1.2,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1502,42 +1511,57 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             '📌 Traçabilité du type de pari',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 15,
+              fontSize: 17,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 10),
-          _ligneTrace('Signaux IA détectés', signauxDetectes),
-          _ligneTrace('Affichés en Premium', affichesPremium),
-          _ligneTrace('Gagnants stricts', gagnantsStricts),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
+          _ligneTracePremium(
+            label: 'Signaux IA détectés',
+            value: signauxDetectes,
+            color: const Color(0xFF80DEEA),
+          ),
+          _ligneTracePremium(
+            label: 'Affichés en Premium',
+            value: affichesPremium,
+            color: const Color(0xFFB6A8FF),
+          ),
+          _ligneTracePremium(
+            label: 'Gagnants stricts',
+            value: gagnantsStricts,
+            color: const Color(0xFF66BB6A),
+          ),
+          const SizedBox(height: 12),
           Text(
             'Ces compteurs comparent les signaux détectés par la simulation, '
             'les paris réellement affichés dans les widgets premium, '
             'et les gagnants stricts sur la période.',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 13,
               height: 1.35,
-              color: Colors.white.withValues(alpha: 0.6),
+              color: Colors.white.withValues(alpha: 0.62),
             ),
           ),
-          // ★ v10.70 : Explication si signal détecté mais pas affiché en premium
           if (signauxDetectes > 0 && affichesPremium == 0) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFF9800).withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.3)),
+                color: const Color(0x22FF9800),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0x66FFB74D),
+                ),
               ),
-              child: Text(
+              child: const Text(
                 '⚠️ Signal détecté en simulation, mais non retenu en Premium sur cette période. '
                 'Il peut avoir été écarté par les seuils, la stabilité, ou parce qu\'un autre pari était prioritaire.',
                 style: TextStyle(
-                  fontSize: 12,
+                  color: Color(0xFFFFCC80),
+                  fontSize: 13,
                   height: 1.35,
-                  color: const Color(0xFFFFCC80).withValues(alpha: 0.9),
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -1547,26 +1571,32 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     );
   }
 
-  Widget _ligneTrace(String label, int value) {
+  // ★ v10.70 CORRECTIF : Ligne trace UI premium — couleur distincte par ligne
+  Widget _ligneTracePremium({
+    required String label,
+    required int value,
+    required Color color,
+  }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
           Expanded(
             child: Text(
               label,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
           Text(
             '$value',
-            style: const TextStyle(
-              color: Color(0xFF80DEEA),
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
+            style: TextStyle(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],
