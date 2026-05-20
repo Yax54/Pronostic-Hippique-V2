@@ -109,6 +109,7 @@
 //     v7.7 : +premium_widgets_selection_jour_v1 (figeage 5 widgets premium du jour)
 //     v7.8 : +ia_narrative_memory_v1 (mémoire narrative anti-répétition)
 //     v7.9 : +ia_narrative_daily_cache_v1 (cache journalier narratif anti-rebuild)
+//     v8.0 : +ia_stats_filtre_actif_v1, +ia_stats_date_debut_v1, +ia_stats_date_fin_v1 (filtres Précision IA — préférences affichage uniquement)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -127,7 +128,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '7.9'; // ★ v10.66 : +ia_narrative_daily_cache_v1 (cache narratif journalier anti-rebuild)
+  static const _backupVersion = '8.0'; // ★ v10.70 : +ia_stats_filtre_actif_v1, +ia_stats_date_debut_v1, +ia_stats_date_fin_v1 (filtres Précision IA)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -214,6 +215,12 @@ class BackupService {
     // ★ v10.371-audit : flags transitoires (one-shot — restaurer évite un recalcul inutile)
     'elo_orphelins_purges_v1',   // Flag purge ELO orphelins (elo_service)
     'conseils_inject_pending',   // Flag injection conseils en attente
+    // ★ v10.70 : Filtres Précision IA (préférences d'affichage uniquement)
+    // Ces clés NE touchent PAS : apprentissage IA, poids, premium, backtesting, calendrier.
+    // Si absentes dans un ancien backup → filtre par défaut '60j' utilisé. Jamais bloquant.
+    'ia_stats_filtre_actif_v1',  // Filtre actif : '60j', 'all', '7j', 'today', 'custom'
+    'ia_stats_date_debut_v1',    // Date début période personnalisée (ISO 8601)
+    'ia_stats_date_fin_v1',      // Date fin période personnalisée (ISO 8601)
   ];
 
   // 📋 Paris utilisateur — historique complet

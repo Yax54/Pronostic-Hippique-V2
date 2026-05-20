@@ -77,6 +77,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   DateTime? _filtreDebut;
   DateTime? _filtreFin;
 
+  // ★ v10.70 : Clés de persistance du filtre Précision IA
+  static const _kFiltreActif = 'ia_stats_filtre_actif_v1';
+  static const _kFiltreDebut = 'ia_stats_date_debut_v1';
+  static const _kFiltreFin   = 'ia_stats_date_fin_v1';
+
   // ★ v9.79 : Date d'analyse (défaut = aujourd'hui)
   DateTime _dateAnalyse = DateTime.now();
 
@@ -106,6 +111,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) => _verifierFichiersJours());
     // ★ v9.92 : Charger la date/heure de la dernière analyse
     WidgetsBinding.instance.addPostFrameCallback((_) => _chargerDerniereAnalyseHeure());
+    // ★ v10.70 : Restaurer le filtre Précision IA sauvegardé
+    WidgetsBinding.instance.addPostFrameCallback((_) => _chargerFiltreIaStats());
   }
 
   /// ★ v9.84 : Lance la recréation automatiquement si c'est le 1er chargement
@@ -128,6 +135,54 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   }
 
   // ★ v9.90 : _chargerPrefsBt() et _sauvegarderPrefsBt() migrés dans IaTabBacktesting
+
+  // ★ v10.70 : Charger le filtre Précision IA depuis SharedPreferences
+  Future<void> _chargerFiltreIaStats() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawFiltre = prefs.getString(_kFiltreActif);
+      if (rawFiltre == null || !mounted) return;
+      // Valeurs valides : null(60j), 'all', '7j', 'today', 'custom'
+      const valides = {'all', '7j', 'today', 'custom'};
+      final filtreRestaure = valides.contains(rawFiltre) ? rawFiltre : null;
+      DateTime? debut;
+      DateTime? fin;
+      if (filtreRestaure == 'custom') {
+        debut = DateTime.tryParse(prefs.getString(_kFiltreDebut) ?? '');
+        fin   = DateTime.tryParse(prefs.getString(_kFiltreFin)   ?? '');
+        // Dates corrompues → reset vers 60j (ne jamais bloquer)
+        if (debut == null || fin == null) {
+          if (mounted) setState(() { _filtrePeriode = null; });
+          return;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _filtrePeriode = filtreRestaure;
+          _filtreDebut   = debut;
+          _filtreFin     = fin;
+        });
+      }
+    } catch (_) {
+      // Erreur silencieuse — le filtre par défaut (60j) est déjà en place
+    }
+  }
+
+  // ★ v10.70 : Sauvegarder le filtre actif dans SharedPreferences
+  Future<void> _sauvegarderFiltreIaStats() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kFiltreActif, _filtrePeriode ?? '60j');
+      if (_filtreDebut != null) {
+        await prefs.setString(_kFiltreDebut, _filtreDebut!.toIso8601String());
+      }
+      if (_filtreFin != null) {
+        await prefs.setString(_kFiltreFin, _filtreFin!.toIso8601String());
+      }
+    } catch (_) {
+      // Erreur silencieuse — la persistance du filtre est optionnelle
+    }
+  }
 
   void _loadStats() {
     // ★ v9.6 : Calculer les pronostics manquants
@@ -2703,26 +2758,43 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
         const SizedBox(height: 10),
 
-        // Note explicative Taux de Réussite
+        // ★ v10.70 : Note explicative clarifiée — Précision IA / Conseils enregistrés
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: _green.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(color: _green.withValues(alpha: 0.2)),
           ),
-          child: Row(children: const [
-            Icon(Icons.emoji_events_outlined, color: Color(0xFF66BB6A), size: 14),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                "🏆 Précision IA (30j glissants) : sur X courses conseillées Quinté+, combien l'IA avait-elle raison selon PMU ?\n"
-                "Ex : 3 bons sur 5 Quinté+ = 60% de précision. ⚠️ Ces chiffres concernent les CONSEILS IA, pas vos paris.",
-                // NB : le tableau 🎰 Taux de réussite par type (plus bas) concerne VOS paris enregistrés.
-                style: TextStyle(color: Colors.white54, fontSize: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.emoji_events_outlined, color: Color(0xFF66BB6A), size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '🏆 Précision IA — Conseils enregistrés',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 6),
+              Text(
+                'Bons/Total = pronostics IA enregistrés après analyse, par type de pari. '
+                'Ces données alimentent les seuils adaptatifs.',
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  color: Colors.white.withValues(alpha: 0.65),
+                ),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
         const SizedBox(height: 10),
 
@@ -2777,11 +2849,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                     style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
                   )),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 54, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 16), textAlign: TextAlign.center)),
+                  const SizedBox(width: 54, child: Text('Bons/Total', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 16), textAlign: TextAlign.center)),
+                  const SizedBox(width: 46, child: Text('Taux', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 4),
-                  const SizedBox(width: 24, child: Text('7j', style: TextStyle(color: Colors.white38, fontSize: 16), textAlign: TextAlign.center)),
+                  const SizedBox(width: 24, child: Text('↗', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center)),
                   const SizedBox(width: 14),
                 ]),
               ),
@@ -3528,7 +3600,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     const vertActif    = Color(0xFF4CAF7D);
     const jauneInactif = Color(0xFFFFD700);
     return GestureDetector(
-      onTap: () => setState(() => _filtrePeriode = valeur),
+      onTap: () { setState(() => _filtrePeriode = valeur); _sauvegarderFiltreIaStats(); },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
         decoration: BoxDecoration(
@@ -3602,9 +3674,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       // Tout depuis l'installation
       return {'nb': p.nbTotalAll, 'bons': p.nbBonsAll, 'ordre': p.nbOrdreAll, 'desordre': p.nbDesordreAll};
     } else if (_filtrePeriode == '7j') {
-      // 7 derniers jours glissants
-      final fin   = DateTime.now();
-      final debut = fin.subtract(const Duration(days: 7));
+      // ★ v10.70 : 7 jours = aujourd'hui inclus + 6 jours précédents
+      // Avant : fin = now() → manquait les pronostics d'aujourd'hui (heure > now)
+      // Correction : fin = fin du jour (23:59:59.999), debut = début du jour - 6j
+      final now7   = DateTime.now();
+      final fin    = DateTime(now7.year, now7.month, now7.day, 23, 59, 59, 999);
+      final debut  = DateTime(now7.year, now7.month, now7.day).subtract(const Duration(days: 6));
       return p.statsPourPeriode(debut, fin);
     } else if (_filtrePeriode == 'today') {
       // ★ v9.99 : Aujourd'hui — lecture directe depuis _pronostics (source temps réel)
@@ -3693,6 +3768,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       _filtreDebut   = debut;
       _filtreFin     = fin;
     });
+    // ★ v10.70 : Sauvegarder la période personnalisée
+    _sauvegarderFiltreIaStats();
   }
 
   Widget _buildLigneSeuilAdaptatif(String label, double valeurActuelle, double valeurDefaut) {

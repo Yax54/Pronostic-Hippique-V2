@@ -1462,6 +1462,118 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     );
   }
 
+  // ★ v10.70 : Bloc traçabilité — Signaux IA détectés / Affichés en Premium / Gagnants stricts
+  Widget _buildTraceabiliteBacktesting(BacktestResult r) {
+    // Signaux IA détectés = courses simulées par le backtesting sur la période
+    final signauxDetectes = r.nbTotal;
+
+    // Gagnants stricts = courses gagnées dans la simulation
+    final gagnantsStricts = r.nbGagnes;
+
+    // Affichés en Premium = nombre de jours sur la période ayant au moins 1 premium
+    // du type sélectionné (calculé depuis l'historique premium multi-jours)
+    int affichesPremium = 0;
+    final mem = IaMemoryService.instance;
+    final maintenant = DateTime.now();
+    for (int i = 0; i < _btJours; i++) {
+      final jour = maintenant.subtract(Duration(days: i));
+      final premiums = mem.premiumsPourDate(jour.year, jour.month, jour.day);
+      // Compter les jours ayant au moins 1 premium correspondant au type actif
+      final aUnPremiumDuType = premiums.any((p) {
+        if (_btType == 'Conseil IA') return true; // tous types acceptés
+        return p.typePari == _btType;
+      });
+      if (aUnPremiumDuType) affichesPremium++;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(top: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF142030),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x334FC3F7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '📌 Traçabilité du type de pari',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _ligneTrace('Signaux IA détectés', signauxDetectes),
+          _ligneTrace('Affichés en Premium', affichesPremium),
+          _ligneTrace('Gagnants stricts', gagnantsStricts),
+          const SizedBox(height: 8),
+          Text(
+            'Ces compteurs comparent les signaux détectés par la simulation, '
+            'les paris réellement affichés dans les widgets premium, '
+            'et les gagnants stricts sur la période.',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.35,
+              color: Colors.white.withValues(alpha: 0.6),
+            ),
+          ),
+          // ★ v10.70 : Explication si signal détecté mais pas affiché en premium
+          if (signauxDetectes > 0 && affichesPremium == 0) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF9800).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                '⚠️ Signal détecté en simulation, mais non retenu en Premium sur cette période. '
+                'Il peut avoir été écarté par les seuils, la stabilité, ou parce qu\'un autre pari était prioritaire.',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: const Color(0xFFFFCC80).withValues(alpha: 0.9),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _ligneTrace(String label, int value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75),
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Text(
+            '$value',
+            style: const TextStyle(
+              color: Color(0xFF80DEEA),
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBtResultats(BacktestResult r) {
     final gainColor = r.gainNet >= 0 ? const Color(0xFF4CAF7D) : Colors.redAccent;
     final mise      = _btMise;
@@ -2119,6 +2231,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           ),
           const SizedBox(height: 12),
         ],
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ★ v10.70 : BLOC TRAÇABILITÉ — Signaux / Premium / Gagnants stricts
+        // ═══════════════════════════════════════════════════════════════════
+        _buildTraceabiliteBacktesting(r),
+        const SizedBox(height: 12),
 
         // ═══════════════════════════════════════════════════════════════════
         // BLOC 5 — PAR HIPPODROME
