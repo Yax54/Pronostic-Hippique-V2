@@ -1546,88 +1546,142 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  ★ v10.73 — CARTE quasi gagnant
+  //  ★ v10.74 — CARTE quasi gagnant enrichie (résumé compact, clic = fiche)
   // ══════════════════════════════════════════════════════════════════════
   Widget _carteQuasiGagnant(QuasiGagnant qg) {
-    final estBestBet = qg.vientDeBestBet;
-    final labelType  = QuasiGrosParisService.labelType(qg.type);
-    final couleur    = estBestBet ? _cGold : _cGreen;
-    final fmt        = (DateTime d) =>
+    final estBestBet  = qg.vientDeBestBet;
+    final labelType   = QuasiGrosParisService.labelType(qg.type);
+    final couleur     = estBestBet ? _cGold : _cGreen;
+    final nbRequis    = QuasiGrosParisService.nbChevauxPourType(qg.type);
+    final fmt         = (DateTime d) =>
         '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: estBestBet
-            ? const Color(0xFF1A1400)
-            : const Color(0xFF0F1A10),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: couleur.withValues(alpha: 0.4)),
+    // Arrivée PMU top N (pour résumé compact)
+    final pmuTopN = qg.arriveeReelle.take(nbRequis).toList();
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => _ouvrirFicheQuasiGagnant(context, qg),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+          color: estBestBet ? const Color(0xFF1A1400) : const Color(0xFF0F1A10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: couleur.withValues(alpha: 0.4)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── En-tête ──────────────────────────────────────────────────
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: couleur.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${estBestBet ? "⭐ " : ""}$labelType quasi gagnant — ${qg.nbTrouves}/${qg.nbRequis}',
+                style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w800),
+              ),
+            ),
+            const Spacer(),
+            Text(fmt(qg.dateCourse),
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          ]),
+          const SizedBox(height: 7),
+          // ── Nom de course ─────────────────────────────────────────────
+          Text(qg.nomCourse,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 3),
+          Text('${qg.hippodrome} · ${qg.discipline}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+          const Divider(height: 12, color: Colors.white10),
+          // ── IA vs PMU résumé ──────────────────────────────────────────
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('IA', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+              Text(qg.numerosIA.join(' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+            ])),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('PMU', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+              Text(pmuTopN.isEmpty ? '—' : pmuTopN.join(' - '),
+                  style: const TextStyle(color: Color(0xFF66BB6A), fontSize: 13, fontWeight: FontWeight.w800)),
+            ])),
+          ]),
+          const SizedBox(height: 6),
+          // ── Trouvés / manquants / remplaçants ────────────────────────
+          Wrap(spacing: 8, runSpacing: 4, children: [
+            if (qg.numerosTrouves.isNotEmpty)
+              _chipQG('✅ ${qg.numerosTrouves.map((n) => "N°$n").join(" ")}',
+                  couleur.withValues(alpha: 0.8), couleur.withValues(alpha: 0.15)),
+            if (qg.numerosManquants.isNotEmpty)
+              _chipQG('❌ IA: ${qg.numerosManquants.map((n) => "N°$n").join(" ")}',
+                  const Color(0xFFEF5350).withValues(alpha: 0.8),
+                  const Color(0xFFEF5350).withValues(alpha: 0.1)),
+            // Remplaçant = ce qui est dans pmuTopN mais pas dans IA
+            ...(){
+              final setIA  = qg.numerosIA.toSet();
+              final rempl  = pmuTopN.where((n) => !setIA.contains(n)).toList();
+              return rempl.isEmpty ? <Widget>[] : [
+                _chipQG('PMU: ${rempl.map((n) => "N°$n").join(" ")}',
+                    const Color(0xFF4FC3F7).withValues(alpha: 0.8),
+                    const Color(0xFF4FC3F7).withValues(alpha: 0.1)),
+              ];
+            }(),
+          ]),
+          const SizedBox(height: 5),
+          // ── Source + tap hint ─────────────────────────────────────────
+          Row(children: [
+            Text(
+              estBestBet ? '⭐ Gros paris à surveiller' : 'Programme IA',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.38), fontSize: 11),
+            ),
+            const Spacer(),
+            Text('Détail →',
+                style: TextStyle(color: couleur.withValues(alpha: 0.6), fontSize: 11)),
+          ]),
+        ]),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          // Badge type
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: couleur.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '${estBestBet ? "⭐ " : ""}$labelType',
-              style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w800),
-            ),
+    );
+  }
+
+  Widget _chipQG(String label, Color textColor, Color bgColor) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
+    child: Text(label, style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w700)),
+  );
+
+  void _ouvrirFicheQuasiGagnant(BuildContext context, QuasiGagnant qg) {
+    // Chercher le signal BestBet correspondant si source = grosParisSurveiller
+    final signal = qg.vientDeBestBet
+        ? QuasiGrosParisService.instance.signaux
+            .where((s) => s.courseKey == qg.courseKey)
+            .firstOrNull
+        : null;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.88,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (_, scrollCtrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0F1722),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
           ),
-          const SizedBox(width: 8),
-          // Score
-          Text(
-            '${qg.nbTrouves}/${qg.nbRequis} ✓',
-            style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.bold),
+          child: _FicheDetailQuasiGagnant(
+            qg:         qg,
+            signal:     signal,
+            scrollCtrl: scrollCtrl,
           ),
-          const Spacer(),
-          Text(
-            fmt(qg.dateCourse),
-            style: const TextStyle(color: Colors.white38, fontSize: 12),
-          ),
-        ]),
-        const SizedBox(height: 6),
-        Text(
-          qg.nomCourse,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '${qg.hippodrome} • ${qg.discipline}',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
-        ),
-        const SizedBox(height: 6),
-        // Numéros trouvés / manquants
-        Row(children: [
-          if (qg.numerosTrouves.isNotEmpty) ...[
-            Text('✓ ', style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.bold)),
-            Text(
-              qg.numerosTrouves.map((n) => 'N°$n').join(' '),
-              style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(width: 10),
-          ],
-          if (qg.numerosManquants.isNotEmpty) ...[
-            Text('✗ ', style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
-            Text(
-              qg.numerosManquants.map((n) => 'N°$n').join(' '),
-              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
-            ),
-          ],
-        ]),
-        const SizedBox(height: 4),
-        Text(
-          'Source : ${estBestBet ? "Gros paris à surveiller" : "Programme IA"}',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
-        ),
-      ]),
+      ),
     );
   }
 
@@ -2749,7 +2803,7 @@ class _SectionQuasiGagnantsWidgetState
           children: [
             // Bandeau explicatif
             Container(
-              margin: const EdgeInsets.only(bottom: 12),
+              margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: const Color(0x1A7C4DFF),
@@ -2765,6 +2819,30 @@ class _SectionQuasiGagnantsWidgetState
                   color: Color(0xFFB39DDB), fontSize: 12, height: 1.4,
                 ),
               ),
+            ),
+            // ★ v10.74 : Légende sources
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Wrap(spacing: 12, runSpacing: 4, children: [
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Text('⭐', style: TextStyle(fontSize: 12)),
+                  const SizedBox(width: 4),
+                  Text('Signal issu de ⚠️ Gros paris à surveiller',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+                ]),
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    width: 10, height: 10,
+                    decoration: const BoxDecoration(
+                        color: Color(0xFF66BB6A), shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 4),
+                  Text('Programme IA',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+                ]),
+                Text('Appuyer sur une carte pour la fiche complète',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+              ]),
             ),
             // Cartes
             ...aAfficher.map((qg) => widget.onCarteBuilder(qg)),
@@ -2799,5 +2877,263 @@ class _SectionQuasiGagnantsWidgetState
         ),
       ),
     ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.74 — Fiche détail Quasi Gagnant — bottom sheet scrollable
+// ══════════════════════════════════════════════════════════════════════════════
+class _FicheDetailQuasiGagnant extends StatelessWidget {
+  final QuasiGagnant         qg;
+  final GrosPariSurveiller?  signal;    // null si source = Programme IA
+  final ScrollController     scrollCtrl;
+
+  const _FicheDetailQuasiGagnant({
+    required this.qg,
+    required this.signal,
+    required this.scrollCtrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final estBestBet  = qg.vientDeBestBet;
+    final couleur     = estBestBet ? const Color(0xFFFFD700) : const Color(0xFF66BB6A);
+    final labelType   = QuasiGrosParisService.labelType(qg.type);
+    final nbRequis    = QuasiGrosParisService.nbChevauxPourType(qg.type);
+    final fmt         = (DateTime d) =>
+        '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+
+    // Comparaison complète
+    final comp = comparerCourseIA(
+      selectionIA:  qg.numerosIA,
+      arriveePMU:   qg.arriveeReelle,
+      nb:           nbRequis,
+    );
+
+    // Classement IA complet (depuis signal BestBet si disponible)
+    final classement = signal?.classementCompletIA ?? const <ChevalScoreIA>[];
+    final String? numeroSuivant = classement.length > nbRequis
+        ? classement[nbRequis].numero
+        : null;
+
+    return SafeArea(
+      top: false,
+      child: ListView(
+        controller: scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
+        children: [
+          // ── Poignée ──────────────────────────────────────────────────
+          Center(
+            child: Container(
+              width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+
+          // ── Titre ─────────────────────────────────────────────────────
+          Row(children: [
+            const Text('🎯', style: TextStyle(fontSize: 22)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${estBestBet ? "⭐ " : ""}$labelType quasi gagnant — ${qg.nbTrouves}/${qg.nbRequis}',
+                style: TextStyle(color: couleur, fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+
+          // ── Infos course ──────────────────────────────────────────────
+          Text(qg.nomCourse,
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text('${qg.hippodrome} · ${qg.discipline} · ${fmt(qg.dateCourse)}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+          const SizedBox(height: 6),
+          // Source
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: couleur.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              estBestBet ? '⭐ Source : Gros paris à surveiller' : 'Source : Programme IA',
+              style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // ── Comparaison IA vs PMU ─────────────────────────────────────
+          _sectionTitre('Comparaison PMU'),
+          const SizedBox(height: 10),
+          // IA
+          Row(children: [
+            _labelCol('Sélection IA'),
+            Expanded(
+              child: Text(qg.numerosIA.join(' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          // PMU
+          Row(children: [
+            _labelCol('Arrivée PMU'),
+            Expanded(
+              child: Text(
+                qg.arriveeReelle.isEmpty ? '—' : qg.arriveeReelle.take(8).join(' - '),
+                style: const TextStyle(color: Color(0xFF66BB6A), fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ]),
+          const Divider(height: 18, color: Colors.white10),
+          // Détail cheval par cheval
+          ...comp.selectionIA.map((n) {
+            final rang    = comp.rangReelParNumero[n];
+            final trouve  = comp.trouves.contains(n);
+            final icon    = trouve ? '✅' : '❌';
+            final coul    = trouve ? const Color(0xFF66BB6A) : const Color(0xFFEF5350);
+            final rangStr = rang == null
+                ? 'non classé / hors arrivée connue'
+                : 'arrivé ${rang}e';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 7),
+              child: Row(children: [
+                Text(icon, style: const TextStyle(fontSize: 16)),
+                const SizedBox(width: 8),
+                Text('N°$n',
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 6),
+                Text('→ $rangStr',
+                    style: TextStyle(color: coul, fontSize: 13, fontWeight: FontWeight.w600)),
+              ]),
+            );
+          }),
+          const SizedBox(height: 8),
+          // Manquant + remplaçant
+          if (comp.manquantsIA.isNotEmpty) ...[
+            Row(children: [
+              const Text('🔴 ', style: TextStyle(fontSize: 14)),
+              Text('Manquant IA : ',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+              Text(comp.manquantsIA.map((n) => 'N°$n').join(', '),
+                  style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 13, fontWeight: FontWeight.w700)),
+            ]),
+            const SizedBox(height: 4),
+          ],
+          if (comp.remplacantsPMU.isNotEmpty) ...[
+            Row(children: [
+              const Text('🔵 ', style: TextStyle(fontSize: 14)),
+              Text('Remplaçant PMU : ',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+              Text(comp.remplacantsPMU.map((n) => 'N°$n').join(', '),
+                  style: const TextStyle(color: Color(0xFF4FC3F7), fontSize: 13, fontWeight: FontWeight.w700)),
+            ]),
+            const SizedBox(height: 4),
+          ],
+          const SizedBox(height: 18),
+
+          // ── Classement IA complet (si disponible via signal BestBet) ──
+          if (classement.isNotEmpty) ...[
+            _sectionTitre('Classement IA complet'),
+            const SizedBox(height: 10),
+            ...classement.map((c) => _ligneClassementIA(
+              cheval:        c,
+              selection:     qg.numerosIA,
+              numeroSuivant: numeroSuivant,
+              couleur:       couleur,
+            )),
+            const SizedBox(height: 16),
+          ] else if (estBestBet) ...[
+            _sectionTitre('Classement IA complet'),
+            const SizedBox(height: 8),
+            _avisu('Classement complet IA indisponible pour cet ancien signal.'),
+            const SizedBox(height: 16),
+          ],
+
+          // ── Note prudence ─────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0x1A7C4DFF),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0x447C4DFF)),
+            ),
+            child: const Text(
+              'Observation uniquement. Ce module ne modifie pas les statistiques officielles ni les pronostics Premium.',
+              style: TextStyle(color: Color(0xFFB39DDB), fontSize: 13, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitre(String titre) => Text(
+    titre,
+    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+  );
+
+  Widget _labelCol(String label) => SizedBox(
+    width: 100,
+    child: Text(label,
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+  );
+
+  Widget _avisu(String msg) => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.05),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Text(msg, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+  );
+
+  Widget _ligneClassementIA({
+    required ChevalScoreIA cheval,
+    required List<String>  selection,
+    required String?       numeroSuivant,
+    required Color         couleur,
+  }) {
+    final isSelected = selection.contains(cheval.numero);
+    final isNext     = cheval.numero == numeroSuivant;
+    final bgColor    = isSelected
+        ? couleur.withValues(alpha: 0.15)
+        : isNext
+            ? const Color(0xFF4FC3F7).withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.03);
+    final borderColor = isSelected
+        ? couleur.withValues(alpha: 0.5)
+        : isNext
+            ? const Color(0xFF4FC3F7).withValues(alpha: 0.35)
+            : Colors.white.withValues(alpha: 0.07);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(children: [
+        SizedBox(width: 22,
+          child: Text('${cheval.rangIA}.',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12))),
+        Text('N°${cheval.numero}',
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(cheval.nom,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12))),
+        Text('${cheval.score.round()} pts',
+            style: TextStyle(
+              color: isSelected ? couleur : Colors.white.withValues(alpha: 0.5),
+              fontSize: 12, fontWeight: FontWeight.w800,
+            )),
+        if (isSelected) ...[const SizedBox(width: 5), const Text('✅', style: TextStyle(fontSize: 13))],
+        if (isNext)     ...[const SizedBox(width: 5), const Text('👀', style: TextStyle(fontSize: 13))],
+      ]),
+    );
   }
 }

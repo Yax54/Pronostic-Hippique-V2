@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QuasiGrosParisService — Détection, stockage, helpers v10.73
+//  QuasiGrosParisService — Détection, stockage, helpers v10.74
 //
 //  Clé SharedPreferences : 'ia_quasi_gros_paris_v1'
 //  Deux sous-clés JSON :
@@ -21,7 +21,17 @@ import '../models/zt_models.dart';
 import '../widgets/arrivee_reelle_widget.dart' show buildCourseKey;
 import '../services/ia_memory_models.dart' show IaPronostic;
 
-export '../models/quasi_gros_paris_models.dart';
+export '../models/quasi_gros_paris_models.dart'
+    show
+        TypeGrosPari,
+        SourceQuasiGagnant,
+        NiveauFiabiliteGrosPari,
+        couleurNiveau,
+        ChevalScoreIA,
+        ComparaisonCourseIA,
+        comparerCourseIA,
+        GrosPariSurveiller,
+        QuasiGagnant;
 
 class QuasiGrosParisService {
   QuasiGrosParisService._();
@@ -180,22 +190,36 @@ class QuasiGrosParisService {
       dateStr:     course.dateStr,
     );
 
+    // ★ v10.74 : snapshot classement IA complet au moment du signal
+    // Tous les partants triés par score décroissant, rang 1 = meilleur
+    final classementComplet = <ChevalScoreIA>[];
+    for (int i = 0; i < partants.length; i++) {
+      final p = partants[i];
+      classementComplet.add(ChevalScoreIA(
+        numero: p.numero,
+        nom:    p.nom,
+        score:  p.scoreIA,
+        rangIA: i + 1,
+      ));
+    }
+
     return GrosPariSurveiller(
-      id:                  '${courseKey}_${type.name}',
-      courseKey:           courseKey,
-      dateCourse:          course.heureDateTime,
-      nomCourse:           course.nom,
-      hippodrome:          reunion.lieu,
-      heure:               course.heure,
-      discipline:          reunion.discipline,
-      type:                type,
-      numeros:             selection.map((p) => p.numero).toList(),
-      scoresParNumero:     {for (final p in selection) p.numero: p.scoreIA},
-      scoreMoyenSelection: scoreMoyen,
-      ecartAvecSuivant:    ecart,
-      fiabilite:           fiabilite,
-      niveau:              niveau,
-      createdAt:           DateTime.now(),
+      id:                   '${courseKey}_${type.name}',
+      courseKey:            courseKey,
+      dateCourse:           course.heureDateTime,
+      nomCourse:            course.nom,
+      hippodrome:           reunion.lieu,
+      heure:                course.heure,
+      discipline:           reunion.discipline,
+      type:                 type,
+      numeros:              selection.map((p) => p.numero).toList(),
+      scoresParNumero:      {for (final p in selection) p.numero: p.scoreIA},
+      scoreMoyenSelection:  scoreMoyen,
+      ecartAvecSuivant:     ecart,
+      fiabilite:            fiabilite,
+      niveau:               niveau,
+      createdAt:            DateTime.now(),
+      classementCompletIA:  classementComplet, // ★ v10.74
     );
   }
 

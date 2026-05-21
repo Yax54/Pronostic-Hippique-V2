@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QUASI GROS PARIS — Modèles de données v10.72
+//  QUASI GROS PARIS — Modèles de données v10.74
 //
 //  Module secondaire d'observation et suggestion prudente.
 //  Ne modifie JAMAIS : apprentissage IA, poids, premium officiel,
@@ -40,6 +40,94 @@ Color couleurNiveau(NiveauFiabiliteGrosPari niveau) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.74 — ChevalScoreIA — snapshot du classement IA au moment du signal
+// ══════════════════════════════════════════════════════════════════════════
+
+class ChevalScoreIA {
+  final String numero;
+  final String nom;
+  final double score;
+  final int    rangIA;
+
+  const ChevalScoreIA({
+    required this.numero,
+    required this.nom,
+    required this.score,
+    required this.rangIA,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'numero': numero,
+    'nom':    nom,
+    'score':  score,
+    'rangIA': rangIA,
+  };
+
+  factory ChevalScoreIA.fromJson(Map<String, dynamic> json) => ChevalScoreIA(
+    numero: json['numero']?.toString() ?? '',
+    nom:    json['nom']?.toString()    ?? '',
+    score:  (json['score'] as num?     ?? 0).toDouble(),
+    rangIA: json['rangIA'] as int?     ?? 0,
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.74 — ComparaisonCourseIA — résultat IA vs PMU
+// ══════════════════════════════════════════════════════════════════════════
+
+class ComparaisonCourseIA {
+  final List<String>        selectionIA;
+  final List<String>        arriveePMU;
+  final List<String>        trouves;
+  final List<String>        manquantsIA;
+  final List<String>        remplacantsPMU;
+  final Map<String, int?>   rangReelParNumero;
+
+  const ComparaisonCourseIA({
+    required this.selectionIA,
+    required this.arriveePMU,
+    required this.trouves,
+    required this.manquantsIA,
+    required this.remplacantsPMU,
+    required this.rangReelParNumero,
+  });
+}
+
+// ── Fonction utilitaire de comparaison IA vs PMU ──────────────────────────
+ComparaisonCourseIA comparerCourseIA({
+  required List<String> selectionIA,
+  required List<String> arriveePMU,
+  required int          nb,
+}) {
+  final ia  = selectionIA.take(nb).map((e) => e.toString()).toList();
+  // PMU : toute l'arrivée disponible pour retrouver les positions réelles
+  final pmuTopN = arriveePMU.take(nb).map((e) => e.toString()).toList();
+
+  final setIA   = ia.toSet();
+  final setPMU  = pmuTopN.toSet();
+
+  final trouves      = setIA.intersection(setPMU).toList();
+  final manquants    = setIA.difference(setPMU).toList();
+  final remplacants  = setPMU.difference(setIA).toList();
+
+  // Rang réel dans l'arrivée complète (pas seulement top N)
+  final rangReelParNumero = <String, int?>{};
+  for (final n in ia) {
+    final idx = arriveePMU.indexOf(n);
+    rangReelParNumero[n] = idx >= 0 ? idx + 1 : null;
+  }
+
+  return ComparaisonCourseIA(
+    selectionIA:      ia,
+    arriveePMU:       arriveePMU,
+    trouves:          trouves,
+    manquantsIA:      manquants,
+    remplacantsPMU:   remplacants,
+    rangReelParNumero: rangReelParNumero,
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 //  GrosPariSurveiller — signal avant course (Best Bet ⚠️)
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -61,6 +149,9 @@ class GrosPariSurveiller {
   final double fiabilite;
   final NiveauFiabiliteGrosPari niveau;
 
+  // ★ v10.74 : snapshot du classement IA complet au moment du signal
+  final List<ChevalScoreIA> classementCompletIA;
+
   final DateTime createdAt;
 
   const GrosPariSurveiller({
@@ -79,6 +170,7 @@ class GrosPariSurveiller {
     required this.fiabilite,
     required this.niveau,
     required this.createdAt,
+    this.classementCompletIA = const [], // ★ v10.74 : défaut vide pour compat anciens objets
   });
 
   Map<String, dynamic> toJson() => {
@@ -97,6 +189,8 @@ class GrosPariSurveiller {
     'fiabilite':            fiabilite,
     'niveau':               niveau.name,
     'createdAt':            createdAt.toIso8601String(),
+    // ★ v10.74 : snapshot classement
+    'classementCompletIA':  classementCompletIA.map((e) => e.toJson()).toList(),
   };
 
   factory GrosPariSurveiller.fromJson(Map<String, dynamic> json) {
@@ -128,6 +222,11 @@ class GrosPariSurveiller {
       ),
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '')
                     ?? DateTime.now(),
+      // ★ v10.74 : si absent (ancien signal) → liste vide, pas de crash
+      classementCompletIA: (json['classementCompletIA'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => ChevalScoreIA.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }
@@ -149,7 +248,7 @@ class QuasiGagnant {
   final SourceQuasiGagnant source;
 
   final List<String> numerosIA;
-  final List<String> arriveeReelle;
+  final List<String> arriveeReelle;   // arrivée PMU complète disponible
   final List<String> numerosTrouves;
   final List<String> numerosManquants;
 

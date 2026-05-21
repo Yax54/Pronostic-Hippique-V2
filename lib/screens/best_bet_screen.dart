@@ -635,33 +635,40 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   Widget _buildTabBar() {
-    // ★ v10.73 : badge discret sur l'onglet Gros Paris si signaux > 0
+    // ★ v10.74 : titre complet ⊠ Gros paris à surveiller, badge si signaux > 0
     final nbSignaux = _signauxGrosParis.length;
     final tabGrosParis = Tab(
-      child: Row(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 15),
-          const SizedBox(width: 4),
-          const Text('Gros Paris', style: TextStyle(fontSize: 13)),
-          if (nbSignaux > 0) ...[
-            const SizedBox(width: 5),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF9800),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '$nbSignaux',
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.warning_amber_rounded, size: 14),
+              const SizedBox(width: 3),
+              const Text('⚠️ Gros paris', style: TextStyle(fontSize: 11)),
+              if (nbSignaux > 0) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '$nbSignaux',
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            ],
+          ),
+          const Text('à surveiller', style: TextStyle(fontSize: 10)),
         ],
       ),
     );
@@ -670,6 +677,7 @@ class _BestBetScreenState extends State<BestBetScreen>
       color: const Color(0xFF0D1B2A),
       child: TabBar(
         controller: _tabCtrl,
+        isScrollable: false,
         tabs: [
           const Tab(icon: Icon(Icons.balance, size: 16), text: 'Top Équilibre'),
           const Tab(icon: Icon(Icons.verified_outlined, size: 16), text: 'Plus Sûr'),
@@ -679,8 +687,9 @@ class _BestBetScreenState extends State<BestBetScreen>
         labelColor: const Color(0xFFFFD700),
         unselectedLabelColor: Colors.white38,
         indicatorColor: const Color(0xFFFFD700),
-        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        unselectedLabelStyle: const TextStyle(fontSize: 14),
+        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+        unselectedLabelStyle: const TextStyle(fontSize: 12),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
       ),
     );
   }
@@ -1141,10 +1150,14 @@ class _BestBetScreenState extends State<BestBetScreen>
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.74 — CARTE Gros Pari enrichie
+  // ══════════════════════════════════════════════════════════════════════
   Widget _carteGrosPari(GrosPariSurveiller signal) {
-    final color    = QuasiGrosParisService.couleurFiabilite(signal.niveau);
-    final label    = QuasiGrosParisService.labelType(signal.type);
+    final color          = QuasiGrosParisService.couleurFiabilite(signal.niveau);
+    final label          = QuasiGrosParisService.labelType(signal.type);
     final courseTerminee = signal.dateCourse.isBefore(DateTime.now());
+    final nbChevaux      = QuasiGrosParisService.nbChevauxPourType(signal.type);
 
     return InkWell(
       borderRadius: BorderRadius.circular(18),
@@ -1161,54 +1174,106 @@ class _BestBetScreenState extends State<BestBetScreen>
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── En-tête : titre + badge terminée + force signal ──────────
           Row(children: [
-            const Text('⚠️', style: TextStyle(fontSize: 20)),
+            const Text('⚠️', style: TextStyle(fontSize: 18)),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 '$label à surveiller',
-                style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w900),
+                style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900),
               ),
             ),
             if (courseTerminee)
               Container(
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.white10,
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
                 child: const Text('Terminée', style: TextStyle(color: Colors.white38, fontSize: 11)),
               ),
-            Text(
-              '${signal.fiabilite.round()}%',
-              style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900),
+            // Force signal : fiabilité arrondie /100
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                '${signal.fiabilite.round()}/100',
+                style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w900),
+              ),
             ),
           ]),
           const SizedBox(height: 10),
+          // ── Nom de la course ──────────────────────────────────────────
           Text(
             signal.nomCourse,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
-            '${signal.hippodrome} • ${signal.heure} • ${signal.discipline}',
+            '${signal.hippodrome} · ${signal.heure} · ${signal.discipline}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.68), fontSize: 13),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
           ),
-          const SizedBox(height: 10),
+          const Divider(height: 16, color: Colors.white10),
+          // ── Force signal + sélection ──────────────────────────────────
+          Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  'Force du signal',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${signal.fiabilite.round()}/100',
+                  style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+              ]),
+            ),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  'Sélection IA',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  signal.numeros.join(' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          // ── Écart IA ──────────────────────────────────────────────────
+          Row(children: [
+            Icon(Icons.trending_up, color: color, size: 15),
+            const SizedBox(width: 5),
+            Text(
+              'Écart IA : +${signal.ecartAvecSuivant.toStringAsFixed(1)} pts avec le cheval suivant',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          // ── Explication courte ────────────────────────────────────────
           Text(
-            'Chevaux : ${signal.numeros.join(' - ')}',
-            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
+            'Pourquoi surveiller ? $nbChevaux chevaux ressortent nettement du reste du peloton.',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12, height: 1.35),
           ),
           const SizedBox(height: 6),
-          Text(
-            'Écart IA avec le suivant : +${signal.ecartAvecSuivant.toStringAsFixed(1)} pts',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13),
-          ),
+          // ── Tap hint ─────────────────────────────────────────────────
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            Text(
+              'Voir classement complet IA →',
+              style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 11),
+            ),
+          ]),
         ]),
       ),
     );
@@ -1219,108 +1284,26 @@ class _BestBetScreenState extends State<BestBetScreen>
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: const BoxDecoration(
-          color: Color(0xFF0F1722),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-        ),
-        child: SafeArea(top: false, child: _detailGrosPari(signal)),
-      ),
-    );
-  }
-
-  Widget _detailGrosPari(GrosPariSurveiller signal) {
-    final color = QuasiGrosParisService.couleurFiabilite(signal.niveau);
-    final label = QuasiGrosParisService.labelType(signal.type);
-
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Poignée
-      Center(
-        child: Container(
-          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
-          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-        ),
-      ),
-      Row(children: [
-        const Text('⚠️', style: TextStyle(fontSize: 24)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text('$label à surveiller',
-              style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
-        ),
-      ]),
-      const SizedBox(height: 14),
-      Text(signal.nomCourse,
-          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
-      const SizedBox(height: 4),
-      Text(
-        '${signal.hippodrome} • ${signal.heure} • ${signal.discipline}',
-        style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13),
-      ),
-      const SizedBox(height: 16),
-      _ligneDetailGros('Sélection IA', signal.numeros.join(' - ')),
-      _ligneDetailGros('Fiabilité', '${signal.fiabilite.round()}%'),
-      _ligneDetailGros('Écart avec le suivant', '+${signal.ecartAvecSuivant.toStringAsFixed(1)} pts'),
-      _ligneDetailGros('Score moyen sélection', '${signal.scoreMoyenSelection.toStringAsFixed(1)} pts'),
-      const SizedBox(height: 14),
-      Text(
-        QuasiGrosParisService.explicationGrosPari(signal),
-        style: TextStyle(color: Colors.white.withValues(alpha: 0.82), fontSize: 14, height: 1.4),
-      ),
-      const SizedBox(height: 14),
-      // Bandeau prudence
-      Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0x22FF9800),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0x66FFB74D)),
-        ),
-        child: const Text(
-          'Signal à surveiller avec prudence. Ce pari ne remplace pas les pronostics Premium officiels.',
-          style: TextStyle(color: Color(0xFFFFCC80), fontSize: 13, height: 1.35, fontWeight: FontWeight.w600),
-        ),
-      ),
-      const SizedBox(height: 18),
-      // Bouton Parier — ne valide pas automatiquement, prérempli uniquement
-      SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: signal.dateCourse.isBefore(DateTime.now())
-              ? null
-              : () {
-                  Navigator.pop(context);
-                  _preRemplirPariGrosPari(signal);
-                },
-          icon: const Icon(Icons.add_circle_outline),
-          label: Text(signal.dateCourse.isBefore(DateTime.now())
-              ? 'Course terminée'
-              : 'Parier'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.black,
-            disabledBackgroundColor: Colors.white12,
-            disabledForegroundColor: Colors.white38,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.88,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (_, scrollCtrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0F1722),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          ),
+          child: _FicheDetailGrosPari(
+            signal:     signal,
+            scrollCtrl: scrollCtrl,
+            reunions:   _reunions,
+            onParier:   () {
+              Navigator.pop(context);
+              _preRemplirPariGrosPari(signal);
+            },
           ),
         ),
       ),
-    ]);
-  }
-
-  Widget _ligneDetailGros(String label, String valeur) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Text('$label :', style: const TextStyle(color: Colors.white54, fontSize: 14)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(valeur,
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-        ),
-      ]),
     );
   }
 
@@ -1364,6 +1347,324 @@ class _BestBetScreenState extends State<BestBetScreen>
         backgroundColor: Color(0xFF2A1200),
       ),
     );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.74 — FICHE DÉTAIL GROS PARI — bottom sheet scrollable
+// ══════════════════════════════════════════════════════════════════════════════
+class _FicheDetailGrosPari extends StatelessWidget {
+  final GrosPariSurveiller signal;
+  final ScrollController    scrollCtrl;
+  final List<ZtReunion>     reunions;
+  final VoidCallback        onParier;
+
+  const _FicheDetailGrosPari({
+    required this.signal,
+    required this.scrollCtrl,
+    required this.reunions,
+    required this.onParier,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color          = QuasiGrosParisService.couleurFiabilite(signal.niveau);
+    final label          = QuasiGrosParisService.labelType(signal.type);
+    final courseTerminee = signal.dateCourse.isBefore(DateTime.now());
+    final nbChevaux      = QuasiGrosParisService.nbChevauxPourType(signal.type);
+
+    // Cheval suivant = le premier hors sélection dans le classement complet
+    final String? numeroSuivant = signal.classementCompletIA.length > nbChevaux
+        ? signal.classementCompletIA[nbChevaux].numero
+        : null;
+
+    // Arrivée PMU si course terminée — chercher dans les pronostics IA
+    final arrivee = _trouverArriveePMU();
+    final comparaison = (courseTerminee && arrivee != null && arrivee.isNotEmpty)
+        ? comparerCourseIA(
+            selectionIA:  signal.numeros,
+            arriveePMU:   arrivee,
+            nb:           nbChevaux,
+          )
+        : null;
+
+    return SafeArea(
+      top: false,
+      child: ListView(
+        controller: scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
+        children: [
+          // ── Poignée ──────────────────────────────────────────────────
+          Center(
+            child: Container(
+              width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+
+          // ── Titre ─────────────────────────────────────────────────────
+          Row(children: [
+            const Text('⚠️', style: TextStyle(fontSize: 24)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('$label à surveiller',
+                  style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text('${signal.fiabilite.round()}/100',
+                  style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w900)),
+            ),
+          ]),
+          const SizedBox(height: 14),
+
+          // ── Infos course ──────────────────────────────────────────────
+          Text(signal.nomCourse,
+              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text('${signal.hippodrome} · ${signal.heure} · ${signal.discipline}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+          const SizedBox(height: 16),
+
+          // ── Sélection IA ──────────────────────────────────────────────
+          _sectionTitre('Sélection IA du pari'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8, runSpacing: 8,
+            children: signal.numeros.map((n) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color.withValues(alpha: 0.6)),
+              ),
+              child: Text('N°$n',
+                  style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900)),
+            )).toList(),
+          ),
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.trending_up, color: color, size: 14),
+            const SizedBox(width: 5),
+            Text(
+              'Écart IA : +${signal.ecartAvecSuivant.toStringAsFixed(1)} pts avec le cheval suivant',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            QuasiGrosParisService.explicationGrosPari(signal),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.45),
+          ),
+          const SizedBox(height: 20),
+
+          // ── Classement IA complet ─────────────────────────────────────
+          _sectionTitre('Classement IA complet'),
+          const SizedBox(height: 10),
+          if (signal.classementCompletIA.isEmpty)
+            _avisu('Classement complet IA indisponible pour cet ancien signal.')
+          else
+            ...signal.classementCompletIA.map((c) => _ligneClassementIA(
+              cheval:        c,
+              selection:     signal.numeros,
+              numeroSuivant: numeroSuivant,
+              couleur:       color,
+            )),
+          const SizedBox(height: 20),
+
+          // ── Comparaison PMU (si terminée) ─────────────────────────────
+          if (courseTerminee) ...[
+            _sectionTitre('Comparaison PMU'),
+            const SizedBox(height: 10),
+            if (comparaison == null)
+              _avisu('Arrivée PMU non disponible.')
+            else
+              _buildComparaisonPMU(comparaison, color),
+            const SizedBox(height: 20),
+          ],
+
+          // ── Bandeau prudence ──────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0x22FF9800),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0x66FFB74D)),
+            ),
+            child: const Text(
+              '⚠️ Signal à surveiller avec prudence. Ce pari ne remplace pas les pronostics Premium officiels.',
+              style: TextStyle(color: Color(0xFFFFCC80), fontSize: 13, height: 1.35, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // ── Bouton Parier ─────────────────────────────────────────────
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: courseTerminee ? null : onParier,
+              icon: const Icon(Icons.add_circle_outline),
+              label: Text(courseTerminee ? 'Course terminée' : 'Parier'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                foregroundColor: Colors.black,
+                disabledBackgroundColor: Colors.white12,
+                disabledForegroundColor: Colors.white38,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Cherche l'arrivée PMU dans les pronostics IA mémorisés.
+  List<String>? _trouverArriveePMU() {
+    final pronostics = IaMemoryService.instance.pronostics;
+    for (final p in pronostics) {
+      if (p.courseKey == signal.courseKey && p.arriveeReelle != null) {
+        return p.arriveeReelle!.map((e) => e.toString()).toList();
+      }
+    }
+    return null;
+  }
+
+  Widget _sectionTitre(String titre) => Text(
+    titre,
+    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+  );
+
+  Widget _avisu(String msg) => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.05),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Text(msg, style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+  );
+
+  Widget _ligneClassementIA({
+    required ChevalScoreIA cheval,
+    required List<String>  selection,
+    required String?       numeroSuivant,
+    required Color         couleur,
+  }) {
+    final isSelected = selection.contains(cheval.numero);
+    final isNext     = cheval.numero == numeroSuivant;
+    final bgColor    = isSelected
+        ? couleur.withValues(alpha: 0.18)
+        : isNext
+            ? const Color(0xFF4FC3F7).withValues(alpha: 0.12)
+            : Colors.white.withValues(alpha: 0.04);
+    final borderColor = isSelected
+        ? couleur.withValues(alpha: 0.55)
+        : isNext
+            ? const Color(0xFF4FC3F7).withValues(alpha: 0.4)
+            : Colors.white.withValues(alpha: 0.08);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(children: [
+        // Rang IA
+        SizedBox(
+          width: 24,
+          child: Text('${cheval.rangIA}.',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+        ),
+        // Numéro
+        Text('N°${cheval.numero}',
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
+        const SizedBox(width: 10),
+        // Nom
+        Expanded(
+          child: Text(cheval.nom,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
+        ),
+        // Score
+        Text('${cheval.score.round()} pts',
+            style: TextStyle(
+              color: isSelected ? couleur : Colors.white.withValues(alpha: 0.6),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            )),
+        // Badge
+        if (isSelected) ...[const SizedBox(width: 6), const Text('✅', style: TextStyle(fontSize: 14))],
+        if (isNext)     ...[const SizedBox(width: 6), const Text('👀', style: TextStyle(fontSize: 14))],
+      ]),
+    );
+  }
+
+  Widget _buildComparaisonPMU(ComparaisonCourseIA c, Color couleurSignal) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // IA vs PMU
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Sélection IA', style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+          const SizedBox(height: 3),
+          Text(c.selectionIA.join(' - '),
+              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+        ])),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Arrivée PMU', style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+          const SizedBox(height: 3),
+          Text(c.arriveePMU.take(8).join(' - '),
+              style: const TextStyle(color: Color(0xFF66BB6A), fontSize: 15, fontWeight: FontWeight.w800)),
+        ])),
+      ]),
+      const SizedBox(height: 14),
+      // Classement réel de chaque cheval IA
+      ...c.selectionIA.map((n) {
+        final rang    = c.rangReelParNumero[n];
+        final trouve  = c.trouves.contains(n);
+        final icon    = trouve ? '✅' : '❌';
+        final couleur = trouve ? const Color(0xFF66BB6A) : const Color(0xFFEF5350);
+        final rangStr = rang == null ? 'non classé / hors arrivée connue' : 'arrivé ${rang}e';
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 7),
+          child: Row(children: [
+            Text(icon, style: const TextStyle(fontSize: 16)),
+            const SizedBox(width: 8),
+            Text('N°$n', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 6),
+            Text('→ $rangStr',
+                style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+        );
+      }),
+      const SizedBox(height: 10),
+      // Manquant + remplaçant
+      if (c.manquantsIA.isNotEmpty) ...[
+        Row(children: [
+          const Text('🔴 ', style: TextStyle(fontSize: 14)),
+          Text('Manquant IA : ',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+          Text(c.manquantsIA.map((n) => 'N°$n').join(', '),
+              style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 13, fontWeight: FontWeight.w700)),
+        ]),
+        const SizedBox(height: 4),
+      ],
+      if (c.remplacantsPMU.isNotEmpty)
+        Row(children: [
+          const Text('🔵 ', style: TextStyle(fontSize: 14)),
+          Text('Remplaçant PMU : ',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13)),
+          Text(c.remplacantsPMU.map((n) => 'N°$n').join(', '),
+              style: const TextStyle(color: Color(0xFF4FC3F7), fontSize: 13, fontWeight: FontWeight.w700)),
+        ]),
+    ]);
   }
 }
 
