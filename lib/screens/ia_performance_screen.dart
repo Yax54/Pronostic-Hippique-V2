@@ -141,21 +141,28 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       final rawFiltre = prefs.getString(_kFiltreActif);
-      if (rawFiltre == null || !mounted) return;
+      if (!mounted) return;
       // Valeurs valides : null(60j), 'all', '7j', 'today', 'custom'
       const valides = {'all', '7j', 'today', 'custom'};
-      final filtreRestaure = valides.contains(rawFiltre) ? rawFiltre : null;
-      DateTime? debut;
-      DateTime? fin;
-      if (filtreRestaure == 'custom') {
-        debut = DateTime.tryParse(prefs.getString(_kFiltreDebut) ?? '');
-        fin   = DateTime.tryParse(prefs.getString(_kFiltreFin)   ?? '');
-        // Dates corrompues → reset vers 60j (ne jamais bloquer)
-        if (debut == null || fin == null) {
-          if (mounted) setState(() { _filtrePeriode = null; });
-          return;
-        }
+      final filtreRestaure = (rawFiltre != null && valides.contains(rawFiltre))
+          ? rawFiltre
+          : null;
+
+      // ★ v10.71 : TOUJOURS charger les dates personnalisées depuis les prefs,
+      // indépendamment du filtre actif. Cela garantit que le bouton Période
+      // retrouve toujours la dernière plage saisie, même si on a cliqué 7j/30j
+      // entre-temps.
+      DateTime? debut = DateTime.tryParse(prefs.getString(_kFiltreDebut) ?? '');
+      DateTime? fin   = DateTime.tryParse(prefs.getString(_kFiltreFin)   ?? '');
+
+      // Dates corrompues pour filtre custom → reset vers 60j (ne jamais bloquer)
+      if (filtreRestaure == 'custom' && (debut == null || fin == null)) {
+        debugPrint('[FILTRE_PERIODE] custom chargé mais dates absentes → reset 60j');
+        if (mounted) setState(() { _filtrePeriode = null; _filtreDebut = null; _filtreFin = null; });
+        return;
       }
+
+      debugPrint('[FILTRE_PERIODE] chargé : filtre=$filtreRestaure debut=$debut fin=$fin');
       if (mounted) {
         setState(() {
           _filtrePeriode = filtreRestaure;
@@ -168,17 +175,21 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     }
   }
 
-  // ★ v10.70 : Sauvegarder le filtre actif dans SharedPreferences
+  // ★ v10.71 : Sauvegarder le filtre actif + toujours les dates (même si filtre != custom)
+  // Les dates sont conservées indépendamment du filtre actif pour garantir leur persistance.
   Future<void> _sauvegarderFiltreIaStats() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kFiltreActif, _filtrePeriode ?? '60j');
+      // ★ v10.71 : sauvegarder les dates TOUJOURS (pas seulement quand custom)
+      // → elles restent disponibles quand on revient sur Période
       if (_filtreDebut != null) {
         await prefs.setString(_kFiltreDebut, _filtreDebut!.toIso8601String());
       }
       if (_filtreFin != null) {
         await prefs.setString(_kFiltreFin, _filtreFin!.toIso8601String());
       }
+      debugPrint('[FILTRE_PERIODE] sauvegardé : filtre=${_filtrePeriode ?? "60j"} debut=$_filtreDebut fin=$_filtreFin');
     } catch (_) {
       // Erreur silencieuse — la persistance du filtre est optionnelle
     }
@@ -3533,7 +3544,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     // Date du jour affichée en temps réel en français : ex « Mer 29 Avr »
     final jourSemaine = joursF[now.weekday];
     final libAuj = '$jourSemaine ${now.day} ${moisF[now.month]}';
-    final libPeriode = (_filtrePeriode == 'custom' && _filtreDebut != null && _filtreFin != null)
+    // ★ v10.71 : afficher les dates même si le filtre actif n'est pas 'custom'
+    // → l'utilisateur voit que ses dates sont mémorisées après avoir cliqué 7j/30j
+    final libPeriode = (_filtreDebut != null && _filtreFin != null)
         ? '${_filtreDebut!.day.toString().padLeft(2,'0')}/${_filtreDebut!.month.toString().padLeft(2,'0')}'
           ' → ${_filtreFin!.day.toString().padLeft(2,'0')}/${_filtreFin!.month.toString().padLeft(2,'0')}'
         : 'Période';
@@ -3600,7 +3613,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     const vertActif    = Color(0xFF4CAF7D);
     const jauneInactif = Color(0xFFFFD700);
     return GestureDetector(
-      onTap: () { setState(() => _filtrePeriode = valeur); _sauvegarderFiltreIaStats(); },
+      // ★ v10.71 : NE JAMAIS reset _filtreDebut/_filtreFin ici
+      // Les dates personnalisées restent en mémoire indépendamment du filtre actif
+      onTap: () {
+        setState(() => _filtrePeriode = valeur);
+        _sauvegarderFiltreIaStats();
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
         decoration: BoxDecoration(
@@ -3674,13 +3692,27 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       // Tout depuis l'installation
       return {'nb': p.nbTotalAll, 'bons': p.nbBonsAll, 'ordre': p.nbOrdreAll, 'desordre': p.nbDesordreAll};
     } else if (_filtrePeriode == '7j') {
-      // ★ v10.70 : 7 jours = aujourd'hui inclus + 6 jours précédents
-      // Avant : fin = now() → manquait les pronostics d'aujourd'hui (heure > now)
-      // Correction : fin = fin du jour (23:59:59.999), debut = début du jour - 6j
+      // ★ v10.71 : 7j = historiqueComplet 6j précédents + précisionAujourdHui temps réel
+      // Avant (v10.70) : fin = today 23:59:59 → incluait aujourd'hui depuis historiqueComplet
+      // Problème : historiqueComplet ne contient pas aujourd'hui (mis à jour après analyseJournee)
+      // Fix : on combine les 6j passés + aujourd'hui depuis la source temps réel
       final now7   = DateTime.now();
-      final fin    = DateTime(now7.year, now7.month, now7.day, 23, 59, 59, 999);
-      final debut  = DateTime(now7.year, now7.month, now7.day).subtract(const Duration(days: 6));
-      return p.statsPourPeriode(debut, fin);
+      final debutHier = DateTime(now7.year, now7.month, now7.day).subtract(const Duration(days: 6));
+      final finHier   = DateTime(now7.year, now7.month, now7.day - 1, 23, 59, 59, 999);
+      final stats6j = p.statsPourPeriode(debutHier, finHier);
+
+      // Ajouter aujourd'hui depuis la source temps réel
+      final aujourdhuiMap = IaMemoryService.instance.precisionAujourdhuiDepuisPronostics;
+      final statsAuj = aujourdhuiMap[p.typePari] ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+
+      final total7j = {
+        'nb':       (stats6j['nb']       ?? 0) + (statsAuj['nb']       ?? 0),
+        'bons':     (stats6j['bons']     ?? 0) + (statsAuj['bons']     ?? 0),
+        'ordre':    (stats6j['ordre']    ?? 0) + (statsAuj['ordre']    ?? 0),
+        'desordre': (stats6j['desordre'] ?? 0) + (statsAuj['desordre'] ?? 0),
+      };
+      debugPrint('[FILTRE_7J] typePari=${p.typePari} 6j=${stats6j["nb"]} auj=${statsAuj["nb"]} total=${total7j["nb"]}');
+      return total7j;
     } else if (_filtrePeriode == 'today') {
       // ★ v9.99 : Aujourd'hui — lecture directe depuis _pronostics (source temps réel)
       // statsPourPeriode() lisait historiqueComplet, mis à jour seulement après

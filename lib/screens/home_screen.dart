@@ -456,7 +456,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final conseil   = _conseilIACached;
     final meilleur  = _meilleurPariCached;
 
-    // ★ v10.54 : Enregistrer les 2 conseils premium de l'accueil
+    // ★ v10.71 : Protection anti-régénération
+    // Si les sélections figées du jour existent déjà (conseilJour + meilleurPari),
+    // ne pas recalculer — le figeage est idempotent via obtenirOuCreerSelectionWidgetPremiumDuJour
+    // mais on saute le calcul des premiums pour éviter tout effacement accidentel.
+    final selsExistantes = _selectionsFigees;
+    final conseilFige  = selsExistantes['conseilJour'];
+    final meilleurFige = selsExistantes['meilleurPari'];
+    final dejaFige = (conseilFige != null && conseilFige.estValide)
+                  && (meilleurFige != null && meilleurFige.estValide);
+    debugPrint('[WIDGET_HOME] _declencherBulleMatinale : dejaFige=$dejaFige'
+        ' | conseilFige=${conseilFige?.nomCourse}'
+        ' | meilleurFige=${meilleurFige?.nomCourse}');
+    // ★ v10.71 : Ne recalculer les premiums et le figeage QUE si pas encore figés
+    if (!dejaFige) {
     // typePari + numeros calculés dynamiquement depuis la course réelle
     // (plus de dépendance aux pronostics IA mémorisés → données toujours cohérentes).
     // → Validation stricte de l'étoile ⭐ calendrier (pas de fausse étoile).
@@ -587,6 +600,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     // ── Fin figeage v10.62 ──────────────────────────────────────────────────
+    } // ★ v10.71 : fin guard anti-régénération if (!dejaFige)
 
     // ★ v10.23 : recalcul immédiat + résumé Conseil IA matinal
     final nbConseil = await AlertService.instance.recalculerCoursesConseilIA(reunions);
@@ -1611,40 +1625,39 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Meilleur Pari ─────────────────────────────────────────────────
-  // ★ v10.55 : affiche le VRAI type de pari + TOUS les numéros conseillés.
-  // Plus d'ambiguïté : un Quarté+ affiche 4 numéros, un Simple 1 numéro, etc.
+  // ★ v10.71 : PRIORITÉ ABSOLUE — sélection figée du jour (si valide).
+  // Affiche DIRECTEMENT les données stockées sans chercher la course dans _reunions.
+  // Fallback vers recalcul dynamique UNIQUEMENT si sélection absente/invalide.
   Widget _buildMeilleurPari() {
-    // ★ v10.69 : PRIORITÉ 1 — sélection figée du jour (si disponible et retrouvée)
-    ZtCourse? courseFigee;
-    ZtReunion? reunionFigee;
+    // ★ v10.71 : PRIORITÉ 1 — sélection figée complète
     if (_selectionsFigeesChargees) {
       final sel = _selectionsFigees['meilleurPari'];
       if (sel != null && sel.estValide) {
-        final found = _trouverCourseFigee(sel);
-        courseFigee  = found.course;
-        reunionFigee = found.reunion;
+        debugPrint('[WIDGET_FIGE] meilleurPari → source=figée'
+            ' | nomCourse=${sel.nomCourse}'
+            ' | typePari=${sel.typePari}'
+            ' | numeros=${sel.numeros}'
+            ' | heure=${sel.heure}');
+        return _buildMeilleurPariDepuisSelectionFigee(sel);
       }
     }
 
+    // ★ v10.71 : FALLBACK — recalcul dynamique uniquement si pas de sélection figée
     final pari = _meilleurPariCached;
-    // Utiliser la course figée si retrouvée, sinon recalcul dynamique
-    if (courseFigee == null && (pari.course == null || pari.cheval == null)) {
+    if (pari.course == null || pari.cheval == null) {
+      debugPrint('[WIDGET_HOME] meilleurPari → aucune sélection figée ET aucun recalcul → SizedBox');
       return const SizedBox();
     }
-    final course  = courseFigee ?? pari.course!;
-    // Cheval : depuis le recalcul dynamique ou 1er partant IA de la course figée
-    // Si les deux sont absents (course vide) → on n'affiche pas le widget
-    final partants = course.partantsParRangIA;
-    final ZtPartant? chevalNullable = pari.cheval ?? (partants.isNotEmpty ? partants.first : null);
-    if (chevalNullable == null) return const SizedBox();
-    final ZtPartant cheval = chevalNullable;
-    final reunion = reunionFigee ?? pari.reunion;
+    debugPrint('[WIDGET_HOME] meilleurPari → source=recalcul dynamique (pas de sélection figée)');
+
+    final course  = pari.course!;
+    final cheval  = pari.cheval!;
+    final reunion = pari.reunion;
     final lieu    = reunion?.lieu ?? '';
 
     // ★ v10.55 : typePari réel + numéros complets via helper centralisé
     final (:tp, :nums) = typePariEtNumerosPourCourse(course);
     final typePari     = tp.isEmpty ? 'Simple Gagnant' : tp;
-    // ★ v10.69 : cheval garanti non-null après le guard ci-dessus
     final numeros      = nums.isNotEmpty ? nums : [cheval.numero];
     final emoji        = emojiPourTypePari(typePari);
 
@@ -1689,7 +1702,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Ligne 1 : badge type pari + heure + favori ──────
+                // ── Ligne 1 : badge type pari + heure ──────
                 Row(children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1831,6 +1844,172 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── ★ v10.71 : Builder dédié depuis la sélection figée ────────────────────
+  // Affiche le Meilleur Pari DIRECTEMENT depuis les données stockées.
+  // Ne cherche pas la course dans _reunions → garanti stable toute la journée.
+  Widget _buildMeilleurPariDepuisSelectionFigee(SelectionWidgetPremiumDuJour s) {
+    final typePari = s.typePari;
+    final numeros  = s.numeros;
+    final emoji    = emojiPourTypePari(typePari);
+    final nomCours = s.nomCourse ?? '';
+    final hippo    = s.hippodrome ?? '';
+    final heure    = s.heure ?? '';
+    final chevalN  = s.chevalNom ?? '';
+    final score    = s.score ?? 0.0;
+    final confianceColor = score >= 80
+        ? const Color(0xFF00E676)
+        : score >= 65
+            ? const Color(0xFFFFEA00)
+            : score >= 50
+                ? const Color(0xFFFF6D00)
+                : const Color(0xFFFF1744);
+    final confianceLabel = score >= 80 ? 'FORTE' : score >= 65 ? 'BONNE' : score >= 50 ? 'MOY.' : 'FAIBLE';
+
+    final PremiumStreak streakMeilleurPari = streakPourSource(
+      sourceWidget: 'meilleurPari',
+      dateReference: DateTime.now(),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('⭐ Meilleur Pari du Jour'),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFFFFD700).withValues(alpha: 0.12),
+                const Color(0xFF0D1B2A),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.5)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Ligne 1 : badge type pari + heure ──────
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(emoji, style: const TextStyle(fontSize: 14)),
+                      const SizedBox(width: 5),
+                      Text(typePari,
+                          style: const TextStyle(
+                              color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  const Spacer(),
+                  // ★ v10.71 : badge figé pour indiquer stabilité
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.lock_outline, color: Color(0xFF4CAF7D), size: 11),
+                      SizedBox(width: 3),
+                      Text('Figé', style: TextStyle(color: Color(0xFF4CAF7D), fontSize: 11, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                  const SizedBox(width: 8),
+                  if (heure.isNotEmpty)
+                    Text(heure,
+                        style: const TextStyle(
+                            color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.bold)),
+                ]),
+                // ★ v10.61 — Phrase série premium meilleurPari (si streak ≥ 2)
+                buildPremiumStreakPhrase(streak: streakMeilleurPari),
+                const SizedBox(height: 14),
+
+                // ── Bloc numéros ──────────────────────────────────────
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFFFFD700).withValues(alpha: 0.25)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: numeros.map((num) {
+                          final isFirst = num == numeros.first;
+                          return Container(
+                            width: 44, height: 44,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: isFirst
+                                  ? const LinearGradient(
+                                      colors: [Color(0xFFFFD700), Color(0xFFFFA000)])
+                                  : null,
+                              color: isFirst ? null
+                                  : const Color(0xFFFFD700).withValues(alpha: 0.15),
+                              border: Border.all(
+                                color: const Color(0xFFFFD700).withValues(
+                                    alpha: isFirst ? 0.0 : 0.4)),
+                            ),
+                            child: Center(
+                              child: Text(num,
+                                  style: TextStyle(
+                                    color: isFirst ? Colors.black : const Color(0xFFFFD700),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  )),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 8),
+                      if (chevalN.isNotEmpty)
+                        Text(chevalN,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      if (nomCours.isNotEmpty || hippo.isNotEmpty)
+                        Text('$nomCours${hippo.isNotEmpty ? " • $hippo" : ""}',
+                            style: const TextStyle(color: Colors.white38, fontSize: 13),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // ── Métriques ───────────────────────────────────────
+                Row(children: [
+                  _metrique('Score IA', '${score.round()}/100', confianceColor),
+                  const SizedBox(width: 10),
+                  _metrique('Confiance', confianceLabel, confianceColor),
+                  const SizedBox(width: 10),
+                  if (numeros.length > 1)
+                    _metrique('Chevaux', '${numeros.length}', Colors.white54),
+                ]),
               ],
             ),
           ),

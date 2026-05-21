@@ -1352,8 +1352,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
   Widget _chipStatFiltrePeriode() {
     final actif = _statsFiltreType == 'custom';
+    // ★ v10.71 : afficher les dates même si le chip n'est pas actif
+    // → l'utilisateur voit que ses dates sont mémorisées même après avoir cliqué 7j/30j
     String label = 'Période';
-    if (actif && _statsFiltreDebut != null && _statsFiltreFin != null) {
+    if (_statsFiltreDebut != null && _statsFiltreFin != null) {
       final fmt = (DateTime d) =>
           '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
       label = '${fmt(_statsFiltreDebut!)}→${fmt(_statsFiltreFin!)}';
