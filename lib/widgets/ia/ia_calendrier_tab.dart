@@ -1145,6 +1145,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         return true;
       case 'custom':
         if (_statsFiltreDebut == null || _statsFiltreFin == null) return true;
+        // ★ v10.73 patch : bornes déjà normalisées à l'affectation (debutJour/finJour)
         return !date.isBefore(_statsFiltreDebut!) && !date.isAfter(_statsFiltreFin!);
       default:
         return true;
@@ -1438,8 +1439,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     if (fin == null || !mounted) return;
     setState(() {
       _statsFiltreType  = 'custom';
-      _statsFiltreDebut = debut;
-      _statsFiltreFin   = _finJour(fin);
+      _statsFiltreDebut = _debutJour(debut); // ★ v10.73 patch : normaliser 00:00:00
+      _statsFiltreFin   = _finJour(fin);     // déjà normalisé 23:59:59
     });
   }
 
@@ -1475,8 +1476,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       case 'custom':
         if (_statsFiltreDebut == null || _statsFiltreFin == null) return null;
         return DateTimeRange(
-          start: _statsFiltreDebut!,
-          end:   _statsFiltreFin!,
+          start: _debutJour(_statsFiltreDebut!), // ★ v10.73 patch : double sécurité 00:00:00
+          end:   _finJour(_statsFiltreFin!),     // ★ v10.73 patch : double sécurité 23:59:59
         );
       case 'all':
       default:
