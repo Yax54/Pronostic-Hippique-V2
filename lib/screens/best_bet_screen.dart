@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════
 import '../widgets/type_pari_badge.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import '../widgets/favori_button.dart'; // ★ v9.3
 import 'package:provider/provider.dart';
 import '../main.dart' show NavigationNotifier;
@@ -79,6 +80,23 @@ class _BestBetScreenState extends State<BestBetScreen>
     _tabCtrl = TabController(length: 4, vsync: this);
     _charger();
     _chargerSelectionsFigees();
+    _chargerSignauxPersistants(); // ★ v10.73 : charge les signaux sauvegardés au démarrage
+  }
+
+  /// ★ v10.73 : Charge les signaux Gros Paris déjà persistés (pour survie après fermeture app).
+  Future<void> _chargerSignauxPersistants() async {
+    try {
+      final svc = QuasiGrosParisService.instance;
+      await svc.charger(); // s'assure que la mémoire est peuplée depuis SharedPreferences
+      if (!mounted) return;
+      final signaux = svc.signauxAujourdhui();
+      if (kDebugMode) {
+        debugPrint('[QUASI_GROS_PARIS_LOAD] ${signaux.length} signaux chargés depuis persistance');
+      }
+      setState(() { _signauxGrosParis = signaux; });
+    } catch (e) {
+      if (kDebugMode) debugPrint('[QUASI_GROS_PARIS_LOAD] Erreur chargement persistance: $e');
+    }
   }
 
   /// Charge les sélections figées du jour depuis SharedPreferences.
@@ -617,15 +635,46 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   Widget _buildTabBar() {
+    // ★ v10.73 : badge discret sur l'onglet Gros Paris si signaux > 0
+    final nbSignaux = _signauxGrosParis.length;
+    final tabGrosParis = Tab(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 15),
+          const SizedBox(width: 4),
+          const Text('Gros Paris', style: TextStyle(fontSize: 13)),
+          if (nbSignaux > 0) ...[
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF9800),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '$nbSignaux',
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+
     return Container(
       color: const Color(0xFF0D1B2A),
       child: TabBar(
         controller: _tabCtrl,
-        tabs: const [
-          Tab(icon: Icon(Icons.balance, size: 16), text: 'Top Équilibre'),
-          Tab(icon: Icon(Icons.verified_outlined, size: 16), text: 'Plus Sûr'),
-          Tab(icon: Icon(Icons.trending_up, size: 16), text: 'Plus Rentable'),
-          Tab(icon: Icon(Icons.warning_amber_rounded, size: 16), text: 'Gros Paris'),
+        tabs: [
+          const Tab(icon: Icon(Icons.balance, size: 16), text: 'Top Équilibre'),
+          const Tab(icon: Icon(Icons.verified_outlined, size: 16), text: 'Plus Sûr'),
+          const Tab(icon: Icon(Icons.trending_up, size: 16), text: 'Plus Rentable'),
+          tabGrosParis,
         ],
         labelColor: const Color(0xFFFFD700),
         unselectedLabelColor: Colors.white38,

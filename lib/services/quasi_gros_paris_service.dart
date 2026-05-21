@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QuasiGrosParisService — Détection, stockage, helpers v10.72
+//  QuasiGrosParisService — Détection, stockage, helpers v10.73
 //
 //  Clé SharedPreferences : 'ia_quasi_gros_paris_v1'
 //  Deux sous-clés JSON :
@@ -299,16 +299,23 @@ class QuasiGrosParisService {
 
   /// Calcule les quasi gagnants depuis les pronostics IA pour un mois donné.
   /// Déduplication par courseKey (meilleur niveau gardé).
+  /// ★ v10.73 : surcharge avec filtre DateTimeRange optionnel
   List<QuasiGagnant> calculerQuasiGagnantsDepuisPronostics({
     required List<IaPronostic> pronostics,
-    required int annee,
-    required int mois,
+    int? annee,
+    int? mois,
+    DateTimeRange? periode, // ★ v10.73 : filtre période calendrier
   }) {
     final Map<String, QuasiGagnant> meilleurParCourse = {};
 
     for (final p in pronostics) {
       final date = p.datePronostic;
-      if (date.year != annee || date.month != mois) continue;
+      // Filtre : période explicite prioritaire, sinon année/mois, sinon tout
+      if (periode != null) {
+        if (date.isBefore(periode.start) || date.isAfter(periode.end)) continue;
+      } else if (annee != null && mois != null) {
+        if (date.year != annee || date.month != mois) continue;
+      }
       final arrivee = p.arriveeReelle;
       if (arrivee == null || arrivee.isEmpty)  continue;
 
@@ -362,16 +369,30 @@ class QuasiGrosParisService {
 
   /// Calcule les quasi gagnants depuis les signaux Best Bet archivés,
   /// en les croisant avec les arrivées réelles fournies.
+  /// ★ v10.73 : filtre DateTimeRange optionnel
   List<QuasiGagnant> calculerQuasiGagnantsBestBet({
     required Map<String, List<int>> arriveesParcourseKey,
-    required int annee,
-    required int mois,
+    int? annee,
+    int? mois,
+    DateTimeRange? periode, // ★ v10.73 : filtre période calendrier
   }) {
     final Map<String, QuasiGagnant> meilleurParCourse = {};
 
+    if (kDebugMode) {
+      debugPrint('[QUASI_GAGNANTS_FILTER] BestBet — ${_signaux.length} signaux en mémoire, '
+          'periode=${periode?.start.toIso8601String() ?? "null"} → '
+          '${periode?.end.toIso8601String() ?? "null"}');
+    }
+
     for (final signal in _signaux) {
-      if (signal.dateCourse.year  != annee) continue;
-      if (signal.dateCourse.month != mois)  continue;
+      // Filtre : période explicite prioritaire, sinon année/mois, sinon tout
+      if (periode != null) {
+        if (signal.dateCourse.isBefore(periode.start) ||
+            signal.dateCourse.isAfter(periode.end)) continue;
+      } else if (annee != null && mois != null) {
+        if (signal.dateCourse.year  != annee) continue;
+        if (signal.dateCourse.month != mois)  continue;
+      }
 
       final arrivee = arriveesParcourseKey[signal.courseKey];
       if (arrivee == null || arrivee.isEmpty) continue;
@@ -409,31 +430,105 @@ class QuasiGrosParisService {
   // ══════════════════════════════════════════════════════════════════════
 
   /// Ajoute plusieurs signaux en batch (idempotent sur l'id).
+  /// ★ v10.73 : MERGE — ne supprime jamais les anciens signaux du jour.
   /// Purge automatique des signaux > 90 jours.
   Future<void> ajouterSignauxBatch(List<GrosPariSurveiller> signaux) async {
     await charger();
+    // Merge : anciens + nouveaux, les nouveaux écrasent par id
+    final map = <String, GrosPariSurveiller>{
+      for (final s in _signaux) s.id: s,
+    };
     for (final s in signaux) {
-      _signaux.removeWhere((x) => x.id == s.id);
-      _signaux.add(s);
+      map[s.id] = s; // écrase si même id, sinon ajoute
     }
+    _signaux
+      ..clear()
+      ..addAll(map.values);
+    // Purge > 90 jours
     final limite = DateTime.now().subtract(const Duration(days: 90));
     _signaux.removeWhere((s) => s.dateCourse.isBefore(limite));
     await _sauvegarder();
     if (kDebugMode) {
-      debugPrint('[QuasiGros] Signaux sauvegardés : ${_signaux.length}');
+      debugPrint('[QUASI_GROS_PARIS_SAVE] ${_signaux.length} signaux sauvegardés '
+          '(batch: ${signaux.length})');
     }
   }
 
+  /// ★ v10.73 : Sauvegarde immédiate des signaux du jour (appelé depuis BestBetScreen).
+  /// Utilise le même merge que ajouterSignauxBatch pour ne pas écraser l'historique.
+  Future<void> sauvegarderSignauxGrosParisDuJour(
+    List<GrosPariSurveiller> signaux,
+  ) async {
+    if (signaux.isEmpty) return;
+    await ajouterSignauxBatch(signaux); // délègue le merge + persistance
+    if (kDebugMode) {
+      debugPrint('[QUASI_GROS_PARIS_SAVE] Sauvegarde immédiate : '
+          '${signaux.length} signaux du jour');
+    }
+  }
+
+  /// ★ v10.73 : Charge les signaux depuis SharedPreferences (accès direct).
+  /// Utile pour lecture sans passer par l'état mémoire (_signaux).
+  Future<List<GrosPariSurveiller>> chargerSignauxGrosParis() async {
+    await charger();
+    if (kDebugMode) {
+      debugPrint('[QUASI_GROS_PARIS_LOAD] ${_signaux.length} signaux en mémoire');
+    }
+    return List.unmodifiable(_signaux);
+  }
+
   /// Retourne les signaux d'aujourd'hui, triés par fiabilité décroissante.
+  /// ★ v10.73 : masque le niveau "eviter" (trop spéculatif pour l'affichage)
   List<GrosPariSurveiller> signauxAujourdhui() {
     final today = DateTime.now();
     return _signaux
         .where((s) =>
             s.dateCourse.year  == today.year &&
             s.dateCourse.month == today.month &&
-            s.dateCourse.day   == today.day)
+            s.dateCourse.day   == today.day &&
+            s.niveau != NiveauFiabiliteGrosPari.eviter) // ★ v10.73 : masquer "éviter"
         .toList()
       ..sort((a, b) => b.fiabilite.compareTo(a.fiabilite));
+  }
+
+  /// ★ v10.73 : helpers de déduplication avec priorité Type + Source
+  static int _prioriteType(TypeGrosPari type) {
+    switch (type) {
+      case TypeGrosPari.quinte: return 3;
+      case TypeGrosPari.quarte: return 2;
+      case TypeGrosPari.tierce: return 1;
+    }
+  }
+
+  static int _prioriteSource(SourceQuasiGagnant source) {
+    switch (source) {
+      case SourceQuasiGagnant.grosParisSurveiller: return 2;
+      case SourceQuasiGagnant.programme:           return 1;
+    }
+  }
+
+  /// ★ v10.73 : Fusionne et déduplique par courseKey.
+  /// Priorité : TypeGrosPari décroissant, puis SourceQuasiGagnant décroissante.
+  static List<QuasiGagnant> dedoublonnerQuasiGagnants(
+    List<QuasiGagnant> items,
+  ) {
+    final map = <String, QuasiGagnant>{};
+    for (final qg in items) {
+      final old = map[qg.courseKey];
+      if (old == null) {
+        map[qg.courseKey] = qg;
+        continue;
+      }
+      final betterType =
+          _prioriteType(qg.type) > _prioriteType(old.type);
+      final sameTypeBetterSource =
+          _prioriteType(qg.type) == _prioriteType(old.type) &&
+          _prioriteSource(qg.source) > _prioriteSource(old.source);
+      if (betterType || sameTypeBetterSource) {
+        map[qg.courseKey] = qg;
+      }
+    }
+    return map.values.toList();
   }
 
   // ══════════════════════════════════════════════════════════════════════

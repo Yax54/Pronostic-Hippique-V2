@@ -14,7 +14,7 @@
 //  Tap case → liste pronostics gagnants → dialog détail IA custom.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, kDebugMode;
 import 'package:flutter/material.dart';
 import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1444,88 +1444,109 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  ★ v10.72 — QUASI GAGNANTS DU MOIS
+  //  ★ v10.73 — QUASI GAGNANTS filtrés par période active
   // ══════════════════════════════════════════════════════════════════════
+
+  /// ★ v10.73 : Construit le DateTimeRange correspondant au filtre stats actif.
+  /// Retourne null pour "Total" (pas de borne temporelle).
+  DateTimeRange? _periodeQuasiGagnants() {
+    final now = DateTime.now();
+    switch (_statsFiltreType) {
+      case 'today':
+        return DateTimeRange(
+          start: _debutJour(now),
+          end:   _finJour(now),
+        );
+      case '7j':
+        return DateTimeRange(
+          start: _debutJour(now).subtract(const Duration(days: 6)),
+          end:   _finJour(now),
+        );
+      case '30j':
+        return DateTimeRange(
+          start: _debutJour(now).subtract(const Duration(days: 29)),
+          end:   _finJour(now),
+        );
+      case '60j':
+        return DateTimeRange(
+          start: _debutJour(now).subtract(const Duration(days: 59)),
+          end:   _finJour(now),
+        );
+      case 'custom':
+        if (_statsFiltreDebut == null || _statsFiltreFin == null) return null;
+        return DateTimeRange(
+          start: _statsFiltreDebut!,
+          end:   _statsFiltreFin!,
+        );
+      case 'all':
+      default:
+        return null; // pas de borne = tout l'historique
+    }
+  }
+
   Widget _buildSectionQuasiGagnants() {
-    final svc       = QuasiGrosParisService.instance;
+    final svc        = QuasiGrosParisService.instance;
     final pronostics = IaMemoryService.instance.pronostics;
 
-    // Quasi gagnants depuis Programme IA
+    // ★ v10.73 : utilise la même période que les stats calendrier
+    final periode = _periodeQuasiGagnants();
+
+    if (kDebugMode) {
+      debugPrint('[QUASI_GAGNANTS_CALENDAR] Filtre=$_statsFiltreType '
+          'periode=${periode?.start.toIso8601String() ?? "null"} → '
+          '${periode?.end.toIso8601String() ?? "null"}');
+    }
+
+    // Quasi gagnants depuis Programme IA — filtre période
     final depuisProg = svc.calculerQuasiGagnantsDepuisPronostics(
       pronostics: pronostics,
-      annee: _moisRef.year,
-      mois:  _moisRef.month,
+      periode:    periode,
     );
 
-    // Quasi gagnants depuis signaux Best Bet archivés
-    // Construire la map arrivée depuis les pronostics
+    // Map arrivées depuis pronostics pour croiser avec signaux BestBet
     final arriveesParcourseKey = <String, List<int>>{};
     for (final p in pronostics) {
       if (p.arriveeReelle != null) {
         arriveesParcourseKey[p.courseKey] = p.arriveeReelle!;
       }
     }
+
+    // Quasi gagnants depuis signaux Best Bet archivés — filtre période
     final depuisBestBet = svc.calculerQuasiGagnantsBestBet(
       arriveesParcourseKey: arriveesParcourseKey,
-      annee: _moisRef.year,
-      mois:  _moisRef.month,
+      periode:              periode,
     );
 
-    // Fusionner et dédupliquer : Best Bet prioritaire sur Prog pour même courseKey
-    final Map<String, QuasiGagnant> fusion = {};
-    for (final qg in depuisProg) {
-      fusion[qg.courseKey] = qg;
-    }
-    for (final qg in depuisBestBet) {
-      // Best Bet écrase Prog si même course et niveau >= (Quinté+ > Quarté+ > Tiercé)
-      final existing = fusion[qg.courseKey];
-      if (existing == null ||
-          QuasiGrosParisService.nbChevauxPourType(qg.type) >=
-          QuasiGrosParisService.nbChevauxPourType(existing.type)) {
-        fusion[qg.courseKey] = qg;
-      }
-    }
+    // ★ v10.73 : Déduplication avec priorité Type + Source (via service)
+    final tous = QuasiGrosParisService.dedoublonnerQuasiGagnants([
+      ...depuisProg,
+      ...depuisBestBet,
+    ])..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
 
-    final tous = fusion.values.toList()
-      ..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
+    if (kDebugMode) {
+      debugPrint('[QUASI_GAGNANTS_CALENDAR] ${tous.length} quasi-gagnants '
+          'après dédup (prog:${depuisProg.length}, bestbet:${depuisBestBet.length})');
+    }
 
     if (tous.isEmpty) return const SizedBox();
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      iaSectionTitle('🎯 Quasi gagnants'),
-      const SizedBox(height: 10),
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _cCard,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Sous-titre explicatif
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0x1A7C4DFF),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0x447C4DFF)),
-              ),
-              child: const Text(
-                'Courses où l\'IA était à 1 cheval près. Observation uniquement — '
-                'ne modifie pas les statistiques officielles.',
-                style: TextStyle(color: Color(0xFFB39DDB), fontSize: 12, height: 1.4),
-              ),
-            ),
-            ...tous.map((qg) => _carteQuasiGagnant(qg)),
-          ],
-        ),
-      ),
-    ]);
+    // ★ v10.73 : Limiter à 10 par défaut, avec bouton "Voir tout"
+    const int limiteDefaut = 10;
+    final affichesParDefaut = tous.length <= limiteDefaut
+        ? tous
+        : tous.take(limiteDefaut).toList();
+
+    return _SectionQuasiGagnantsWidget(
+      tous:           tous,
+      affichesParDefaut: affichesParDefaut,
+      labelFiltre:    _labelFiltreStats,
+      onCarteBuilder: _carteQuasiGagnant,
+    );
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.73 — CARTE quasi gagnant
+  // ══════════════════════════════════════════════════════════════════════
   Widget _carteQuasiGagnant(QuasiGagnant qg) {
     final estBestBet = qg.vientDeBestBet;
     final labelType  = QuasiGrosParisService.labelType(qg.type);
@@ -2653,5 +2674,129 @@ class _SeuilUniquSheetState extends State<_SeuilUniquSheet> {
         ]),
       ),
     );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ★ v10.73 — Widget autonome pour la section Quasi gagnants (limite 10 + Voir tout)
+// ══════════════════════════════════════════════════════════════════════════════
+class _SectionQuasiGagnantsWidget extends StatefulWidget {
+  final List<QuasiGagnant>       tous;
+  final List<QuasiGagnant>       affichesParDefaut;
+  final String                   labelFiltre;
+  final Widget Function(QuasiGagnant) onCarteBuilder;
+
+  const _SectionQuasiGagnantsWidget({
+    required this.tous,
+    required this.affichesParDefaut,
+    required this.labelFiltre,
+    required this.onCarteBuilder,
+  });
+
+  @override
+  State<_SectionQuasiGagnantsWidget> createState() =>
+      _SectionQuasiGagnantsWidgetState();
+}
+
+class _SectionQuasiGagnantsWidgetState
+    extends State<_SectionQuasiGagnantsWidget> {
+  bool _voirTout = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final aAfficher = _voirTout ? widget.tous : widget.affichesParDefaut;
+    final hasMore   = widget.tous.length > widget.affichesParDefaut.length;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Titre + label filtre sur la même ligne
+      Row(children: [
+        Expanded(
+          child: RichText(
+            text: const TextSpan(
+              text: '🎯 Quasi gagnants',
+              style: TextStyle(
+                color: Color(0xFFFFD700),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0x22B39DDB),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            widget.labelFiltre.replaceFirst('Filtre : ', ''),
+            style: const TextStyle(color: Color(0xFFB39DDB), fontSize: 11),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111F30),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Bandeau explicatif
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0x1A7C4DFF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0x447C4DFF)),
+              ),
+              child: Text(
+                'Courses où l\'IA était à 1 cheval près. '
+                '${widget.tous.length} résultat${widget.tous.length > 1 ? "s" : ""} '
+                'sur la période. Observation uniquement — '
+                'ne modifie pas les statistiques officielles.',
+                style: const TextStyle(
+                  color: Color(0xFFB39DDB), fontSize: 12, height: 1.4,
+                ),
+              ),
+            ),
+            // Cartes
+            ...aAfficher.map((qg) => widget.onCarteBuilder(qg)),
+            // Bouton "Voir tout" / "Réduire"
+            if (hasMore)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: GestureDetector(
+                  onTap: () => setState(() => _voirTout = !_voirTout),
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0x227C4DFF),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0x557C4DFF)),
+                    ),
+                    child: Text(
+                      _voirTout
+                          ? '▲ Réduire'
+                          : '▼ Voir tout (${widget.tous.length})',
+                      style: const TextStyle(
+                        color: Color(0xFFB39DDB),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ]);
   }
 }
