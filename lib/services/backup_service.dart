@@ -110,6 +110,7 @@
 //     v7.8 : +ia_narrative_memory_v1 (mémoire narrative anti-répétition)
 //     v7.9 : +ia_narrative_daily_cache_v1 (cache journalier narratif anti-rebuild)
 //     v8.0 : +ia_stats_filtre_actif_v1, +ia_stats_date_debut_v1, +ia_stats_date_fin_v1 (filtres Précision IA — préférences affichage uniquement)
+//     v9.0 : +ia_quasi_gros_paris_v1 (Gros paris à surveiller + Quasi gagnants — non recalculable)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -122,13 +123,14 @@ import 'package:file_picker/file_picker.dart';
 import 'alert_service.dart'; // ★ v10.26d
 import 'elo_service.dart'; // ★ v8.0
 import 'ia_memory_service.dart'; // ★ v10.26c
+import 'quasi_gros_paris_service.dart'; // ★ v10.72
 
 class BackupService {
   BackupService._();
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '8.0'; // ★ v10.70 : +ia_stats_filtre_actif_v1, +ia_stats_date_debut_v1, +ia_stats_date_fin_v1 (filtres Précision IA)
+  static const _backupVersion = '9.0'; // ★ v10.72 : +ia_quasi_gros_paris_v1 (Gros paris à surveiller + Quasi gagnants)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -302,6 +304,13 @@ class BackupService {
     'ia_audit_cache_v1', // Cache des onglets Audit (IaAuditCacheService)
   ];
 
+  // ⚠️ Gros Paris — signaux Gros paris à surveiller + Quasi gagnants archivés
+  // OBLIGATOIRE : non recalculable (signaux d'avant-course disparus après la course)
+  // Rétrocompat : absent dans un ancien backup → reset à liste vide (jamais crash)
+  static const _keysGrosParis = [
+    'ia_quasi_gros_paris_v1', // ★ v10.72 : Signaux Gros paris + Quasi gagnants (QuasiGrosParisService)
+  ];
+
   // Toutes les cles reunies (pour reinitialisation complete)
   static List<String> get _toutesLesCles => [
     ..._keysIA,
@@ -312,6 +321,7 @@ class BackupService {
     ..._keysWidget,
     ..._keysLaboIA,
     ..._keysAuditCache,
+    ..._keysGrosParis,
   ];
 
   // ════════════════════════════════════════════════════════════════════════
@@ -357,6 +367,7 @@ class BackupService {
       'widget'     : <String, dynamic>{},
       'laboIA'     : <String, dynamic>{},   // ★ v10.35 : Pistes Labo IA
       'auditCache' : <String, dynamic>{},   // ★ v10.35 : Cache Audit
+      'grosParis'  : <String, dynamic>{},   // ★ v10.72 : Gros Paris à surveiller
     };
 
     // ── 🧠 Memoire IA ────────────────────────────────────────────────────
@@ -446,6 +457,23 @@ class BackupService {
       } else {
         if (kDebugMode) debugPrint('[Backup] AUD $key -> ABSENT (ok)');
       }
+    }
+
+    // ── ⚠️ Gros Paris ★ v10.72 ───────────────────────────────────────────────
+    // Les données sont gérées par QuasiGrosParisService (pas des SharedPreferences
+    // classiques) — on les exporte via la méthode dédiée du service.
+    try {
+      final grosParisData = QuasiGrosParisService.instance.exporterPourBackup();
+      if (grosParisData.isNotEmpty) {
+        data['grosParis'] = grosParisData;
+        if (kDebugMode) {
+          final nbSignaux = (grosParisData['signaux'] as List? ?? []).length;
+          final nbQG = (grosParisData['quasiGagnants'] as List? ?? []).length;
+          debugPrint('[Backup] GRO -> $nbSignaux signaux, $nbQG quasi-gagnants');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Backup] GRO export partiel : $e');
     }
 
     // ── 🏇 ELO SERVICE ★ v8.0 ──────────────────────────────────────────────
@@ -750,6 +778,35 @@ class BackupService {
         final nbAudit = await _restaurerGroupe(prefs, data['auditCache'] as Map<String, dynamic>?);
         total += nbAudit;
         if (kDebugMode) debugPrint('[Backup] AuditCache restaure : $nbAudit cles');
+      }
+
+      // ── ⚠️ GROS PARIS ★ v10.72 ───────────────────────────────────────────
+      // Restaurer les signaux Gros Paris + Quasi Gagnants (obligatoire — non recalculable)
+      // Rétrocompat : clé absente dans un ancien backup → reset à vide, jamais crash
+      try {
+        if (data.containsKey('grosParis')) {
+          final grosParisRaw = data['grosParis'];
+          if (grosParisRaw is Map<String, dynamic>) {
+            await QuasiGrosParisService.instance.importerDepuisBackup(grosParisRaw);
+            if (kDebugMode) {
+              final nbS = (grosParisRaw['signaux'] as List? ?? []).length;
+              final nbQ = (grosParisRaw['quasiGagnants'] as List? ?? []).length;
+              debugPrint('[Backup] GrosParis restaure : $nbS signaux, $nbQ quasi-gagnants');
+            }
+          }
+        } else {
+          // Rétrocompat : absent dans un ancien backup → reset propre à vide
+          await QuasiGrosParisService.instance.importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
+          if (kDebugMode) {
+            debugPrint('[Backup] grosParis absent → reset à vide (compat v<9.0)');
+          }
+        }
+      } catch (e) {
+        // Clé corrompue : reset uniquement cette clé, ne jamais bloquer la restauration
+        if (kDebugMode) debugPrint('[Backup] GrosParis restauration partielle (reset) : $e');
+        try {
+          await QuasiGrosParisService.instance.importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
+        } catch (_) {}
       }
 
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes

@@ -20,6 +20,7 @@ import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../services/quasi_gros_paris_service.dart'; // ★ v10.72
 import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
     show
         estPremiumGagnantPourCarte,
@@ -280,6 +281,9 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             _buildBilanMois(data),
             const SizedBox(height: 20),
             _buildStatsByType(data),
+            const SizedBox(height: 20),
+            // ★ v10.72 : Quasi gagnants du mois
+            _buildSectionQuasiGagnants(),
             const SizedBox(height: 20),
             _buildTendanceJours(data),
           ] else ...[
@@ -1437,6 +1441,172 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       _statsFiltreDebut = debut;
       _statsFiltreFin   = _finJour(fin);
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.72 — QUASI GAGNANTS DU MOIS
+  // ══════════════════════════════════════════════════════════════════════
+  Widget _buildSectionQuasiGagnants() {
+    final svc       = QuasiGrosParisService.instance;
+    final pronostics = IaMemoryService.instance.pronostics;
+
+    // Quasi gagnants depuis Programme IA
+    final depuisProg = svc.calculerQuasiGagnantsDepuisPronostics(
+      pronostics: pronostics,
+      annee: _moisRef.year,
+      mois:  _moisRef.month,
+    );
+
+    // Quasi gagnants depuis signaux Best Bet archivés
+    // Construire la map arrivée depuis les pronostics
+    final arriveesParcourseKey = <String, List<int>>{};
+    for (final p in pronostics) {
+      if (p.arriveeReelle != null) {
+        arriveesParcourseKey[p.courseKey] = p.arriveeReelle!;
+      }
+    }
+    final depuisBestBet = svc.calculerQuasiGagnantsBestBet(
+      arriveesParcourseKey: arriveesParcourseKey,
+      annee: _moisRef.year,
+      mois:  _moisRef.month,
+    );
+
+    // Fusionner et dédupliquer : Best Bet prioritaire sur Prog pour même courseKey
+    final Map<String, QuasiGagnant> fusion = {};
+    for (final qg in depuisProg) {
+      fusion[qg.courseKey] = qg;
+    }
+    for (final qg in depuisBestBet) {
+      // Best Bet écrase Prog si même course et niveau >= (Quinté+ > Quarté+ > Tiercé)
+      final existing = fusion[qg.courseKey];
+      if (existing == null ||
+          QuasiGrosParisService.nbChevauxPourType(qg.type) >=
+          QuasiGrosParisService.nbChevauxPourType(existing.type)) {
+        fusion[qg.courseKey] = qg;
+      }
+    }
+
+    final tous = fusion.values.toList()
+      ..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
+
+    if (tous.isEmpty) return const SizedBox();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      iaSectionTitle('🎯 Quasi gagnants'),
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _cCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Sous-titre explicatif
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0x1A7C4DFF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0x447C4DFF)),
+              ),
+              child: const Text(
+                'Courses où l\'IA était à 1 cheval près. Observation uniquement — '
+                'ne modifie pas les statistiques officielles.',
+                style: TextStyle(color: Color(0xFFB39DDB), fontSize: 12, height: 1.4),
+              ),
+            ),
+            ...tous.map((qg) => _carteQuasiGagnant(qg)),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _carteQuasiGagnant(QuasiGagnant qg) {
+    final estBestBet = qg.vientDeBestBet;
+    final labelType  = QuasiGrosParisService.labelType(qg.type);
+    final couleur    = estBestBet ? _cGold : _cGreen;
+    final fmt        = (DateTime d) =>
+        '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: estBestBet
+            ? const Color(0xFF1A1400)
+            : const Color(0xFF0F1A10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: couleur.withValues(alpha: 0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          // Badge type
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: couleur.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${estBestBet ? "⭐ " : ""}$labelType',
+              style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Score
+          Text(
+            '${qg.nbTrouves}/${qg.nbRequis} ✓',
+            style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+          const Spacer(),
+          Text(
+            fmt(qg.dateCourse),
+            style: const TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          qg.nomCourse,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${qg.hippodrome} • ${qg.discipline}',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        // Numéros trouvés / manquants
+        Row(children: [
+          if (qg.numerosTrouves.isNotEmpty) ...[
+            Text('✓ ', style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.bold)),
+            Text(
+              qg.numerosTrouves.map((n) => 'N°$n').join(' '),
+              style: TextStyle(color: couleur, fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(width: 10),
+          ],
+          if (qg.numerosManquants.isNotEmpty) ...[
+            Text('✗ ', style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+            Text(
+              qg.numerosManquants.map((n) => 'N°$n').join(' '),
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          'Source : ${estBestBet ? "Gros paris à surveiller" : "Programme IA"}',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+        ),
+      ]),
+    );
   }
 
   // ══════════════════════════════════════════════════════════════════════

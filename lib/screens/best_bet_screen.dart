@@ -18,6 +18,7 @@ import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
 import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55
 import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
+import '../services/quasi_gros_paris_service.dart'; // ★ v10.72 : Gros paris à surveiller
 
 import 'course_detail_screen.dart';
 
@@ -64,6 +65,9 @@ class _BestBetScreenState extends State<BestBetScreen>
   double _mise      = 10.0;
   double _bankroll  = 200.0; // ★ v9.93 : bankroll pour Kelly Criterion
 
+  // ★ v10.72 : Signaux "Gros paris à surveiller"
+  List<GrosPariSurveiller> _signauxGrosParis = [];
+
   // ★ v10.69 : Sélections figées du jour pour les 3 widgets BestBet
   // CLÉ : l'UI lit ces sélections EN PRIORITÉ 1 avant tout recalcul.
   Map<String, SelectionWidgetPremiumDuJour> _selectionsFigees = {};
@@ -72,7 +76,7 @@ class _BestBetScreenState extends State<BestBetScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(length: 4, vsync: this);
     _charger();
     _chargerSelectionsFigees();
   }
@@ -138,12 +142,15 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   Future<void> _charger({bool refresh = false}) async {
+    // ★ v10.72 : Charger les signaux depuis le stockage
+    await QuasiGrosParisService.instance.charger();
     // Charger immédiatement depuis le cache du DataRefreshService
     if (!refresh) {
       final svc = context.read<DataRefreshService>();
       if (svc.reunions.isNotEmpty) {
         if (mounted) setState(() { _reunions = svc.reunions; _loading = false; _error = null; });
         _enregistrerBestBetsPremium();
+        _calculerEtSauvegarderSignaux();
         return;
       }
     }
@@ -158,8 +165,22 @@ class _BestBetScreenState extends State<BestBetScreen>
         if (mounted) setState(() { _reunions = r; _loading = false; });
       }
       _enregistrerBestBetsPremium();
+      _calculerEtSauvegarderSignaux();
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  // ★ v10.72 : Calcule et sauvegarde les signaux "Gros paris à surveiller" du jour
+  Future<void> _calculerEtSauvegarderSignaux() async {
+    try {
+      final svc = QuasiGrosParisService.instance;
+      final signaux = svc.calculerSignauxDuJour(_reunions);
+      await svc.ajouterSignauxBatch(signaux);
+      if (mounted) setState(() { _signauxGrosParis = svc.signauxAujourdhui(); });
+      debugPrint('[GrosParis] ${signaux.length} signaux calculés');
+    } catch (e) {
+      debugPrint('[GrosParis] Erreur calcul signaux: $e');
     }
   }
 
@@ -604,6 +625,7 @@ class _BestBetScreenState extends State<BestBetScreen>
           Tab(icon: Icon(Icons.balance, size: 16), text: 'Top Équilibre'),
           Tab(icon: Icon(Icons.verified_outlined, size: 16), text: 'Plus Sûr'),
           Tab(icon: Icon(Icons.trending_up, size: 16), text: 'Plus Rentable'),
+          Tab(icon: Icon(Icons.warning_amber_rounded, size: 16), text: 'Gros Paris'),
         ],
         labelColor: const Color(0xFFFFD700),
         unselectedLabelColor: Colors.white38,
@@ -698,10 +720,15 @@ class _BestBetScreenState extends State<BestBetScreen>
 
     return TabBarView(
       controller: _tabCtrl,
-      children: [0, 1, 2].map((tab) {
-        final sorted = _sortedBy(tab, opps);
-        return _buildListe(sorted, tab);
-      }).toList(),
+      children: [
+        // Onglets 0-2 : Best Bet classiques
+        ...[0, 1, 2].map((tab) {
+          final sorted = _sortedBy(tab, opps);
+          return _buildListe(sorted, tab);
+        }),
+        // ★ v10.72 : Onglet 3 — Gros paris à surveiller
+        _buildListeGrosParis(),
+      ],
     );
   }
 
@@ -998,6 +1025,295 @@ class _BestBetScreenState extends State<BestBetScreen>
           },
         );
       },
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ v10.72 — ONGLET GROS PARIS À SURVEILLER
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildListeGrosParis() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFFFF9800)));
+    }
+
+    // Bandeau prudence obligatoire
+    final bandeau = Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x22FF9800),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x66FFB74D)),
+      ),
+      child: const Row(children: [
+        Icon(Icons.warning_amber_rounded, color: Color(0xFFFFCC80), size: 18),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Signal à surveiller — ne remplace pas les pronostics Premium officiels.',
+            style: TextStyle(color: Color(0xFFFFCC80), fontSize: 13, fontWeight: FontWeight.w600, height: 1.35),
+          ),
+        ),
+      ]),
+    );
+
+    if (_signauxGrosParis.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+        children: [
+          bandeau,
+          const SizedBox(height: 30),
+          const Center(
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text('⚠️', style: TextStyle(fontSize: 44)),
+              SizedBox(height: 12),
+              Text('Aucun signal détecté aujourd\'hui',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center),
+              SizedBox(height: 8),
+              Text(
+                'Les signaux apparaissent quand l\'IA détecte\nN chevaux nettement au-dessus du reste\navec un écart ≥ 10 pts.',
+                style: TextStyle(color: Colors.white38, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+            ]),
+          ),
+        ],
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+      children: [
+        bandeau,
+        ..._signauxGrosParis.map((signal) => _carteGrosPari(signal)),
+      ],
+    );
+  }
+
+  Widget _carteGrosPari(GrosPariSurveiller signal) {
+    final color    = QuasiGrosParisService.couleurFiabilite(signal.niveau);
+    final label    = QuasiGrosParisService.labelType(signal.type);
+    final courseTerminee = signal.dateCourse.isBefore(DateTime.now());
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _ouvrirDetailGrosPari(signal),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF142030),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: color.withValues(alpha: 0.65), width: 1.4),
+          boxShadow: [
+            BoxShadow(color: color.withValues(alpha: 0.16), blurRadius: 14, offset: const Offset(0, 6)),
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('⚠️', style: TextStyle(fontSize: 20)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '$label à surveiller',
+                style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w900),
+              ),
+            ),
+            if (courseTerminee)
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text('Terminée', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ),
+            Text(
+              '${signal.fiabilite.round()}%',
+              style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Text(
+            signal.nomCourse,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${signal.hippodrome} • ${signal.heure} • ${signal.discipline}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.68), fontSize: 13),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Chevaux : ${signal.numeros.join(' - ')}',
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Écart IA avec le suivant : +${signal.ecartAvecSuivant.toStringAsFixed(1)} pts',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  void _ouvrirDetailGrosPari(GrosPariSurveiller signal) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        padding: const EdgeInsets.all(18),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0F1722),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: SafeArea(top: false, child: _detailGrosPari(signal)),
+      ),
+    );
+  }
+
+  Widget _detailGrosPari(GrosPariSurveiller signal) {
+    final color = QuasiGrosParisService.couleurFiabilite(signal.niveau);
+    final label = QuasiGrosParisService.labelType(signal.type);
+
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Poignée
+      Center(
+        child: Container(
+          width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+        ),
+      ),
+      Row(children: [
+        const Text('⚠️', style: TextStyle(fontSize: 24)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text('$label à surveiller',
+              style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+        ),
+      ]),
+      const SizedBox(height: 14),
+      Text(signal.nomCourse,
+          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 4),
+      Text(
+        '${signal.hippodrome} • ${signal.heure} • ${signal.discipline}',
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 13),
+      ),
+      const SizedBox(height: 16),
+      _ligneDetailGros('Sélection IA', signal.numeros.join(' - ')),
+      _ligneDetailGros('Fiabilité', '${signal.fiabilite.round()}%'),
+      _ligneDetailGros('Écart avec le suivant', '+${signal.ecartAvecSuivant.toStringAsFixed(1)} pts'),
+      _ligneDetailGros('Score moyen sélection', '${signal.scoreMoyenSelection.toStringAsFixed(1)} pts'),
+      const SizedBox(height: 14),
+      Text(
+        QuasiGrosParisService.explicationGrosPari(signal),
+        style: TextStyle(color: Colors.white.withValues(alpha: 0.82), fontSize: 14, height: 1.4),
+      ),
+      const SizedBox(height: 14),
+      // Bandeau prudence
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0x22FF9800),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0x66FFB74D)),
+        ),
+        child: const Text(
+          'Signal à surveiller avec prudence. Ce pari ne remplace pas les pronostics Premium officiels.',
+          style: TextStyle(color: Color(0xFFFFCC80), fontSize: 13, height: 1.35, fontWeight: FontWeight.w600),
+        ),
+      ),
+      const SizedBox(height: 18),
+      // Bouton Parier — ne valide pas automatiquement, prérempli uniquement
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: signal.dateCourse.isBefore(DateTime.now())
+              ? null
+              : () {
+                  Navigator.pop(context);
+                  _preRemplirPariGrosPari(signal);
+                },
+          icon: const Icon(Icons.add_circle_outline),
+          label: Text(signal.dateCourse.isBefore(DateTime.now())
+              ? 'Course terminée'
+              : 'Parier'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.black,
+            disabledBackgroundColor: Colors.white12,
+            disabledForegroundColor: Colors.white38,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _ligneDetailGros(String label, String valeur) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Text('$label :', style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(valeur,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+        ),
+      ]),
+    );
+  }
+
+  /// ★ v10.72 : Prérempli une entrée dans Mes Paris depuis un signal Gros Pari.
+  /// Ne valide PAS automatiquement — l'utilisateur confirme ensuite.
+  void _preRemplirPariGrosPari(GrosPariSurveiller signal) {
+    // Chercher la course correspondante dans _reunions pour ouvrir le bet sheet
+    for (final reunion in _reunions) {
+      for (final course in reunion.courses) {
+        final key = buildCourseKey(
+          reunionCode: reunion.code,
+          numCourse:   course.numCourse,
+          dateStr:     course.dateStr,
+        );
+        if (key == signal.courseKey && course.partants.isNotEmpty) {
+          // Trouver le premier cheval de la sélection signal
+          final partantSignal = course.partants.firstWhere(
+            (p) => signal.numeros.contains(p.numero),
+            orElse: () => course.partants.first,
+          );
+          try {
+            showBetSheet(
+              context,
+              reunion: reunion,
+              course: course,
+              alertService: AlertService.instance,
+              chevalSuggere: partantSignal,
+              onBetPlaced: () => context.read<NavigationNotifier>().goToMesParis(),
+            );
+          } catch (e) {
+            debugPrint('[GrosParis] Parier erreur: $e');
+          }
+          return;
+        }
+      }
+    }
+    // Course non trouvée dans les réunions actuelles
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Course non disponible dans le programme actuel.'),
+        backgroundColor: Color(0xFF2A1200),
+      ),
     );
   }
 }
