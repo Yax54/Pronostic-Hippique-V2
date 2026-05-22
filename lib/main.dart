@@ -79,6 +79,13 @@ void main() async {
   // PronosticResultatsRepository pour visibilité dans IA Stats / Calendrier / Précision.
   // Idempotente : protégée par flag 'ia_migration_gros_paris_stats_v2_done'.
   QuasiGrosParisService.instance.migrerGrosParisStatsSiBesoin().ignore();
+  // ★ v10.77 : Diagnostic preuve injection — log 4 métriques au démarrage (debug only)
+  // [1] chargés repo [2] injectés stats [3] Tiercé 21/05 [4] 0 violation gradient
+  Future.delayed(const Duration(seconds: 3), () {
+    IaMemoryService.instance.diagnosticPronosticRepository(
+      dateVerif: DateTime(2026, 5, 21),
+    );
+  });
   // Lancement du rafraîchissement automatique (immédiat + toutes les 15 min)
   // Note : on lance sans await pour ne pas bloquer le démarrage de l'UI,
   // mais on s'assure bien que la Future est lancée via un ignore explicite.

@@ -365,6 +365,65 @@ class IaMemoryService extends ChangeNotifier {
     return data;
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.77 — Diagnostic PronosticResultatsRepository (preuve d'injection)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Retourne un rapport lisible (et loggable) prouvant l'injection des gros paris
+  /// dans les stats utilisateur, sans toucher au gradient.
+  ///
+  /// Vérifié :
+  ///  [1] nb résultats chargés depuis PronosticResultatsRepository
+  ///  [2] nb injectés dans les stats utilisateur (utilisableStatsUtilisateur=true)
+  ///  [3] nb visibles dans Tiercé pour la date donnée (par défaut 21/05/2026)
+  ///  [4] assert : aucun utilisé pour apprentissage (utilisableApprentissage=false)
+  Map<String, dynamic> diagnosticPronosticRepository({DateTime? dateVerif}) {
+    final repo = PronosticResultatsRepository.instance;
+    final tous = repo.tous;
+    final utilisablesStats = repo.utilisablesStats;
+
+    // [1] Total chargés
+    final nbCharges = tous.length;
+
+    // [2] Injectés dans stats utilisateur
+    final nbStats = utilisablesStats.length;
+
+    // [3] Tiercé pour la date de vérification
+    final date = dateVerif ?? DateTime(2026, 5, 21);
+    final tiercesDate = utilisablesStats.where((r) =>
+        r.dateCourse.year  == date.year  &&
+        r.dateCourse.month == date.month &&
+        r.dateCourse.day   == date.day   &&
+        r.typePari.contains('Tierc')).toList();
+    final nbTiercesDate = tiercesDate.length;
+    final tiercesGagnantsDate = tiercesDate.where((r) => r.gagnant).length;
+
+    // [4] Sécurité apprentissage — aucun grosParisSurveiller avec apprentissage=true
+    final violationGradient = tous.where((r) =>
+        r.source == 'grosParisSurveiller' && r.utilisableApprentissage).length;
+
+    final rapport = {
+      'nbCharges':              nbCharges,
+      'nbInjectesStats':        nbStats,
+      'nbTierceDate':           nbTiercesDate,
+      'nbTiercesGagnantsDate':  tiercesGagnantsDate,
+      'dateVerif':              '${date.day.toString().padLeft(2,'0')}/${date.month.toString().padLeft(2,'0')}/${date.year}',
+      'violationGradient':      violationGradient,
+      'ok':                     violationGradient == 0,
+    };
+
+    if (kDebugMode) {
+      debugPrint('[v10.77 PREUVE] ════════════════════════════════');
+      debugPrint('[v10.77 PREUVE] [1] chargés depuis repo   : $nbCharges');
+      debugPrint('[v10.77 PREUVE] [2] injectés dans stats   : $nbStats');
+      debugPrint('[v10.77 PREUVE] [3] Tiercé ${rapport['dateVerif']} : $nbTiercesDate (gagnants: $tiercesGagnantsDate)');
+      debugPrint('[v10.77 PREUVE] [4] violations gradient   : $violationGradient (doit être 0)');
+      debugPrint('[v10.77 PREUVE] ════════════════════════════════');
+    }
+
+    return rapport;
+  }
+
   /// ★ v9.99 : Précision "Aujourd'hui" calculée directement depuis _pronostics
   /// (source de vérité temps réel) sans passer par historiqueComplet.
   /// historiqueComplet n'est mis à jour qu'après analyseJourneeComplete()

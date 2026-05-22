@@ -2109,7 +2109,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         children: List.generate(12, (i) {
           final mois = i + 1;
           if (mois > moisMax) return _miniMoisVide(mois);
-          final data = IaMemoryService.instance.donneesCalendrierJour(annee, mois);
+          // ★ v10.77 : vue annuelle aussi fusionnée avec gros paris
+          final data = IaMemoryService.instance.donneesCalendrierJourAvecGrosParis(annee, mois);
           return _miniMois(annee, mois, data);
         }),
       ),
