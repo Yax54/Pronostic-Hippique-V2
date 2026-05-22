@@ -260,9 +260,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   @override
   Widget build(BuildContext context) {
     // Calcul unique : évite 4 appels séparés dans les sous-widgets (★ a2)
+    // ★ v10.77 : donneesCalendrierJourAvecGrosParis fusionne pronostics IA
+    //            + PronosticResultatsRepository (gros paris gagnants nobles → palier OR)
     final data = _modeTabs.index == 0
         ? IaMemoryService.instance
-            .donneesCalendrierJour(_moisRef.year, _moisRef.month)
+            .donneesCalendrierJourAvecGrosParis(_moisRef.year, _moisRef.month)
         : const <int, DonneeJourCalendrier>{};
 
     return Container(

@@ -75,6 +75,10 @@ void main() async {
   // Doit être après IaMemoryService.init() (enregistrement du provider arrivées PMU)
   // Retourne MigrationGrosParisResult avec logs signaux/gagnants/quasiSupprimes
   QuasiGrosParisService.instance.migrerGrosParisDesordreSiBesoin().ignore();
+  // ★ v10.77 : Migration stats v2 — force réinjection gros paris dans
+  // PronosticResultatsRepository pour visibilité dans IA Stats / Calendrier / Précision.
+  // Idempotente : protégée par flag 'ia_migration_gros_paris_stats_v2_done'.
+  QuasiGrosParisService.instance.migrerGrosParisStatsSiBesoin().ignore();
   // Lancement du rafraîchissement automatique (immédiat + toutes les 15 min)
   // Note : on lance sans await pour ne pas bloquer le démarrage de l'UI,
   // mais on s'assure bien que la Future est lancée via un ignore explicite.

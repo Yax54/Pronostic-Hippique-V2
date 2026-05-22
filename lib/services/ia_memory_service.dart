@@ -52,6 +52,8 @@ import 'ia_audit_cache_service.dart'; // ★ v10.32 : invalidation cache audit
 // ★ v10.75b : accès aux gros paris gagnants pour stats (lecture seule, jamais gradient)
 import 'quasi_gros_paris_service.dart'
     show IaMemoryPronosticsAccessor, QuasiGrosParisService, GrosPariGagnant;
+// ★ v10.77 : repository résultats utilisateur (stats uniquement, jamais gradient)
+import 'pronostic_resultats_repository.dart' show PronosticResultatsRepository;
 
 class IaMemoryService extends ChangeNotifier {
   static final IaMemoryService _instance = IaMemoryService._();
@@ -193,6 +195,174 @@ class IaMemoryService extends ChangeNotifier {
       }
     }
     return result;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.77 — Précision fusionnée IA + Gros Paris (stats utilisateur)
+  //  SOURCE STATS  = pronostics IA + PronosticResultatsRepository
+  //  SOURCE GRADIENT = pronostics IA UNIQUEMENT (inchangé)
+  //  → NE JAMAIS TOUCHER _mettreAJourPrecisionIA ni _apprendreParGradient
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Getter stats précision par type fusionné :
+  ///   • pronostics IA (fenêtre 60j via _precisionParType) — source de vérité IA
+  ///   • gros paris du PronosticResultatsRepository (utilisableStatsUtilisateur=true)
+  ///
+  /// JAMAIS injecté dans le gradient. Lecture seule pour l'affichage des stats.
+  List<StatsPrecisionParType> get precisionParTypeAvecGrosParis {
+    // Partir d'une COPIE des entrées IA (ne jamais muter _precisionParType)
+    final merged = <String, StatsPrecisionParType>{};
+    for (final entry in _precisionParType.entries) {
+      if (entry.value.typePari.isEmpty || entry.value.typePari == 'Inconnu') continue;
+      // Copie défensive : nouvelle instance avec les mêmes compteurs
+      merged[entry.key] = StatsPrecisionParType(
+        typePari:       entry.value.typePari,
+        nbTotal:        entry.value.nbTotal,
+        nbBons:         entry.value.nbBons,
+        nbOrdre:        entry.value.nbOrdre,
+        nbDesordre:     entry.value.nbDesordre,
+        nbTotalAll:     entry.value.nbTotalAll,
+        nbBonsAll:      entry.value.nbBonsAll,
+        nbOrdreAll:     entry.value.nbOrdreAll,
+        nbDesordreAll:  entry.value.nbDesordreAll,
+        historique:     List.from(entry.value.historique),
+        historiqueComplet: List.from(entry.value.historiqueComplet),
+      );
+    }
+
+    // Injecter les résultats du repository (utilisableStatsUtilisateur=true)
+    // Sécurité : assert que la source grosParisSurveiller ne contamine pas gradient
+    final repoItems = PronosticResultatsRepository.instance.utilisablesStats;
+
+    // Déduplication obligatoire par courseKey : garder le plus haut type de pari
+    // (déjà effectuée à l'écriture dans ajouterOuRemplacer, mais on re-vérifie ici)
+    final seenCourseKeys = <String>{};
+    final itemsDedupes = repoItems.where((r) {
+      if (seenCourseKeys.contains(r.courseKey)) return false;
+      seenCourseKeys.add(r.courseKey);
+      return true;
+    }).toList();
+
+    for (final r in itemsDedupes) {
+      // SÉCURITÉ : ne jamais injecter dans gradient (assertion dev)
+      assert(!r.utilisableApprentissage || r.source != 'grosParisSurveiller',
+          '[v10.77] VIOLATION : grosParisSurveiller ne doit jamais avoir utilisableApprentissage=true');
+
+      final type = r.typePari;
+      if (type.isEmpty || type == 'Inconnu') continue;
+
+      // Créer l'entrée si elle n'existe pas encore pour ce type
+      merged.putIfAbsent(type, () => StatsPrecisionParType(typePari: type));
+
+      final entry = merged[type]!;
+      final dateStr =
+          '${r.dateCourse.year}-${r.dateCourse.month.toString().padLeft(2, '0')}-'
+          '${r.dateCourse.day.toString().padLeft(2, '0')}';
+
+      // Vérifier si cette date+cours est déjà dans historiqueComplet de ce type
+      // (évite le doublon si un pronostic IA ET un gros pari concernent le même type)
+      final dejaPresent = entry.historiqueComplet.any((e) {
+        final d = e['d'] as String? ?? '';
+        // Évite le doublon exact : même date + même résultat (gagnant ou pas)
+        return d == dateStr && (e['source'] as String? ?? '') == r.source;
+      });
+      if (dejaPresent) continue;
+
+      // Injecter dans historiqueComplet (pour filtre période dans SectionPrecisionIA)
+      entry.historiqueComplet.add({
+        'd':       dateStr,
+        'nb':      1,
+        'bon':     r.gagnant ? 1 : 0,
+        'ord':     (r.gagnant && r.ordreExact) ? 1 : 0,
+        'des':     (r.gagnant && !r.ordreExact) ? 1 : 0,
+        'source':  r.source,  // tracabilité — ne pas retirer
+      });
+
+      // Injecter dans les compteurs permanents (nbTotalAll, nbBonsAll)
+      entry.nbTotalAll += 1;
+      if (r.gagnant) {
+        entry.nbBonsAll += 1;
+        if (r.ordreExact) entry.nbOrdreAll += 1;
+        else              entry.nbDesordreAll += 1;
+      }
+
+      // Injecter dans les compteurs fenêtre 60j si la course est dans les 60j
+      final now60 = DateTime.now().subtract(const Duration(days: 60));
+      if (r.dateCourse.isAfter(now60)) {
+        entry.nbTotal += 1;
+        if (r.gagnant) {
+          entry.nbBons += 1;
+          if (r.ordreExact) entry.nbOrdre += 1;
+          else              entry.nbDesordre += 1;
+        }
+      }
+    }
+
+    final list = merged.values
+        .where((p) => p.typePari != 'Inconnu' && p.typePari.isNotEmpty)
+        .toList();
+    list.sort((a, b) => a.ordreAffichage.compareTo(b.ordreAffichage));
+    return list;
+  }
+
+  /// ★ v10.77 : Données calendrier fusionnées IA + Gros Paris.
+  ///
+  /// Le palier OR est attribué dès qu'un gros pari gagnant noble (Tiercé/Quarté+/Quinté+)
+  /// est trouvé dans PronosticResultatsRepository pour ce jour, MÊME si aucun
+  /// pronostic IA classique ne le contient.
+  ///
+  /// La fusion n'est PAS injectée dans _pronostics ni dans le gradient.
+  Map<int, DonneeJourCalendrier> donneesCalendrierJourAvecGrosParis(
+      int annee, int mois) {
+    // Partir de la base IA classique (lecture de _pronostics)
+    final data = donneesCalendrierJour(annee, mois);
+
+    // Enrichir avec les gros paris gagnants du repository
+    const typesNoblesOr = {
+      'Quinté+', 'Quinté+ Ordre', 'Quinté+ Désordre',
+      'Quarté+', 'Quarté+ Ordre', 'Quarté+ Désordre',
+      'Tiercé',  'Tiercé Ordre',  'Tiercé Désordre',
+    };
+
+    final repoItems = PronosticResultatsRepository.instance.utilisablesStats;
+
+    for (final r in repoItems) {
+      if (r.dateCourse.year != annee || r.dateCourse.month != mois) continue;
+      if (!r.gagnant) continue;
+      if (!typesNoblesOr.contains(r.typePari)) continue;
+
+      final jour = r.dateCourse.day;
+      final existing = data[jour];
+
+      if (existing == null) {
+        // Aucune donnée IA ce jour : créer une entrée minimale OR depuis gros paris
+        data[jour] = DonneeJourCalendrier(
+          jour:       jour,
+          nbCourses:  1,
+          nbBons:     1,
+          nbOrdre:    r.ordreExact ? 1 : 0,
+          nbDesordre: r.ordreExact ? 0 : 1,
+          palier:     PalierCalendrier.or,
+          pronostics: const [],
+          hasBestBet: true,
+        );
+      } else if (existing.palier != PalierCalendrier.or) {
+        // Upgrader le palier en OR car un gros pari noble est gagnant ce jour
+        data[jour] = DonneeJourCalendrier(
+          jour:       existing.jour,
+          nbCourses:  existing.nbCourses + 1,
+          nbBons:     existing.nbBons + 1,
+          nbOrdre:    existing.nbOrdre + (r.ordreExact ? 1 : 0),
+          nbDesordre: existing.nbDesordre + (r.ordreExact ? 0 : 1),
+          palier:     PalierCalendrier.or,  // force OR
+          pronostics: existing.pronostics,
+          hasBestBet: existing.hasBestBet,
+        );
+      }
+      // Si palier est déjà OR → rien à faire
+    }
+
+    return data;
   }
 
   /// ★ v9.99 : Précision "Aujourd'hui" calculée directement depuis _pronostics

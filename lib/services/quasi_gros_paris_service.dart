@@ -76,8 +76,11 @@ class QuasiGrosParisService {
   static const String storageKey          = 'ia_quasi_gros_paris_v1';
   /// ★ v10.75b : clé séparée pour les vrais gagnants
   static const String storageKeyGagnants  = 'ia_gros_paris_resultats_v1';
-  /// ★ v10.75b : flag migration one-shot
+  /// ★ v10.75b : flag migration one-shot (stockage initial)
   static const String migrationFlagKey    = 'ia_migration_gros_paris_desordre_v1_done';
+  /// ★ v10.77 : flag migration stats — force réinjection dans PronosticResultatsRepository
+  ///            pour que les écrans stats voient les Tiercés désordre
+  static const String migrationStatsFlagKey = 'ia_migration_gros_paris_stats_v2_done';
 
   // ─── Données en mémoire ────────────────────────────────────────────────
   final List<GrosPariSurveiller> _signaux         = [];
@@ -339,6 +342,59 @@ class QuasiGrosParisService {
     } catch (e) {
       // JAMAIS bloquant
       if (kDebugMode) debugPrint('[GROS_PARIS_MIGRATION] ERROR $e');
+    }
+  }
+
+  /// ★ v10.77 — Migration stats v2 : réinjecte les gros paris gagnants
+  /// dans PronosticResultatsRepository pour les rendre visibles dans tous
+  /// les écrans stats (Précision par type, Calendrier OR, Mémoire IA).
+  ///
+  /// Idempotente : protégée par flag 'ia_migration_gros_paris_stats_v2_done'.
+  /// Rejoue depuis le 21/05/2026 (première date avec des gros paris).
+  /// JAMAIS bloquante — erreur = log + retour silencieux.
+  Future<void> migrerGrosParisStatsSiBesoin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final migrationFaite = prefs.getBool(migrationStatsFlagKey) ?? false;
+      if (migrationFaite) {
+        if (kDebugMode) {
+          debugPrint('[GROS_PARIS_STATS_V2] déjà effectuée — skip');
+        }
+        return;
+      }
+
+      if (kDebugMode) debugPrint('[GROS_PARIS_STATS_V2] START');
+
+      await charger();
+
+      // Charger le repository existant
+      await PronosticResultatsRepository.instance.charger();
+
+      // Recalculer depuis le 21/05/2026 pour forcer la réinjection dans le repository
+      // (même si la migration v1 a déjà tourné — le repository était écrit mais pas lu)
+      final debut = DateTime(2026, 5, 21);
+      final fin   = DateTime.now();
+
+      final result = await recalculerGrosParisHistorique(
+        debut: debut, fin: fin,
+      );
+
+      if (kDebugMode) {
+        debugPrint('[GROS_PARIS_STATS_V2] signaux=${result.signauxAnalyses}');
+        debugPrint('[GROS_PARIS_STATS_V2] gagnants=${result.gagnantsDesordre}');
+        debugPrint('[GROS_PARIS_STATS_V2] quasiSupprimes=${result.quasiSupprimes}');
+        debugPrint('[GROS_PARIS_STATS_V2] repository=${PronosticResultatsRepository.instance.tous.length} entrées');
+      }
+
+      // Marquer la migration v2 comme effectuée
+      await prefs.setBool(migrationStatsFlagKey, true);
+
+      if (kDebugMode) {
+        debugPrint('[GROS_PARIS_STATS_V2] DONE');
+      }
+    } catch (e) {
+      // JAMAIS bloquant
+      if (kDebugMode) debugPrint('[GROS_PARIS_STATS_V2] ERROR $e');
     }
   }
 

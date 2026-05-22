@@ -529,7 +529,10 @@ class _SectionPrecisionIAState extends State<SectionPrecisionIA> {
 
   @override
   Widget build(BuildContext context) {
-    final prList = IaMemoryService.instance.precisionParType;
+    // ★ v10.77 : source fusionnée IA + Gros Paris (stats utilisateur uniquement)
+    // precisionParTypeAvecGrosParis = _precisionParType (IA) + PronosticResultatsRepository
+    // JAMAIS injecté dans le gradient — apprentissage inchangé.
+    final prList = IaMemoryService.instance.precisionParTypeAvecGrosParis;
     final seuils = IaMemoryService.instance.seuilsConfiance;
     final poidsIdx = IaMemoryService.instance.poidsIndices;
     final hasData = prList.any((p) => p.nbTotal >= 1);

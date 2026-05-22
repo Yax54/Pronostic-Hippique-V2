@@ -314,7 +314,9 @@ class BackupService {
     'pronostic_resultats_repository_v2',   // Repository résultats utilisateur
     'home_best_bet_snapshot_v2',           // Snapshot "Meilleur Pari" Home
     'home_best_bet_snapshot_date_v2',      // Date snapshot Home
-    'ia_migration_gros_paris_desordre_v1_done', // Flag migration one-shot
+    'ia_migration_gros_paris_desordre_v1_done', // Flag migration one-shot v10.76
+    // ★ v10.77 : Migration stats — branchement PronosticResultatsRepository dans écrans stats
+    'ia_migration_gros_paris_stats_v2_done',    // Flag migration stats v10.77
   ];
 
   // Toutes les cles reunies (pour reinitialisation complete)

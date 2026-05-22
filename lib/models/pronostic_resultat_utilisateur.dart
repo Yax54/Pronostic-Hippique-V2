@@ -96,6 +96,36 @@ class PronosticResultatUtilisateur {
     );
   }
 
+  /// Construit depuis un IaPronostic classique pour intégration stats utilisateur.
+  /// utilisableApprentissage = true (source 'programme' — peut alimenter le gradient).
+  /// ATTENTION : ne jamais appeler avec source = 'grosParisSurveiller'.
+  factory PronosticResultatUtilisateur.depuisPronosticClassique({
+    required String   courseKey,
+    required DateTime dateCourse,
+    required String   typePari,
+    required List<String> predictionIA,
+    required List<String> arriveePMUComplete,
+    required bool   gagnant,
+    required bool   ordreExact,
+    required int    nbTrouves,
+    required int    nbRequis,
+  }) {
+    return PronosticResultatUtilisateur(
+      courseKey:                   courseKey,
+      dateCourse:                  dateCourse,
+      typePari:                    typePari,
+      predictionIA:                predictionIA,
+      arriveePMUComplete:          arriveePMUComplete,
+      gagnant:                     gagnant,
+      ordreExact:                  ordreExact,
+      nbTrouves:                   nbTrouves,
+      nbRequis:                    nbRequis,
+      source:                      'programme',
+      utilisableStatsUtilisateur:  true,
+      utilisableApprentissage:     true, // source 'programme' → peut alimenter gradient
+    );
+  }
+
   /// Construit depuis un GrosPariGagnant pour intégration dans le repository.
   factory PronosticResultatUtilisateur.depuisGrosPariGagnant({
     required String   courseKey,
