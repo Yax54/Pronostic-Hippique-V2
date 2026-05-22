@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/quasi_gros_paris_models.dart';
 import '../models/zt_models.dart';
 import '../models/pronostic_resultat_utilisateur.dart'; // ★ v10.76
+import '../models/stats_gros_paris_jour.dart';          // ★ v10.78
 import '../widgets/arrivee_reelle_widget.dart' show buildCourseKey;
 import '../services/ia_memory_models.dart' show IaPronostic;
 import 'pronostic_resultats_repository.dart'; // ★ v10.76
@@ -1052,6 +1053,62 @@ class QuasiGrosParisService {
       }
     }
     return map.values.toList();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.78 — STATS GROS PARIS PAR JOUR (compteur 🔥 X/Y)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Calcule les statistiques Gros Paris pour un jour donné.
+  ///
+  /// - Y ([StatsGrosParisJour.proposes]) = signaux enregistrés dans [_signaux]
+  ///   pour ce [jour] (source de vérité : jamais recalculé après coup).
+  /// - X ([StatsGrosParisJour.gagnes])   = signaux de ce [jour] qui figurent
+  ///   dans [_grosParisGagnants].
+  ///
+  /// Préalable : [charger()] doit avoir été appelé (idempotent).
+  /// Appelé côté widget (IaCalendrierTab) — pas de side-effect.
+  StatsGrosParisJour calculerStatsGrosParisJour(DateTime jour) {
+    // Y : tous les signaux dont la course se déroule ce jour-là
+    final signauxDuJour = _signaux.where((s) =>
+        s.dateCourse.year  == jour.year &&
+        s.dateCourse.month == jour.month &&
+        s.dateCourse.day   == jour.day,
+    ).toList();
+
+    if (signauxDuJour.isEmpty) return StatsGrosParisJour.vide;
+
+    // X : combien de ces signaux ont un vrai gagnant enregistré
+    final courseKeysSignaux = signauxDuJour.map((s) => s.courseKey).toSet();
+    final nbGagnes = _grosParisGagnants.where((g) =>
+        courseKeysSignaux.contains(g.courseKey),
+    ).length;
+
+    return StatsGrosParisJour(
+      gagnes:   nbGagnes,
+      proposes: signauxDuJour.length,
+    );
+  }
+
+  /// Retourne une map [jour → StatsGrosParisJour] pour tout un mois.
+  /// Seuls les jours avec au moins 1 signal sont inclus.
+  Map<int, StatsGrosParisJour> calculerStatsGrosParisParJourDuMois({
+    required int annee,
+    required int mois,
+  }) {
+    final result = <int, StatsGrosParisJour>{};
+    // Regrouper les signaux du mois par jour
+    final parJour = <int, List<GrosPariSurveiller>>{};
+    for (final s in _signaux) {
+      if (s.dateCourse.year == annee && s.dateCourse.month == mois) {
+        parJour.putIfAbsent(s.dateCourse.day, () => []).add(s);
+      }
+    }
+    for (final entry in parJour.entries) {
+      final jourDt = DateTime(annee, mois, entry.key);
+      result[entry.key] = calculerStatsGrosParisJour(jourDt);
+    }
+    return result;
   }
 
   // ══════════════════════════════════════════════════════════════════════

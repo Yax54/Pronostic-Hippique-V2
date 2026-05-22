@@ -21,6 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
 import '../../services/quasi_gros_paris_service.dart'; // ★ v10.72
+import '../../utils/source_pronostic_utils.dart';        // ★ v10.78
 import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
     show
         estPremiumGagnantPourCarte,
@@ -877,6 +878,13 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         : (hasCourses ? palier.border : Colors.transparent);
     // ★ v10.36 : Best Bet — pronostic de haute qualité ce jour
     final hasBestBet = hasCourses && (dd.hasBestBet);
+    // ★ v10.78 : Gros Paris — calculé côté widget depuis QuasiGrosParisService
+    // (sans modifier DonneeJourCalendrier — règle v10.78)
+    final hasGrosParis = hasCourses && (() {
+      final svc = QuasiGrosParisService.instance;
+      final jourDt = DateTime(_moisRef.year, _moisRef.month, jour);
+      return svc.calculerStatsGrosParisJour(jourDt).aDesSignaux;
+    })();
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 350),
@@ -927,12 +935,17 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             ),
         ]),
 
-        // ★ v10.36 : Étoile ⭐ Best Bet en haut à gauche
+        // ★ v10.36 / v10.78 : Badge source en haut à gauche
+        // ⭐ = Best Bet | 🔥 = Gros Paris | ⭐🔥 = Double signal
         // Visible sur tous les paliers sauf OR (qui a déjà ★ à droite)
-        if (hasBestBet && palier != PalierCalendrier.or)
+        if ((hasBestBet || hasGrosParis) && palier != PalierCalendrier.or)
           Positioned(
             top: 2, left: 3,
-            child: Text('⭐',
+            child: Text(
+              SourcePronosticUtils.iconeCombinaison(
+                hasBestBet:  hasBestBet,
+                hasGrosParis: hasGrosParis,
+              ),
               style: const TextStyle(fontSize: 8),
             ),
           ),
@@ -1013,9 +1026,101 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             const SizedBox(height: 12),
             _buildCommentaireMois(taux, joursOr, joursVert, joursRouge, joursActifs),
           ],
+
+          // ★ v10.78 : Compteur Gros Paris 🔥 X/Y du mois
+          _buildCompteurGrosParisMonth(),
         ]),
       ),
     ]);
+  }
+
+  /// ★ v10.78 — Compteur mensuel "🔥 Gros Paris : X/Y"
+  ///
+  /// Y = somme des signaux proposés ce mois (source : _signaux historisés)
+  /// X = somme des gagnants parmi ces signaux
+  Widget _buildCompteurGrosParisMonth() {
+    final svc    = QuasiGrosParisService.instance;
+    final statsM = svc.calculerStatsGrosParisParJourDuMois(
+      annee: _moisRef.year,
+      mois:  _moisRef.month,
+    );
+
+    if (statsM.isEmpty) return const SizedBox();
+
+    // Agréger X et Y sur tout le mois
+    int totalGagnes   = 0;
+    int totalProposes = 0;
+    for (final s in statsM.values) {
+      totalGagnes   += s.gagnes;
+      totalProposes += s.proposes;
+    }
+
+    if (totalProposes == 0) return const SizedBox();
+
+    final tauxPct = totalProposes > 0
+        ? (totalGagnes / totalProposes * 100).round()
+        : 0;
+    final couleurTaux = tauxPct >= 50
+        ? _cGreen
+        : tauxPct >= 25
+            ? _cYellow
+            : _cOrange;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1200),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: const Color(0xFFFF6B35).withValues(alpha: 0.4),
+            width: 1.0,
+          ),
+        ),
+        child: Row(children: [
+          const Text(
+            '🔥',
+            style: TextStyle(fontSize: 18),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(
+                'Gros Paris : $totalGagnes/$totalProposes',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                'signaux proposés ce mois · $tauxPct% gagnants',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 11,
+                ),
+              ),
+            ]),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: couleurTaux.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '$tauxPct%',
+              style: TextStyle(
+                color: couleurTaux,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
   }
 
   Widget _buildRepartitionBar(
@@ -1631,7 +1736,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                '⭐ Gros paris à surveiller',
+                '🔥 Gros Paris à surveiller',
                 style: TextStyle(color: couleurOrdre.withValues(alpha: 0.9), fontSize: 11, fontWeight: FontWeight.w700),
               ),
             ),
@@ -1946,7 +2051,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                estBestBet ? '⭐ Gros paris à surveiller' : '🔬 Programme IA',
+                estBestBet ? '🔥 Gros Paris à surveiller' : '🔬 Programme IA',
                 style: TextStyle(color: bordureCoul.withValues(alpha: 0.85), fontSize: 11, fontWeight: FontWeight.w600),
               ),
             ),
