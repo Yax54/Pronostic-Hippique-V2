@@ -308,7 +308,13 @@ class BackupService {
   // OBLIGATOIRE : non recalculable (signaux d'avant-course disparus après la course)
   // Rétrocompat : absent dans un ancien backup → reset à liste vide (jamais crash)
   static const _keysGrosParis = [
-    'ia_quasi_gros_paris_v1', // ★ v10.72 : Signaux Gros paris + Quasi gagnants (QuasiGrosParisService)
+    'ia_quasi_gros_paris_v1',          // ★ v10.72 : Signaux Gros paris + Quasi gagnants
+    'ia_gros_paris_resultats_v1',      // ★ v10.75b : Vrais gagnants ordre/désordre
+    // ★ v10.76 : Nouvelles clés
+    'pronostic_resultats_repository_v2',   // Repository résultats utilisateur
+    'home_best_bet_snapshot_v2',           // Snapshot "Meilleur Pari" Home
+    'home_best_bet_snapshot_date_v2',      // Date snapshot Home
+    'ia_migration_gros_paris_desordre_v1_done', // Flag migration one-shot
   ];
 
   // Toutes les cles reunies (pour reinitialisation complete)

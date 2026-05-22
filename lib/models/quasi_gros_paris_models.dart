@@ -456,6 +456,107 @@ EvaluationGrosPari evaluerGrosPariOrdreDesordre({
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.76 — EvaluationPari — évaluateur unifié (nouveau nom canonique)
+//  Champs renommés vs EvaluationGrosPari : statut (vs resultat),
+//  predictionIA (vs selectionIA, passé en paramètre).
+//  Utilisation : evaluerPariOrdreDesordre() partout dans l'app.
+//  RÈGLE ABSOLUE : jamais dans gradient descent.
+// ══════════════════════════════════════════════════════════════════════════
+
+class EvaluationPari {
+  final ResultatPariType statut;
+  final int              nbTrouves;
+  final int              nbRequis;
+  final bool             ordreExact;
+
+  const EvaluationPari({
+    required this.statut,
+    required this.nbTrouves,
+    required this.nbRequis,
+    required this.ordreExact,
+  });
+
+  bool get estGagnant =>
+      statut == ResultatPariType.gagnantOrdre ||
+      statut == ResultatPariType.gagnantDesordre;
+
+  bool get estQuasi => statut == ResultatPariType.quasi;
+  bool get estPerdant => statut == ResultatPariType.perdant;
+}
+
+/// Nombre de chevaux requis pour un type de pari (version publique v10.76).
+int nbChevauxPourType(String typePari) {
+  final t = typePari.toLowerCase();
+  if (t.contains('quint')) return 5;
+  if (t.contains('quart')) return 4;
+  if (t.contains('tierc') || t.contains('trio')) return 3;
+  if (t.contains('coupl')) return 2;
+  return 1;
+}
+
+/// Évaluateur unifié v10.76 — remplace tous les calculs locaux.
+/// Utilise l'arrivée PMU COMPLÈTE — ne tronque pas pour l'affichage.
+/// RÈGLE : seule source de vérité pour quasi/gagnant ordre/désordre.
+EvaluationPari evaluerPariOrdreDesordre({
+  required String       typePari,
+  required List<String> predictionIA,
+  required List<String> arriveePMUComplete,
+}) {
+  final nb = nbChevauxPourType(typePari);
+
+  if (predictionIA.length < nb || arriveePMUComplete.length < nb) {
+    return EvaluationPari(
+      statut:     ResultatPariType.perdant,
+      nbTrouves:  0,
+      nbRequis:   nb,
+      ordreExact: false,
+    );
+  }
+
+  final ia      = predictionIA.take(nb).map((e) => e.trim()).toList();
+  final pmuTopN = arriveePMUComplete.take(nb).map((e) => e.trim()).toList();
+
+  final nbTrouves = ia.toSet().intersection(pmuTopN.toSet()).length;
+
+  final ordreExact = ia.length == pmuTopN.length &&
+      List.generate(nb, (i) => ia[i] == pmuTopN[i]).every((e) => e);
+
+  if (nbTrouves == nb && ordreExact) {
+    return EvaluationPari(
+      statut:     ResultatPariType.gagnantOrdre,
+      nbTrouves:  nbTrouves,
+      nbRequis:   nb,
+      ordreExact: true,
+    );
+  }
+
+  if (nbTrouves == nb) {
+    return EvaluationPari(
+      statut:     ResultatPariType.gagnantDesordre,
+      nbTrouves:  nbTrouves,
+      nbRequis:   nb,
+      ordreExact: false,
+    );
+  }
+
+  if (nbTrouves == nb - 1) {
+    return EvaluationPari(
+      statut:     ResultatPariType.quasi,
+      nbTrouves:  nbTrouves,
+      nbRequis:   nb,
+      ordreExact: false,
+    );
+  }
+
+  return EvaluationPari(
+    statut:     ResultatPariType.perdant,
+    nbTrouves:  nbTrouves,
+    nbRequis:   nb,
+    ordreExact: false,
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 //  GrosPariSurveiller — signal avant course (Best Bet ⚠️)
 // ══════════════════════════════════════════════════════════════════════════
 

@@ -31,6 +31,8 @@ import '../widgets/ia/ia_tab_conseils.dart';        // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_backtesting.dart';     // ★ v9.90 découpage
 import '../widgets/ia/ia_bubble_widget.dart';        // ★ v9.93 bulles
 import '../widgets/ia/ia_calendrier_tab.dart';       // ★ v10.25 calendrier performances
+import '../services/quasi_gros_paris_service.dart'
+    show evaluerPariOrdreDesordre; // ★ v10.76 : évaluateur unifié
 // import 'ia_journal_screen.dart'; // ★ v9.85 — conservé pour navigation (non utilisé directement)
 
 part 'ia_perf_secondary_widgets.dart'; // ★ v9.93 : widgets secondaires
@@ -3363,31 +3365,25 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     );
   }
 
-  /// Vérifie ordre/désordre directement depuis IaPronostic (sans appel service)
+  /// Vérifie ordre/désordre via l'évaluateur unifié v10.76.
+  /// ★ v10.76 : remplace les calculs locaux take(3)/take(4)/take(5) dangereux.
+  /// Retourne true=ordre, false=désordre, null=non-gagnant.
   bool? _verifierOrdreLocal(IaPronostic pr, String typePari) {
     final arrivee = pr.arriveeReelle;
     if (arrivee == null || arrivee.isEmpty) return null;
-    final topIA = pr.topNIA.map((e) => int.tryParse(e)).whereType<int>().toList();
-    switch (typePari) {
-      case 'Tiercé':
-        if (topIA.length < 3 || arrivee.length < 3) return null;
-        if (topIA[0]==arrivee[0] && topIA[1]==arrivee[1] && topIA[2]==arrivee[2]) return true;
-        final ok = topIA.take(3).toSet().intersection(arrivee.take(3).toSet()).length >= 3;
-        return ok ? false : null;
-      case 'Quarté+':
-        if (topIA.length < 4 || arrivee.length < 4) return null;
-        if (topIA[0]==arrivee[0] && topIA[1]==arrivee[1] &&
-            topIA[2]==arrivee[2] && topIA[3]==arrivee[3]) return true;
-        final ok = topIA.take(4).toSet().intersection(arrivee.take(4).toSet()).length >= 3;
-        return ok ? false : null;
-      case 'Quinté+':
-        if (topIA.length < 5 || arrivee.length < 5) return null;
-        if (topIA[0]==arrivee[0] && topIA[1]==arrivee[1] && topIA[2]==arrivee[2] &&
-            topIA[3]==arrivee[3] && topIA[4]==arrivee[4]) return true;
-        final ok = topIA.take(5).toSet().intersection(arrivee.take(5).toSet()).length >= 3;
-        return ok ? false : null;
-      default: return null;
-    }
+    final arriveeStr = arrivee.map((e) => e.toString()).toList();
+    // Utiliser topNIA comme prédiction IA
+    final topIA = pr.topNIA;
+    if (topIA.isEmpty) return null;
+
+    final eval = evaluerPariOrdreDesordre(
+      typePari:           typePari,
+      predictionIA:       topIA,
+      arriveePMUComplete: arriveeStr,
+    );
+
+    if (eval.estGagnant) return eval.ordreExact;
+    return null; // quasi ou perdant → pas gagnant
   }
 
   Widget _chipStat(String label, Color color) => Container(
@@ -4280,15 +4276,18 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         ok   = rang != null && rang <= 3;
         break;
       case 'Couplé Gagnant':
-        // ★ fix : les 2 chevaux IA doivent TOUS DEUX être dans le top 2 réel
-        // rang seul (= rang du 1er cheval IA) ne suffit pas
+        // ★ v10.76 : évaluateur unifié — arrivée COMPLÈTE, pas take(2)
         {
           final arr = c.arriveeReelle;
-          final n1  = int.tryParse(c.favoriIaNumero ?? '');
-          final n2  = int.tryParse(c.favoriIaNumero2 ?? '');
-          if (arr.length >= 2 && n1 != null && n2 != null) {
-            final top2 = arr.take(2).toSet();
-            gagn = top2.contains(n1) && top2.contains(n2);
+          final n1  = c.favoriIaNumero  ?? '';
+          final n2  = c.favoriIaNumero2 ?? '';
+          if (arr.isNotEmpty && n1.isNotEmpty && n2.isNotEmpty) {
+            final eval = evaluerPariOrdreDesordre(
+              typePari:           'Couplé Gagnant',
+              predictionIA:       [n1, n2],
+              arriveePMUComplete: arr.map((e) => e.toString()).toList(),
+            );
+            gagn = eval.estGagnant;
             ok   = false; // pas de "partiellement bon" pour Couplé Gagnant
           } else {
             gagn = false;
@@ -4297,15 +4296,19 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         }
         break;
       case 'Couplé Placé':
-        // ★ fix : les 2 chevaux IA doivent TOUS DEUX être dans le top 3 réel
+        // ★ v10.76 : évaluateur unifié — arrivée COMPLÈTE, pas take(3)
         {
           final arr = c.arriveeReelle;
-          final n1  = int.tryParse(c.favoriIaNumero ?? '');
-          final n2  = int.tryParse(c.favoriIaNumero2 ?? '');
-          if (arr.length >= 3 && n1 != null && n2 != null) {
-            final top3 = arr.take(3).toSet();
+          final n1  = c.favoriIaNumero  ?? '';
+          final n2  = c.favoriIaNumero2 ?? '';
+          if (arr.isNotEmpty && n1.isNotEmpty && n2.isNotEmpty) {
+            final eval = evaluerPariOrdreDesordre(
+              typePari:           'Couplé Placé',
+              predictionIA:       [n1, n2],
+              arriveePMUComplete: arr.map((e) => e.toString()).toList(),
+            );
             gagn = false;
-            ok   = top3.contains(n1) && top3.contains(n2);
+            ok   = eval.estGagnant; // les 2 dans le top 3
           } else {
             gagn = false;
             ok   = rang != null && rang <= 3; // fallback si données manquantes
@@ -4313,25 +4316,25 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         }
         break;
       case 'Tiercé':
-        // ✅ VERT si au moins 2 des 3 chevaux IA sont dans le top 3 réel
+        // ★ v10.76 : CourseDetailRapport n'a pas de topNIA
+        // — nbTop3DansArrivee : nb de sélections IA dans le top3
+        // 3/3 = gagnant désordre (ordre non déterminable ici)
         gagn = false;
-        ok   = c.nbTop3DansArrivee >= 2;
+        ok   = c.nbTop3DansArrivee >= 3; // les 3 bons
         break;
       case 'Tiercé Ordre':
-        // ✅ VERT uniquement si les 3 chevaux IA sont dans le top 3 dans l'ordre exact
+        // Ordre exact non déterminable depuis CourseDetailRapport (pas de topNIA)
         gagn = false;
-        ok   = c.nbTop3DansArrivee >= 3; // les 3 bons ET dans l'ordre (vérifié en amont)
+        ok   = c.nbTop3DansArrivee >= 3;
         break;
       case 'Quarté+':
-        // ✅ VERT si au moins 3 des 4 chevaux IA sont dans le top 4 réel
-        // nbTop3DansArrivee + nbTop5DansArrivee permettent d'approcher le top4
+        // ★ v10.76 : nbTop3+nbTop5 approchent top4
         gagn = false;
         ok   = c.nbTop3DansArrivee + (c.nbTop5DansArrivee - c.nbTop3DansArrivee) >= 3
                && (rang == null || rang <= 4);
         break;
       case 'Quinté+':
-        // ✅ VERT si au moins 4 des 5 chevaux IA sont dans le top 5 réel
-        // CORRECTION v10.12 : seuil 4/5 au lieu de favoriTop5 générique
+        // ★ v10.76 : seuil 4/5
         gagn = false;
         ok   = c.nbTop5DansArrivee >= 4;
         break;

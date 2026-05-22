@@ -28,6 +28,8 @@ import '../services/ia_memory_models.dart' show PremiumStreak; // ★ v10.61
 import '../services/ia_narrative_memory_service.dart'; // ★ v10.68 : présence IA accueil
 import '../models/ia_narrative_models.dart';           // ★ v10.68 : IaNarrativeContext
 import 'package:shared_preferences/shared_preferences.dart'; // ★ v10.68 : lecture pseudo
+import '../services/quasi_gros_paris_service.dart'
+    show evaluerPariOrdreDesordre; // ★ v10.76 : évaluateur unifié
 
 
 class HomeScreen extends StatefulWidget {
@@ -1889,19 +1891,24 @@ class _HomeScreenState extends State<HomeScreen> {
       for (final p in pronostics) {
         if (p.courseKey == keyRecherche && p.arriveeReelle != null) {
           arriveePMU = p.arriveeReelle!.map((e) => e.toString()).toList();
-          // Évaluer le résultat avec l'évaluateur ordre/désordre v10.75
-          if (arriveePMU.isNotEmpty && numeros.isNotEmpty) {
+          // ★ v10.76 : évaluateur unifié — reconnaît ordre, désordre, quasi
+          if (arriveePMU.isNotEmpty && numeros.isNotEmpty && typePari.isNotEmpty) {
             try {
-              // Utiliser l'évaluateur du module gros paris si applicable
-              // Pour les paris classiques, évaluation simple trouvés/manquants
-              final setIA  = numeros.toSet();
-              final setPMU = arriveePMU.take(numeros.length).toSet();
-              final nb     = numeros.length;
-              final trouves = setIA.intersection(setPMU).length;
-              if (trouves == nb) {
-                labelResultat = '✅ Gagnant';
-              } else if (trouves > 0) {
-                labelResultat = '🟡 $trouves/$nb trouvés';
+              final eval = evaluerPariOrdreDesordre(
+                typePari:           typePari,
+                predictionIA:       numeros,
+                arriveePMUComplete: arriveePMU,
+              );
+              if (eval.estGagnant) {
+                labelResultat = eval.ordreExact
+                    ? '🥇 Gagnant ordre'
+                    : '🥈 Gagnant désordre';
+              } else if (eval.estQuasi) {
+                labelResultat =
+                    '🟡 Quasi (${eval.nbTrouves}/${eval.nbRequis})';
+              } else if (eval.nbTrouves > 0) {
+                labelResultat =
+                    '🟠 ${eval.nbTrouves}/${eval.nbRequis} trouvés';
               } else {
                 labelResultat = '❌ Perdant';
               }

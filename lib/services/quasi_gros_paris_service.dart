@@ -23,8 +23,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/quasi_gros_paris_models.dart';
 import '../models/zt_models.dart';
+import '../models/pronostic_resultat_utilisateur.dart'; // ★ v10.76
 import '../widgets/arrivee_reelle_widget.dart' show buildCourseKey;
 import '../services/ia_memory_models.dart' show IaPronostic;
+import 'pronostic_resultats_repository.dart'; // ★ v10.76
 
 export '../models/quasi_gros_paris_models.dart'
     show
@@ -46,7 +48,26 @@ export '../models/quasi_gros_paris_models.dart'
         // ★ v10.75b PATCH : gros paris gagnants
         ResultatGrosPariStatut,
         GrosPariGagnant,
-        evaluerGrosPariOrdreDesordre;
+        evaluerGrosPariOrdreDesordre,
+        // ★ v10.76 : évaluateur unifié canonique
+        EvaluationPari,
+        evaluerPariOrdreDesordre,
+        nbChevauxPourType;
+
+export '../models/pronostic_resultat_utilisateur.dart' // ★ v10.76
+    show
+        PronosticResultatUtilisateur,
+        HomeBestBetSnapshot,
+        MigrationGrosParisResult;
+
+export '../utils/date_utils.dart' // ★ v10.76
+    show
+        debutJour,
+        finJour,
+        dateFiltreStable,
+        dateDansPeriodeStable,
+        estAujourdhui,
+        estDansLesNDerniersjours;
 
 class QuasiGrosParisService {
   QuasiGrosParisService._();
@@ -74,6 +95,17 @@ class QuasiGrosParisService {
   // ══════════════════════════════════════════════════════════════════════
   //  HELPERS STATIQUES
   // ══════════════════════════════════════════════════════════════════════
+
+  /// ★ v10.76 : Nombre de chevaux requis depuis le label String (ex: "Tiercé" → 3).
+  /// Helper local pour éviter l'ambiguïté avec nbChevauxPourType(TypeGrosPari).
+  static int _nbChevauxDepuisLabel(String typePari) {
+    final t = typePari.toLowerCase();
+    if (t.contains('quint')) return 5;
+    if (t.contains('quart')) return 4;
+    if (t.contains('tierc') || t.contains('trio')) return 3;
+    if (t.contains('coupl')) return 2;
+    return 1;
+  }
 
   static int nbChevauxPourType(TypeGrosPari type) {
     switch (type) {
@@ -260,6 +292,7 @@ class QuasiGrosParisService {
   /// Migration one-shot : rescanne les signaux × arrivées PMU disponibles
   /// pour reclasser les anciens quasi devenus vrais gagnants.
   /// Idempotente : protégée par flag 'ia_migration_gros_paris_desordre_v1_done'.
+  /// ★ v10.76 : retourne MigrationGrosParisResult avec logs complets.
   /// JAMAIS bloquante — erreur = log + retour silencieux.
   Future<void> migrerGrosParisDesordreSiBesoin() async {
     try {
@@ -267,44 +300,60 @@ class QuasiGrosParisService {
       final migrationFaite = prefs.getBool(migrationFlagKey) ?? false;
       if (migrationFaite) {
         if (kDebugMode) {
-          debugPrint('[QuasiGros] Migration v10.75b déjà effectuée — skip');
+          debugPrint('[GROS_PARIS_MIGRATION] déjà effectuée — skip');
         }
         return;
       }
+
+      if (kDebugMode) debugPrint('[GROS_PARIS_MIGRATION] START');
 
       await charger();
 
       if (_signaux.isEmpty) {
         // Aucun signal historique → marquer quand même comme fait
         await prefs.setBool(migrationFlagKey, true);
+        if (kDebugMode) debugPrint('[GROS_PARIS_MIGRATION] aucun signal — DONE');
         return;
       }
 
-      // Recalcul sur les 90 derniers jours
-      final debut = DateTime.now().subtract(const Duration(days: 90));
+      // ★ v10.76 : recalcul depuis le 21/05/2026 jusqu'à aujourd'hui
+      final debut = DateTime(2026, 5, 21);
       final fin   = DateTime.now();
-      await recalculerGrosParisHistorique(debut: debut, fin: fin);
+      final result = await recalculerGrosParisHistorique(
+        debut: debut, fin: fin,
+      );
+
+      if (kDebugMode) {
+        debugPrint('[GROS_PARIS_MIGRATION] signaux=${result.signauxAnalyses}');
+        debugPrint('[GROS_PARIS_MIGRATION] gagnants=${result.gagnantsDesordre}');
+        debugPrint('[GROS_PARIS_MIGRATION] quasiSupprimes=${result.quasiSupprimes}');
+      }
 
       // Marquer la migration comme effectuée
       await prefs.setBool(migrationFlagKey, true);
 
       if (kDebugMode) {
-        debugPrint('[QuasiGros] ✅ Migration v10.75b terminée : '
-            '${_grosParisGagnants.length} gagnants détectés au total');
+        debugPrint('[GROS_PARIS_MIGRATION] DONE — '
+            '${_grosParisGagnants.length} gagnants au total');
       }
     } catch (e) {
       // JAMAIS bloquant
-      if (kDebugMode) debugPrint('[QuasiGros] Migration erreur (ignorée): $e');
+      if (kDebugMode) debugPrint('[GROS_PARIS_MIGRATION] ERROR $e');
     }
   }
 
   /// Rescanne les signaux × arrivées PMU depuis IaMemoryService.
   /// Reclasse quasi→gagnant et nettoie _quasiGagnants.
+  /// ★ v10.76 : retourne MigrationGrosParisResult avec compteurs.
   /// Appelée par la migration one-shot et peut être relancée manuellement.
-  Future<void> recalculerGrosParisHistorique({
+  Future<MigrationGrosParisResult> recalculerGrosParisHistorique({
     required DateTime debut,
     required DateTime fin,
   }) async {
+    int signauxAnalyses  = 0;
+    int nbNouveauxGagnants  = 0;
+    int nbQuasiSupprimes    = 0;
+
     try {
       await charger();
 
@@ -314,17 +363,19 @@ class QuasiGrosParisService {
         if (kDebugMode) {
           debugPrint('[QuasiGros] recalculerHistorique : IaMemoryService non disponible');
         }
-        return;
+        return MigrationGrosParisResult(
+          signauxAnalyses:  0,
+          gagnantsDesordre: 0,
+          quasiSupprimes:   0,
+        );
       }
-
-      int nbNouveauxGagnants  = 0;
-      int nbQuasiSupprimes    = 0;
 
       for (final signal in _signaux) {
         // Filtre période
         if (signal.dateCourse.isBefore(debut) || signal.dateCourse.isAfter(fin)) {
           continue;
         }
+        signauxAnalyses++;
 
         // Chercher l'arrivée PMU pour cette course
         final arrivee = iaMemory[signal.courseKey];
@@ -333,28 +384,52 @@ class QuasiGrosParisService {
         final arriveeStr = arrivee.map((e) => e.toString()).toList();
         final typePariStr = labelType(signal.type);
 
-        final eval = evaluerGrosPariOrdreDesordre(
+        // ★ v10.76 : évaluateur unifié canonique
+        final eval = evaluerPariOrdreDesordre(
           typePari:           typePariStr,
-          selectionIA:        signal.numeros,
+          predictionIA:       signal.numeros,
           arriveePMUComplete: arriveeStr,
         );
 
         if (eval.estGagnant) {
-          // Enregistrer comme vrai gagnant (idempotent)
+          // Enregistrer comme vrai gagnant dans _grosParisGagnants (idempotent)
           final dejaPresent = _grosParisGagnants.any(
             (g) => g.courseKey == signal.courseKey && g.typePari == typePariStr,
           );
           if (!dejaPresent) {
+            // Convertir EvaluationPari → EvaluationGrosPari pour la factory existante
+            final evalGP = evaluerGrosPariOrdreDesordre(
+              typePari:           typePariStr,
+              selectionIA:        signal.numeros,
+              arriveePMUComplete: arriveeStr,
+            );
             final gagnant = GrosPariGagnant.depuisSignal(
               signal:             signal,
-              evaluation:         eval,
+              evaluation:         evalGP,
               arriveePMUComplete: arriveeStr,
             );
             _grosParisGagnants.add(gagnant);
             nbNouveauxGagnants++;
           }
 
-          // Supprimer le quasi éventuel
+          // ★ v10.76 : ajouter dans PronosticResultatsRepository (stats utilisateur)
+          // Calcul du nb de chevaux requis depuis le label type pari (String)
+          final nb = _nbChevauxDepuisLabel(typePariStr);
+          final resultat = PronosticResultatUtilisateur.depuisGrosPariGagnant(
+            courseKey:          signal.courseKey,
+            dateCourse:         signal.dateCourse,
+            typePari:           typePariStr,
+            predictionIA:       signal.numeros,
+            arriveePMUComplete: arriveeStr,
+            gagnant:            true,
+            ordreExact:         eval.ordreExact,
+            nbTrouves:          eval.nbTrouves,
+            nbRequis:           nb,
+          );
+          await PronosticResultatsRepository.instance
+              .ajouterOuRemplacer(resultat);
+
+          // Supprimer le quasi éventuel pour cette course
           final nbAvant = _quasiGagnants.length;
           _quasiGagnants.removeWhere((q) =>
               q.courseKey == signal.courseKey &&
@@ -367,16 +442,65 @@ class QuasiGrosParisService {
         await _sauvegarder();
         if (kDebugMode) {
           debugPrint('[QuasiGros] Recalcul historique : '
-              '+$nbNouveauxGagnants gagnants, $nbQuasiSupprimes quasi supprimés');
+              '+$nbNouveauxGagnants gagnants, $nbQuasiSupprimes quasi supprimés, '
+              '$signauxAnalyses signaux analysés');
         }
       } else {
         if (kDebugMode) {
-          debugPrint('[QuasiGros] Recalcul historique : aucun changement');
+          debugPrint('[QuasiGros] Recalcul historique : aucun changement '
+              '($signauxAnalyses signaux analysés)');
         }
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[QuasiGros] recalculerHistorique erreur (ignorée): $e');
     }
+
+    return MigrationGrosParisResult(
+      signauxAnalyses:  signauxAnalyses,
+      gagnantsDesordre: nbNouveauxGagnants,
+      quasiSupprimes:   nbQuasiSupprimes,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.76 — SUPPRESSION QUASI après requalification
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Supprime le quasi gagnant pour une course spécifique.
+  /// Appelé quand un quasi est promu en vrai gagnant.
+  Future<void> supprimerQuasiGagnantPourCourse(String courseKey) async {
+    await charger();
+    final nbAvant = _quasiGagnants.length;
+    _quasiGagnants.removeWhere((q) => q.courseKey == courseKey);
+    final nbSupprimes = nbAvant - _quasiGagnants.length;
+    if (nbSupprimes > 0) {
+      await _sauvegarder();
+      if (kDebugMode) {
+        debugPrint('[QuasiGros] supprimerQuasiGagnantPourCourse: '
+            '$nbSupprimes quasi supprimés pour $courseKey');
+      }
+    }
+  }
+
+  /// Supprime tous les quasi gagnants pour un ensemble de courses gagnantes.
+  /// Retourne le nombre de quasi supprimés.
+  Future<int> supprimerQuasiRequalifies(
+    Set<String> courseKeysGagnantes,
+  ) async {
+    await charger();
+    final nbAvant = _quasiGagnants.length;
+    _quasiGagnants
+        .removeWhere((q) => courseKeysGagnantes.contains(q.courseKey));
+    final nbSupprimes = nbAvant - _quasiGagnants.length;
+    if (nbSupprimes > 0) {
+      await _sauvegarder();
+      if (kDebugMode) {
+        debugPrint('[QuasiGros] supprimerQuasiRequalifies: '
+            '$nbSupprimes quasi supprimés pour '
+            '${courseKeysGagnantes.length} courses gagnantes');
+      }
+    }
+    return nbSupprimes;
   }
 
   /// Retourne les vrais gagnants filtrés par période.

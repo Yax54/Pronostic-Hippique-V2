@@ -71,8 +71,9 @@ void main() async {
   await IaPersonalityService.init(); // ★ v9.85
   await IaUserPrefsService.init();   // ★ v9.85
   await IaBadgesService.init();      // ★ v9.85
-  // ★ v10.75b : Migration one-shot gros paris désordre (idempotente, jamais bloquante)
+  // ★ v10.76 : Migration one-shot gros paris (idempotente, jamais bloquante)
   // Doit être après IaMemoryService.init() (enregistrement du provider arrivées PMU)
+  // Retourne MigrationGrosParisResult avec logs signaux/gagnants/quasiSupprimes
   QuasiGrosParisService.instance.migrerGrosParisDesordreSiBesoin().ignore();
   // Lancement du rafraîchissement automatique (immédiat + toutes les 15 min)
   // Note : on lance sans await pour ne pas bloquer le démarrage de l'UI,
