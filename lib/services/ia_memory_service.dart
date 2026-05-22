@@ -234,12 +234,14 @@ class IaMemoryService extends ChangeNotifier {
     // Sécurité : assert que la source grosParisSurveiller ne contamine pas gradient
     final repoItems = PronosticResultatsRepository.instance.utilisablesStats;
 
-    // Déduplication obligatoire par courseKey : garder le plus haut type de pari
-    // (déjà effectuée à l'écriture dans ajouterOuRemplacer, mais on re-vérifie ici)
-    final seenCourseKeys = <String>{};
+    // ★ v10.79b : Déduplication par courseKey + typePari + source.
+    // Une même course peut contribuer à Tiercé, Quarté+ ET Quinté+ séparément.
+    // On ne garde plus "1 seul type par course" — chaque type a ses propres stats.
+    final seenStatsKeys = <String>{};
     final itemsDedupes = repoItems.where((r) {
-      if (seenCourseKeys.contains(r.courseKey)) return false;
-      seenCourseKeys.add(r.courseKey);
+      final key = '${r.courseKey}|${r.typePari}|${r.source}';
+      if (seenStatsKeys.contains(key)) return false;
+      seenStatsKeys.add(key);
       return true;
     }).toList();
 
