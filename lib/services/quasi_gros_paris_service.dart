@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QuasiGrosParisService — Détection, stockage, helpers v10.74
+//  QuasiGrosParisService — Détection, stockage, helpers v10.75
 //
 //  Clé SharedPreferences : 'ia_quasi_gros_paris_v1'
 //  Deux sous-clés JSON :
@@ -31,7 +31,13 @@ export '../models/quasi_gros_paris_models.dart'
         ComparaisonCourseIA,
         comparerCourseIA,
         GrosPariSurveiller,
-        QuasiGagnant;
+        QuasiGagnant,
+        // ★ v10.75 : évaluateur ordre/désordre
+        ResultatPariType,
+        EvaluationGrosPari,
+        evaluerGrosPari,
+        extraireArriveePMUComplete,
+        prioritePari;
 
 class QuasiGrosParisService {
   QuasiGrosParisService._();
@@ -264,8 +270,12 @@ class QuasiGrosParisService {
   //  DÉTECTION — quasi gagnant après résultat
   // ══════════════════════════════════════════════════════════════════════
 
-  /// Détecte un quasi-gagnant (comparaison sans ordre).
-  /// Retourne null si pari déjà gagné ou seuil non atteint.
+  /// Détecte un quasi-gagnant (comparaison sans ordre).  ★ v10.75
+  /// Retourne null si :
+  ///  • pari déjà gagné en totalité (ordre ou désordre) → vrai gagnant, pas quasi
+  ///  • seuil non atteint
+  ///  • arrivée tronquée (< nb chevaux)
+  /// L'arrivée COMPLÈTE est stockée dans QuasiGagnant.arriveeReelle.
   QuasiGagnant? detecterQuasiGagnant({
     required String             courseKey,
     required DateTime           dateCourse,
@@ -276,25 +286,34 @@ class QuasiGrosParisService {
     required TypeGrosPari       type,
     required SourceQuasiGagnant source,
     required List<String>       numerosIA,
-    required List<String>       arriveeReelle,
+    required List<String>       arriveeReelle, // arrivée COMPLÈTE ici
     required double             fiabilite,
   }) {
-    final nb     = nbChevauxPourType(type);
-    final requis = nbQuasiRequis(type);
+    final nb = nbChevauxPourType(type);
+    // ★ v10.75 : requis n'est plus utilisé directement (évaluateur gère la logique)
 
-    if (numerosIA.length    < nb) return null;
+    if (numerosIA.length     < nb) return null;
     if (arriveeReelle.length < nb) return null;
 
+    // ★ v10.75 : utiliser l'évaluateur ordre/désordre
+    final typePariStr = labelType(type);
+    final eval = evaluerGrosPari(
+      typePari:           typePariStr,
+      selectionIA:        numerosIA,
+      arriveePMUComplete: arriveeReelle, // arrivée COMPLÈTE transmise
+    );
+
+    // Vrai gagnant (ordre ou désordre) → NE PAS créer de quasi
+    if (eval.estGagnant) return null;
+
+    // Pas quasi → perdant
+    if (!eval.estQuasi) return null;
+
+    // Reconstituer les listes trouvés/manquants depuis l'évaluation
     final ia      = numerosIA.take(nb).map((e) => e.toString()).toSet();
-    final arrivee = arriveeReelle.take(nb).map((e) => e.toString()).toSet();
-
-    final trouves   = ia.intersection(arrivee).toList();
-    final manquants = ia.difference(arrivee).toList();
-
-    // Pari déjà gagné en totalité → ne pas afficher en quasi
-    if (trouves.length == nb) return null;
-    // Pas assez trouvé → pas de quasi
-    if (trouves.length != requis) return null;
+    final pmuTopN = arriveeReelle.take(nb).map((e) => e.toString()).toSet();
+    final trouves   = ia.intersection(pmuTopN).toList();
+    final manquants = ia.difference(pmuTopN).toList();
 
     return QuasiGagnant(
       id:               '${courseKey}_${source.name}_${type.name}',
@@ -307,13 +326,32 @@ class QuasiGrosParisService {
       type:             type,
       source:           source,
       numerosIA:        ia.toList(),
-      arriveeReelle:    arrivee.toList(),
+      arriveeReelle:    arriveeReelle, // ★ v10.75 : arrivée COMPLÈTE stockée
       numerosTrouves:   trouves,
       numerosManquants: manquants,
       nbTrouves:        trouves.length,
       nbRequis:         nb,
       fiabilite:        fiabilite,
       createdAt:        DateTime.now(),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75 — DÉTECTION Vrai Gagnant depuis signal Gros Pari
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// ★ v10.75 : Évalue un signal BestBet contre l'arrivée PMU.
+  /// Retourne l'EvaluationGrosPari pour décision gagnant/quasi/perdant.
+  /// Ne touche pas le gradient descent ni les poids IA.
+  EvaluationGrosPari evaluerSignalContrePMU({
+    required GrosPariSurveiller signal,
+    required List<String>       arriveePMUComplete,
+  }) {
+    final typePariStr = labelType(signal.type);
+    return evaluerGrosPari(
+      typePari:           typePariStr,
+      selectionIA:        signal.numeros,
+      arriveePMUComplete: arriveePMUComplete,
     );
   }
 
@@ -513,6 +551,29 @@ class QuasiGrosParisService {
             s.niveau != NiveauFiabiliteGrosPari.eviter) // ★ v10.73 : masquer "éviter"
         .toList()
       ..sort((a, b) => b.fiabilite.compareTo(a.fiabilite));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75 — Déduplication gagnants par course (priorité type pari)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Déduplique une liste mixte de résultats par courseKey.
+  /// Garde le pari de plus haut niveau (Quinté+ > Quarté+ > Tiercé > Couplé > Simple).
+  /// Usage : éviter le doublon Simple gagnant + Tiercé gagnant sur la même course.
+  static List<T> dedoublonnerGagnantsParCourse<T>({
+    required List<T>       items,
+    required String        Function(T) courseKeyOf,
+    required String        Function(T) typePariOf,
+  }) {
+    final map = <String, T>{};
+    for (final item in items) {
+      final key = courseKeyOf(item);
+      final old = map[key];
+      if (old == null || prioritePari(typePariOf(item)) > prioritePari(typePariOf(old))) {
+        map[key] = item;
+      }
+    }
+    return map.values.toList();
   }
 
   /// ★ v10.73 : helpers de déduplication avec priorité Type + Source

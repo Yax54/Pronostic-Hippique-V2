@@ -634,62 +634,158 @@ class _BestBetScreenState extends State<BestBetScreen>
     );
   }
 
+  // ★ v10.75 : TabBar remplacé par une grille 2×2 (textes complets, jamais tronqués)
   Widget _buildTabBar() {
-    // ★ v10.74 : titre complet ⊠ Gros paris à surveiller, badge si signaux > 0
-    final nbSignaux = _signauxGrosParis.length;
-    final tabGrosParis = Tab(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return Container(
+      color: const Color(0xFF0D1B2A),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: _buildBestBetTabGrid(),
+    );
+  }
+
+  Widget _buildBestBetTabGrid() {
+    return AnimatedBuilder(
+      animation: _tabCtrl,
+      builder: (context, _) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.warning_amber_rounded, size: 14),
-              const SizedBox(width: 3),
-              const Text('⚠️ Gros paris', style: TextStyle(fontSize: 11)),
-              if (nbSignaux > 0) ...[
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF9800),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '$nbSignaux',
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
+              Expanded(child: _buildTabButton(0, '⚖️', 'Top Équilibre')),
+              const SizedBox(width: 8),
+              Expanded(child: _buildTabButton(1, '🏅', 'Plus Sûr')),
             ],
           ),
-          const Text('à surveiller', style: TextStyle(fontSize: 10)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _buildTabButton(2, '📈', 'Plus Rentable')),
+              const SizedBox(width: 8),
+              Expanded(child: _buildTabButtonGrosParis(3)),
+            ],
+          ),
         ],
       ),
     );
+  }
 
-    return Container(
-      color: const Color(0xFF0D1B2A),
-      child: TabBar(
-        controller: _tabCtrl,
-        isScrollable: false,
-        tabs: [
-          const Tab(icon: Icon(Icons.balance, size: 16), text: 'Top Équilibre'),
-          const Tab(icon: Icon(Icons.verified_outlined, size: 16), text: 'Plus Sûr'),
-          const Tab(icon: Icon(Icons.trending_up, size: 16), text: 'Plus Rentable'),
-          tabGrosParis,
-        ],
-        labelColor: const Color(0xFFFFD700),
-        unselectedLabelColor: Colors.white38,
-        indicatorColor: const Color(0xFFFFD700),
-        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        unselectedLabelStyle: const TextStyle(fontSize: 12),
-        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+  Widget _buildTabButton(int index, String icon, String label) {
+    final selected = _tabCtrl.index == index;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        setState(() => _tabCtrl.animateTo(index));
+      },
+      child: Container(
+        height: 62,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFFFFD700).withValues(alpha: 0.12)
+              : const Color(0xFF1A2535),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFFFFD700).withValues(alpha: 0.7)
+                : Colors.white.withValues(alpha: 0.10),
+            width: selected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 17)),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.1,
+                color: selected ? const Color(0xFFFFD700) : Colors.white60,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Bouton onglet Gros Paris (index 3) avec badge nombre de signaux.
+  Widget _buildTabButtonGrosParis(int index) {
+    final selected   = _tabCtrl.index == index;
+    final nbSignaux  = _signauxGrosParis.length;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        setState(() => _tabCtrl.animateTo(index));
+      },
+      child: Container(
+        height: 62,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFFFF9800).withValues(alpha: 0.12)
+              : const Color(0xFF1A2535),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFFFF9800).withValues(alpha: 0.7)
+                : Colors.white.withValues(alpha: 0.10),
+            width: selected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Icône + badge signaux
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('⚠️', style: TextStyle(
+                  fontSize: 16,
+                  color: selected ? const Color(0xFFFF9800) : Colors.white60,
+                )),
+                if (nbSignaux > 0) ...[
+                  const SizedBox(width: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9800),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Text(
+                      '$nbSignaux',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'Gros paris\nà surveiller',
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.visible,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.1,
+                color: selected ? const Color(0xFFFF9800) : Colors.white60,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

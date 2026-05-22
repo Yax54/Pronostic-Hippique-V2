@@ -1551,13 +1551,19 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   Widget _carteQuasiGagnant(QuasiGagnant qg) {
     final estBestBet  = qg.vientDeBestBet;
     final labelType   = QuasiGrosParisService.labelType(qg.type);
+    // ★ v10.75 : thème bleu nuit — étoile or conservée, fond bleu nuit, bordure violet/cyan
     final couleur     = estBestBet ? _cGold : _cGreen;
+    final bordureCoul = estBestBet
+        ? const Color(0xFFFFD93D).withValues(alpha: 0.6)
+        : const Color(0xFF57C7FF).withValues(alpha: 0.5);
     final nbRequis    = QuasiGrosParisService.nbChevauxPourType(qg.type);
     final fmt         = (DateTime d) =>
         '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
 
-    // Arrivée PMU top N (pour résumé compact)
-    final pmuTopN = qg.arriveeReelle.take(nbRequis).toList();
+    // ★ v10.75 : arrivée COMPLÈTE (jamais tronquée en affichage)
+    final arriveeComplete = qg.arriveeReelle; // stockée complète depuis v10.75
+    // Résumé compact : top N pour la comparaison rapide IA vs PMU
+    final pmuTopN = arriveeComplete.take(nbRequis).toList();
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -1566,9 +1572,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         decoration: BoxDecoration(
-          color: estBestBet ? const Color(0xFF1A1400) : const Color(0xFF0F1A10),
+          // ★ v10.75 : fond bleu nuit (pas jaune, pas vert sombre)
+          color: const Color(0xFF111C2A),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: couleur.withValues(alpha: 0.4)),
+          border: Border.all(color: bordureCoul, width: 1.2),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // ── En-tête ──────────────────────────────────────────────────
@@ -1606,9 +1613,14 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                   style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
             ])),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('PMU', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
-              Text(pmuTopN.isEmpty ? '—' : pmuTopN.join(' - '),
-                  style: const TextStyle(color: Color(0xFF66BB6A), fontSize: 13, fontWeight: FontWeight.w800)),
+              // ★ v10.75 : affiche l'arrivée COMPLÈTE (pas seulement top N)
+              Text('PMU (arrivée complète)', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+              Text(
+                arriveeComplete.isEmpty
+                    ? '—'
+                    : arriveeComplete.take(8).join(' - '),
+                style: const TextStyle(color: Color(0xFF66BB6A), fontSize: 13, fontWeight: FontWeight.w800),
+              ),
             ])),
           ]),
           const SizedBox(height: 6),
@@ -1616,28 +1628,36 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           Wrap(spacing: 8, runSpacing: 4, children: [
             if (qg.numerosTrouves.isNotEmpty)
               _chipQG('✅ ${qg.numerosTrouves.map((n) => "N°$n").join(" ")}',
-                  couleur.withValues(alpha: 0.8), couleur.withValues(alpha: 0.15)),
+                  const Color(0xFF4CAF7D).withValues(alpha: 0.9),
+                  const Color(0xFF4CAF7D).withValues(alpha: 0.12)),
             if (qg.numerosManquants.isNotEmpty)
               _chipQG('❌ IA: ${qg.numerosManquants.map((n) => "N°$n").join(" ")}',
-                  const Color(0xFFEF5350).withValues(alpha: 0.8),
-                  const Color(0xFFEF5350).withValues(alpha: 0.1)),
+                  const Color(0xFFEF5350).withValues(alpha: 0.9),
+                  const Color(0xFFEF5350).withValues(alpha: 0.10)),
             // Remplaçant = ce qui est dans pmuTopN mais pas dans IA
             ...(){
               final setIA  = qg.numerosIA.toSet();
               final rempl  = pmuTopN.where((n) => !setIA.contains(n)).toList();
               return rempl.isEmpty ? <Widget>[] : [
-                _chipQG('PMU: ${rempl.map((n) => "N°$n").join(" ")}',
-                    const Color(0xFF4FC3F7).withValues(alpha: 0.8),
-                    const Color(0xFF4FC3F7).withValues(alpha: 0.1)),
+                _chipQG('🔵 PMU: ${rempl.map((n) => "N°$n").join(" ")}',
+                    const Color(0xFF57C7FF).withValues(alpha: 0.9),
+                    const Color(0xFF57C7FF).withValues(alpha: 0.10)),
               ];
             }(),
           ]),
           const SizedBox(height: 5),
-          // ── Source + tap hint ─────────────────────────────────────────
+          // ★ v10.75 : Source affichée + tap hint
           Row(children: [
-            Text(
-              estBestBet ? '⭐ Gros paris à surveiller' : 'Programme IA',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.38), fontSize: 11),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: bordureCoul.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                estBestBet ? '⭐ Gros paris à surveiller' : '🔬 Programme IA',
+                style: TextStyle(color: bordureCoul.withValues(alpha: 0.85), fontSize: 11, fontWeight: FontWeight.w600),
+              ),
             ),
             const Spacer(),
             Text('Détail →',
@@ -2175,8 +2195,9 @@ class _DetailJourSheet extends StatelessWidget {
     final hip    = p.hippodrome;
     final disc   = p.discipline;
     final topIA  = p.topNIA.take(3).map((e) => 'N°$e').join(' · ');
-    final arriv  = p.arriveeReelle != null
-        ? p.arriveeReelle!.take(3).map((e) => 'N°$e').join('-')
+    // ★ v10.75 : arrivée COMPLÈTE (jamais .take(2) ou .take(3) pour l'affichage)
+    final arriv  = p.arriveeReelle != null && p.arriveeReelle!.isNotEmpty
+        ? p.arriveeReelle!.map((e) => 'N°$e').join(' - ')
         : '—';
 
     // ★ v10.55 — Détection premium gagnant strict (délègue à IaMemoryService)

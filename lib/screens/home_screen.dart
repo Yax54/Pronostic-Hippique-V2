@@ -1852,10 +1852,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── ★ v10.71 : Builder dédié depuis la sélection figée ────────────────────
-  // Affiche le Meilleur Pari DIRECTEMENT depuis les données stockées.
-  // Ne cherche pas la course dans _reunions → garanti stable toute la journée.
+  // ── ★ v10.75 : Widget Meilleur Pari VIVANT ────────────────────────────────
+  // Règle fondamentale : on fige la SÉLECTION IA (numeros, typePari, score).
+  // On HYDRATE toujours depuis la course vivante : arrivée PMU, statut, clic.
+  // On ne rend JAMAIS le widget non-cliquable ni mort.
   Widget _buildMeilleurPariDepuisSelectionFigee(SelectionWidgetPremiumDuJour s) {
+    // ── Données figées (immuables) ──
     final typePari = s.typePari;
     final numeros  = s.numeros;
     final emoji    = emojiPourTypePari(typePari);
@@ -1864,6 +1866,52 @@ class _HomeScreenState extends State<HomeScreen> {
     final heure    = s.heure ?? '';
     final chevalN  = s.chevalNom ?? '';
     final score    = s.score ?? 0.0;
+
+    // ── Hydratation vivante : chercher la course dans _reunions ──
+    final found       = _trouverCourseFigee(s);
+    final courseViv   = found.course;
+    final reunionViv  = found.reunion;
+
+    // Statut vivant : terminée si heure passée (depuis la course si dispo, sinon heure figée)
+    final now = DateTime.now();
+    final courseTerminee = courseViv != null
+        ? courseViv.heureDateTime.isBefore(now)
+        : (heure.isNotEmpty
+            ? _parseHeureTerminee(heure, now)
+            : false);
+
+    // Arrivée PMU vivante : si la course a un résultat dans les pronostics IA
+    List<String>? arriveePMU;
+    String? labelResultat;
+    if (courseViv != null || s.courseKey.isNotEmpty) {
+      final keyRecherche = s.courseKey;
+      final pronostics   = IaMemoryService.instance.pronostics;
+      for (final p in pronostics) {
+        if (p.courseKey == keyRecherche && p.arriveeReelle != null) {
+          arriveePMU = p.arriveeReelle!.map((e) => e.toString()).toList();
+          // Évaluer le résultat avec l'évaluateur ordre/désordre v10.75
+          if (arriveePMU.isNotEmpty && numeros.isNotEmpty) {
+            try {
+              // Utiliser l'évaluateur du module gros paris si applicable
+              // Pour les paris classiques, évaluation simple trouvés/manquants
+              final setIA  = numeros.toSet();
+              final setPMU = arriveePMU.take(numeros.length).toSet();
+              final nb     = numeros.length;
+              final trouves = setIA.intersection(setPMU).length;
+              if (trouves == nb) {
+                labelResultat = '✅ Gagnant';
+              } else if (trouves > 0) {
+                labelResultat = '🟡 $trouves/$nb trouvés';
+              } else {
+                labelResultat = '❌ Perdant';
+              }
+            } catch (_) {}
+          }
+          break;
+        }
+      }
+    }
+
     final confianceColor = score >= 80
         ? const Color(0xFF00E676)
         : score >= 65
@@ -1871,12 +1919,20 @@ class _HomeScreenState extends State<HomeScreen> {
             : score >= 50
                 ? const Color(0xFFFF6D00)
                 : const Color(0xFFFF1744);
-    final confianceLabel = score >= 80 ? 'FORTE' : score >= 65 ? 'BONNE' : score >= 50 ? 'MOY.' : 'FAIBLE';
+    final confianceLabel = score >= 80 ? 'FORTE'
+        : score >= 65 ? 'BONNE'
+        : score >= 50 ? 'MOY.' : 'FAIBLE';
 
     final PremiumStreak streakMeilleurPari = streakPourSource(
       sourceWidget: 'meilleurPari',
       dateReference: DateTime.now(),
     );
+
+    // ── Callback clic : navigation vers la course si disponible ──
+    VoidCallback? onTap;
+    if (courseViv != null) {
+      onTap = () => _ouvrirCourse(courseViv, reunionViv);
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1884,138 +1940,236 @@ class _HomeScreenState extends State<HomeScreen> {
         _sectionTitle('⭐ Meilleur Pari du Jour'),
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                const Color(0xFFFFD700).withValues(alpha: 0.12),
-                const Color(0xFF0D1B2A),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.5)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Ligne 1 : badge type pari + heure ──────
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFD700).withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6)),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text(emoji, style: const TextStyle(fontSize: 14)),
-                      const SizedBox(width: 5),
-                      Text(typePari,
-                          style: const TextStyle(
-                              color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold)),
-                    ]),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(16),
+              child: Ink(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFFFFD700).withValues(alpha: 0.12),
+                      const Color(0xFF0D1B2A),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  const Spacer(),
-                  // ★ v10.71 : badge figé pour indiquer stabilité
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.lock_outline, color: Color(0xFF4CAF7D), size: 11),
-                      SizedBox(width: 3),
-                      Text('Figé', style: TextStyle(color: Color(0xFF4CAF7D), fontSize: 11, fontWeight: FontWeight.w600)),
-                    ]),
-                  ),
-                  const SizedBox(width: 8),
-                  if (heure.isNotEmpty)
-                    Text(heure,
-                        style: const TextStyle(
-                            color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.bold)),
-                ]),
-                // ★ v10.61 — Phrase série premium meilleurPari (si streak ≥ 2)
-                buildPremiumStreakPhrase(streak: streakMeilleurPari),
-                const SizedBox(height: 14),
-
-                // ── Bloc numéros ──────────────────────────────────────
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: const Color(0xFFFFD700).withValues(alpha: 0.25)),
-                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.5)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: numeros.map((num) {
-                          final isFirst = num == numeros.first;
-                          return Container(
-                            width: 44, height: 44,
+                      // ── Ligne 1 : badge type pari + heure + statut ──────
+                      Row(children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFD700).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.6)),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text(emoji, style: const TextStyle(fontSize: 14)),
+                            const SizedBox(width: 5),
+                            Text(typePari,
+                                style: const TextStyle(
+                                    color: Color(0xFFFFD700), fontSize: 13, fontWeight: FontWeight.bold)),
+                          ]),
+                        ),
+                        const Spacer(),
+                        // Badge résultat PMU (hydraté dynamiquement)
+                        if (labelResultat case final lbl?) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                             decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: isFirst
-                                  ? const LinearGradient(
-                                      colors: [Color(0xFFFFD700), Color(0xFFFFA000)])
-                                  : null,
-                              color: isFirst ? null
-                                  : const Color(0xFFFFD700).withValues(alpha: 0.15),
-                              border: Border.all(
-                                color: const Color(0xFFFFD700).withValues(
-                                    alpha: isFirst ? 0.0 : 0.4)),
+                              color: lbl.startsWith('✅')
+                                  ? const Color(0xFF4CAF7D).withValues(alpha: 0.18)
+                                  : lbl.startsWith('🟡')
+                                      ? const Color(0xFFFFD700).withValues(alpha: 0.15)
+                                      : const Color(0xFFEF5350).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Center(
-                              child: Text(num,
-                                  style: TextStyle(
-                                    color: isFirst ? Colors.black : const Color(0xFFFFD700),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  )),
+                            child: Text(lbl,
+                                style: TextStyle(
+                                  color: lbl.startsWith('✅')
+                                      ? const Color(0xFF4CAF7D)
+                                      : lbl.startsWith('🟡')
+                                          ? const Color(0xFFFFD700)
+                                          : const Color(0xFFEF5350),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                )),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        // Badge figé discret
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF7D).withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.lock_outline, color: Color(0xFF4CAF7D), size: 10),
+                            SizedBox(width: 2),
+                            Text('Figé', style: TextStyle(color: Color(0xFF4CAF7D), fontSize: 10, fontWeight: FontWeight.w600)),
+                          ]),
+                        ),
+                        const SizedBox(width: 8),
+                        if (heure.isNotEmpty)
+                          Text(
+                            courseTerminee ? 'Terminée' : heure,
+                            style: TextStyle(
+                              color: courseTerminee ? Colors.white38 : const Color(0xFF4CAF7D),
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
                             ),
-                          );
-                        }).toList(),
+                          ),
+                      ]),
+                      // ★ v10.61 — Phrase série premium meilleurPari (si streak ≥ 2)
+                      buildPremiumStreakPhrase(streak: streakMeilleurPari),
+                      const SizedBox(height: 14),
+
+                      // ── Bloc numéros ──────────────────────────────────────
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: const Color(0xFFFFD700).withValues(alpha: 0.25)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: numeros.map((num) {
+                                final isFirst = num == numeros.first;
+                                return Container(
+                                  width: 44, height: 44,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: isFirst
+                                        ? const LinearGradient(
+                                            colors: [Color(0xFFFFD700), Color(0xFFFFA000)])
+                                        : null,
+                                    color: isFirst ? null
+                                        : const Color(0xFFFFD700).withValues(alpha: 0.15),
+                                    border: Border.all(
+                                      color: const Color(0xFFFFD700).withValues(
+                                          alpha: isFirst ? 0.0 : 0.4)),
+                                  ),
+                                  child: Center(
+                                    child: Text(num,
+                                        style: TextStyle(
+                                          color: isFirst ? Colors.black : const Color(0xFFFFD700),
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        )),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 8),
+                            if (chevalN.isNotEmpty)
+                              Text(chevalN,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            if (nomCours.isNotEmpty || hippo.isNotEmpty)
+                              Text('$nomCours${hippo.isNotEmpty ? " • $hippo" : ""}',
+                                  style: const TextStyle(color: Colors.white38, fontSize: 13),
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      if (chevalN.isNotEmpty)
-                        Text(chevalN,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 4),
-                      if (nomCours.isNotEmpty || hippo.isNotEmpty)
-                        Text('$nomCours${hippo.isNotEmpty ? " • $hippo" : ""}',
-                            style: const TextStyle(color: Colors.white38, fontSize: 13),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 10),
+
+                      // ── Arrivée PMU (hydratée dynamiquement) ─────────────
+                      if (arriveePMU case final pmu? when pmu.isNotEmpty) ...[  // ★ v10.75
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF7D).withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.3)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Arrivée réelle PMU :',
+                                  style: TextStyle(color: Colors.white38, fontSize: 12)),
+                              const SizedBox(height: 3),
+                              Text(
+                                pmu.map((n) => 'N°$n').join(' - '),
+                                style: const TextStyle(
+                                    color: Color(0xFF66BB6A), fontSize: 14, fontWeight: FontWeight.w800),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+
+                      // ── Métriques ───────────────────────────────────────
+                      Row(children: [
+                        _metrique('Score IA', '${score.round()}/100', confianceColor),
+                        const SizedBox(width: 10),
+                        _metrique('Confiance', confianceLabel, confianceColor),
+                        const SizedBox(width: 10),
+                        if (numeros.length > 1)
+                          _metrique('Chevaux', '${numeros.length}', Colors.white54),
+                      ]),
+
+                      // ── Bouton analyse si course vivante disponible ──────
+                      if (courseViv != null) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _ouvrirCourse(courseViv, reunionViv),
+                            icon: const Icon(Icons.bar_chart, size: 16),
+                            label: const Text('Voir la course complète'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFD700),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-
-                // ── Métriques ───────────────────────────────────────
-                Row(children: [
-                  _metrique('Score IA', '${score.round()}/100', confianceColor),
-                  const SizedBox(width: 10),
-                  _metrique('Confiance', confianceLabel, confianceColor),
-                  const SizedBox(width: 10),
-                  if (numeros.length > 1)
-                    _metrique('Chevaux', '${numeros.length}', Colors.white54),
-                ]),
-              ],
+              ),
             ),
           ),
         ),
       ],
     );
+  }
+
+  /// Détermine si une heure "HH:mm" est passée par rapport à [now].
+  bool _parseHeureTerminee(String heure, DateTime now) {
+    try {
+      final parts = heure.split(':');
+      if (parts.length < 2) return false;
+      final h = int.parse(parts[0]);
+      final m = int.parse(parts[1]);
+      final dt = DateTime(now.year, now.month, now.day, h, m);
+      return dt.isBefore(now);
+    } catch (_) {
+      return false;
+    }
   }
 
   Widget _metrique(String label, String value, Color color) => Container(
