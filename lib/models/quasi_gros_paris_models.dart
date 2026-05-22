@@ -1,9 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QUASI GROS PARIS — Modèles de données v10.75
+//  QUASI GROS PARIS — Modèles de données v10.75b
 //
 //  Module secondaire d'observation et suggestion prudente.
 //  Ne modifie JAMAIS : apprentissage IA, poids, premium officiel,
 //  streaks, taux officiels, ROI, calendrier principal.
+//
+//  v10.75b PATCH : GrosPariGagnant, ResultatGrosPariStatut
+//  Règle critique : utilisableApprentissage = false TOUJOURS
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -280,6 +283,175 @@ ComparaisonCourseIA comparerCourseIA({
     manquantsIA:      manquants,
     remplacantsPMU:   remplacants,
     rangReelParNumero: rangReelParNumero,
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.75b PATCH — ResultatGrosPariStatut (alias / surensemble de ResultatPariType)
+//  Utilisé dans GrosPariGagnant pour le champ 'statut'.
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Alias sémantique de [ResultatPariType] pour les vrais gagnants uniquement.
+/// Seules les valeurs gagnantOrdre et gagnantDesordre apparaissent dans
+/// [GrosPariGagnant] — perdant et quasi ne sont jamais stockés ici.
+typedef ResultatGrosPariStatut = ResultatPariType;
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.75b PATCH — GrosPariGagnant
+//  Modèle séparé pour les gros paris gagnants (ordre ou désordre).
+//  CRITIQUE :
+//    • utilisableApprentissage = false — JAMAIS injecté dans gradient descent
+//    • utilisableStatsUtilisateur = true — affiché dans Calendrier/IA Stats
+//    • source = 'grosParisSurveiller' — tracé comme venant de Best Bet
+//    • Aucun champ scoresCriteres — isolation totale du gradient
+// ══════════════════════════════════════════════════════════════════════════
+
+class GrosPariGagnant {
+  final String   id;
+  final String   courseKey;
+  final DateTime dateCourse;
+  final String   nomCourse;
+  final String   hippodrome;
+  final String   heure;
+  final String   discipline;
+
+  final String       typePari;           // ex: "Tiercé", "Quarté+", "Quinté+"
+  final List<String> selectionIA;        // numéros IA conseillés
+  final List<String> arriveePMUComplete; // arrivée PMU complète (source de vérité)
+
+  /// Statut : gagnantOrdre ou gagnantDesordre uniquement
+  final ResultatGrosPariStatut statut;
+  final bool ordreExact;                 // true = ordre, false = désordre
+
+  // ── Flags d'isolation IA ──────────────────────────────────────────────
+  /// TOUJOURS false : ne jamais alimenter gradient descent / poids IA
+  final bool utilisableApprentissage;
+  /// TOUJOURS true : affiché dans stats utilisateur, Calendrier, Mémoire IA
+  final bool utilisableStatsUtilisateur;
+  /// Source traçabilité
+  final String source;
+
+  final DateTime createdAt;
+
+  const GrosPariGagnant({
+    required this.id,
+    required this.courseKey,
+    required this.dateCourse,
+    required this.nomCourse,
+    required this.hippodrome,
+    required this.heure,
+    required this.discipline,
+    required this.typePari,
+    required this.selectionIA,
+    required this.arriveePMUComplete,
+    required this.statut,
+    required this.ordreExact,
+    required this.createdAt,
+    this.utilisableApprentissage  = false,           // immuable false
+    this.utilisableStatsUtilisateur = true,          // immuable true
+    this.source                   = 'grosParisSurveiller',
+  });
+
+  /// Label lisible pour l'affichage (ex: "Tiercé désordre ✅")
+  String get labelStatut {
+    if (ordreExact) return '$typePari ordre ✅';
+    return '$typePari désordre ✅';
+  }
+
+  /// Badge court pour le Calendrier
+  String get badgeStatut => ordreExact ? '🥇 Ordre' : '🥈 Désordre';
+
+  Map<String, dynamic> toJson() => {
+    'id':                       id,
+    'courseKey':                courseKey,
+    'dateCourse':               dateCourse.toIso8601String(),
+    'nomCourse':                nomCourse,
+    'hippodrome':               hippodrome,
+    'heure':                    heure,
+    'discipline':               discipline,
+    'typePari':                 typePari,
+    'selectionIA':              selectionIA,
+    'arriveePMUComplete':       arriveePMUComplete,
+    'statut':                   statut.name,
+    'ordreExact':               ordreExact,
+    'utilisableApprentissage':  false,   // toujours false en JSON
+    'utilisableStatsUtilisateur': true,  // toujours true en JSON
+    'source':                   source,
+    'createdAt':                createdAt.toIso8601String(),
+  };
+
+  factory GrosPariGagnant.fromJson(Map<String, dynamic> json) {
+    return GrosPariGagnant(
+      id:           json['id']         as String? ?? '',
+      courseKey:    json['courseKey']  as String? ?? '',
+      dateCourse:   DateTime.tryParse(json['dateCourse'] as String? ?? '')
+                        ?? DateTime.now(),
+      nomCourse:    json['nomCourse']  as String? ?? '',
+      hippodrome:   json['hippodrome'] as String? ?? '',
+      heure:        json['heure']      as String? ?? '',
+      discipline:   json['discipline'] as String? ?? '',
+      typePari:     json['typePari']   as String? ?? '',
+      selectionIA:  List<String>.from(json['selectionIA']       as List? ?? const []),
+      arriveePMUComplete: List<String>.from(
+                      json['arriveePMUComplete'] as List? ?? const []),
+      statut: ResultatGrosPariStatut.values.firstWhere(
+        (e) => e.name == (json['statut'] as String? ?? ''),
+        orElse: () => ResultatGrosPariStatut.gagnantDesordre,
+      ),
+      ordreExact: json['ordreExact'] as bool? ?? false,
+      createdAt:  DateTime.tryParse(json['createdAt'] as String? ?? '')
+                      ?? DateTime.now(),
+      // Flags immuables : ignorés depuis JSON pour sécurité
+      utilisableApprentissage   : false,
+      utilisableStatsUtilisateur: true,
+      source: json['source'] as String? ?? 'grosParisSurveiller',
+    );
+  }
+
+  /// Construit depuis un signal [GrosPariSurveiller] + évaluation
+  factory GrosPariGagnant.depuisSignal({
+    required GrosPariSurveiller signal,
+    required EvaluationGrosPari evaluation,
+    required List<String>       arriveePMUComplete,
+  }) {
+    assert(evaluation.estGagnant,
+        'GrosPariGagnant.depuisSignal : evaluation doit être gagnante');
+    return GrosPariGagnant(
+      id:                 'gpg_${signal.courseKey}_${DateTime.now().millisecondsSinceEpoch}',
+      courseKey:          signal.courseKey,
+      dateCourse:         signal.dateCourse,
+      nomCourse:          signal.nomCourse,
+      hippodrome:         signal.hippodrome,
+      heure:              signal.heure,
+      discipline:         signal.discipline,
+      typePari:           evaluation.typePari,
+      selectionIA:        signal.numeros,
+      arriveePMUComplete: arriveePMUComplete,
+      statut:             evaluation.resultat,  // gagnantOrdre ou gagnantDesordre
+      ordreExact:         evaluation.ordreExact,
+      createdAt:          DateTime.now(),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.75b — evaluerGrosPariOrdreDesordre()
+//  Fonction top-level — alias enrichi de evaluerGrosPari().
+//  Identique logiquement mais typée explicitement pour le patch.
+//  Règle : si estGagnant → appeler enregistrerGrosPariGagnant(), return null
+//          si estQuasi   → ajouter à _quasiGagnants normalement
+// ══════════════════════════════════════════════════════════════════════════
+
+EvaluationGrosPari evaluerGrosPariOrdreDesordre({
+  required String       typePari,
+  required List<String> selectionIA,
+  required List<String> arriveePMUComplete,
+}) {
+  // Délègue à evaluerGrosPari() — logique commune, source unique
+  return evaluerGrosPari(
+    typePari:           typePari,
+    selectionIA:        selectionIA,
+    arriveePMUComplete: arriveePMUComplete,
   );
 }
 

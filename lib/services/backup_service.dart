@@ -459,17 +459,20 @@ class BackupService {
       }
     }
 
-    // ── ⚠️ Gros Paris ★ v10.72 ───────────────────────────────────────────────
+    // ── ⚠️ Gros Paris ★ v10.72 / v10.75b ──────────────────────────────────────
     // Les données sont gérées par QuasiGrosParisService (pas des SharedPreferences
     // classiques) — on les exporte via la méthode dédiée du service.
+    // ★ v10.75b : inclut maintenant grosParisGagnants (ia_gros_paris_resultats_v1)
     try {
       final grosParisData = QuasiGrosParisService.instance.exporterPourBackup();
       if (grosParisData.isNotEmpty) {
         data['grosParis'] = grosParisData;
         if (kDebugMode) {
-          final nbSignaux = (grosParisData['signaux'] as List? ?? []).length;
-          final nbQG = (grosParisData['quasiGagnants'] as List? ?? []).length;
-          debugPrint('[Backup] GRO -> $nbSignaux signaux, $nbQG quasi-gagnants');
+          final nbSignaux  = (grosParisData['signaux']           as List? ?? []).length;
+          final nbQG       = (grosParisData['quasiGagnants']     as List? ?? []).length;
+          final nbGagnants = (grosParisData['grosParisGagnants'] as List? ?? []).length;
+          debugPrint('[Backup] GRO -> $nbSignaux signaux, $nbQG quasi-gagnants, '
+              '$nbGagnants gagnants (ia_gros_paris_resultats_v1)');
         }
       }
     } catch (e) {
@@ -789,9 +792,11 @@ class BackupService {
           if (grosParisRaw is Map<String, dynamic>) {
             await QuasiGrosParisService.instance.importerDepuisBackup(grosParisRaw);
             if (kDebugMode) {
-              final nbS = (grosParisRaw['signaux'] as List? ?? []).length;
-              final nbQ = (grosParisRaw['quasiGagnants'] as List? ?? []).length;
-              debugPrint('[Backup] GrosParis restaure : $nbS signaux, $nbQ quasi-gagnants');
+              final nbS = (grosParisRaw['signaux']           as List? ?? []).length;
+              final nbQ = (grosParisRaw['quasiGagnants']     as List? ?? []).length;
+              final nbG = (grosParisRaw['grosParisGagnants'] as List? ?? []).length;
+              debugPrint('[Backup] GrosParis restaure : $nbS signaux, $nbQ quasi-gagnants, '
+                  '$nbG gagnants (ia_gros_paris_resultats_v1)');
             }
           }
         } else {

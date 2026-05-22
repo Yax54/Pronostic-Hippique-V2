@@ -20,6 +20,7 @@ import 'services/data_refresh_service.dart';
 import 'services/ia_personality_service.dart'; // ★ v9.85
 import 'services/ia_user_prefs_service.dart';  // ★ v9.85
 import 'services/ia_badges_service.dart';      // ★ v9.85
+import 'services/quasi_gros_paris_service.dart' show QuasiGrosParisService; // ★ v10.75b
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
 import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
 
@@ -70,6 +71,9 @@ void main() async {
   await IaPersonalityService.init(); // ★ v9.85
   await IaUserPrefsService.init();   // ★ v9.85
   await IaBadgesService.init();      // ★ v9.85
+  // ★ v10.75b : Migration one-shot gros paris désordre (idempotente, jamais bloquante)
+  // Doit être après IaMemoryService.init() (enregistrement du provider arrivées PMU)
+  QuasiGrosParisService.instance.migrerGrosParisDesordreSiBesoin().ignore();
   // Lancement du rafraîchissement automatique (immédiat + toutes les 15 min)
   // Note : on lance sans await pour ne pas bloquer le démarrage de l'UI,
   // mais on s'assure bien que la Future est lancée via un ignore explicite.

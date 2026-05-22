@@ -1,13 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  QuasiGrosParisService — Détection, stockage, helpers v10.75
+//  QuasiGrosParisService — Détection, stockage, helpers v10.75b
 //
 //  Clé SharedPreferences : 'ia_quasi_gros_paris_v1'
 //  Deux sous-clés JSON :
 //    'signaux'       → List<GrosPariSurveiller>  (signaux avant course)
 //    'quasiGagnants' → List<QuasiGagnant>        (résultats archivés)
 //
+//  ★ v10.75b PATCH — Nouvelle clé : 'ia_gros_paris_resultats_v1'
+//    'grosParisGagnants' → List<GrosPariGagnant> (vrais gagnants ordre/désordre)
+//  Clé migration : 'ia_migration_gros_paris_desordre_v1_done'
+//
 //  Ne modifie JAMAIS : apprentissage IA, poids, premium officiel,
 //  streaks, taux officiels, ROI, calendrier principal.
+//  CRITIQUE : GrosPariGagnant.utilisableApprentissage = false TOUJOURS.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -37,22 +42,34 @@ export '../models/quasi_gros_paris_models.dart'
         EvaluationGrosPari,
         evaluerGrosPari,
         extraireArriveePMUComplete,
-        prioritePari;
+        prioritePari,
+        // ★ v10.75b PATCH : gros paris gagnants
+        ResultatGrosPariStatut,
+        GrosPariGagnant,
+        evaluerGrosPariOrdreDesordre;
 
 class QuasiGrosParisService {
   QuasiGrosParisService._();
   static final instance = QuasiGrosParisService._();
 
-  static const String storageKey = 'ia_quasi_gros_paris_v1';
+  static const String storageKey          = 'ia_quasi_gros_paris_v1';
+  /// ★ v10.75b : clé séparée pour les vrais gagnants
+  static const String storageKeyGagnants  = 'ia_gros_paris_resultats_v1';
+  /// ★ v10.75b : flag migration one-shot
+  static const String migrationFlagKey    = 'ia_migration_gros_paris_desordre_v1_done';
 
   // ─── Données en mémoire ────────────────────────────────────────────────
-  final List<GrosPariSurveiller> _signaux       = [];
-  final List<QuasiGagnant>       _quasiGagnants = [];
+  final List<GrosPariSurveiller> _signaux         = [];
+  final List<QuasiGagnant>       _quasiGagnants   = [];
+  /// ★ v10.75b : vrais gagnants ordre/désordre (séparés des quasi)
+  final List<GrosPariGagnant>    _grosParisGagnants = [];
 
   bool _charge = false;
 
-  List<GrosPariSurveiller> get signaux       => List.unmodifiable(_signaux);
-  List<QuasiGagnant>       get quasiGagnants => List.unmodifiable(_quasiGagnants);
+  List<GrosPariSurveiller> get signaux           => List.unmodifiable(_signaux);
+  List<QuasiGagnant>       get quasiGagnants     => List.unmodifiable(_quasiGagnants);
+  /// ★ v10.75b : accès lecture seule aux vrais gagnants
+  List<GrosPariGagnant>    get grosParisGagnants => List.unmodifiable(_grosParisGagnants);
 
   // ══════════════════════════════════════════════════════════════════════
   //  HELPERS STATIQUES
@@ -109,6 +126,8 @@ class QuasiGrosParisService {
     if (_charge) return;
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      // ── Signaux + quasi-gagnants (clé historique) ───────────────────────
       final raw   = prefs.getString(storageKey);
       if (raw != null && raw.isNotEmpty) {
         final map = json.decode(raw) as Map<String, dynamic>;
@@ -130,11 +149,27 @@ class QuasiGrosParisService {
             if (kDebugMode) debugPrint('[QuasiGros] quasi-gagnant corrompu ignoré: $e');
           }
         }
+      }
 
-        if (kDebugMode) {
-          debugPrint('[QuasiGros] Chargé : ${_signaux.length} signaux, '
-              '${_quasiGagnants.length} quasi-gagnants');
+      // ── ★ v10.75b : Gros paris gagnants (nouvelle clé séparée) ──────────
+      final rawGagnants = prefs.getString(storageKeyGagnants);
+      if (rawGagnants != null && rawGagnants.isNotEmpty) {
+        final mapG = json.decode(rawGagnants) as Map<String, dynamic>;
+        _grosParisGagnants.clear();
+        for (final item in (mapG['grosParisGagnants'] as List? ?? [])) {
+          try {
+            _grosParisGagnants.add(
+                GrosPariGagnant.fromJson(item as Map<String, dynamic>));
+          } catch (e) {
+            if (kDebugMode) debugPrint('[QuasiGros] gros-pari-gagnant corrompu ignoré: $e');
+          }
         }
+      }
+
+      if (kDebugMode) {
+        debugPrint('[QuasiGros] Chargé : ${_signaux.length} signaux, '
+            '${_quasiGagnants.length} quasi-gagnants, '
+            '${_grosParisGagnants.length} gros-paris-gagnants');
       }
       _charge = true;
     } catch (e) {
@@ -146,15 +181,238 @@ class QuasiGrosParisService {
   Future<void> _sauvegarder() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // ── Signaux + quasi (clé historique inchangée) ───────────────────────
       final map = {
         'signaux':       _signaux.map((s) => s.toJson()).toList(),
         'quasiGagnants': _quasiGagnants.map((q) => q.toJson()).toList(),
       };
       await prefs.setString(storageKey, json.encode(map));
+      // ── ★ v10.75b : Gros paris gagnants (clé séparée) ────────────────────
+      final mapG = {
+        'grosParisGagnants': _grosParisGagnants.map((g) => g.toJson()).toList(),
+      };
+      await prefs.setString(storageKeyGagnants, json.encode(mapG));
     } catch (e) {
       if (kDebugMode) debugPrint('[QuasiGros] Erreur sauvegarde: $e');
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75b — GROS PARIS GAGNANTS (Ordre/Désordre)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Enregistre un vrai gagnant (ordre ou désordre) SANS toucher le gradient.
+  /// Règle : appeler AVANT d'appeler detecterQuasiGagnant().
+  /// Si l'évaluation est un vrai gagnant → enregistre ici et retourne true.
+  /// Supprime également le quasi éventuellement présent pour cette course.
+  Future<bool> enregistrerGrosPariGagnant({
+    required GrosPariSurveiller signal,
+    required EvaluationGrosPari evaluation,
+    required List<String>       arriveePMUComplete,
+  }) async {
+    // Sécurité : ne rien faire si ce n'est pas un vrai gagnant
+    if (!evaluation.estGagnant) return false;
+
+    await charger();
+
+    // Idempotence : vérifier si déjà enregistré pour cette course
+    final dejaPresentIdx = _grosParisGagnants.indexWhere(
+      (g) => g.courseKey == signal.courseKey && g.typePari == evaluation.typePari,
+    );
+    if (dejaPresentIdx >= 0) {
+      if (kDebugMode) {
+        debugPrint('[QuasiGros] Gagnant déjà enregistré pour '
+            '${signal.courseKey} — ${evaluation.typePari}');
+      }
+      return true; // déjà présent, idempotent
+    }
+
+    // Créer le vrai gagnant
+    final gagnant = GrosPariGagnant.depuisSignal(
+      signal:             signal,
+      evaluation:         evaluation,
+      arriveePMUComplete: arriveePMUComplete,
+    );
+    _grosParisGagnants.add(gagnant);
+
+    // ── Nettoyer le quasi éventuel pour cette course ────────────────────
+    // Un quasi sur la même course ne doit pas coexister avec un vrai gagnant
+    final nbAvant = _quasiGagnants.length;
+    _quasiGagnants.removeWhere((q) =>
+        q.courseKey == signal.courseKey &&
+        q.source == SourceQuasiGagnant.grosParisSurveiller);
+    final nbSupprimes = nbAvant - _quasiGagnants.length;
+
+    await _sauvegarder();
+
+    if (kDebugMode) {
+      debugPrint('[QuasiGros] ✅ Gagnant enregistré : '
+          '${gagnant.labelStatut} — ${signal.nomCourse} '
+          '(${nbSupprimes > 0 ? "$nbSupprimes quasi supprimés" : "pas de quasi à supprimer"})');
+    }
+    return true;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75b — MIGRATION HISTORIQUE (one-shot, idempotente)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Migration one-shot : rescanne les signaux × arrivées PMU disponibles
+  /// pour reclasser les anciens quasi devenus vrais gagnants.
+  /// Idempotente : protégée par flag 'ia_migration_gros_paris_desordre_v1_done'.
+  /// JAMAIS bloquante — erreur = log + retour silencieux.
+  Future<void> migrerGrosParisDesordreSiBesoin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final migrationFaite = prefs.getBool(migrationFlagKey) ?? false;
+      if (migrationFaite) {
+        if (kDebugMode) {
+          debugPrint('[QuasiGros] Migration v10.75b déjà effectuée — skip');
+        }
+        return;
+      }
+
+      await charger();
+
+      if (_signaux.isEmpty) {
+        // Aucun signal historique → marquer quand même comme fait
+        await prefs.setBool(migrationFlagKey, true);
+        return;
+      }
+
+      // Recalcul sur les 90 derniers jours
+      final debut = DateTime.now().subtract(const Duration(days: 90));
+      final fin   = DateTime.now();
+      await recalculerGrosParisHistorique(debut: debut, fin: fin);
+
+      // Marquer la migration comme effectuée
+      await prefs.setBool(migrationFlagKey, true);
+
+      if (kDebugMode) {
+        debugPrint('[QuasiGros] ✅ Migration v10.75b terminée : '
+            '${_grosParisGagnants.length} gagnants détectés au total');
+      }
+    } catch (e) {
+      // JAMAIS bloquant
+      if (kDebugMode) debugPrint('[QuasiGros] Migration erreur (ignorée): $e');
+    }
+  }
+
+  /// Rescanne les signaux × arrivées PMU depuis IaMemoryService.
+  /// Reclasse quasi→gagnant et nettoie _quasiGagnants.
+  /// Appelée par la migration one-shot et peut être relancée manuellement.
+  Future<void> recalculerGrosParisHistorique({
+    required DateTime debut,
+    required DateTime fin,
+  }) async {
+    try {
+      await charger();
+
+      // Accès sans dépendance circulaire via IaMemoryPronosticsAccessor
+      final iaMemory = IaMemoryPronosticsAccessor.getArriveesPMU();
+      if (iaMemory == null) {
+        if (kDebugMode) {
+          debugPrint('[QuasiGros] recalculerHistorique : IaMemoryService non disponible');
+        }
+        return;
+      }
+
+      int nbNouveauxGagnants  = 0;
+      int nbQuasiSupprimes    = 0;
+
+      for (final signal in _signaux) {
+        // Filtre période
+        if (signal.dateCourse.isBefore(debut) || signal.dateCourse.isAfter(fin)) {
+          continue;
+        }
+
+        // Chercher l'arrivée PMU pour cette course
+        final arrivee = iaMemory[signal.courseKey];
+        if (arrivee == null || arrivee.isEmpty) continue;
+
+        final arriveeStr = arrivee.map((e) => e.toString()).toList();
+        final typePariStr = labelType(signal.type);
+
+        final eval = evaluerGrosPariOrdreDesordre(
+          typePari:           typePariStr,
+          selectionIA:        signal.numeros,
+          arriveePMUComplete: arriveeStr,
+        );
+
+        if (eval.estGagnant) {
+          // Enregistrer comme vrai gagnant (idempotent)
+          final dejaPresent = _grosParisGagnants.any(
+            (g) => g.courseKey == signal.courseKey && g.typePari == typePariStr,
+          );
+          if (!dejaPresent) {
+            final gagnant = GrosPariGagnant.depuisSignal(
+              signal:             signal,
+              evaluation:         eval,
+              arriveePMUComplete: arriveeStr,
+            );
+            _grosParisGagnants.add(gagnant);
+            nbNouveauxGagnants++;
+          }
+
+          // Supprimer le quasi éventuel
+          final nbAvant = _quasiGagnants.length;
+          _quasiGagnants.removeWhere((q) =>
+              q.courseKey == signal.courseKey &&
+              q.source == SourceQuasiGagnant.grosParisSurveiller);
+          nbQuasiSupprimes += nbAvant - _quasiGagnants.length;
+        }
+      }
+
+      if (nbNouveauxGagnants > 0 || nbQuasiSupprimes > 0) {
+        await _sauvegarder();
+        if (kDebugMode) {
+          debugPrint('[QuasiGros] Recalcul historique : '
+              '+$nbNouveauxGagnants gagnants, $nbQuasiSupprimes quasi supprimés');
+        }
+      } else {
+        if (kDebugMode) {
+          debugPrint('[QuasiGros] Recalcul historique : aucun changement');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[QuasiGros] recalculerHistorique erreur (ignorée): $e');
+    }
+  }
+
+  /// Retourne les vrais gagnants filtrés par période.
+  List<GrosPariGagnant> grosParisGagnantsPeriode({
+    int? annee,
+    int? mois,
+    DateTimeRange? periode,
+  }) {
+    return _grosParisGagnants.where((g) {
+      if (periode != null) {
+        return !g.dateCourse.isBefore(periode.start) &&
+               !g.dateCourse.isAfter(periode.end);
+      }
+      if (annee != null && mois != null) {
+        return g.dateCourse.year == annee && g.dateCourse.month == mois;
+      }
+      return true;
+    }).toList()
+      ..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
+  }
+
+  /// Retourne les vrais gagnants d'aujourd'hui.
+  List<GrosPariGagnant> grosParisGagnantsAujourdhui() {
+    final today = DateTime.now();
+    return _grosParisGagnants
+        .where((g) =>
+            g.dateCourse.year  == today.year &&
+            g.dateCourse.month == today.month &&
+            g.dateCourse.day   == today.day)
+        .toList()
+      ..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
+  }
+
+  /// Vérifie si une course a déjà un vrai gagnant enregistré.
+  bool courseAGagnant(String courseKey) =>
+      _grosParisGagnants.any((g) => g.courseKey == courseKey);
 
   // ══════════════════════════════════════════════════════════════════════
   //  DÉTECTION — signal avant course (Best Bet)
@@ -621,8 +879,10 @@ class QuasiGrosParisService {
   // ══════════════════════════════════════════════════════════════════════
 
   Map<String, dynamic> exporterPourBackup() => {
-    'signaux':       _signaux.map((s) => s.toJson()).toList(),
-    'quasiGagnants': _quasiGagnants.map((q) => q.toJson()).toList(),
+    'signaux':           _signaux.map((s) => s.toJson()).toList(),
+    'quasiGagnants':     _quasiGagnants.map((q) => q.toJson()).toList(),
+    // ★ v10.75b : inclure les vrais gagnants dans le backup
+    'grosParisGagnants': _grosParisGagnants.map((g) => g.toJson()).toList(),
   };
 
   Future<void> importerDepuisBackup(Map<String, dynamic> data) async {
@@ -639,14 +899,60 @@ class QuasiGrosParisService {
           _quasiGagnants.add(QuasiGagnant.fromJson(item as Map<String, dynamic>));
         } catch (_) {}
       }
+      // ★ v10.75b : restaurer les vrais gagnants (rétrocompat : absent = vide)
+      _grosParisGagnants.clear();
+      for (final item in (data['grosParisGagnants'] as List? ?? [])) {
+        try {
+          _grosParisGagnants.add(
+              GrosPariGagnant.fromJson(item as Map<String, dynamic>));
+        } catch (_) {}
+      }
       _charge = true;
       await _sauvegarder();
       if (kDebugMode) {
         debugPrint('[QuasiGros] Backup importé : ${_signaux.length} signaux, '
-            '${_quasiGagnants.length} quasi-gagnants');
+            '${_quasiGagnants.length} quasi-gagnants, '
+            '${_grosParisGagnants.length} gros-paris-gagnants');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[QuasiGros] Erreur import backup (ignoré): $e');
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ★ v10.75b — IaMemoryPronosticsAccessor
+//  Shim sans dépendance circulaire pour accéder aux pronostics depuis
+//  IaMemoryService. IaMemoryService s'enregistre lui-même au démarrage.
+// ══════════════════════════════════════════════════════════════════════════
+
+/// IaMemoryService s'enregistre ici au démarrage (dans init()).
+/// Permet à QuasiGrosParisService d'accéder aux arrivées PMU
+/// SANS créer de dépendance circulaire.
+class IaMemoryPronosticsAccessor {
+  static List<IaPronostic> Function()? _pronosticsGetter;
+
+  /// Appelé par IaMemoryService.init() pour s'enregistrer.
+  static void register(List<IaPronostic> Function() getter) {
+    _pronosticsGetter = getter;
+  }
+
+  /// Reconstruit Map<courseKey, arrivée PMU int> depuis les pronostics.
+  static Map<String, List<int>>? getArriveesPMU() {
+    final getter = _pronosticsGetter;
+    if (getter == null) return null;
+    try {
+      final pronostics = getter();
+      final map = <String, List<int>>{};
+      for (final p in pronostics) {
+        final arr = p.arriveeReelle;
+        if (arr != null && arr.isNotEmpty) {
+          map[p.courseKey] = arr;
+        }
+      }
+      return map;
+    } catch (_) {
+      return null;
     }
   }
 }

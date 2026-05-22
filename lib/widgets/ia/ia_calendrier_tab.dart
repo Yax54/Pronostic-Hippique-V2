@@ -282,7 +282,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
             const SizedBox(height: 20),
             _buildStatsByType(data),
             const SizedBox(height: 20),
-            // ★ v10.72 : Quasi gagnants du mois
+            // ★ v10.75b : Vrais gagnants (ordre/désordre) d'abord
+            _buildSectionGrosParisGagnants(),
+            const SizedBox(height: 20),
+            // ★ v10.72 : Quasi gagnants du mois (exclus si vrai gagnant)
             _buildSectionQuasiGagnants(),
             const SizedBox(height: 20),
             _buildTendanceJours(data),
@@ -1485,6 +1488,283 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75b — SECTION VRAIS GAGNANTS (ordre/désordre)
+  // ══════════════════════════════════════════════════════════════════════
+
+  Widget _buildSectionGrosParisGagnants() {
+    final svc     = QuasiGrosParisService.instance;
+    final periode = _periodeQuasiGagnants(); // réutilise le même filtre de période
+
+    final gagnants = svc.grosParisGagnantsPeriode(
+      annee:   periode == null ? null : periode.start.year,
+      mois:    periode == null ? null : periode.start.month,
+      periode: periode,
+    );
+
+    if (gagnants.isEmpty) return const SizedBox();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // ── En-tête section ──────────────────────────────────────────────
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFFFD700), Color(0xFFFFA000)],
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '🏆 Gros Paris Gagnants (${gagnants.length})',
+              style: const TextStyle(color: Colors.black, fontSize: 13, fontWeight: FontWeight.w900),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            _labelFiltreStats,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 8),
+      ...gagnants.map(_carteGrosPariGagnant),
+    ]);
+  }
+
+  Widget _carteGrosPariGagnant(GrosPariGagnant g) {
+    final fmt = (DateTime d) =>
+        '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+    final couleurOrdre   = g.ordreExact
+        ? const Color(0xFFFFD700)   // or = ordre exact
+        : const Color(0xFF66BB6A);  // vert = désordre gagnant
+    final bordureOrdre   = g.ordreExact
+        ? const Color(0xFFFFD700).withValues(alpha: 0.7)
+        : const Color(0xFF66BB6A).withValues(alpha: 0.6);
+    final int nbRequis   = (){
+      final t = g.typePari.toLowerCase();
+      if (t.contains('quint')) return 5;
+      if (t.contains('quart')) return 4;
+      return 3;
+    }();
+    final arriveeComplete = g.arriveePMUComplete;
+    final pmuTopN = arriveeComplete.take(nbRequis).toList();
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => _ouvrirFicheGrosPariGagnant(context, g),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D1F12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: bordureOrdre, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: couleurOrdre.withValues(alpha: 0.08),
+              blurRadius: 8, offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── En-tête ────────────────────────────────────────────────────
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: couleurOrdre.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${g.ordreExact ? "🥇" : "🥈"} ${g.labelStatut}',
+                style: TextStyle(color: couleurOrdre, fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+            ),
+            const Spacer(),
+            Text(fmt(g.dateCourse),
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          ]),
+          const SizedBox(height: 7),
+          // ── Nom de course ───────────────────────────────────────────────
+          Text(g.nomCourse,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 3),
+          Text('${g.hippodrome} · ${g.discipline}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+          const Divider(height: 12, color: Colors.white10),
+          // ── IA vs PMU ───────────────────────────────────────────────────
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Sélection IA', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+              Text(g.selectionIA.take(nbRequis).join(' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+            ])),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('PMU top $nbRequis', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+              Text(
+                pmuTopN.isEmpty ? '—' : pmuTopN.join(' - '),
+                style: TextStyle(color: couleurOrdre, fontSize: 13, fontWeight: FontWeight.w800),
+              ),
+            ])),
+          ]),
+          if (arriveeComplete.length > nbRequis) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Arrivée complète : ${arriveeComplete.take(8).join(' - ')}${arriveeComplete.length > 8 ? " …" : ""}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 6),
+          // ── Badge source ────────────────────────────────────────────────
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: couleurOrdre.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '⭐ Gros paris à surveiller',
+                style: TextStyle(color: couleurOrdre.withValues(alpha: 0.9), fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                g.badgeStatut,
+                style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Spacer(),
+            Text('Détail →',
+                style: TextStyle(color: couleurOrdre.withValues(alpha: 0.6), fontSize: 11)),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  void _ouvrirFicheGrosPariGagnant(BuildContext context, GrosPariGagnant g) {
+    final signal = QuasiGrosParisService.instance.signaux
+        .where((s) => s.courseKey == g.courseKey)
+        .firstOrNull;
+
+    final int nbRequis = (){
+      final t = g.typePari.toLowerCase();
+      if (t.contains('quint')) return 5;
+      if (t.contains('quart')) return 4;
+      return 3;
+    }();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.88,
+        minChildSize:     0.4,
+        maxChildSize:     0.95,
+        expand: false,
+        builder: (_, ctrl) => Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D1F12),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border.all(
+              color: g.ordreExact
+                  ? const Color(0xFFFFD700).withValues(alpha: 0.5)
+                  : const Color(0xFF66BB6A).withValues(alpha: 0.4),
+              width: 1.2,
+            ),
+          ),
+          child: ListView(
+            controller: ctrl,
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 30),
+            children: [
+              // Poignée
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // Titre
+              Text(g.labelStatut,
+                  style: TextStyle(
+                    color: g.ordreExact ? const Color(0xFFFFD700) : const Color(0xFF66BB6A),
+                    fontSize: 20, fontWeight: FontWeight.w900,
+                  )),
+              const SizedBox(height: 4),
+              Text(g.nomCourse,
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text('${g.hippodrome} · ${g.heure} · ${g.discipline}',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+              const Divider(height: 20, color: Colors.white12),
+              // Sélection IA
+              const Text('Sélection IA', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(height: 4),
+              Text(g.selectionIA.take(nbRequis).join(' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              // Arrivée PMU complète
+              const Text('Arrivée PMU (complète)', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(height: 4),
+              Text(
+                g.arriveePMUComplete.isEmpty ? '—' : g.arriveePMUComplete.join(' - '),
+                style: TextStyle(
+                  color: g.ordreExact ? const Color(0xFFFFD700) : const Color(0xFF66BB6A),
+                  fontSize: 15, fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Divider(height: 20, color: Colors.white12),
+              // Signal original si disponible
+              if (signal != null) ...[
+                const Text('Signal d\'origine', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(height: 4),
+                Text('Fiabilité : ${signal.fiabilite.toStringAsFixed(0)}%',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 12),
+              ],
+              // Source + apprentissage
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('ℹ️ Source & utilisation',
+                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  Text('Source : ${g.source}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Visible dans stats utilisateur : ${g.utilisableStatsUtilisateur ? "✅ Oui" : "❌ Non"}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Apprentissage IA : ${g.utilisableApprentissage ? "⚠️ Oui" : "✅ Non (isolé)"}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionQuasiGagnants() {
     final svc        = QuasiGrosParisService.instance;
     final pronostics = IaMemoryService.instance.pronostics;
@@ -1519,14 +1799,23 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     );
 
     // ★ v10.73 : Déduplication avec priorité Type + Source (via service)
-    final tous = QuasiGrosParisService.dedoublonnerQuasiGagnants([
+    final tousAvantFiltrage = QuasiGrosParisService.dedoublonnerQuasiGagnants([
       ...depuisProg,
       ...depuisBestBet,
     ])..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
 
+    // ★ v10.75b : Exclure les quasi dont la course a un vrai gagnant enregistré
+    final coursesAvecVraiGagnant = svc.grosParisGagnants
+        .map((g) => g.courseKey)
+        .toSet();
+    final tous = tousAvantFiltrage
+        .where((qg) => !coursesAvecVraiGagnant.contains(qg.courseKey))
+        .toList();
+
     if (kDebugMode) {
       debugPrint('[QUASI_GAGNANTS_CALENDAR] ${tous.length} quasi-gagnants '
-          'après dédup (prog:${depuisProg.length}, bestbet:${depuisBestBet.length})');
+          'après dédup (prog:${depuisProg.length}, bestbet:${depuisBestBet.length})'
+          ', exclus (vrais gagnants):${tousAvantFiltrage.length - tous.length}');
     }
 
     if (tous.isEmpty) return const SizedBox();

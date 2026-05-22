@@ -49,6 +49,9 @@ import '../models/zt_models.dart';
 import 'ia_memory_models.dart';
 import 'ia_pronostic_engine.dart';
 import 'ia_audit_cache_service.dart'; // ★ v10.32 : invalidation cache audit
+// ★ v10.75b : accès aux gros paris gagnants pour stats (lecture seule, jamais gradient)
+import 'quasi_gros_paris_service.dart'
+    show IaMemoryPronosticsAccessor, QuasiGrosParisService, GrosPariGagnant;
 
 class IaMemoryService extends ChangeNotifier {
   static final IaMemoryService _instance = IaMemoryService._();
@@ -155,6 +158,41 @@ class IaMemoryService extends ChangeNotifier {
         .toList();
     list.sort((a, b) => a.ordreAffichage.compareTo(b.ordreAffichage));
     return list;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.75b — Gros paris gagnants (lecture seule, JAMAIS gradient)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Accès lecture seule aux gros paris gagnants (ordre/désordre).
+  /// utilisableApprentissage = false TOUJOURS — jamais gradient.
+  List<GrosPariGagnant> get grosParisGagnants =>
+      QuasiGrosParisService.instance.grosParisGagnants;
+
+  /// Gros paris gagnants du mois donné (pour le Calendrier).
+  List<GrosPariGagnant> grosParisGagnantsDuMois(int annee, int mois) =>
+      QuasiGrosParisService.instance.grosParisGagnantsPeriode(
+          annee: annee, mois: mois);
+
+  /// Gros paris gagnants d'aujourd'hui (pour les stats du jour).
+  List<GrosPariGagnant> get grosParisGagnantsAujourdhui =>
+      QuasiGrosParisService.instance.grosParisGagnantsAujourdhui();
+
+  /// Résumé stats gros paris gagnants par type pour affichage.
+  /// JAMAIS injecté dans le gradient descent.
+  Map<String, Map<String, int>> get statsGrosParisGagnantsParType {
+    final result = <String, Map<String, int>>{};
+    for (final g in grosParisGagnants) {
+      result[g.typePari] ??= {'nb': 0, 'ordre': 0, 'desordre': 0};
+      result[g.typePari]!['nb'] = (result[g.typePari]!['nb'] ?? 0) + 1;
+      if (g.ordreExact) {
+        result[g.typePari]!['ordre'] = (result[g.typePari]!['ordre'] ?? 0) + 1;
+      } else {
+        result[g.typePari]!['desordre'] =
+            (result[g.typePari]!['desordre'] ?? 0) + 1;
+      }
+    }
+    return result;
   }
 
   /// ★ v9.99 : Précision "Aujourd'hui" calculée directement depuis _pronostics
@@ -480,6 +518,9 @@ class IaMemoryService extends ChangeNotifier {
 
   static Future<void> init() async {
     await _instance._load();
+    // ★ v10.75b : s'enregistrer dans le shim pour que QuasiGrosParisService
+    // puisse accéder aux arrivées PMU sans dépendance circulaire
+    IaMemoryPronosticsAccessor.register(() => _instance._pronostics);
   }
 
   /// ★ Lot 4 : Purge automatique des pronostics trop anciens sans résultat.
