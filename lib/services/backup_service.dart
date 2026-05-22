@@ -317,6 +317,8 @@ class BackupService {
     'ia_migration_gros_paris_desordre_v1_done', // Flag migration one-shot v10.76
     // ★ v10.77 : Migration stats — branchement PronosticResultatsRepository dans écrans stats
     'ia_migration_gros_paris_stats_v2_done',    // Flag migration stats v10.77
+    // ★ v10.79 : Migration types dérivés — évalue Tiercé/Quarté+/Quinté+ séparément
+    'ia_migration_gros_paris_types_derives_v1_done', // Flag migration types dérivés v10.79
   ];
 
   // Toutes les cles reunies (pour reinitialisation complete)

@@ -79,6 +79,11 @@ void main() async {
   // PronosticResultatsRepository pour visibilité dans IA Stats / Calendrier / Précision.
   // Idempotente : protégée par flag 'ia_migration_gros_paris_stats_v2_done'.
   QuasiGrosParisService.instance.migrerGrosParisStatsSiBesoin().ignore();
+  // ★ v10.79 : Migration types dérivés — évalue Tiercé/Quarté+/Quinté+ séparément
+  // pour chaque signal Gros Paris. Écrit gagnants ET perdants dans le repository
+  // afin que les stats par type soient correctes (Tiercé gagnant même si signal=Quinté+).
+  // Idempotente : protégée par flag 'ia_migration_gros_paris_types_derives_v1_done'.
+  QuasiGrosParisService.instance.migrerStatsParTypesSiBesoin().ignore();
   // ★ v10.77 : Diagnostic preuve injection — log 4 métriques au démarrage (debug only)
   // [1] chargés repo [2] injectés stats [3] Tiercé 21/05 [4] 0 violation gradient
   Future.delayed(const Duration(seconds: 3), () {

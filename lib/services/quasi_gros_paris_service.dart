@@ -82,6 +82,11 @@ class QuasiGrosParisService {
   /// ★ v10.77 : flag migration stats — force réinjection dans PronosticResultatsRepository
   ///            pour que les écrans stats voient les Tiercés désordre
   static const String migrationStatsFlagKey = 'ia_migration_gros_paris_stats_v2_done';
+  /// ★ v10.79 : flag migration types dérivés — réévalue chaque signal sur tous ses
+  ///            sous-types (Quinté+ → Tiercé + Quarté+ + Quinté+) et écrit
+  ///            gagnants ET perdants dans le repo pour des stats par type correctes.
+  static const String migrationTypesDerivesKey =
+      'ia_migration_gros_paris_types_derives_v1_done';
 
   // ─── Données en mémoire ────────────────────────────────────────────────
   final List<GrosPariSurveiller> _signaux         = [];
@@ -109,6 +114,29 @@ class QuasiGrosParisService {
     if (t.contains('tierc') || t.contains('trio')) return 3;
     if (t.contains('coupl')) return 2;
     return 1;
+  }
+
+  /// ★ v10.79 : Types dérivés à évaluer depuis un signal.
+  /// Un signal Quinté+ contient implicitement Tiercé et Quarté+.
+  /// Retourne les labels dans l'ordre croissant (Tiercé → Quarté+ → Quinté+).
+  static List<String> _typesDerivesDepuisSignal(String typeLabel) {
+    final t = typeLabel.toLowerCase();
+    if (t.contains('quint')) return ['Tiercé', 'Quarté+', 'Quinté+'];
+    if (t.contains('quart')) return ['Tiercé', 'Quarté+'];
+    if (t.contains('tierc') || t.contains('trio')) return ['Tiercé'];
+    return [typeLabel]; // fallback : type inconnu traité tel quel
+  }
+
+  /// ★ v10.79 : Ordre IA reconstruit depuis classementCompletIA si disponible.
+  /// Priorité : classementCompletIA trié par rangIA croissant.
+  /// Fallback : signal.numeros tel quel.
+  static List<String> _numerosOrdreIA(GrosPariSurveiller signal) {
+    if (signal.classementCompletIA.isNotEmpty) {
+      final trie = [...signal.classementCompletIA]
+        ..sort((a, b) => a.rangIA.compareTo(b.rangIA));
+      return trie.map((c) => c.numero).toList();
+    }
+    return signal.numeros;
   }
 
   static int nbChevauxPourType(TypeGrosPari type) {
@@ -399,9 +427,58 @@ class QuasiGrosParisService {
     }
   }
 
+  /// ★ v10.79 — Migration types dérivés (one-shot, idempotente).
+  ///
+  /// Rejoue tous les signaux depuis le 21/05/2026 en évaluant chaque sous-type
+  /// dérivé (Quinté+ → Tiercé + Quarté+ + Quinté+) et écrit TOUS les résultats
+  /// (gagnants ET perdants) dans PronosticResultatsRepository pour que les stats
+  /// par type soient correctes.
+  ///
+  /// Protégée par flag 'ia_migration_gros_paris_types_derives_v1_done'.
+  /// JAMAIS bloquante — erreur = log + retour silencieux.
+  Future<void> migrerStatsParTypesSiBesoin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final migrationFaite = prefs.getBool(migrationTypesDerivesKey) ?? false;
+      if (migrationFaite) {
+        if (kDebugMode) {
+          debugPrint('[GROS_PARIS_TYPES_DERIVES] déjà effectuée — skip');
+        }
+        return;
+      }
+
+      if (kDebugMode) debugPrint('[GROS_PARIS_TYPES_DERIVES] START');
+
+      await charger();
+      await PronosticResultatsRepository.instance.charger();
+
+      final debut = DateTime(2026, 5, 21);
+      final fin   = DateTime.now();
+
+      final result = await recalculerGrosParisHistorique(
+        debut: debut, fin: fin,
+      );
+
+      if (kDebugMode) {
+        debugPrint('[GROS_PARIS_TYPES_DERIVES] signaux=${result.signauxAnalyses}');
+        debugPrint('[GROS_PARIS_TYPES_DERIVES] gagnants=${result.gagnantsDesordre}');
+        debugPrint('[GROS_PARIS_TYPES_DERIVES] quasiSupprimes=${result.quasiSupprimes}');
+        debugPrint('[GROS_PARIS_TYPES_DERIVES] repository='
+            '${PronosticResultatsRepository.instance.tous.length} entrées');
+      }
+
+      await prefs.setBool(migrationTypesDerivesKey, true);
+
+      if (kDebugMode) debugPrint('[GROS_PARIS_TYPES_DERIVES] DONE');
+    } catch (e) {
+      if (kDebugMode) debugPrint('[GROS_PARIS_TYPES_DERIVES] ERROR $e');
+    }
+  }
+
   /// Rescanne les signaux × arrivées PMU depuis IaMemoryService.
   /// Reclasse quasi→gagnant et nettoie _quasiGagnants.
   /// ★ v10.76 : retourne MigrationGrosParisResult avec compteurs.
+  /// ★ v10.79 : évalue tous les types dérivés, écrit gagnants ET perdants.
   /// Appelée par la migration one-shot et peut être relancée manuellement.
   Future<MigrationGrosParisResult> recalculerGrosParisHistorique({
     required DateTime debut,
@@ -438,60 +515,75 @@ class QuasiGrosParisService {
         final arrivee = iaMemory[signal.courseKey];
         if (arrivee == null || arrivee.isEmpty) continue;
 
-        final arriveeStr = arrivee.map((e) => e.toString()).toList();
-        final typePariStr = labelType(signal.type);
+        final arriveeStr   = arrivee.map((e) => e.toString()).toList();
+        final typeSignal   = labelType(signal.type);
 
-        // ★ v10.76 : évaluateur unifié canonique
-        final eval = evaluerPariOrdreDesordre(
-          typePari:           typePariStr,
-          predictionIA:       signal.numeros,
-          arriveePMUComplete: arriveeStr,
-        );
+        // ★ v10.79 : ordre IA reconstruit depuis classementCompletIA si disponible
+        final numerosIA = _numerosOrdreIA(signal);
 
-        if (eval.estGagnant) {
-          // Enregistrer comme vrai gagnant dans _grosParisGagnants (idempotent)
-          final dejaPresent = _grosParisGagnants.any(
-            (g) => g.courseKey == signal.courseKey && g.typePari == typePariStr,
+        // ★ v10.79 : évaluer TOUS les types dérivés du signal
+        // Signal Quinté+ → évalue Tiercé + Quarté+ + Quinté+
+        // Signal Quarté+ → évalue Tiercé + Quarté+
+        // Signal Tiercé  → évalue Tiercé
+        for (final typeDerive in _typesDerivesDepuisSignal(typeSignal)) {
+          final nb          = _nbChevauxDepuisLabel(typeDerive);
+          final selectionDerive = numerosIA.take(nb).toList();
+
+          if (selectionDerive.length < nb) continue; // pas assez de chevaux IA
+
+          final eval = evaluerPariOrdreDesordre(
+            typePari:           typeDerive,
+            predictionIA:       selectionDerive,
+            arriveePMUComplete: arriveeStr,
           );
-          if (!dejaPresent) {
-            // Convertir EvaluationPari → EvaluationGrosPari pour la factory existante
-            final evalGP = evaluerGrosPariOrdreDesordre(
-              typePari:           typePariStr,
-              selectionIA:        signal.numeros,
-              arriveePMUComplete: arriveeStr,
+
+          // ── Gagnants : enregistrer dans _grosParisGagnants (type signal uniquement)
+          // On n'ajoute à _grosParisGagnants que le type du signal original,
+          // pas les types dérivés inférieurs (Tiercé dérivé d'un Quinté+ reste
+          // un résultat stats, pas un "vrai gagnant Gros Paris" au sens UI).
+          if (eval.estGagnant && typeDerive == typeSignal) {
+            final dejaPresent = _grosParisGagnants.any(
+              (g) => g.courseKey == signal.courseKey && g.typePari == typeDerive,
             );
-            final gagnant = GrosPariGagnant.depuisSignal(
-              signal:             signal,
-              evaluation:         evalGP,
-              arriveePMUComplete: arriveeStr,
-            );
-            _grosParisGagnants.add(gagnant);
-            nbNouveauxGagnants++;
+            if (!dejaPresent) {
+              final evalGP = evaluerGrosPariOrdreDesordre(
+                typePari:           typeDerive,
+                selectionIA:        selectionDerive,
+                arriveePMUComplete: arriveeStr,
+              );
+              final gagnant = GrosPariGagnant.depuisSignal(
+                signal:             signal,
+                evaluation:         evalGP,
+                arriveePMUComplete: arriveeStr,
+              );
+              _grosParisGagnants.add(gagnant);
+              nbNouveauxGagnants++;
+            }
+
+            // Supprimer le quasi éventuel pour ce type sur cette course
+            final nbAvant = _quasiGagnants.length;
+            _quasiGagnants.removeWhere((q) =>
+                q.courseKey == signal.courseKey &&
+                q.source == SourceQuasiGagnant.grosParisSurveiller);
+            nbQuasiSupprimes += nbAvant - _quasiGagnants.length;
           }
 
-          // ★ v10.76 : ajouter dans PronosticResultatsRepository (stats utilisateur)
-          // Calcul du nb de chevaux requis depuis le label type pari (String)
-          final nb = _nbChevauxDepuisLabel(typePariStr);
+          // ── Stats : écrire TOUS les résultats (gagnant, quasi, perdant)
+          // dans PronosticResultatsRepository pour des stats par type correctes.
+          // utilisableApprentissage = false — jamais dans le gradient.
           final resultat = PronosticResultatUtilisateur.depuisGrosPariGagnant(
             courseKey:          signal.courseKey,
             dateCourse:         signal.dateCourse,
-            typePari:           typePariStr,
-            predictionIA:       signal.numeros,
+            typePari:           typeDerive,
+            predictionIA:       selectionDerive,
             arriveePMUComplete: arriveeStr,
-            gagnant:            true,
+            gagnant:            eval.estGagnant,
             ordreExact:         eval.ordreExact,
             nbTrouves:          eval.nbTrouves,
             nbRequis:           nb,
           );
           await PronosticResultatsRepository.instance
               .ajouterOuRemplacer(resultat);
-
-          // Supprimer le quasi éventuel pour cette course
-          final nbAvant = _quasiGagnants.length;
-          _quasiGagnants.removeWhere((q) =>
-              q.courseKey == signal.courseKey &&
-              q.source == SourceQuasiGagnant.grosParisSurveiller);
-          nbQuasiSupprimes += nbAvant - _quasiGagnants.length;
         }
       }
 

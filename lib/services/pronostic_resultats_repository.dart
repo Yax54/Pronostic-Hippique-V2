@@ -1,13 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  PronosticResultatsRepository — Singleton persistant v10.76
+//  PronosticResultatsRepository — Singleton persistant v10.79
 //
 //  Clé SharedPreferences : 'pronostic_resultats_repository_v2'
 //
 //  Responsabilités :
-//    • Stocker les PronosticResultatUtilisateur (gros paris gagnants)
-//    • ajouterOuRemplacer() : idempotent, anti-doublon strict
-//    • dedoublonnerParCourseEtPriorite() : garde le meilleur pari par course
+//    • Stocker les PronosticResultatUtilisateur (gros paris — tous types dérivés)
+//    • ajouterOuRemplacer() : idempotent, clé courseKey+typePari+source
+//    • dedoublonnerParCourseTypeSource() : 1 entrée par (course × type × source)
 //    • Lecture seule depuis l'extérieur (stats utilisateur, Calendrier, IA Stats)
+//
+//  ★ v10.79 : déduplication courseKey+typePari+source (remplace courseKey seul)
+//  Permet à Tiercé / Quarté+ / Quinté+ d'une même course d'exister séparément.
 //
 //  RÈGLE ABSOLUE : utilisableApprentissage = false pour grosParisSurveiller
 //  — ces données ne doivent JAMAIS alimenter le gradient descent.
@@ -18,6 +21,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/pronostic_resultat_utilisateur.dart';
+// ignore: unused_import — prioritePari conservé pour rétrocompat éventuelle
 import '../models/quasi_gros_paris_models.dart' show prioritePari;
 
 class PronosticResultatsRepository {
@@ -85,15 +89,16 @@ class PronosticResultatsRepository {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  ajouterOuRemplacer — idempotent, anti-doublon strict
-  //  Supprime tous les doublons courseKey+typePari+source avant insertion.
-  //  Applique ensuite la déduplication forte par course.
+  //  ajouterOuRemplacer — idempotent, clé courseKey+typePari+source
+  //  ★ v10.79 : ne garde plus 1 seul pari par course.
+  //  Chaque (course × type × source) est une entrée distincte.
+  //  Permet Tiercé / Quarté+ / Quinté+ de la même course dans les stats.
   // ══════════════════════════════════════════════════════════════════════
 
   Future<void> ajouterOuRemplacer(PronosticResultatUtilisateur item) async {
     await charger();
 
-    // Supprimer tous les doublons exacts (courseKey + typePari + source)
+    // Supprimer le doublon exact (courseKey + typePari + source)
     _items.removeWhere((e) =>
         e.courseKey == item.courseKey &&
         e.typePari  == item.typePari  &&
@@ -101,8 +106,8 @@ class PronosticResultatsRepository {
 
     _items.add(item);
 
-    // Déduplication forte : une seule entrée par course (meilleur pari)
-    final dedoublonnes = dedoublonnerParCourseEtPriorite(_items);
+    // ★ v10.79 : déduplication courseKey+typePari+source (pas courseKey seul)
+    final dedoublonnes = dedoublonnerParCourseTypeSource(_items);
     _items
       ..clear()
       ..addAll(dedoublonnes);
@@ -118,38 +123,20 @@ class PronosticResultatsRepository {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  dedoublonnerParCourseEtPriorite — garde le meilleur pari par course
-  //  Priorité source : grosParisSurveiller > programme
-  //  Priorité type : Quinté+ > Quarté+ > Tiercé > Couplé > Placé > Simple
+  //  ★ v10.79 — dedoublonnerParCourseTypeSource
+  //  Clé : courseKey + typePari + source
+  //  Permet Tiercé / Quarté+ / Quinté+ de coexister pour une même course.
+  //  Le dernier item écrit pour une clé donnée gagne (idempotent).
   // ══════════════════════════════════════════════════════════════════════
 
-  static List<PronosticResultatUtilisateur> dedoublonnerParCourseEtPriorite(
+  static List<PronosticResultatUtilisateur> dedoublonnerParCourseTypeSource(
     List<PronosticResultatUtilisateur> items,
   ) {
     final map = <String, PronosticResultatUtilisateur>{};
-
     for (final item in items) {
-      final old = map[item.courseKey];
-
-      if (old == null) {
-        map[item.courseKey] = item;
-        continue;
-      }
-
-      final itemPriorite = prioritePari(item.typePari);
-      final oldPriorite  = prioritePari(old.typePari);
-
-      if (itemPriorite > oldPriorite) {
-        map[item.courseKey] = item;
-      } else if (itemPriorite == oldPriorite) {
-        // À priorité de type égale, grosParisSurveiller prend le dessus
-        if (item.source == 'grosParisSurveiller' &&
-            old.source  != 'grosParisSurveiller') {
-          map[item.courseKey] = item;
-        }
-      }
+      final key = '${item.courseKey}|${item.typePari}|${item.source}';
+      map[key] = item; // dernier écrase — idempotent
     }
-
     return map.values.toList();
   }
 
