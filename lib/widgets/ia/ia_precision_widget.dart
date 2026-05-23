@@ -468,15 +468,44 @@ class _SectionPrecisionIAState extends State<SectionPrecisionIA> {
     } else if (_filtrePeriode == 'all') {
       return {'nb': p.nbTotalAll, 'bons': p.nbBonsAll, 'ordre': p.nbOrdreAll, 'desordre': p.nbDesordreAll};
     } else if (_filtrePeriode == '7j') {
-      final fin   = DateTime.now();
-      final debut = fin.subtract(const Duration(days: 7));
-      return p.statsPourPeriode(debut, fin);
+      // ★ v10.79c : 6 jours passés (historiqueComplet) + aujourd'hui (temps réel)
+      // Évite le 0/0 pendant la journée car historiqueComplet n'est mis à jour
+      // qu'après analyseJourneeComplete().
+      final now7    = DateTime.now();
+      final todayD  = DateTime(now7.year, now7.month, now7.day);
+      final debut6j = todayD.subtract(const Duration(days: 6));
+      final fin6j   = todayD.subtract(const Duration(milliseconds: 1));
+      final stats6j = p.statsPourPeriode(debut6j, fin6j);
+      final auj     = IaMemoryService.instance
+                        .precisionAujourdhuiDepuisPronostics[p.typePari]
+                      ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+      return {
+        'nb':       (stats6j['nb']       ?? 0) + (auj['nb']       ?? 0),
+        'bons':     (stats6j['bons']     ?? 0) + (auj['bons']     ?? 0),
+        'ordre':    (stats6j['ordre']    ?? 0) + (auj['ordre']    ?? 0),
+        'desordre': (stats6j['desordre'] ?? 0) + (auj['desordre'] ?? 0),
+      };
     } else if (_filtrePeriode == 'today') {
-      final now = DateTime.now();
-      final jour = DateTime(now.year, now.month, now.day);
-      return p.statsPourPeriode(jour, jour);
+      // ★ v10.79c : source temps réel uniquement
+      // historiqueComplet n'est pas encore mis à jour pendant la journée.
+      return IaMemoryService.instance
+               .precisionAujourdhuiDepuisPronostics[p.typePari]
+             ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
     } else if (_filtrePeriode == 'custom' && _filtreDebut != null && _filtreFin != null) {
-      return p.statsPourPeriode(_filtreDebut!, _filtreFin!);
+      // ★ v10.79c : si la période inclut aujourd'hui → historique + temps réel
+      final today  = DateTime.now();
+      final todayD = DateTime(today.year, today.month, today.day);
+      final stats  = p.statsPourPeriode(_filtreDebut!, _filtreFin!);
+      if (_filtreFin!.isBefore(todayD)) return stats; // période passée uniquement
+      final auj = IaMemoryService.instance
+                    .precisionAujourdhuiDepuisPronostics[p.typePari]
+                  ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+      return {
+        'nb':       (stats['nb']       ?? 0) + (auj['nb']       ?? 0),
+        'bons':     (stats['bons']     ?? 0) + (auj['bons']     ?? 0),
+        'ordre':    (stats['ordre']    ?? 0) + (auj['ordre']    ?? 0),
+        'desordre': (stats['desordre'] ?? 0) + (auj['desordre'] ?? 0),
+      };
     }
     return {'nb': p.nbTotal, 'bons': p.nbBons, 'ordre': p.nbOrdre, 'desordre': p.nbDesordre};
   }
