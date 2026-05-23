@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../services/pronostic_resultats_repository.dart' show PronosticResultatsRepository;
 
 // ─── Couleurs partagées (palette IaPerformanceScreen) ─────────────────────────
 const Color _kDark   = Color(0xFF0D1B2A);
@@ -374,6 +375,83 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
     return {'ordre': ord, 'desordre': des};
   }
 
+  // ★ v10.80 : Section "Suite IA classique" — réussites dérivées
+  // Affichée uniquement dans ce dialog de détail, jamais dans les listes compactes.
+  // Source : PronosticResultatsRepository filtré par typePari + source='suiteIAClassique'.
+  Widget _buildSectionSuiteIAClassique() {
+    final repo = PronosticResultatsRepository.instance;
+    final items = repo.tous.where((r) =>
+        r.typePari == widget.stats.typePari &&
+        r.source == 'suiteIAClassique' &&
+        r.gagnant).toList()
+      ..sort((a, b) => b.dateCourse.compareTo(a.dateCourse));
+
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    const mois = ['','Jan','Fév','Mar','Avr','Mai','Juin',
+                   'Juil','Aoû','Sep','Oct','Nov','Déc'];
+
+    return Container(
+      width: double.maxFinite,
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2A3A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // En-tête
+          Row(children: [
+            const Text('🔎', style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            const Text('Suite IA classique',
+                style: TextStyle(color: Color(0xFF7C4DFF),
+                    fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+              ),
+              child: const Text('Hors apprentissage',
+                  style: TextStyle(color: Colors.orange, fontSize: 10)),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          // Liste des réussites dérivées
+          ...items.take(5).map((r) {
+            final d = r.dateCourse;
+            final dateStr = '${d.day} ${mois[d.month]} ${d.year}';
+            final ordreLabel = r.ordreExact ? '🎯 Ordre' : '🔀 Désordre';
+            final ordreColor = r.ordreExact
+                ? const Color(0xFF4CAF7D)
+                : const Color(0xFFFFB74D);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(children: [
+                const Text('✅ ', style: TextStyle(fontSize: 11)),
+                Expanded(child: Text(dateStr,
+                    style: const TextStyle(color: Colors.white60, fontSize: 11))),
+                Text(ordreLabel,
+                    style: TextStyle(color: ordreColor,
+                        fontSize: 11, fontWeight: FontWeight.bold)),
+              ]),
+            );
+          }),
+          if (items.length > 5)
+            Text('… et ${items.length - 5} autre(s)',
+                style: const TextStyle(color: Colors.white38, fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // ── Tout calculé depuis _pronosticsFiltres — UNE SEULE SOURCE ────────
@@ -510,6 +588,8 @@ class _DialogDetailTypePariState extends State<_DialogDetailTypePari> {
                     ]),
         ),
         actions: [
+          // ★ v10.80 : Section Suite IA classique — réussites dérivées hors apprentissage
+          _buildSectionSuiteIAClassique(),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Fermer', style: TextStyle(color: Color(0xFF4CAF7D))),

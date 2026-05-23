@@ -97,7 +97,8 @@ class PronosticResultatUtilisateur {
   }
 
   /// Construit depuis un IaPronostic classique pour intégration stats utilisateur.
-  /// utilisableApprentissage = true (source 'programme' — peut alimenter le gradient).
+  /// source = 'programme' (défaut) → utilisableApprentissage = true (peut alimenter gradient).
+  /// source = 'suiteIAClassique'   → utilisableApprentissage = false (stats uniquement).
   /// ATTENTION : ne jamais appeler avec source = 'grosParisSurveiller'.
   factory PronosticResultatUtilisateur.depuisPronosticClassique({
     required String   courseKey,
@@ -109,7 +110,10 @@ class PronosticResultatUtilisateur {
     required bool   ordreExact,
     required int    nbTrouves,
     required int    nbRequis,
+    String source = 'programme', // ★ v10.80 : paramètre source (défaut = 'programme')
   }) {
+    // ★ v10.80 : suiteIAClassique = jamais dans gradient (hors apprentissage)
+    final utilisableApprentissage = source != 'suiteIAClassique';
     return PronosticResultatUtilisateur(
       courseKey:                   courseKey,
       dateCourse:                  dateCourse,
@@ -120,9 +124,9 @@ class PronosticResultatUtilisateur {
       ordreExact:                  ordreExact,
       nbTrouves:                   nbTrouves,
       nbRequis:                    nbRequis,
-      source:                      'programme',
+      source:                      source,
       utilisableStatsUtilisateur:  true,
-      utilisableApprentissage:     true, // source 'programme' → peut alimenter gradient
+      utilisableApprentissage:     utilisableApprentissage,
     );
   }
 

@@ -84,6 +84,11 @@ void main() async {
   // afin que les stats par type soient correctes (Tiercé gagnant même si signal=Quinté+).
   // Idempotente : protégée par flag 'ia_migration_gros_paris_types_derives_v1_done'.
   QuasiGrosParisService.instance.migrerStatsParTypesSiBesoin().ignore();
+  // ★ v10.80 : Migration suite IA classique — réussites dérivées depuis topNIA figé.
+  // Alimente le repository avec Tiercé/Quarté+/Quinté+ gagnants issus des pronostics IA.
+  // source = 'suiteIAClassique', utilisableApprentissage = false (jamais gradient).
+  // Idempotente : protégée par flag 'ia_migration_suite_ia_classique_v1_done'.
+  IaMemoryService.instance.migrerSuiteIAClassiqueSiBesoin().ignore();
   // ★ v10.77 : Diagnostic preuve injection — log 4 métriques au démarrage (debug only)
   // [1] chargés repo [2] injectés stats [3] Tiercé 21/05 [4] 0 violation gradient
   Future.delayed(const Duration(seconds: 3), () {

@@ -54,6 +54,9 @@ import 'quasi_gros_paris_service.dart'
     show IaMemoryPronosticsAccessor, QuasiGrosParisService, GrosPariGagnant;
 // ★ v10.77 : repository résultats utilisateur (stats uniquement, jamais gradient)
 import 'pronostic_resultats_repository.dart' show PronosticResultatsRepository;
+// ★ v10.80 : suite IA classique — évaluateur unifié + modèle résultat utilisateur
+import '../models/quasi_gros_paris_models.dart' show evaluerPariOrdreDesordre;
+import '../models/pronostic_resultat_utilisateur.dart' show PronosticResultatUtilisateur;
 
 class IaMemoryService extends ChangeNotifier {
   static final IaMemoryService _instance = IaMemoryService._();
@@ -365,6 +368,118 @@ class IaMemoryService extends ChangeNotifier {
     }
 
     return data;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ v10.80 — Suite IA classique : réussites dérivées (Tiercé/Quarté+/Quinté+)
+  //  Alimente le repository avec les gagnants dérivés depuis la suite IA figée.
+  //  RÈGLES ABSOLUES :
+  //  - Ne touche pas analyseJourneeComplete(), gradient, poids, seuils
+  //  - source = 'suiteIAClassique', utilisableApprentissage = false
+  //  - Uniquement les gagnants (v1) — perdants ajoutés plus tard si besoin
+  //  - topNIA figé au moment du pronostic — jamais recalculé
+  //  - Déduplication courseKey + typePari + source
+  // ══════════════════════════════════════════════════════════════════════
+
+  static const String _migrationSuiteIAClassiqueKey =
+      'ia_migration_suite_ia_classique_v1_done';
+
+  /// ★ v10.80 : Alimente le repository avec les réussites dérivées depuis
+  /// la suite IA classique (topNIA figé).
+  /// Évalue Tiercé (3 chevaux), Quarté+ (4), Quinté+ (5) depuis topNIA.
+  /// N'écrit QUE les gagnants (ordre ou désordre). Skip si topNIA incomplet.
+  /// Appel idempotent : déduplication courseKey + typePari + suiteIAClassique.
+  Future<void> alimenterRepositoryDepuisPronosticsClassiques(
+      List<IaPronostic> pronostics) async {
+    final repo    = PronosticResultatsRepository.instance;
+    final dejaDans = repo.tous
+        .where((r) => r.source == 'suiteIAClassique')
+        .map((r) => '${r.courseKey}|${r.typePari}|suiteIAClassique')
+        .toSet();
+
+    const typesAEvaluer = ['Tiercé', 'Quarté+', 'Quinté+'];
+    const nbRequis      = {'Tiercé': 3, 'Quarté+': 4, 'Quinté+': 5};
+
+    int nbAjoutes = 0;
+
+    for (final p in pronostics) {
+      if (!p.resultatsReels) continue;
+      final arrivee = p.arriveeReelle;
+      if (arrivee == null || arrivee.isEmpty) continue;
+
+      // topNIA figé — jamais recalculé
+      final topIA = p.topNIA;
+      if (topIA.isEmpty) continue;
+
+      final arriveeStr = arrivee.map((n) => n.toString()).toList();
+
+      for (final type in typesAEvaluer) {
+        final nb = nbRequis[type]!;
+
+        // Skip si topNIA insuffisant pour ce type
+        if (topIA.length < nb) continue;
+
+        // Déduplication — skip si déjà dans le repository
+        final cleDedup = '${p.courseKey}|$type|suiteIAClassique';
+        if (dejaDans.contains(cleDedup)) continue;
+
+        final selection = topIA.take(nb).toList();
+
+        // Évaluation via evaluerPariOrdreDesordre — RÈGLE : jamais dans gradient
+        final eval = evaluerPariOrdreDesordre(
+          typePari:           type,
+          predictionIA:       selection,
+          arriveePMUComplete: arriveeStr,
+        );
+
+        // V1 : uniquement les gagnants
+        if (!eval.estGagnant) continue;
+
+        final resultat = PronosticResultatUtilisateur.depuisPronosticClassique(
+          courseKey:           p.courseKey,
+          dateCourse:          p.datePronostic,
+          typePari:            type,
+          predictionIA:        selection,
+          arriveePMUComplete:  arriveeStr,
+          gagnant:             true,
+          ordreExact:          eval.ordreExact,
+          nbTrouves:           eval.nbTrouves,
+          nbRequis:            nb,
+          source:              'suiteIAClassique',
+        );
+
+        await repo.ajouterOuRemplacer(resultat); // sauvegarde incluse dans ajouterOuRemplacer
+        dejaDans.add(cleDedup); // éviter le doublon dans cette même passe
+        nbAjoutes++;
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint('[v10.80 suiteIAClassique] $nbAjoutes réussites dérivées ajoutées');
+    }
+  }
+
+  /// ★ v10.80 : Migration one-shot — alimente le repository depuis tout l'historique.
+  /// Protégée par flag 'ia_migration_suite_ia_classique_v1_done'.
+  /// Idempotente — sans effet si déjà exécutée.
+  Future<void> migrerSuiteIAClassiqueSiBesoin() async {
+    await _load();
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_migrationSuiteIAClassiqueKey) == true) return;
+
+    if (kDebugMode) {
+      debugPrint('[v10.80] Migration suite IA classique — démarrage…');
+    }
+
+    // Tous les pronostics résolus de l'historique
+    final resolus = _pronostics.where((p) => p.resultatsReels).toList();
+    await alimenterRepositoryDepuisPronosticsClassiques(resolus);
+
+    await prefs.setBool(_migrationSuiteIAClassiqueKey, true);
+
+    if (kDebugMode) {
+      debugPrint('[v10.80] Migration suite IA classique — terminée.');
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════
