@@ -679,8 +679,11 @@ class IaMemoryService extends ChangeNotifier {
           _premiumHistorique[dateJour] ?? [];
 
       final bool hasBestBet;
-      if (premiumCeJour.isEmpty) {
-        hasBestBet = false; // pas de données premium pour ce jour → pas d'étoile
+      if (premiumCeJour.isEmpty || ag.nbCourses == 0) {
+        // pas de données premium pour ce jour → pas d'étoile
+        // ★ fix : ag.nbCourses == 0 signifie aucun pronostic avec typePariConseille valide
+        // (ex : jour sans ouverture appli, typePariConseille=null) → jamais d'étoile fantôme
+        hasBestBet = false;
       } else {
         hasBestBet = ag.pronostics.any((prono) {
           if (!prono.resultatsReels) return false;
@@ -3110,6 +3113,41 @@ class IaMemoryService extends ChangeNotifier {
             '✅ Les $dejaResultat résultats du $dateRefLog sont déjà enregistrés — '
             're-calcul des poids IA…');
         nbCoursesAnalysees = dejaResultat;
+
+        // ★ fix : guard par typePari — historiqueComplet peut être absent pour ce jour
+        // si enregistrerResultat() a marqué les pronostics résolus AVANT analyseJourneeComplete(),
+        // ce qui laisse aTraiter vide → nouveauxResolusParPasse vide → _mettreAJourPrecisionIA()
+        // jamais appelé → historiqueComplet figé (bug constaté : figé au 13/05 pour 15 jours).
+        // Fix : pour chaque typePari, si ce jour est absent de son historiqueComplet,
+        // réinjecter uniquement les pronostics de ce type. Guard anti-doublon par type.
+        // Ne touche pas gradient, poids, seuils, apprentissage.
+        final dateStrRef =
+            '${_dateAnalyseReelle.year}-'
+            '${_dateAnalyseReelle.month.toString().padLeft(2, '0')}-'
+            '${_dateAnalyseReelle.day.toString().padLeft(2, '0')}';
+
+        // Grouper les pronostics résolus du jour par typePariConseille
+        final Map<String, List<IaPronostic>> resolusParType = {};
+        for (final p in pronosticsJour) {
+          if (!p.resultatsReels) continue;
+          final tp = p.typePariConseille ?? '';
+          if (tp.isEmpty || tp == 'Inconnu' || tp == 'À surveiller') continue;
+          resolusParType.putIfAbsent(tp, () => []).add(p);
+        }
+
+        // Pour chaque type : réinjecter si ce jour est absent de son historiqueComplet
+        for (final typeEntry in resolusParType.entries) {
+          final type       = typeEntry.key;
+          final pronosType = typeEntry.value;
+          final statType   = _precisionParType[type];
+          final dejaPresent = statType != null &&
+              statType.historiqueComplet.any((e) => e['d'] == dateStrRef);
+          if (!dejaPresent) {
+            debugPrint('[PRECISION_PATCH] Réinjection historiqueComplet : '
+                'date=$dateStrRef | type=$type | nb=${pronosType.length}');
+            await _mettreAJourPrecisionIA(pronosType, _dateAnalyseReelle);
+          }
+        }
         // Passer directement à l'apprentissage
       } else {
 

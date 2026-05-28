@@ -880,10 +880,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     final hasBestBet = hasCourses && (dd.hasBestBet);
     // ★ v10.78 : Gros Paris — calculé côté widget depuis QuasiGrosParisService
     // (sans modifier DonneeJourCalendrier — règle v10.78)
+    // ★ fix : aDesSignaux → aDesGagnants (règle métier : 🔥 = gros pari GAGNANT, pas juste proposé)
     final hasGrosParis = hasCourses && (() {
       final svc = QuasiGrosParisService.instance;
       final jourDt = DateTime(_moisRef.year, _moisRef.month, jour);
-      return svc.calculerStatsGrosParisJour(jourDt).aDesSignaux;
+      return svc.calculerStatsGrosParisJour(jourDt).aDesGagnants;
     })();
 
     return AnimatedContainer(
