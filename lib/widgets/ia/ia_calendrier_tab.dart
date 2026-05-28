@@ -2694,17 +2694,21 @@ class _DetailJourSheet extends StatelessWidget {
         ? streakPourSource(sourceWidget: sourceP, dateReference: dateRef)
         : null;
 
-    // ★ v10.81b — Détection Gros Paris gagnant (courseKey + typePari).
-    // v10.81 utilisait courseAGagnant(courseKey) seul → trop large :
-    //   un Simple Gagnant classique de la même course pouvait devenir orange.
-    // v10.81b : double critère courseKey + typePari (insensible casse/espaces).
-    // Si typePariConseille est vide → false sans déduction heuristique.
-    // Un Tiercé classique gagnant ≠ Gros Paris — le style orange ne s'applique PAS.
-    final isGrosParis = QuasiGrosParisService.instance
-        .courseATypeGrosParisGagnant(
-          courseKey: p.courseKey,
-          typePari:  p.typePariConseille ?? '',
-        );
+    // ★ v10.81c — Détection Gros Paris gagnant.
+    // Règle : orange = CE pronostic exact vient de ⚠️ Gros Paris à surveiller ET il a gagné.
+    //   • même courseKey
+    //   • même typePari (normalisé)
+    //   • source == 'grosParisSurveiller'
+    // Aucune déduction : un Tiercé classique gagnant ≠ orange.
+    // Aucune propagation : si courseKey correspond mais typePari diffère → false.
+    // Si typePariConseille est null/vide → false sans aucun fallback.
+    final typePariCarte = p.typePariConseille ?? '';
+    final isGrosParis = typePariCarte.trim().isEmpty
+        ? false
+        : QuasiGrosParisService.instance.courseATypeGrosParisGagnant(
+            courseKey: p.courseKey,
+            typePari:  typePariCarte,
+          );
 
     // ★ v10.81 — Couleurs de la carte selon la source.
     final Color cardBg = isGrosParis

@@ -687,20 +687,35 @@ class QuasiGrosParisService {
   bool courseAGagnant(String courseKey) =>
       _grosParisGagnants.any((g) => g.courseKey == courseKey);
 
-  /// ★ v10.81b — Vérifie si une course a un Gros Paris gagnant pour un type exact.
-  /// Critère double : même courseKey ET même typePari (insensible à la casse/espaces).
-  /// Si [typePari] est vide → retourne false sans déduction heuristique.
-  /// Un Simple Gagnant classique gagnant ne devient PAS orange si la même course
-  /// a eu un Tiercé Gros Paris gagnant — les deux types doivent correspondre exactement.
+  /// ★ v10.81c — Vérifie si un pronostic exact est un Gros Paris gagnant.
+  ///
+  /// Critères obligatoires (les 3 doivent être vrais, sans exception) :
+  ///   1. même courseKey (trim exact)
+  ///   2. même typePari (insensible à la casse et aux espaces)
+  ///   3. source == 'grosParisSurveiller' ou 'Gros Paris à surveiller'
+  ///
+  /// La liste [_grosParisGagnants] ne contient que des gagnants (ordre ou désordre) —
+  /// jamais de perdants. Pas de champ 'gagnant' booléen nécessaire.
+  ///
+  /// Aucune déduction heuristique :
+  ///   - pas de "si Tiercé → orange"
+  ///   - pas de recalcul PMU
+  ///   - pas de propagation à d'autres paris de la même course
+  /// Si courseKey ou typePari est vide → false immédiatement.
   bool courseATypeGrosParisGagnant({
     required String courseKey,
     required String typePari,
   }) {
-    if (typePari.trim().isEmpty) return false;
+    if (courseKey.trim().isEmpty || typePari.trim().isEmpty) return false;
+    final keyClean  = courseKey.trim();
     final typeClean = typePari.trim().toLowerCase();
-    return _grosParisGagnants.any((g) =>
-        g.courseKey == courseKey &&
-        g.typePari.trim().toLowerCase() == typeClean);
+    return grosParisGagnants.any((g) {
+      final sameCourse = g.courseKey.trim() == keyClean;
+      final sameType   = g.typePari.trim().toLowerCase() == typeClean;
+      final sourceOk   = g.source == 'grosParisSurveiller' ||
+                         g.source == 'Gros Paris à surveiller';
+      return sameCourse && sameType && sourceOk;
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
