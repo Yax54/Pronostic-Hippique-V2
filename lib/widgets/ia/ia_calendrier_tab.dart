@@ -47,6 +47,18 @@ const Color _cRedBg   = Color(0xFF2A0A0A);
 const Color _cGrey    = Color(0xFF1A2535);
 const Color _cGreyTxt = Color(0xFF3A4A5A);
 
+// ── Couleurs Gros Paris gagnant — ★ v10.81 ────────────────────────────────
+// Utilisées UNIQUEMENT dans le détail journée (cartes gagnantes).
+// Critère : courseKey présent dans QuasiGrosParisService.grosParisGagnants.
+// AUCUNE déduction depuis le type de pari (Tiercé / Quarté+ / Quinté+).
+const Color _kGrosParisOrangeBg     = Color(0x33FF6D00); // fond carte
+const Color _kGrosParisOrangeBorder = Color(0xFFFF8A00); // bordure
+const Color _kGrosParisOrangeGlow   = Color(0xFFFF6D00); // shadow (= orange feu)
+// Couleurs Best Bet — reprend les valeurs inline existantes en constantes nommées
+const Color _kBestBetGold           = Color(0xFFFFD700);
+const Color _kBestBetGoldBg         = Color(0x1AFFD700);
+const Color _kBestBetGoldBorder     = Color(0xFFFFD700);
+
 // ── Données palier ─────────────────────────────────────────────────────────
 extension PalierExt on PalierCalendrier {
   Color get bg {
@@ -2560,6 +2572,75 @@ class _DetailJourSheet extends StatelessWidget {
   // ★ v10.59 — _buildStreakBadge supprimé (rollback visuel v10.57).
   // Les données streak restent calculées dans IaMemoryService mais ne s'affichent pas ici.
 
+  // ★ v10.81 — Badge source dans la carte gagnante du détail journée.
+  // Affiché en haut de chaque carte pour distinguer :
+  //   🔥  Gros Paris à surveiller (orange)
+  //   ⭐  Best Bet / Premium (or)
+  //   ⭐🔥 Double signal (orange prioritaire)
+  // La méthode est une fonction pure — aucune logique métier, aucun calcul de stats.
+  Widget _buildBadgeSourceGagnant({
+    required bool isGrosParis,
+    required bool isPremium,
+    required String? sourceLabel,
+  }) {
+    final String icon;
+    final String label;
+    final Color bg;
+    final Color border;
+    final Color text;
+
+    if (isGrosParis && isPremium) {
+      icon   = '⭐🔥';
+      label  = 'Best Bet + Gros Paris';
+      bg     = _kGrosParisOrangeBg;
+      border = _kGrosParisOrangeBorder;
+      text   = const Color(0xFFFFCC80);
+    } else if (isGrosParis) {
+      icon   = '🔥';
+      label  = 'Gros Paris à surveiller';
+      bg     = _kGrosParisOrangeBg;
+      border = _kGrosParisOrangeBorder;
+      text   = const Color(0xFFFFCC80);
+    } else if (isPremium) {
+      icon   = '⭐';
+      label  = 'Premium — ${sourceLabel ?? 'Best Bet'}';
+      bg     = const Color(0x26FFD700);
+      border = const Color(0x99FFD700);
+      text   = _kBestBetGold;
+    } else {
+      // Source inconnue / programme IA classique : pas de badge source
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color:        bg,
+        borderRadius: BorderRadius.circular(24),
+        border:       Border.all(color: border, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color:      text,
+                fontSize:   12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// ★ v10.26 : Descriptif dynamique du taux affiché dans le BottomSheet
   static String _descriptifTaux(double taux, PalierCalendrier palier) {
     if (palier == PalierCalendrier.or)
@@ -2613,51 +2694,63 @@ class _DetailJourSheet extends StatelessWidget {
         ? streakPourSource(sourceWidget: sourceP, dateReference: dateRef)
         : null;
 
-    // ★ v10.59 — Restauration exacte du design screenshot :
-    //   fond doré translucide 0x1AFFD700, bordure dorée 2.2px,
-    //   badge pill "⭐ Premium — Plus Sûr" via _labelSourcePremium().
+    // ★ v10.81 — Détection Gros Paris gagnant.
+    // Source de vérité : QuasiGrosParisService.grosParisGagnants (courseKey).
+    // Aucune déduction heuristique depuis le typePariConseille.
+    // Un Tiercé classique gagnant ≠ Gros Paris — le style orange ne s'applique PAS.
+    final isGrosParis = QuasiGrosParisService.instance
+        .courseAGagnant(p.courseKey);
+
+    // ★ v10.81 — Couleurs de la carte selon la source.
+    final Color cardBg = isGrosParis
+        ? _kGrosParisOrangeBg
+        : isPremium
+            ? _kBestBetGoldBg
+            : const Color(0xFF142030);
+    final Color cardBorder = isGrosParis
+        ? _kGrosParisOrangeBorder
+        : isPremium
+            ? _kBestBetGoldBorder
+            : const Color(0xFF26384D);
+    final double cardBorderWidth = isGrosParis ? 1.7 : isPremium ? 2.2 : 1.2;
+    final List<BoxShadow> cardShadow = isGrosParis
+        ? [
+            BoxShadow(
+              color:       _kGrosParisOrangeGlow.withValues(alpha: 0.35),
+              blurRadius:  14,
+              spreadRadius: 1,
+            ),
+          ]
+        : isPremium
+            ? [
+                BoxShadow(
+                  color:       _kBestBetGold.withValues(alpha: 0.18),
+                  blurRadius:  10,
+                  spreadRadius: 0,
+                ),
+              ]
+            : const [];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isPremium
-            ? const Color(0x1AFFD700)
-            : const Color(0xFF142030),
+        color:        cardBg,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: isPremium
-              ? const Color(0xFFFFD700)
-              : const Color(0xFF26384D),
-          width: isPremium ? 2.2 : 1.2,
-        ),
+        border:       Border.all(color: cardBorder, width: cardBorderWidth),
+        boxShadow:    cardShadow,
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ★ v10.59 — Badge premium pill exactement comme le screenshot
-        // ★ v10.60 — Phrase série sous le badge (streak ≥ 2, date historique exacte)
-        if (isPremium) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0x26FFD700),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: const Color(0x99FFD700),
-                width: 1,
-              ),
-            ),
-            child: Text(
-              '⭐ Premium — ${_labelSourcePremium(sourceP)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFFFD700),
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+        // ★ v10.81 — Badge source unifié (Gros Paris orange / Premium or / double ⭐🔥)
+        // Remplace le bloc isPremium inline précédent pour gérer les 3 cas.
+        if (isGrosParis || isPremium) ...[
+          _buildBadgeSourceGagnant(
+            isGrosParis: isGrosParis,
+            isPremium:   isPremium,
+            sourceLabel: isPremium ? _labelSourcePremium(sourceP) : null,
           ),
-          // ★ v10.61 — Phrase série via helper commun (même rendu que Home/BestBet)
-          buildPremiumStreakPhrase(streak: streakCarte),
+          // Phrase série — uniquement pour Best Bet (streak non pertinent pour Gros Paris)
+          if (isPremium) buildPremiumStreakPhrase(streak: streakCarte),
           const SizedBox(height: 14),
         ],
         // Titre course — blanc pour lisibilité (jamais vert sur fond vert)
