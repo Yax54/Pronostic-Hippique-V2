@@ -340,7 +340,11 @@ class IaMemoryService extends ChangeNotifier {
       final existing = data[jour];
 
       if (existing == null) {
-        // Aucune donnée IA ce jour : créer une entrée minimale OR depuis gros paris
+        // Aucune donnée IA ce jour : créer une entrée minimale OR depuis gros paris.
+        // ★ v10.81b : hasBestBet = false ici — un Gros Paris gagnant ≠ Best Bet/Premium.
+        // hasBestBet = true hardcodé ici était une source d'étoiles fantômes sur des
+        // jours sans aucun widget premium actif. Le palier OR vient du gros paris, pas
+        // d'un premium. L'étoile ⭐ est calculée séparément dans donneesCalendrierJour().
         data[jour] = DonneeJourCalendrier(
           jour:       jour,
           nbCourses:  1,
@@ -349,7 +353,7 @@ class IaMemoryService extends ChangeNotifier {
           nbDesordre: r.ordreExact ? 0 : 1,
           palier:     PalierCalendrier.or,
           pronostics: const [],
-          hasBestBet: true,
+          hasBestBet: false,          // ★ v10.81b : jamais true depuis un gros paris seul
         );
       } else if (existing.palier != PalierCalendrier.or) {
         // Upgrader le palier en OR car un gros pari noble est gagnant ce jour
@@ -678,16 +682,38 @@ class IaMemoryService extends ChangeNotifier {
       final List<PremiumPronosticDuJour> premiumCeJour =
           _premiumHistorique[dateJour] ?? [];
 
+      // ★ v10.81b : hasBestBet — source de vérité identique à l'affichage des cartes.
+      //
+      // RÈGLE ABSOLUE : ⭐ sur la case calendrier ↔ au moins une carte gagnante dans
+      // le détail journée vient réellement d'un widget Best Bet / Premium gagnant.
+      //
+      // Source de vérité commune :
+      //   _DetailJourSheet.build() →  bons = dd.pronostics.where((p) =>
+      //       IaMemoryService.instance.estBonConseil(p, p.typePariConseille ?? ''))
+      //   donneesCalendrierJour()  →  _estBonConseilParType(prono, tp)
+      //   Les deux appellent exactement la même fonction (estBonConseil est un wrapper 1:1).
+      //
+      // AVANT v10.81b : ag.pronostics.any() itérait sur TOUS les pronostics, y compris
+      // les perdants → étoile fantôme possible si un premium perdant coïncidait avec l'arrivée.
+      //
+      // AUCUN fallback heuristique. Si les données premium sont absentes → false.
       final bool hasBestBet;
       if (premiumCeJour.isEmpty || ag.nbCourses == 0) {
-        // pas de données premium pour ce jour → pas d'étoile
-        // ★ fix : ag.nbCourses == 0 signifie aucun pronostic avec typePariConseille valide
-        // (ex : jour sans ouverture appli, typePariConseille=null) → jamais d'étoile fantôme
+        // Pas de données premium enregistrées ce jour → ⭐ impossible.
+        // ag.nbCourses == 0 = aucun pronostic avec typePariConseille valide
+        // (ex : jour sans ouverture appli) → aucune étoile fantôme possible.
         hasBestBet = false;
       } else {
         hasBestBet = ag.pronostics.any((prono) {
           if (!prono.resultatsReels) return false;
-          // ★ v10.50 : appel direct (plus de délégation via _premiumExactGagnant)
+          final tp = prono.typePariConseille ?? '';
+          if (tp.isEmpty) return false;
+          // Condition 1 — même filtre que _DetailJourSheet :
+          //   seuls les pronostics réellement gagnants (estBonConseil) sont affichés.
+          //   Un perdant ne peut jamais déclencher ⭐, même si un premium lui correspond.
+          if (!_estBonConseilParType(prono, tp)) return false;
+          // Condition 2 — ce pronostic gagnant correspond à un premium gagnant strict.
+          //   Validation exacte : courseKey + typePari + numéros + arrivée réelle.
           return premiumCeJour.any((premium) =>
               _estPremiumExactGagnantStrict(premium: premium, prono: prono));
         });

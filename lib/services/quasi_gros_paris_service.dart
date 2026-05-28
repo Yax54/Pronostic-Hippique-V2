@@ -687,6 +687,22 @@ class QuasiGrosParisService {
   bool courseAGagnant(String courseKey) =>
       _grosParisGagnants.any((g) => g.courseKey == courseKey);
 
+  /// ★ v10.81b — Vérifie si une course a un Gros Paris gagnant pour un type exact.
+  /// Critère double : même courseKey ET même typePari (insensible à la casse/espaces).
+  /// Si [typePari] est vide → retourne false sans déduction heuristique.
+  /// Un Simple Gagnant classique gagnant ne devient PAS orange si la même course
+  /// a eu un Tiercé Gros Paris gagnant — les deux types doivent correspondre exactement.
+  bool courseATypeGrosParisGagnant({
+    required String courseKey,
+    required String typePari,
+  }) {
+    if (typePari.trim().isEmpty) return false;
+    final typeClean = typePari.trim().toLowerCase();
+    return _grosParisGagnants.any((g) =>
+        g.courseKey == courseKey &&
+        g.typePari.trim().toLowerCase() == typeClean);
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   //  DÉTECTION — signal avant course (Best Bet)
   // ══════════════════════════════════════════════════════════════════════
