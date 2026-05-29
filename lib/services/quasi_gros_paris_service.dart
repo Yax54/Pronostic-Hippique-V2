@@ -687,34 +687,33 @@ class QuasiGrosParisService {
   bool courseAGagnant(String courseKey) =>
       _grosParisGagnants.any((g) => g.courseKey == courseKey);
 
-  /// ★ v10.81c — Vérifie si un pronostic exact est un Gros Paris gagnant.
+  /// ★ v10.81d — La carte devient orange si la courseKey correspond à un signal
+  /// "Gros Paris à surveiller" gagnant.
   ///
-  /// Critères obligatoires (les 3 doivent être vrais, sans exception) :
+  /// Critères (Option C — validée) :
   ///   1. même courseKey (trim exact)
-  ///   2. même typePari (insensible à la casse et aux espaces)
-  ///   3. source == 'grosParisSurveiller' ou 'Gros Paris à surveiller'
+  ///   2. source == 'grosParisSurveiller' ou 'Gros Paris à surveiller'
   ///
-  /// La liste [_grosParisGagnants] ne contient que des gagnants (ordre ou désordre) —
-  /// jamais de perdants. Pas de champ 'gagnant' booléen nécessaire.
+  /// sameType supprimé délibérément :
+  ///   Le typePari du pronostic IA affiché (IaPronostic.typePariConseille) et
+  ///   le typePari du signal GP (GrosPariGagnant.typePari) sont deux champs
+  ///   indépendants qui ne sont pas garantis identiques (ex : carte "Couplé Gagnant"
+  ///   sur une course dont le signal GP était "Tiercé").
+  ///   La condition sameCourse && sourceOk est la règle correcte.
   ///
-  /// Aucune déduction heuristique :
-  ///   - pas de "si Tiercé → orange"
-  ///   - pas de recalcul PMU
-  ///   - pas de propagation à d'autres paris de la même course
-  /// Si courseKey ou typePari est vide → false immédiatement.
+  /// La liste [grosParisGagnants] ne contient que des gagnants (ordre ou désordre).
+  /// Si courseKey est vide → false immédiatement.
   bool courseATypeGrosParisGagnant({
     required String courseKey,
-    required String typePari,
+    required String typePari,   // conservé en signature pour compatibilité des appelants
   }) {
-    if (courseKey.trim().isEmpty || typePari.trim().isEmpty) return false;
-    final keyClean  = courseKey.trim();
-    final typeClean = typePari.trim().toLowerCase();
+    if (courseKey.trim().isEmpty) return false;
+    final keyClean = courseKey.trim();
     return grosParisGagnants.any((g) {
       final sameCourse = g.courseKey.trim() == keyClean;
-      final sameType   = g.typePari.trim().toLowerCase() == typeClean;
       final sourceOk   = g.source == 'grosParisSurveiller' ||
                          g.source == 'Gros Paris à surveiller';
-      return sameCourse && sameType && sourceOk;
+      return sameCourse && sourceOk;
     });
   }
 
