@@ -4386,6 +4386,27 @@ class IaMemoryService extends ChangeNotifier {
   ///
   /// N'agit que sur la journée en cours.
   Future<int> recreerPronosticsManquants(List<ZtReunion> reunions) async {
+    // ★ v10.86 — D2/H1 : se comporter comme les trois autres écrivains.
+    //
+    // `enregistrerPronostic()` (l.1700), `enregistrerPronosticsBatch()`
+    // (l.1775) et `invaliderEtRecalculer()` (l.1875) commencent tous par
+    // `await _load()`. Cette méthode ne le faisait pas.
+    //
+    // Or `recharger()` — appelé par la restauration de sauvegarde
+    // (backup_service.dart:1111) — exécute :
+    //     _loaded = false;  _pronostics.clear();  ... await _load();
+    // Pendant cet `await`, `_pronostics` est VIDE et `_loaded` est false.
+    //
+    // Sans ce verrou, une recréation lancée dans cette fenêtre insérait ses
+    // pronostics dans la liste vide, puis `_save()` réécrivait le disque à
+    // partir de cette même liste : les créations étaient perdues et le
+    // message « ✅ N pronostic(s) recréé(s) » était mensonger.
+    //
+    // `_load()` est idempotent et déjà protégé contre les appels concurrents
+    // par `_loadCompleter` (l.1312) : sur le chemin normal il retourne
+    // immédiatement. Aucune règle métier n'est modifiée ici.
+    await _load();
+
     int nbCrees = 0;
     final now = DateTime.now();
     final todayStr = '${now.day.toString().padLeft(2, '0')}'
