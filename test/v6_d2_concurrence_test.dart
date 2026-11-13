@@ -292,17 +292,30 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  D2/H8 — Le chemin AUTO (`enregistrerPronosticsBatch`) n'a AUCUN filtre
-  //  de date, contrairement à la recréation depuis l'écran IA.
+  //  D2/H8 — Le chemin AUTO et la recréation n'appliquent PAS la même règle
+  //  de date, et c'est DÉLIBÉRÉ.
   //
-  //  • recreerPronosticsManquants()  filtre `'$dj$dm${dep.year}' != todayStr`
-  //    → ignore les courses des autres jours.
-  //  • enregistrerPronosticsBatch()  ne filtre RIEN.
+  //  ── HISTORIQUE DE CE TEST (traçabilité) ──────────────────────────────
+  //  Version d'origine (commit ffcf8a8) : elle exigeait
+  //      expect(accepteParAuto != null, refuseParEcran != null)
+  //  c'est-à-dire l'ÉGALITÉ des deux comportements, avec le motif
+  //  « les deux chemins doivent appliquer la MÊME règle de date ».
   //
-  //  Conséquence : un refresh automatique remplit la mémoire avec des
-  //  courses d'autres jours. `_calculerManquants()` (écran IA) ne compte
-  //  qu'une seule date → l'écran peut afficher « tout est en mémoire »
-  //  tandis que la mémoire contient surtout des courses étrangères.
+  //  Cette assertion était correcte à l'époque : elle documentait un défaut
+  //  réel (aucun garde-fou n'existait, les deux chemins divergeaient par
+  //  accident). Elle est devenue INCORRECTE après D2/H8, parce que la
+  //  divergence a été décidée, pas subie :
+  //
+  //   • enregistrerPronosticsBatch() — refresh automatique — DOIT accepter
+  //     hier, aujourd'hui et demain (programme PMU publié la veille).
+  //     L'utilisateur a explicitement interdit de le modifier.
+  //   • recreerPronosticsManquants() — action manuelle de l'écran — DOIT
+  //     refuser une journée passée : recréer aujourd'hui un pronostic daté
+  //     d'hier, avec les poids et ELO actuels, produirait un faux
+  //     « pronostic historique » jamais affiché avant la course.
+  //
+  //  Le test n'est donc pas supprimé : son scénario est conservé et ses
+  //  assertions vérifient désormais les règles VALIDÉES.
   // ═══════════════════════════════════════════════════════════════════════
   test('V6/D2/H8 — le chemin auto accepte les courses d\'autres jours, la '
       'recréation non', () async {
@@ -310,6 +323,9 @@ void main() {
     //  (hier = hors « aujourd'hui » mais dans la fenêtre de 90 jours, donc
     //   aucune purge ne vient fausser la mesure)
     final hier = _dateRelative(1);
+    final auj  = _dateRelative(0);
+    final demain = _dateRelative(-1);
+
     final reunionEtrangere = _reunion(code: 'R2', nbCourses: 1, date: hier);
     final courseEtrangere = reunionEtrangere.courses.first;
     final keyEtrangere = _courseKey('2', courseEtrangere.numCourse, hier);
@@ -332,23 +348,100 @@ void main() {
     print('  [D2/H8] batch auto a accepté $keyEtrangere : '
         '${accepteParAuto != null}');
 
-    // ── Chemin ÉCRAN : même course, jour étranger ───────────────────────
+    // ── RÈGLE 1 : le batch automatique conserve plusieurs dates ──────────
+    expect(accepteParAuto, isNotNull,
+        reason: 'le refresh automatique DOIT accepter une course d\'hier '
+            '(programme publié la veille) — décision validée D2/H8');
+
+    // On ajoute une course d'aujourd'hui : le batch doit savoir coexister
+    // avec plusieurs journées sans en supprimer aucune.
+    final reunionAuj = _reunion(code: 'R3', nbCourses: 1, date: auj);
+    final courseAuj = reunionAuj.courses.first;
+    final keyAuj = _courseKey('3', courseAuj.numCourse, auj);
+    final (pcA, scA) =
+        IaPronosticEngine.analyserCourseAvecCriteres(courseAuj);
+    await IaMemoryService.instance.enregistrerPronosticsBatch([
+      {
+        'courseKey': keyAuj,
+        'course': courseAuj,
+        'partantsClasses': pcA,
+        'scoresCriteres': scA,
+        'confiance': courseAuj.confianceIA,
+        'typePariConseille': 'Quinté+',
+      },
+    ]);
+
+    final apresAuto = IaMemoryService.instance.pronostics
+        .map((p) => p.courseKey)
+        .toSet();
+    // ignore: avoid_print
+    print('  [D2/H8] après 2 batchs : ${apresAuto.length} pronostics — '
+        'hier=${apresAuto.contains(keyEtrangere)} '
+        'aujourd\'hui=${apresAuto.contains(keyAuj)}');
+
+    expect(apresAuto.contains(keyEtrangere), isTrue,
+        reason: 'RÈGLE 1 : le batch auto conserve la journée d\'hier');
+    expect(apresAuto.contains(keyAuj), isTrue,
+        reason: 'RÈGLE 1 : le batch auto conserve aussi la journée du jour');
+    expect(apresAuto.length, greaterThanOrEqualTo(2),
+        reason: 'RÈGLE 4 : aucun pronostic existant n\'est supprimé');
+
+    // ── RÈGLE 2 : la recréation REFUSE une date passée ──────────────────
     SharedPreferences.setMockInitialValues(_prefsVides());
     await IaMemoryService.instance.recharger();
-    await IaMemoryService.instance.recreerPronosticsManquants(
-        [_reunion(code: 'R2', nbCourses: 1, date: hier)]);
+
+    final creePasse = await IaMemoryService.instance.recreerPronosticsManquants(
+      [_reunion(code: 'R2', nbCourses: 1, date: hier)],
+      dateCible: DateTime(
+          int.parse(hier.substring(4)),
+          int.parse(hier.substring(2, 4)),
+          int.parse(hier.substring(0, 2))),
+    );
     final refuseParEcran = IaMemoryService.instance.getPronostic(keyEtrangere);
 
     // ignore: avoid_print
-    print('  [D2/H8] recreerPronosticsManquants a créé $keyEtrangere : '
-        '${refuseParEcran != null}');
+    print('  [D2/H8] recreerPronosticsManquants(dateCible=hier) → '
+        'créés=$creePasse, créé=${refuseParEcran != null}');
 
-    // ── Le désalignement est le défaut : les deux doivent s'accorder ─────
-    expect(accepteParAuto != null, refuseParEcran != null,
-        reason: 'les deux chemins doivent appliquer la MÊME règle de date. '
-            'Actuellement le batch auto accepte tout tandis que la recréation '
-            'ne traite que le jour courant → la mémoire et le compteur de '
-            'l\'écran IA divergent.');
+    expect(creePasse, 0,
+        reason: 'RÈGLE 2 : la recréation refuse une journée passée');
+    expect(refuseParEcran, isNull,
+        reason: 'RÈGLE 2 : aucun pronostic historique ne doit être fabriqué');
+
+    // ── RÈGLE 3 : elle ACCEPTE aujourd'hui et demain ─────────────────────
+    int creeAuj = 0, creeDemain = 0;
+    if (auj != hier) {
+      creeAuj = await IaMemoryService.instance.recreerPronosticsManquants(
+        [_reunion(code: 'R3', nbCourses: 1, date: auj)],
+        dateCible: DateTime(
+            int.parse(auj.substring(4)),
+            int.parse(auj.substring(2, 4)),
+            int.parse(auj.substring(0, 2))),
+      );
+    }
+    creeDemain = await IaMemoryService.instance.recreerPronosticsManquants(
+      [_reunion(code: 'R4', nbCourses: 1, date: demain)],
+      dateCible: DateTime(
+          int.parse(demain.substring(4)),
+          int.parse(demain.substring(2, 4)),
+          int.parse(demain.substring(0, 2))),
+    );
+
+    // ignore: avoid_print
+    print('  [D2/H8] recréation aujourd\'hui=$creeAuj demain=$creeDemain');
+
+    expect(creeAuj, 1, reason: 'RÈGLE 3 : aujourd\'hui est accepté');
+    expect(creeDemain, 1,
+        reason: 'RÈGLE 3 : demain est accepté (programme anticipé)');
+
+    // ── RÈGLE 4 : rien n'a été supprimé au passage ───────────────────────
+    final finales = IaMemoryService.instance.pronostics
+        .map((p) => p.courseKey)
+        .toSet();
+    // ignore: avoid_print
+    print('  [D2/H8] mémoire finale : ${finales.length} pronostics');
+    expect(finales.length, 2,
+        reason: 'RÈGLE 4 : uniquement aujourd\'hui et demain, aucune perte');
   });
 
   // ═══════════════════════════════════════════════════════════════════════

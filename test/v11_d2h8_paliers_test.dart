@@ -399,13 +399,21 @@ void main() {
     expect(src.contains('bool _dateAnalyseAutomatique = true;'), isTrue,
         reason: '_dateAnalyseAutomatique doit exister');
 
-    final iLoadStats = src.indexOf('void _loadStats()');
-    expect(iLoadStats, greaterThan(-1));
-    final blocLoadStats = src.substring(
-        iLoadStats, (iLoadStats + 1400).clamp(0, src.length));
-    expect(blocLoadStats.contains('_dateAnalyseAutomatique'), isTrue,
-        reason: 'le recalage doit être dans _loadStats()');
-    expect(blocLoadStats.contains('_dateAnalyse = n;'), isTrue,
+    // ★ v10.89 : le recalage vit désormais dans `_loadStatsTravail()`, appelé
+    // par `_loadStats()` → `_loadStatsCorps()`. On isole le corps réel plutôt
+    // que de fenêtrer sur N caractères (une fenêtre fixe casse au moindre
+    // ajout de commentaire — c'est ce qui s'est produit avec le verrou).
+    final iTravail = src.indexOf('Future<void> _loadStatsTravail() async');
+    expect(iTravail, greaterThan(-1),
+        reason: 'le corps de _loadStats doit exister');
+    final iSync = src.indexOf('await _syncTrackedCoursesToIa();');
+    expect(iSync, greaterThan(iTravail),
+        reason: 'la sync doit suivre le recalage dans le même corps');
+    final blocCorps = src.substring(iTravail, iSync);
+
+    expect(blocCorps.contains('_dateAnalyseAutomatique'), isTrue,
+        reason: 'le recalage doit être dans le corps de _loadStats()');
+    expect(blocCorps.contains('_dateAnalyse = n;'), isTrue,
         reason: 'la date doit être réassignée');
 
     final iChoisir = src.indexOf('Future<void> _choisirDateAnalyse()');

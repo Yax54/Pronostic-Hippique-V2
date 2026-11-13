@@ -8,6 +8,7 @@
 //   • Historique de vos paris et résultats
 // ═══════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';   // ★ v10.89 : unawaited()
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -53,7 +54,21 @@ class IaPerformanceScreen extends StatefulWidget {
 }
 
 class _IaPerformanceScreenState extends State<IaPerformanceScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  // ★ v10.89 — D2/H8 finalisation : l'écran est construit une seule fois
+  // (main.dart:267 `IndexedStack`) et reste monté toute la session.
+  // Sans observateur de cycle de vie, `_loadStats()` ne se rejouait jamais
+  // au retour au premier plan : `_dateAnalyse` restait figée sur la veille
+  // après minuit dès lors qu'aucun pronostic n'était écrit entre-temps
+  // (`recreerPronosticsManquants` ne notifie que si `nbCrees > 0`,
+  // `enregistrerPronosticsBatch` que si `nbAjoutes > 0`).
+  //
+  // L'observateur se contente de DÉCLENCHER la fonction existante : aucune
+  // règle métier n'est ajoutée ni modifiée ici.
+  //
+  // Limite assumée : une application laissée au premier plan toute la nuit
+  // ne repasse pas par `resumed` — ce cas est reporté à l'audit global
+  // (pas de `Timer` permanent).
   late TabController _tabCtrl;
   IaStats? _statsReelles;
 
@@ -118,6 +133,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     super.initState();
     IaPerformanceScreen._instance = this; // ★ v10.27 : raccourci calendrier
     _tabCtrl = TabController(length: 6, vsync: this);
+    // ★ v10.89 — D2/H8 : l'écran suit désormais le cycle de vie pour se
+    // recaler au retour au premier plan (voir didChangeAppLifecycleState).
+    WidgetsBinding.instance.addObserver(this);
     _loadStats();
     IaMemoryService.instance.addListener(_loadStats);
     // ★ v9.90 : _chargerPrefsBt() migré dans IaTabBacktesting.initState()
@@ -211,7 +229,53 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     }
   }
 
+  // ★ v10.89 — D2/H8 finalisation : garde-fou anti-réentrance de `_loadStats`.
+  //
+  // MESURÉ SUR LE CODE RÉEL : un seul déclenchement de `_loadStats()`
+  // produisait une chaîne auto-entretenue :
+  //   `_loadStats()`                    (listener de IaMemoryService, l.139)
+  //     → `_syncTrackedCoursesToIa()`   (l.286)
+  //       → `mettreAJourStatsTypes()`   (l.313, NON attendue)
+  //         → `notifyListeners()`       (ia_memory_service.dart:3873, INCONDITIONNEL)
+  //           → `_loadStats()`          → recommence
+  //
+  // ⚠ Deux formes ont été mesurées, et une seule protège :
+  //   • verrou SYNCHRONE autour d'un corps synchrone → 61 appels, boucle
+  //     toujours active : INOPÉRANT, car le verrou est relâché avant que
+  //     `notifyListeners()` (asynchrone) n'arrive ;
+  //   • verrou couvrant l'attente réelle de la chaîne → 1 seul appel.
+  //
+  // La correction retenue : `_loadStatsCorps()` devient asynchrone et
+  // `_syncTrackedCoursesToIa()` renvoie son `Future` pour être ATTENDU.
+  // Le verrou n'est donc relâché qu'une fois la notification consommée.
+  //
+  // Aucune règle métier n'est modifiée : `mettreAJourStatsTypes()` reçoit
+  // exactement la même liste, on change seulement le moment où l'on
+  // considère le rafraîchissement terminé.
+  bool _loadStatsEnCours = false;
+
   void _loadStats() {
+    // Déjà en cours (notification provoquée par notre propre écriture,
+    // ou `resumed` concurrent) : on ignore, pas d'empilement.
+    if (_loadStatsEnCours) return;
+    _loadStatsEnCours = true;
+
+    // Volontairement non attendu par les appelants synchrones du framework
+    // (`initState`, `notifyListeners`, `didChangeAppLifecycleState`) : on
+    // garde le comportement d'origine (aucun blocage de l'UI).
+    unawaited(_loadStatsCorps());
+  }
+
+  Future<void> _loadStatsCorps() async {
+    try {
+      await _loadStatsTravail();
+    } finally {
+      // Relâché APRÈS la chaîne asynchrone : c'est tout l'intérêt du verrou.
+      _loadStatsEnCours = false;
+    }
+  }
+
+  Future<void> _loadStatsTravail() async {
     // ★ v10.88 — D2/H8 palier 3 : recalage après minuit.
     //
     // `_dateAnalyse` est initialisée à `DateTime.now()` une seule fois,
@@ -232,7 +296,14 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     _calculerManquants();
     if (!mounted) return;
     // ── Alimenter l'IA depuis tous les paris TrackedCourse résolus (isGagne != null) ──
-    _syncTrackedCoursesToIa();
+    // ★ v10.89 — ATTENDU : c'est cette attente qui rend le verrou efficace.
+    // Sans elle, `notifyListeners()` arrive après le relâchement du verrou et
+    // la boucle se reforme (mesuré : 61 appels).
+    await _syncTrackedCoursesToIa();
+    // ★ v10.89 — indispensable : l'`await` ci-dessus laisse passer du temps
+    // réel, l'écran peut avoir été détruit entre-temps. Avant cette version
+    // l'appel était fire-and-forget, donc `setState` suivait immédiatement.
+    if (!mounted) return;
     setState(() {
       _statsReelles = IaMemoryService.instance.calculerStats();
     });
@@ -240,7 +311,10 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
   /// Synchronise les paris suivis (TrackedCourse) avec les stats IA.
   /// Tous les paris avec un résultat connu (isGagne != null) sont transmis.
-  void _syncTrackedCoursesToIa() {
+  ///
+  /// ★ v10.89 — renvoie son `Future` pour que l'appelant puisse l'attendre.
+  /// Le corps est inchangé : seule la signature change.
+  Future<void> _syncTrackedCoursesToIa() async {
     final trackedCourses = widget.alertService.trackedCourses.values
         .where((tc) => tc.isGagne != null && (tc.miseEngagee ?? 0.0) > 0)
         .toList();
@@ -261,12 +335,31 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       };
     }).toList();
 
-    // Mise à jour asynchrone sans bloquer l'UI
-    IaMemoryService.instance.mettreAJourStatsTypes(predictions);
+    // Mise à jour asynchrone — ★ v10.89 : attendue par l'appelant, afin que
+    // le verrou de `_loadStats` couvre bien la notification qui en découle.
+    await IaMemoryService.instance.mettreAJourStatsTypes(predictions);
+  }
+
+  /// ★ v10.89 — D2/H8 finalisation : recalage au retour au premier plan.
+  ///
+  /// L'écran reste monté (main.dart:267 `IndexedStack`) : après un passage de
+  /// minuit en arrière-plan, `_dateAnalyse` désignait encore la veille.
+  /// `_loadStats()` contient déjà la règle de recalage (palier 3) ; il suffit
+  /// de l'appeler. Aucune règle métier n'est dupliquée ici.
+  ///
+  /// `resumed` est le seul état qui nous intéresse : `inactive`, `paused`,
+  /// `hidden` et `detached` ne doivent rien déclencher.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (!mounted) return;
+    _loadStats();
   }
 
   @override
   void dispose() {
+    // ★ v10.89 — D2/H8 : toujours retirer l'observateur (consigne explicite).
+    WidgetsBinding.instance.removeObserver(this);
     if (IaPerformanceScreen._instance == this) {
       IaPerformanceScreen._instance = null; // ★ v10.27
     }
