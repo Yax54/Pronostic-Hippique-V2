@@ -87,6 +87,20 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   // ★ v9.79 : Date d'analyse (défaut = aujourd'hui)
   DateTime _dateAnalyse = DateTime.now();
 
+  // ★ v10.88 — D2/H8 palier 3 : la date d'analyse suit-elle l'horloge ?
+  //
+  // `true` = l'utilisateur n'a pas choisi de date : `_dateAnalyse` doit
+  //          rester alignée sur le jour courant, y compris après minuit.
+  // `false` = une date a été choisie explicitement (via
+  //           `_choisirDateAnalyse()`) : on n'y touche plus.
+  //
+  // Ce drapeau n'a AUCUN appelant qui le mette à false aujourd'hui
+  // (`_choisirDateAnalyse()` est inutilisée), donc le comportement visible
+  // reste identique. Il existe pour que le recalage soit correct le jour
+  // où la sélection de date sera branchée — sinon on figerait une date
+  // choisie, ou on écraserait un choix utilisateur.
+  bool _dateAnalyseAutomatique = true;
+
   // ★ v9.88 : Statut fichiers analyse par jour (clé = 'JJMMAAAA', valeur = 'ok'|'partiel'|'absent')
   // ignore: unused_field
   Map<String, String> _statutFichiers = {};
@@ -198,6 +212,22 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   }
 
   void _loadStats() {
+    // ★ v10.88 — D2/H8 palier 3 : recalage après minuit.
+    //
+    // `_dateAnalyse` est initialisée à `DateTime.now()` une seule fois,
+    // dans l'état. Si l'écran reste monté pendant le passage de minuit,
+    // elle désigne encore la veille : le comptage porte alors sur une
+    // journée terminée pendant que la recréation, elle, viserait la
+    // nouvelle journée. On réaligne tant que l'utilisateur n'a pas
+    // choisi de date (`_dateAnalyseAutomatique`).
+    if (_dateAnalyseAutomatique) {
+      final n = DateTime.now();
+      if (n.year != _dateAnalyse.year ||
+          n.month != _dateAnalyse.month ||
+          n.day != _dateAnalyse.day) {
+        _dateAnalyse = n;
+      }
+    }
     // ★ v9.6 : Calculer les pronostics manquants
     _calculerManquants();
     if (!mounted) return;
@@ -293,19 +323,42 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
     try {
       final svc = DataRefreshService.instance;
+      // ★ v10.88 — D2/H8 palier 2 : compter ET recréer sur la MÊME date.
+      //
+      // `_calculerManquants()` (l.253) compte les manquants sur
+      // `_dateAnalyse`. La recréation, elle, utilisait `DateTime.now()`
+      // en interne. Deux journées différentes pouvaient donc être en jeu
+      // (typiquement au passage de minuit) : l'écran annonçait N manquants
+      // sur une journée, la recréation en créait sur une autre, et le
+      // compteur ne descendait jamais — malgré le message de succès.
+      //
+      // On transmet désormais explicitement la date affichée.
+      // Le service refuse les dates passées (garde-fou règle 3) : le
+      // message doit donc le dire, au lieu d'annoncer un faux succès.
       final nbCrees = await IaMemoryService.instance
-          .recreerPronosticsManquants(svc.reunions);
+          .recreerPronosticsManquants(svc.reunions, dateCible: _dateAnalyse);
 
       _calculerManquants();
 
       if (mounted) {
+        final now = DateTime.now();
+        final jourAffiche =
+            DateTime(_dateAnalyse.year, _dateAnalyse.month, _dateAnalyse.day);
+        final jourAuj = DateTime(now.year, now.month, now.day);
+        final datePassee = jourAffiche.isBefore(jourAuj);
+
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(nbCrees > 0
               ? '✅ $nbCrees pronostic(s) recréé(s) avec succès !'
-              : '✅ Tous les pronostics étaient déjà en mémoire'),
+              : datePassee
+                  ? 'Date passée : recréation non autorisée '
+                      '(aucune fabrication rétroactive)'
+                  : '✅ Tous les pronostics étaient déjà en mémoire'),
           backgroundColor: nbCrees > 0
               ? const Color(0xFF1B5E20)
-              : const Color(0xFF1A3A5C),
+              : datePassee
+                  ? const Color(0xFF5D4037)
+                  : const Color(0xFF1A3A5C),
           duration: const Duration(seconds: 3),
           behavior: SnackBarBehavior.floating,
         ));
@@ -453,7 +506,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       ),
     );
     if (picked != null && mounted) {
-      setState(() => _dateAnalyse = picked);
+      setState(() {
+        _dateAnalyse = picked;
+        // ★ v10.88 — D2/H8 : une date choisie ne doit plus être réalignée
+        // sur l'horloge au prochain rafraîchissement.
+        _dateAnalyseAutomatique = false;
+      });
       _calculerManquants();
     }
   }
@@ -4517,6 +4575,14 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     final memoireVide  = _nbTotal > 0 && _nbManquants == _nbTotal;
     final partial      = _nbManquants > 0 && !memoireVide;
 
+    // ★ v10.88 — D2/H8 palier 2 : le bouton ne doit pas promettre une
+    // recréation que le service va refuser. Si la date affichée est passée,
+    // on le signale au lieu d'afficher « N manquant(s) — Recréer ».
+    final horlogeB = DateTime.now();
+    final dateAfficheePassee = DateTime(
+            _dateAnalyse.year, _dateAnalyse.month, _dateAnalyse.day)
+        .isBefore(DateTime(horlogeB.year, horlogeB.month, horlogeB.day));
+
     // Couleurs selon l'état
     final Color couleurPrincipale;
     final Color couleurBord;
@@ -4530,6 +4596,13 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       couleurTexte      = const Color(0xFF1DE585);
       label             = 'Pronostics en mémoire ($_nbTotal/$_nbTotal)';
       emoji             = '✅';
+    } else if (dateAfficheePassee && _nbManquants > 0) {
+      // Le service refuse les dates passées : inutile de proposer l'action
+      couleurPrincipale = const Color(0xFF2D1800);
+      couleurBord       = const Color(0xFF8D6E63);
+      couleurTexte      = const Color(0xFFBCAAA4);
+      label             = 'Date passée : recréation non autorisée';
+      emoji             = '🔒';
     } else if (memoireVide) {
       couleurPrincipale = const Color(0xFF3D0A0A);
       couleurBord       = const Color(0xFFFF4444);
@@ -4551,7 +4624,10 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       emoji             = '🔄';
     }
 
-    final peutCliquer = !tousPresents && !_recreationEnCours && _nbTotal > 0;
+    final peutCliquer = !tousPresents &&
+        !_recreationEnCours &&
+        _nbTotal > 0 &&
+        !dateAfficheePassee; // ★ v10.88 — D2/H8 : pas de recréation passée
 
     return GestureDetector(
       onTap: peutCliquer ? _recreerPronostics : null,

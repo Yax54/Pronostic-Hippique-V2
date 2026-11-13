@@ -95,6 +95,11 @@ class IaMemoryService extends ChangeNotifier {
   static const _maxPronostics   = 600;
   // ★ Lot 4 : Compression + purge automatique
   static const _maxPronosticsAge = 90;    // purger les pronostics > 90 jours sans résultat
+  // ★ v10.88 — D2/H8 : garde-fou contre la fabrication rétroactive.
+  // Passer à true UNIQUEMENT sur décision explicite de l'utilisateur :
+  // cela autoriserait la création de pronostics datés du passé avec les
+  // poids et ELO actuels, en les présentant comme des prédictions d'origine.
+  static const bool _autoriserRecerationPasse = false;
   static const _useCompression   = true;  // activer gzip sur les listes longues
   static const _compressionKey   = 'ia_pronostics_v2_gz'; // clé des données compressées
   static const _maxJournal      = 500;  // ★ v9.91 : monté de 300 → 500
@@ -4405,8 +4410,16 @@ class IaMemoryService extends ChangeNotifier {
   /// par l'apprentissage. Ce n'est pas une récupération des critères
   /// d'origine mais un RECALCUL : le classement peut donc changer.
   ///
-  /// N'agit que sur la journée en cours.
-  Future<int> recreerPronosticsManquants(List<ZtReunion> reunions) async {
+  /// N'agit que sur la journée cible (`dateCible`, défaut : aujourd'hui).
+  ///
+  /// ★ v10.88 — D2/H8 : `dateCible` permet à l'écran de recréer la journée
+  /// qu'il affiche, au lieu d'une journée figée sur l'horloge. Les journées
+  /// passées sont REFUSÉES (garde-fou `_autoriserRecerationPasse`) pour
+  /// éviter toute fabrication rétroactive de pronostic historique.
+  Future<int> recreerPronosticsManquants(
+    List<ZtReunion> reunions, {
+    DateTime? dateCible,
+  }) async {
     // ★ v10.86 — D2/H1 : se comporter comme les trois autres écrivains.
     //
     // `enregistrerPronostic()` (l.1700), `enregistrerPronosticsBatch()`
@@ -4429,9 +4442,49 @@ class IaMemoryService extends ChangeNotifier {
     await _load();
 
     int nbCrees = 0;
-    final now = DateTime.now();
-    final todayStr = '${now.day.toString().padLeft(2, '0')}'
-        '${now.month.toString().padLeft(2, '0')}${now.year}';
+
+    // ★ v10.88 — D2/H8 palier 1 : date cible explicite.
+    //
+    // Avant : `final now = DateTime.now(); final todayStr = ...` —
+    // la méthode ne savait travailler que sur « aujourd'hui ».
+    // L'écran IA Stats, lui, comptait les manquants sur `_dateAnalyse`.
+    // Les deux dates pouvaient donc désigner deux journées différentes
+    // (typiquement au passage de minuit) : l'écran annonçait N manquants
+    // sur une journée et la recréation en créait sur une autre, si bien
+    // que le compteur ne descendait jamais.
+    //
+    // `dateCible` est OPTIONNEL et vaut `DateTime.now()` par défaut :
+    // l'appelant historique (ia_performance_screen.dart:297) qui ne passe
+    // rien conserve exactement le comportement d'avant.
+    final DateTime cible = dateCible ?? DateTime.now();
+    final cibleStr = '${cible.day.toString().padLeft(2, '0')}'
+        '${cible.month.toString().padLeft(2, '0')}${cible.year}';
+
+    // ── GARDE-FOU — aucune fabrication rétroactive de pronostic ───────────
+    //
+    // Un pronostic recréé porte `datePronostic` = date de la COURSE (prouvé
+    // en V7/H8-E), pas la date du calcul. Créer aujourd'hui un pronostic
+    // daté d'hier, avec les poids et les ELO actuels, produirait exactement
+    // le mensonge que l'utilisateur refuse : un « pronostic historique »
+    // qui n'a jamais été affiché avant la course.
+    //
+    // `_autoriserRecerationPasse` est une constante privée à false.
+    // Elle ne s'active qu'en un seul endroit, sur décision explicite.
+    // Ce garde-fou ne bloque AUCUNE lecture : `analyseJourneeComplete()`
+    // et `relancerRecuperationPMU()` continuent d'exploiter les pronostics
+    // passés déjà présents en mémoire (mesuré en V8/R10).
+    if (!_autoriserRecerationPasse) {
+      final auj = DateTime.now();
+      final jourCible = DateTime(cible.year, cible.month, cible.day);
+      final jourAuj = DateTime(auj.year, auj.month, auj.day);
+      if (jourCible.isBefore(jourAuj)) {
+        if (kDebugMode) {
+          debugPrint('[IA] Recréation refusée : $cibleStr est une date passée '
+              '(aucune fabrication rétroactive de pronostic).');
+        }
+        return 0; // aucun calcul, aucune écriture, aucun _save()
+      }
+    }
 
     for (final reunion in reunions) {
       final code = reunion.code;
@@ -4446,8 +4499,8 @@ class IaMemoryService extends ChangeNotifier {
         final dj = dep.day.toString().padLeft(2, '0');
         final dm = dep.month.toString().padLeft(2, '0');
 
-        // ★ Uniquement la journée en cours
-        if ('$dj$dm${dep.year}' != todayStr) continue;
+        // ★ Uniquement la journée cible (défaut : aujourd'hui)
+        if ('$dj$dm${dep.year}' != cibleStr) continue;
 
         final courseKey = 'R${numR}C${course.numCourse}_$dj$dm${dep.year}';
 
