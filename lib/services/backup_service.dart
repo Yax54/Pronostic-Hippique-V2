@@ -123,6 +123,7 @@ import 'package:file_picker/file_picker.dart';
 import 'alert_service.dart'; // ★ v10.26d
 import 'elo_service.dart'; // ★ v8.0
 import 'ia_memory_service.dart'; // ★ v10.26c
+import 'ia_archive_service.dart'; // ★ E3
 import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
 import 'quasi_gros_paris_service.dart'; // ★ v10.72
 
@@ -131,7 +132,7 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '9.0'; // ★ v10.72 : +ia_quasi_gros_paris_v1 (Gros paris à surveiller + Quasi gagnants)
+  static const _backupVersion = '9.1'; // ★ E3 : +archiveIA (archive permanente des pronostics évincés)
 
   // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
@@ -518,6 +519,26 @@ class BackupService {
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] REP export partiel : $e');
+    }
+
+    // ── 🗄️ ARCHIVE HISTORIQUE IA ★ E3 ───────────────────────────────────────
+    // Archive permanente des pronostics évincés : manifeste + TOUS les shards
+    // mensuels (gzip+base64) + fiches détaillées complètes + les évictions dont
+    // l'écriture n'a pas encore été confirmée (sinon perdues au changement de
+    // téléphone). Lecture seule vis-à-vis de l'apprentissage : ni _poids, ni
+    // _seuils, aucun recalcul de pronostic.
+    try {
+      final archiveData = await IaArchiveService.instance.exporterPourBackup();
+      data['archiveIA'] = archiveData;
+      if (kDebugMode) {
+        debugPrint('[Backup] ARC -> ${archiveData['nbShards']} shard(s), '
+            '${archiveData['nbVersions']} version(s), '
+            '${archiveData['nbPredictions']} prédiction(s), '
+            '${archiveData['nbEnAttente']} en attente');
+      }
+    } catch (e) {
+      // Clé ABSENTE en cas d'échec = règle « local préservé » à la restauration.
+      if (kDebugMode) debugPrint('[Backup] ARC export partiel : $e');
     }
 
     // ── 🏇 ELO SERVICE ★ v8.0 ──────────────────────────────────────────────
@@ -1043,6 +1064,38 @@ class BackupService {
         }
       }
 
+      // ── 🗄️ ARCHIVE HISTORIQUE IA ★ E3 ─────────────────────────────────────
+      // EXIGENCES 3 et 4 :
+      //   • `archiveIA` PRÉSENTE  → FUSION PROTECTRICE (union par empreinte,
+      //     aucune suppression locale, aucune rétrogradation des fiches
+      //     complètes : voir IaArchiveService.restaurerDepuisBackup).
+      //   • `archiveIA` ABSENTE   → on ne touche À RIEN : archive locale intacte
+      //     (toutes les sauvegardes v ≤ 9.0 restent compatibles).
+      //   • clé mal typée         → même règle : local préservé.
+      if (data.containsKey('archiveIA')) {
+        try {
+          final brut = data['archiveIA'];
+          if (brut is Map<String, dynamic>) {
+            final res =
+                await IaArchiveService.instance.restaurerDepuisBackup(brut);
+            if (kDebugMode) {
+              debugPrint('[Backup] ARC restauration -> '
+                  '${res.shardsLus} shard(s) lus, '
+                  '${res.versionsAjoutees} version(s) ajoutée(s), '
+                  '${res.versionsDejaPresentes} doublon(s) évité(s), '
+                  '${res.predictionsAmelioreesLabel}');
+            }
+          } else if (kDebugMode) {
+            debugPrint('[Backup] archiveIA mal typée → local préservé');
+          }
+        } catch (e) {
+          if (kDebugMode) debugPrint('[Backup] ARC restauration partielle : $e');
+        }
+      } else if (kDebugMode) {
+        debugPrint('[Backup] archiveIA absent → archive locale préservée '
+            '(compat v<9.1)');
+      }
+
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes
       final backupVer  = data['version'] as String? ?? '1.0';
       final dateBackup = data['dateBackup'] as String? ?? '';
@@ -1294,13 +1347,24 @@ class BackupService {
   // ════════════════════════════════════════════════════════════════════════
 
   /// Efface uniquement la memoire IA (conserve les paris et le profil)
+  ///
+  /// ★ E3 : efface AUSSI l'archive historique, indissociable de la mémoire IA.
+  /// Les clés sont ÉNUMÉRÉES depuis le stockage (manifeste + tous les shards
+  /// réellement présents, y compris illisibles), jamais déduites.
   Future<void> reinitialiserIA() async {
     final prefs = await SharedPreferences.getInstance();
     for (final key in _keysIA) {
       await prefs.remove(key);
     }
+    final clesArchive =
+        await IaArchiveService.instance.enumererClesSurStockage();
+    for (final key in clesArchive) {
+      await prefs.remove(key);
+    }
+    await IaArchiveService.instance.effacerTout();
     if (kDebugMode) {
-      debugPrint('[Backup] IA reinitialisee (${_keysIA.length} cles effacees)');
+      debugPrint('[Backup] IA reinitialisee (${_keysIA.length} cles effacees '
+          '+ ${clesArchive.length} cles archive)');
     }
   }
 
@@ -1310,8 +1374,17 @@ class BackupService {
     for (final key in _toutesLesCles) {
       await prefs.remove(key);
     }
+    // ★ E3 : l'archive historique fait partie des données de l'application.
+    final clesArchive =
+        await IaArchiveService.instance.enumererClesSurStockage();
+    for (final key in clesArchive) {
+      await prefs.remove(key);
+    }
+    await IaArchiveService.instance.effacerTout();
     if (kDebugMode) {
-      debugPrint('[Backup] Reinitialisation complete (${_toutesLesCles.length} cles effacees)');
+      debugPrint('[Backup] Reinitialisation complete '
+          '(${_toutesLesCles.length} cles effacees '
+          '+ ${clesArchive.length} cles archive)');
     }
   }
 
