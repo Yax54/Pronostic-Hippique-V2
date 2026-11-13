@@ -80,8 +80,13 @@ class IaMemoryService extends ChangeNotifier {
   // ★ v10.38 : historique multi-jours {"entries":{"YYYY-MM-DD":[{courseKey,typePari,numeros}]}}
   // Chaque jour J, home_screen et best_bet_screen ajoutent leurs 5 entrées premium.
   // Le calendrier consulte l'historique pour tout jour passé.
-  // Purgé automatiquement après 90 jours.
+  //
+  // ★ E5 : plus AUCUNE purge temporelle — l'historique est conservé indéfiniment.
+  //   (avant E5 : « Purgé automatiquement après 90 jours »)
   static const _premiumHistoriqueKey = 'ia_premium_historique_v1';
+  // ★ E5 : cette constante n'est PLUS une limite de rétention. Elle ne sert plus
+  // qu'à borner la boucle de balayage arrière de calculerStreakPremium
+  // (« éviter boucle infinie »). Valeur et usage inchangés par E5.
   static const _premiumHistoriqueMaxJours = 90;
   // ★ v10.62 : Clé figeage des 5 widgets premium du jour (distincte de l'historique calendrier)
   // Format : {"YYYY-MM-DD": {"conseilJour": {...}, "meilleurPari": {...}, ...}}
@@ -4734,7 +4739,26 @@ class IaMemoryService extends ChangeNotifier {
 
   // ★ v10.38 : Enregistrer les pronostics premium dans l'historique multi-jours
   // Appelé depuis home_screen (Conseil IA + Meilleur Pari) et best_bet_screen (3 Best Bets).
-  // Stocke courseKey + typePari + numéros pour le jour J, conservé 90 jours.
+  // Stocke courseKey + typePari + numéros pour le jour J.
+  //
+  // ★ E5 : CONSERVATION PERMANENTE. La purge temporelle à 90 jours qui figurait
+  // ici a été retirée : les entrées premium déjà enregistrées sont désormais
+  // conservées indéfiniment, quels que soient leur âge.
+  //   • Aucune entrée existante n'est supprimée par cette fonction.
+  //   • Aucune entrée déjà purgée par le passé n'est reconstituée ni inventée :
+  //     seules les entrées encore présentes survivent.
+  //   • Les règles d'attribution des étoiles (_estPremiumExactGagnantStrict),
+  //     de la surbrillance or et de leur cumul (calculerStreakPremium) sont
+  //     strictement inchangées.
+  //   • _premiumHistoriqueMaxJours reste utilisé par calculerStreakPremium
+  //     (borne de balayage arrière) — voir plus bas, non modifié.
+  //   • La seule limite restante sur cet historique est la taille physique de
+  //     SharedPreferences.
+  //
+  // ⚠️ PORTÉE : E5 protège les données premium ; il ne rend PAS visibles les
+  //    étoiles antérieures à la fenêtre de _pronostics. L'affichage calendrier
+  //    recalcule l'étoile depuis _pronostics (600 entrées max, purge à 90 jours
+  //    des pronostics sans résultat) : cette partie relève de E2, non traitée ici.
   Future<void> enregistrerPronosticsPremiumDuJour(
       List<PremiumPronosticDuJour> nouveaux) async {
     final today = _todayKey();
@@ -4756,15 +4780,9 @@ class IaMemoryService extends ChangeNotifier {
     }
     _premiumHistorique[today] = entreeJour;
 
-    // Purger les entrées de plus de 90 jours
-    final cutoff = DateTime.now().subtract(
-        const Duration(days: _premiumHistoriqueMaxJours));
-    _premiumHistorique.removeWhere((dateStr, _) {
-      try {
-        final d = DateTime.parse(dateStr);
-        return d.isBefore(cutoff);
-      } catch (_) { return true; }
-    });
+    // ★ E5 : purge temporelle à 90 jours SUPPRIMÉE (voir en-tête de la méthode).
+    //   Les entrées des jours anciens ne sont plus effacées ici.
+    //   _premiumHistoriqueMaxJours n'intervient plus QUE dans calculerStreakPremium.
 
     // Persister l'historique complet
     await _sauvegarderPremiumHistorique();
