@@ -123,6 +123,7 @@ import 'package:file_picker/file_picker.dart';
 import 'alert_service.dart'; // ★ v10.26d
 import 'elo_service.dart'; // ★ v8.0
 import 'ia_memory_service.dart'; // ★ v10.26c
+import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
 import 'quasi_gros_paris_service.dart'; // ★ v10.72
 
 class BackupService {
@@ -491,6 +492,34 @@ class BackupService {
       if (kDebugMode) debugPrint('[Backup] GRO export partiel : $e');
     }
 
+    // ── 📊 Résultats des Gros Paris ★ v10.85 — B4 ──────────────────────────
+    // `pronostic_resultats_repository_v2` était DÉCLARÉE dans _keysGrosParis
+    // mais n'était JAMAIS collectée (aucune boucle _lireEntree ne parcourt
+    // cette liste) : résultats gagnants/perdants, ordre exact, numéros
+    // trouvés et dates des Gros Paris étaient donc perdus à la restauration.
+    // (PronosticResultatUtilisateur ne porte aucun champ monétaire :
+    //  ni montant ni mise — seulement gagnant/perdant, ordreExact,
+    //  nbTrouves/nbRequis, predictionIA, arriveePMUComplete, source.)
+    //
+    // Même approche qu'EloService : le repository expose déjà
+    // `exporterPourBackup()` / `restaurerDepuisBackup()` — on les utilise.
+    // Lecture seule ici : exporterPourBackup() ne fait que sérialiser _items,
+    // il ne modifie ni ne recalcule aucune donnée.
+    try {
+      final repoResultats =
+          PronosticResultatsRepository.instance.exporterPourBackup();
+      if (repoResultats.isNotEmpty) {
+        data['resultatsGrosParis'] = repoResultats;
+        if (kDebugMode) {
+          debugPrint('[Backup] REP -> '
+              '${repoResultats['nbResultats']} résultats '
+              '(${repoResultats['nbGagnants']} gagnants)');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Backup] REP export partiel : $e');
+    }
+
     // ── 🏇 ELO SERVICE ★ v8.0 ──────────────────────────────────────────────
     // Les ratings ELO sont gérés par EloService (pas des SharedPreferences
     // classiques) — on les exporte/importe via la méthode dédiée du service.
@@ -577,6 +606,151 @@ class BackupService {
       }
     }
     return nbRestaurees;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  ★ v10.84 — B1/B3 : choix de l'UNIQUE format de pronostics à conserver
+  //
+  //  Contexte du défaut (V5/T3, V5/T4b, V5/T11)
+  //  ────────────────────────────────────────────────────────────────────
+  //  Les pronostics sont stockés sous DEUX clés possibles :
+  //    • ia_pronostics_v2      → StringList JSON (format ancien)
+  //    • ia_pronostics_v2_gz   → String base64(gzip(json)) (format actuel)
+  //  `_save()` n'en laisse jamais qu'une, mais `_restaurerGroupe()` écrit
+  //  ce que contient le backup SANS supprimer la clé du format OPPOSÉ déjà
+  //  présente sur l'appareil. Résultat : les deux clés coexistent, et
+  //  `_load()` donnant la priorité au gzip (ia_memory_service.dart:1325),
+  //  la mémoire IA rechargeait l'ANCIEN jeu local au lieu de celui du
+  //  backup. Le résidu JSON pouvait aussi ressusciter via le `catch` de
+  //  `_load()` (l.1338) si le gzip devenait illisible.
+  //
+  //  Règle appliquée ici — une seule version, jamais de mélange :
+  //    • backup avec une seule clé        → cette clé gagne, l'autre est purgée
+  //    • backup avec les deux clés        → la PLUS RICHE gagne (nb pronostics),
+  //                                         à égalité le gzip (format actuel)
+  //    • backup sans aucune clé exploitable → on ne touche à RIEN
+  //      (restauration invalide ⇒ données locales préservées)
+  //
+  //  Aucune donnée de pronostic n'est lue, modifiée ou réécrite ici :
+  //  scores IA, 19 critères, résultats réels restent ceux du backup.
+  //  Ne touche ni aux poids, ni aux seuils, ni à l'apprentissage.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /// Compte les pronostics contenus dans un groupe `ia` de backup.
+  /// Retourne null si le groupe ne contient aucune version exploitable.
+  int? _compterPronosticsBackup(Map<String, dynamic>? groupeIA) {
+    if (groupeIA == null) return null;
+
+    int? lire(String cle) {
+      final raw = groupeIA[cle];
+      if (raw is! Map) return null;
+      final val = raw['value'];
+      if (val is List) return val.length;
+      if (val is String) {
+        // gzip+base64 : on décompresse réellement pour compter exactement.
+        if (cle.endsWith('_gz')) {
+          if (val.isEmpty) return null;
+          try {
+            final bytes = GZipCodec().decode(base64Decode(val));
+            final list = json.decode(utf8.decode(bytes));
+            return list is List ? list.length : null;
+          } catch (_) {
+            return null;
+          }
+        }
+        // StringList sérialisée en String (anciens formats)
+        try {
+          final list = json.decode(val);
+          return list is List ? list.length : null;
+        } catch (_) {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    final nbJson = lire('ia_pronostics_v2');
+    final nbGz   = lire('ia_pronostics_v2_gz');
+
+    if (nbJson == null && nbGz == null) return null;
+    if (nbJson == null) return nbGz;
+    if (nbGz == null)   return nbJson;
+    return nbJson > nbGz ? nbJson : nbGz;
+  }
+
+  /// Purge la clé de pronostics NON retenue, uniquement si le backup
+  /// contient un jeu exploitable. Retourne la clé conservée, ou null.
+  Future<String?> _choisirFormatPronostics(
+    SharedPreferences prefs,
+    Map<String, dynamic>? groupeIA,
+  ) async {
+    if (groupeIA == null) return null;
+
+    final aJson = groupeIA.containsKey('ia_pronostics_v2');
+    final aGz   = groupeIA.containsKey('ia_pronostics_v2_gz');
+
+    // Backup sans pronostics → ne jamais purger les données locales
+    if (!aJson && !aGz) {
+      if (kDebugMode) {
+        debugPrint('[Backup] Pronostics : aucun dans le backup → local préservé');
+      }
+      return null;
+    }
+
+    // Une seule version dans le backup → elle gagne sans ambiguïté
+    if (aGz && !aJson) {
+      await prefs.remove('ia_pronostics_v2');
+      if (kDebugMode) {
+        debugPrint('[Backup] Pronostics : gzip retenu, résidu JSON purgé');
+      }
+      return 'ia_pronostics_v2_gz';
+    }
+    if (aJson && !aGz) {
+      await prefs.remove('ia_pronostics_v2_gz');
+      if (kDebugMode) {
+        debugPrint('[Backup] Pronostics : JSON retenu, résidu gzip purgé');
+      }
+      return 'ia_pronostics_v2';
+    }
+
+    // ★ Backup HYBRIDE (les deux clés) → la plus riche gagne
+    final nbJson = _compterPronosticsBackup({'ia_pronostics_v2': groupeIA['ia_pronostics_v2']});
+    final nbGz   = _compterPronosticsBackup({'ia_pronostics_v2_gz': groupeIA['ia_pronostics_v2_gz']});
+
+    if (nbJson == null && nbGz == null) {
+      // Les deux versions sont illisibles → restaurer tel quel serait ambigu,
+      // et purger reviendrait à détruire les données locales.
+      if (kDebugMode) {
+        debugPrint('[Backup] Pronostics : 2 formats illisibles → local préservé');
+      }
+      return null;
+    }
+
+    final garderGz = nbGz != null && (nbJson == null || nbGz >= nbJson);
+    if (kDebugMode) {
+      debugPrint('[Backup] Pronostics : backup hybride '
+          '(JSON=${nbJson ?? 0}, gzip=${nbGz ?? 0}) → '
+          '${garderGz ? 'gzip' : 'JSON'} retenu');
+    }
+    return garderGz ? 'ia_pronostics_v2_gz' : 'ia_pronostics_v2';
+  }
+
+  /// Applique le choix : restaure uniquement la version retenue.
+  Future<int> _restaurerPronostics(
+    SharedPreferences prefs,
+    Map<String, dynamic>? groupeIA,
+  ) async {
+    final conservee = await _choisirFormatPronostics(prefs, groupeIA);
+    if (conservee == null) return 0;
+
+    final autre = conservee == 'ia_pronostics_v2_gz'
+        ? 'ia_pronostics_v2'
+        : 'ia_pronostics_v2_gz';
+
+    final nb = await _restaurerGroupe(prefs, {conservee: groupeIA![conservee]});
+    // Sécurité : ne purger qu'APRÈS avoir écrit la version retenue
+    await prefs.remove(autre);
+    return nb;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -718,9 +892,25 @@ class BackupService {
       int total = 0;
 
       // 🧠 Memoire IA
-      final nbIA = await _restaurerGroupe(prefs, data['ia'] as Map<String, dynamic>?);
+      // ★ v10.84 — B1/B3 : les pronostics sont restaurés à part, avec choix
+      // d'UN SEUL format (JSON ou gzip). Les autres clés IA continuent de
+      // passer par `_restaurerGroupe()` sans changement.
+      final groupeIA = data['ia'] as Map<String, dynamic>?;
+      Map<String, dynamic>? groupeIASansPronostics;
+      if (groupeIA != null) {
+        groupeIASansPronostics = Map<String, dynamic>.from(groupeIA);
+        groupeIASansPronostics.remove('ia_pronostics_v2');
+        groupeIASansPronostics.remove('ia_pronostics_v2_gz');
+      }
+
+      final nbIA = await _restaurerGroupe(prefs, groupeIASansPronostics);
       total += nbIA;
-      if (kDebugMode) debugPrint('[Backup] IA restauree : $nbIA cles');
+      final nbPronosticsRestaures = await _restaurerPronostics(prefs, groupeIA);
+      total += nbPronosticsRestaures;
+      if (kDebugMode) {
+        debugPrint('[Backup] IA restauree : $nbIA cles '
+            '(+ pronostics : $nbPronosticsRestaures)');
+      }
 
       // 🎯 Config Fusion
       final nbCfg = await _restaurerGroupe(prefs, data['configIA'] as Map<String, dynamic>?);
@@ -824,6 +1014,33 @@ class BackupService {
         try {
           await QuasiGrosParisService.instance.importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
         } catch (_) {}
+      }
+
+      // ── 📊 RÉSULTATS GROS PARIS ★ v10.85 — B4 ─────────────────────────────
+      // Rétrocompat : clé ABSENTE dans une ancienne sauvegarde → on ne touche
+      // à RIEN sur l'appareil (les résultats locaux sont préservés).
+      // Clé présente → le repository remplace sa liste par celle du backup,
+      // sans dédoublonnage ni recalcul (restaurerDepuisBackup fait clear+add).
+      if (data.containsKey('resultatsGrosParis')) {
+        try {
+          final brut = data['resultatsGrosParis'];
+          if (brut is Map<String, dynamic>) {
+            await PronosticResultatsRepository.instance
+                .restaurerDepuisBackup(brut);
+            if (kDebugMode) {
+              debugPrint('[Backup] REP -> '
+                  '${PronosticResultatsRepository.instance.tous.length} '
+                  'résultats restaurés');
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) debugPrint('[Backup] REP restauration partielle : $e');
+        }
+      } else {
+        if (kDebugMode) {
+          debugPrint('[Backup] resultatsGrosParis absent → local préservé '
+              '(compat v<10.85)');
+        }
       }
 
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes
