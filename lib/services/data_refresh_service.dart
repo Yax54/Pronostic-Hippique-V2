@@ -67,6 +67,13 @@ _BatchResult _calculerPronosticsBatch(_BatchPayload payload) {
     seuils = SeuilsConfianceAdaptatifs();
   }
 
+  // ★ v10.82 — D3 : restaurer les ELO dans l'isolate.
+  // Sans ceci, EloService.instance est une instance neuve (_ratings vide)
+  // et enrichirAvecElo() écrase eloRating avec le défaut 1500
+  // → critère M figé à 37.5 pour tous les chevaux.
+  // Lecture seule : aucune formule ELO n'est modifiée.
+  EloService.instance.chargerDepuisMapIsolate(payload.eloJson);
+
   final List<Map<String, dynamic>> nouveaux = [];
 
   for (final reunionJson in payload.reunionsJson) {

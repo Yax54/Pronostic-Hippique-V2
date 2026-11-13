@@ -266,6 +266,27 @@ class EloService {
     debugPrint('[EloService] ✅ Import backup : ${_ratings.length} ratings restaurés');
   }
 
+  /// ★ v10.82 — D3 : chargement SYNCHRONE depuis une Map JSON, sans
+  /// SharedPreferences (indisponible dans un isolate `compute()`).
+  ///
+  /// Lecture seule : ne sauvegarde rien, ne modifie aucun rating,
+  /// ne touche à aucune formule ELO. Utilisé exclusivement par
+  /// l'isolate de data_refresh_service.
+  ///
+  /// Sans ceci, dans un isolate, `EloService.instance` est une instance
+  /// neuve (`_ratings` vide) et `enrichirAvecElo()` écrase `eloRating`
+  /// avec le défaut 1500 → critère M figé à 37.5 pour tous les chevaux.
+  void chargerDepuisMapIsolate(Map<String, dynamic> data) {
+    _ratings.clear();
+    data.forEach((key, val) {
+      try {
+        _ratings[key] = EloScore.fromJson(val as Map<String, dynamic>);
+      } catch (_) {}
+    });
+    _charge = true;
+    debugPrint('[EloService/isolate] ✅ ${_ratings.length} ratings restaurés');
+  }
+
   Future<void> reinitialiser() async {
     _ratings.clear();
     await _sauvegarder();
