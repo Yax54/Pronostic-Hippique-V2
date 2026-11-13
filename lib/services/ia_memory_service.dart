@@ -3210,7 +3210,28 @@ class IaMemoryService extends ChangeNotifier {
             // diffMin 0..-30 : course en cours (< 30 min)  → "Course en cours"
             // diffMin < -30 : course terminée              → analyser
             final heureCourse = p.datePronostic;
-            final diffMin = heureCourse.difference(now).inMinutes;
+
+            // ★ v10.87 — A6-S : la référence temporelle du statut doit être
+            // l'HORLOGE RÉELLE, pas `now`.
+            //
+            // `now` vaut `date ?? DateTime.now()` (l.2993). Quand l'appelant
+            // demande une journée passée, `now` porte la DATE de cette journée
+            // mais conserve l'HEURE de l'appui. Exemple mesuré : rattrapage de
+            // J-2 lancé à 08h00 → now = J-2 à 08h00 ; une course de J-2 à 14h15
+            // donne diffMin = +375 → classée « à venir » et SAUTÉE, alors
+            // qu'elle a été courue il y a deux jours. Un rattrapage matinal
+            // perdait 100 % de la journée (8 courses sur 8).
+            //
+            // Corrigé : seule la référence du calcul change. Les trois
+            // conditions ci-dessous, y compris le délai de 30 minutes, sont
+            // strictement inchangées. `now` reste utilisé partout ailleurs
+            // dans la méthode (sélection du jour, rapport, quota atypique…).
+            //
+            // Aucun effet sur l'apprentissage : `_apprendreParGradient()`
+            // utilise déjà DateTime.now() en interne (l.2219) et n'a jamais
+            // lu ce `now`.
+            final _refTemporelle = DateTime.now();
+            final diffMin = heureCourse.difference(_refTemporelle).inMinutes;
             if (diffMin > 0) {
               // Course strictement future : départ pas encore arrivé
               nbCoursesFutures++;
