@@ -613,6 +613,92 @@ class IaMemoryService extends ChangeNotifier {
     }
     return result;
   }
+  /// ★ E2 — Filtre d'éligibilité calendrier : SOURCE UNIQUE (condition 3).
+  ///
+  /// Règles STRICTEMENT inchangées, appliquées à l'identique aux deux sources
+  /// (mémoire de travail et archive) :
+  ///   • le pronostic doit porter un résultat réel (`resultatsReels`) ;
+  ///   • sa `datePronostic` doit tomber dans le mois demandé ;
+  ///   • son `typePariConseille` doit être valide (non vide, ni « Inconnu »,
+  ///     ni « À surveiller »).
+  ///
+  /// Un pronostic NON RÉSOLU n'est donc jamais éligible : il ne peut jamais
+  /// créer de journée (condition 3).
+  ///
+  /// Retourne la date du pronostic s'il est éligible, `null` sinon.
+  DateTime? _dateCalendrierEligible(IaPronostic p, int annee, int mois) {
+    if (!p.resultatsReels) return null;
+    final d = p.datePronostic;
+    if (d.year != annee || d.month != mois) return null;
+    final type = p.typePariConseille ?? '';
+    if (type.isEmpty || type == 'Inconnu' || type == 'À surveiller') return null;
+    return d;
+  }
+
+  /// ★ E2 — Pronostics éligibles du mois : MÉMOIRE DE TRAVAIL **puis** ARCHIVE.
+  ///
+  /// Objectif : rendre visibles dans le calendrier les journées dont les
+  /// pronostics ont été évincés du blob de travail (plafond `_maxPronostics`
+  /// ou purge à 90 jours) mais qui subsistent dans l'archive mensuelle.
+  ///
+  /// Garanties (conditions 1, 2, 3, 7 de l'autorisation E2) :
+  ///   • MÉMOIRE PRIORITAIRE : toute course dont le `courseKey` figure dans
+  ///     `_pronostics` — y compris sous une forme non résolue ou non éligible —
+  ///     est EXCLUE de l'apport d'archive. Le résultat affiché pour une course
+  ///     déjà en mémoire est donc rigoureusement identique à avant E2 :
+  ///     mêmes pronostics, mêmes pourcentages, mêmes couleurs, mêmes étoiles.
+  ///   • AUCUN DOUBLON : l'apport d'archive est dédoublonné par `courseKey`.
+  ///   • UNE SEULE VERSION PAR COURSE : l'apport d'archive utilise
+  ///     `versionRetenue(courseKey)` (ordre d'autorité de `IaArchiveService`),
+  ///     jamais une version écartée, et ne crée donc jamais deux journées
+  ///     concurrentes.
+  ///   • RE-VÉRIFICATION APRÈS SÉLECTION : la version retenue est soumise au
+  ///     MÊME filtre d'éligibilité que la mémoire (une version retenue dont la
+  ///     date sortirait du mois affiché est ignorée).
+  ///   • LECTURE SEULE : l'archive n'est jamais écrite, jamais réintégrée, et
+  ///     `_pronostics` n'est jamais modifié (condition 7).
+  ///   • Si l'archive n'est pas encore chargée, `versionsDuMois` retourne une
+  ///     liste vide : la fonction dégénère exactement en l'ancien comportement.
+  List<IaPronostic> _pronosticsDuMoisFusionnes(int annee, int mois) {
+    final List<IaPronostic> resultat = [];
+
+    // ── 1. Mémoire de travail (prioritaire) ────────────────────────────────
+    // On note TOUTES les courses présentes, éligibles ou non : une course
+    // présente mais non résolue reste « présente » et bloque l'apport
+    // d'archive (condition 2).
+    final Set<String> clesEnMemoire = <String>{};
+    for (final p in _pronostics) {
+      clesEnMemoire.add(p.courseKey);
+      if (_dateCalendrierEligible(p, annee, mois) != null) {
+        resultat.add(p);
+      }
+    }
+
+    // ── 2. Archive (complète les courses ABSENTES uniquement) ──────────────
+    final String moisStr =
+        '$annee-${mois.toString().padLeft(2, '0')}';
+    final IaArchiveService archive = IaArchiveService.instance;
+    final Set<String> dejaAjoutees = <String>{};
+
+    for (final version in archive.versionsDuMois(moisStr)) {
+      final String cle = version.courseKey;
+      // Dédoublonnage de l'apport d'archive lui-même.
+      if (!dejaAjoutees.add(cle)) continue;
+      // Mémoire prioritaire : jamais de substitution.
+      if (clesEnMemoire.contains(cle)) continue;
+
+      // Une seule version par course : celle retenue par l'autorité.
+      final IaPronostic retenue = archive.versionRetenue(cle) ?? version;
+
+      // Même filtre que la mémoire, re-vérifié APRÈS sélection.
+      if (_dateCalendrierEligible(retenue, annee, mois) == null) continue;
+
+      resultat.add(retenue);
+    }
+
+    return resultat;
+  }
+
   /// ★ v10.25 : Données calendrier — agrège les pronostics résolus d'un mois donné
   /// par jour, et calcule le palier de couleur selon la logique typePariConseille.
   ///
@@ -624,14 +710,18 @@ class IaMemoryService extends ChangeNotifier {
   ///  ROUGE   : taux < 20%
   ///  GRIS    : aucune course ce jour
   ///
+  /// ★ E2 : la source n'est plus `_pronostics` seul mais
+  /// [\_pronosticsDuMoisFusionnes] (mémoire prioritaire + complément d'archive
+  /// en lecture seule). Les filtres, les pourcentages, les paliers, la règle
+  /// OR et la règle ⭐ sont inchangés.
+  ///
   /// Retourne Map<jourDuMois, DonneeJourCalendrier>
   Map<int, DonneeJourCalendrier> donneesCalendrierJour(int annee, int mois) {
     final Map<int, _AgregJourCal> aggr = {};
 
-    for (final p in _pronostics) {
-      if (!p.resultatsReels) continue;
-      final d = p.datePronostic;
-      if (d.year != annee || d.month != mois) continue;
+    for (final p in _pronosticsDuMoisFusionnes(annee, mois)) {
+      final d = _dateCalendrierEligible(p, annee, mois);
+      if (d == null) continue;
 
       final type = p.typePariConseille ?? '';
       if (type.isEmpty || type == 'Inconnu' || type == 'À surveiller') continue;

@@ -300,16 +300,74 @@ class IaArchiveService extends ChangeNotifier {
   //  CHARGEMENT (idempotent, sûr en concurrence)
   // ═══════════════════════════════════════════════════════════════════════
 
+  /// ★ E2 — vrai lorsque les shards sont réellement disponibles en mémoire.
+  /// Distinct de `_charge` qui n'est mis à `true` qu'après un chargement
+  /// RÉUSSI : un échec laisse `_charge = false` et autorise une nouvelle
+  /// tentative (condition 6 de l'autorisation E2).
+  bool get archiveDisponible => _charge;
+
+  /// Dernière erreur de chargement (null si le dernier chargement a réussi).
+  String? derniereErreurChargement;
+
+  /// ★ E2 — Chargement public destiné à l'affichage (calendrier).
+  ///
+  /// Garanties (condition 6) :
+  ///   • AUCUN chargement concurrent : deux appels simultanés partagent la
+  ///     même `_loadCompleter` (idempotence déjà assurée par `_load`).
+  ///   • NOTIFICATION APRÈS DISPONIBILITÉ RÉELLE : la notification est émise
+  ///     APRÈS la fin effective du chargement (jamais avant), et l'état publié
+  ///     est l'état RÉEL — `archiveDisponible` vaut `true` si les shards ont
+  ///     effectivement été chargés, `false` sinon. Un simple
+  ///     `notifyListeners()` dans un `finally` annoncerait « c'est fini » sans
+  ///     garantir que l'état soit exploitable ; ici l'écouteur peut toujours
+  ///     trancher sur `archiveDisponible`.
+  ///   • ÉCHEC RÉCUPÉRABLE : l'exception est absorbée, mémorisée dans
+  ///     [derniereErreurChargement], `_charge` reste `false` → l'appelant
+  ///     peut relancer [charger] et réussir. On notifie quand même (une fois)
+  ///     pour qu'un écouteur ayant déjà affiché l'état mémoire seul ne reste
+  ///     pas suspendu : il verra `archiveDisponible == false` et pourra
+  ///     proposer une nouvelle tentative.
+  Future<void> charger() async {
+    if (_charge) return;
+    // Un chargement est-il DÉJÀ piloté par un autre appelant ? Si oui, on
+    // attend le future partagé et on lui laisse l'unique notification.
+    final dejaEnCours = _loadCompleter != null;
+    try {
+      await _load();
+    } catch (e) {
+      // `_load` a déjà mémorisé l'erreur ; on la conserve pour l'affichage.
+      if (kDebugMode) {
+        debugPrint('[IaArchive] chargement en échec : $e');
+      }
+    }
+    if (dejaEnCours) return; // une seule notification par cycle de chargement
+    // Notification unique, post-chargement. `archiveDisponible` indique si les
+    // données sont réellement exploitables ; `derniereErreurChargement` est
+    // null en cas de succès, renseignée en cas d'échec.
+    notifyListeners();
+  }
+
   Future<void> _load() async {
     if (_charge) return;
     if (_loadCompleter != null) return _loadCompleter!.future;
-    _loadCompleter = Completer<void>();
+    final completer = Completer<void>();
+    _loadCompleter = completer;
     try {
       await _chargerDepuisStockage();
       _charge = true;
-    } finally {
-      _loadCompleter!.complete();
+      derniereErreurChargement = null;
+      completer.complete();
       _loadCompleter = null;
+    } catch (e) {
+      // ★ E2 : l'échec est mémorisé et l'exception remonte à l'appelant
+      // initiateur — un export/restauration ne doit JAMAIS continuer
+      // silencieusement sur une archive incomplète. `_charge` reste `false`,
+      // donc une nouvelle tentative est possible. Les appelants concurrents
+      // reçoivent une complétion normale mais constatent `_charge == false`.
+      derniereErreurChargement = e.toString();
+      completer.complete();
+      _loadCompleter = null;
+      rethrow;
     }
   }
 
@@ -437,6 +495,8 @@ class IaArchiveService extends ChangeNotifier {
     cyclesEchecConsecutifs = 0;
     alerteMemoireArchive = false;
     derniereVerificationArchive = null;
+    // ★ E2 : l'erreur de chargement fait partie de l'état RAM remis à zéro.
+    derniereErreurChargement = null;
   }
 
   /// Simule un redémarrage : vide l'état RAM, puis relit le stockage.
@@ -444,6 +504,15 @@ class IaArchiveService extends ChangeNotifier {
   Future<void> reinitialiserMemoirePourTest() async {
     _resetInMemory();
     await _load();
+  }
+
+  /// ★ E2 — Vide l'état RAM SANS relire le stockage.
+  ///
+  /// Permet de tester le cycle réel `charger()` (aucun chargement préalable).
+  /// N'affecte aucun comportement de production : réservé aux tests.
+  @visibleForTesting
+  void oublierChargementPourTest() {
+    _resetInMemory();
   }
 
   /// Remise à zéro complète (mémoire + stockage) — utilisé par les tests.

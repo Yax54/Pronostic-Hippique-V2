@@ -20,6 +20,7 @@ import '../type_pari_badge.dart'; // ★ v10.30
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
+import '../../services/ia_archive_service.dart'; // ★ E2 — chargement de l'archive
 import '../../services/quasi_gros_paris_service.dart'; // ★ v10.72
 import '../../utils/source_pronostic_utils.dart';        // ★ v10.78
 import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
@@ -173,6 +174,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     _modeTabs = TabController(length: 2, vsync: this);
     _modeTabs.addListener(() => setState(() {}));
     IaMemoryService.instance.addListener(_onMemChange);
+    // ★ E2 : le calendrier s'abonne à l'archive et déclenche son chargement.
+    //   La méthode est idempotente et sûre en concurrence ; l'écouteur est
+    //   notifié une seule fois, APRÈS disponibilité réelle (ou après échec).
+    IaArchiveService.instance.addListener(_onArchiveDispo);
+    IaArchiveService.instance.charger();
     _chargerSeuils();
   }
 
@@ -180,6 +186,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   void dispose() {
     _modeTabs.dispose();
     IaMemoryService.instance.removeListener(_onMemChange);
+    IaArchiveService.instance.removeListener(_onArchiveDispo);
     super.dispose();
   }
 
@@ -192,6 +199,19 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) setState(() => _showRefreshFlash = false);
     });
+  }
+
+  /// ★ E2 — l'archive vient de finir de charger (succès ou échec) : on
+  /// reconstruit le calendrier pour faire apparaître les journées dont les
+  /// pronostics ne sont plus dans la mémoire de travail.
+  /// Aucune modification visuelle : simple `setState`.
+  ///
+  /// Condition 6 : si le chargement a échoué (`archiveDisponible == false`),
+  /// l'affichage reste celui de la mémoire de travail — jamais figé — et une
+  /// nouvelle tentative est possible via [IaArchiveService.charger].
+  void _onArchiveDispo() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   // ── Seuils dynamiques — chargement / sauvegarde ───────────────────────
