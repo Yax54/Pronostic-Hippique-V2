@@ -4373,11 +4373,18 @@ class IaMemoryService extends ChangeNotifier {
   /// Nombre de pronostics en mémoire
   int get pronosticsCount => _pronostics.length;
 
-  /// ★ v9.6 : Recréer les pronostics manquants — stratégie intelligente :
-  /// - Course déjà en mémoire          → ignorer
-  /// - Course manquante, scoreIA > 0   → lire les scores existants
-  /// - Course manquante, scoreIA = 0   → recalculer via IaPronosticEngine
-  /// N'agit que sur la journée en cours
+  /// ★ v9.6 : Recréer les pronostics manquants
+  ///
+  /// - Course déjà en mémoire → ignorée (jamais modifiée)
+  /// - Course manquante      → recalculée via IaPronosticEngine
+  ///
+  /// ★ v10.83 — D1 : un seul calcul produit scores et 19 critères.
+  /// L'ancien raccourci qui se contentait de trier les scoreIA déjà
+  /// présents laissait scoresCriteres = {} → pronostic inexploitable
+  /// par l'apprentissage. Ce n'est pas une récupération des critères
+  /// d'origine mais un RECALCUL : le classement peut donc changer.
+  ///
+  /// N'agit que sur la journée en cours.
   Future<int> recreerPronosticsManquants(List<ZtReunion> reunions) async {
     int nbCrees = 0;
     final now = DateTime.now();
@@ -4405,27 +4412,31 @@ class IaMemoryService extends ChangeNotifier {
         // Déjà en mémoire → ignorer
         if (_pronostics.any((p) => p.courseKey == courseKey)) continue;
 
-        // ★ Stratégie : lire ou recalculer selon scoreIA disponible
-        List<ZtPartant> partantsClasses;
-        Map<String, ScoresCriteres> scoresCriteres = {};
-
-        final scoresExistants = course.partants
-            .where((p) => p.scoreIA > 0)
-            .toList();
-
-        if (scoresExistants.length >= 3) {
-          // Cas 2 : scores déjà calculés à l'affichage → trier par scoreIA desc
-          // ★ fix : tri par scoreIA (pas rang) — rang peut être 0 pour tous
-          partantsClasses = [...course.partants]
-            ..sort((a, b) => b.scoreIA.compareTo(a.scoreIA));
-        } else {
-          // Cas 3 : scores à 0 → recalculer via IaPronosticEngine
-          final result = IaPronosticEngine.analyserCourseAvecCriteres(
-            course, poidsOverride: _poids);
-          partantsClasses = result.$1;
-          scoresCriteres  = result.$2;
-          if (partantsClasses.isEmpty) continue;
-        }
+        // ★ v10.83 — D1 : UN SEUL calcul produit scores ET critères.
+        //
+        // L'ancien raccourci « Cas 1 » (scoreIA déjà > 0 sur ≥ 3 partants)
+        // se contentait de trier les partants existants et laissait
+        // scoresCriteres = {}. Le pronostic créé était alors inexploitable :
+        // _apprendreParGradient() (l.2201), _apprendreParDiscipline() (l.2498)
+        // et _detecterCorrelationsCriteres() (l.2711) filtrent tous sur
+        // .where((p) => p.scoresCriteres.isNotEmpty).
+        //
+        // Ce n'est PAS une récupération des critères d'origine : c'est un
+        // RECALCUL avec les poids et les ELO actuels. Le classement obtenu
+        // peut donc différer de celui qui avait été affiché auparavant.
+        //
+        // analyserCourseAvecCriteres() n'est pas plus coûteux qu'analyserCourse() :
+        // c'est exactement la même boucle de calcul, elle retourne simplement
+        // la Map de critères en plus des partants classés.
+        //
+        // Lecture seule vis-à-vis de l'apprentissage : aucune mise à jour de
+        // _poids, _seuils, ELO ou résultat n'est déclenchée ici.
+        final (List<ZtPartant>, Map<String, ScoresCriteres>) result =
+            IaPronosticEngine.analyserCourseAvecCriteres(
+          course, poidsOverride: _poids);
+        final List<ZtPartant> partantsClasses = result.$1;
+        final Map<String, ScoresCriteres> scoresCriteres = result.$2;
+        if (partantsClasses.isEmpty) continue;
 
         final scores = <String, double>{};
         for (final p in partantsClasses) {
