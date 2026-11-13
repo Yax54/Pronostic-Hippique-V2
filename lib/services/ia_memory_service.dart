@@ -47,6 +47,9 @@ import '../models/zt_models.dart';
 
 // ─── Modèles de données extraits dans ia_memory_models.dart ──────────────────
 import 'ia_memory_models.dart';
+// ★ C1-a / E1 : archive permanente des pronostics évincés (ÉCRITURE SEULE).
+//   Ce service n'est lu par AUCUNE fonction d'apprentissage.
+import 'ia_archive_service.dart' show IaArchiveService, ArchiveReason;
 import 'ia_pronostic_engine.dart';
 import 'ia_audit_cache_service.dart'; // ★ v10.32 : invalidation cache audit
 // ★ v10.75b : accès aux gros paris gagnants pour stats (lecture seule, jamais gradient)
@@ -1642,6 +1645,49 @@ class IaMemoryService extends ChangeNotifier {
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ C1-a / E1 — ÉVICTION SÉCURISÉE (archive permanente)
+  //
+  //  ORDRE IMPOSÉ, NON NÉGOCIABLE :
+  //    1. la référence entre dans la file de conservation (SYNCHRONE) ;
+  //    2. seulement ensuite, l'objet quitte la mémoire de travail.
+  //  Il n'existe donc aucun instant où un pronostic serait hors des deux.
+  //
+  //  Si l'écriture durable de l'archive échoue, l'objet RESTE dans la file
+  //  (sans limite, sans abandon) et le blob des pronostics est GELÉ par
+  //  _save() : sa dernière copie sur disque n'est jamais réécrite sans lui.
+  //
+  //  ⚠️ Ne modifie NI _poids, NI _seuils, NI la population de calibration.
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Retire le pronostic le plus ancien en le sécurisant d'abord dans l'archive.
+  /// Conserve exactement le comportement d'origine : un seul retrait, et
+  /// seulement si la limite de 600 est dépassée.
+  void _evincerAuDelaDeLaLimite({
+    String motif = ArchiveReason.eviction,
+  }) {
+    if (_pronostics.length <= _maxPronostics) return;
+    final evince = _pronostics.last;
+    // 1. Sécurisation AVANT le retrait (appel synchrone, ne lève jamais).
+    IaArchiveService.instance.enregistrerEviction(evince, motif: motif);
+    // 2. Retrait — forme identique à l'origine.
+    _pronostics.removeLast();
+  }
+
+  /// Archive l'excédent au-delà de 600 AVANT que _save() n'écrive le blob
+  /// tronqué. Aucune modification de la troncature elle-même : on protège
+  /// simplement la tranche qui allait être perdue à l'écriture.
+  int _securiserExcedentAvantEcriture() {
+    if (_pronostics.length <= _maxPronostics) return 0;
+    final excedent =
+        _pronostics.skip(_maxPronostics).toList(growable: false);
+    for (final p in excedent) {
+      IaArchiveService.instance
+          .enregistrerEviction(p, motif: ArchiveReason.troncature);
+    }
+    return excedent.length;
+  }
+
   Future<void> _save() async {
     try {
       // ★ Lot 4 : Purger les vieux pronostics avant sauvegarde
@@ -1652,19 +1698,42 @@ class IaMemoryService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_poidsKey, json.encode(_poids.toJson()));
       // ★ Lot 4 : Compression des pronostics si activée
+      // ★ C1-a / E1 : protéger la tranche excédentaire AVANT l'écriture
+      //   tronquée (elle serait sinon détruite sur le disque sans archive).
+      _securiserExcedentAvantEcriture();
       final pronosticsAsSauvegarder = _pronostics.take(_maxPronostics).toList();
-      if (_useCompression && pronosticsAsSauvegarder.length > 20) {
-        // Encoder en JSON unique puis compresser en gzip
-        final jsonStr  = json.encode(pronosticsAsSauvegarder.map((p) => p.toJson()).toList());
-        final bytes    = utf8.encode(jsonStr);
-        final gzipped  = GZipCodec().encode(bytes);
-        final b64      = base64Encode(gzipped);
-        await prefs.setString(_compressionKey, b64);
-        await prefs.remove(_pronosticsKey); // supprimer l'ancienne clé non compressée
-      } else {
-        await prefs.setStringList(_pronosticsKey,
-            pronosticsAsSauvegarder.map((p) => json.encode(p.toJson())).toList());
-        await prefs.remove(_compressionKey);
+      // ★ C1-a / E1 : tentative d'écriture durable de la file d'archive AVANT
+      //   de décider du gel du blob. Si la file se vide, le blob est réécrit
+      //   normalement au cours de ce même cycle.
+      final archive = IaArchiveService.instance;
+      try {
+        await archive.persisterEnAttente();
+      } catch (_) {
+        // Ne jamais faire échouer _save() à cause de l'archive.
+      }
+      // ★ C1-a / E1 : GEL DU BLOB — si des évictions ne sont pas encore
+      //   durablement archivées, réécrire le blob détruirait leur dernière
+      //   copie sur disque. On conserve donc la version précédente.
+      //   Toutes les autres clés (poids, journal, rapports, seuils, stats…)
+      //   sont écrites normalement : l'apprentissage n'est jamais affecté.
+      if (!archive.doitGelerBlobPronostics) {
+        if (_useCompression && pronosticsAsSauvegarder.length > 20) {
+          // Encoder en JSON unique puis compresser en gzip
+          final jsonStr  = json.encode(pronosticsAsSauvegarder.map((p) => p.toJson()).toList());
+          final bytes    = utf8.encode(jsonStr);
+          final gzipped  = GZipCodec().encode(bytes);
+          final b64      = base64Encode(gzipped);
+          await prefs.setString(_compressionKey, b64);
+          await prefs.remove(_pronosticsKey); // supprimer l'ancienne clé non compressée
+        } else {
+          await prefs.setStringList(_pronosticsKey,
+              pronosticsAsSauvegarder.map((p) => json.encode(p.toJson())).toList());
+          await prefs.remove(_compressionKey);
+        }
+      } else if (kDebugMode) {
+        debugPrint('[IaMemory] ⏸️ Blob pronostics gelé : '
+            '${archive.nbEvictionsNonArchivees} éviction(s) non archivée(s) — '
+            'dernière copie disque préservée.');
       }
       await prefs.setStringList(_journalKey,
           _journal.take(_maxJournal).map((e) => json.encode(e.toJson())).toList());
@@ -1768,7 +1837,8 @@ class IaMemoryService extends ChangeNotifier {
     );
 
     _pronostics.insert(0, pronostic);
-    if (_pronostics.length > _maxPronostics) _pronostics.removeLast();
+    // ★ C1-a / E1 : éviction sécurisée (archive AVANT retrait).
+    _evincerAuDelaDeLaLimite();
     await _save();
     notifyListeners();
   }
@@ -1843,7 +1913,8 @@ class IaMemoryService extends ChangeNotifier {
         precisionIA: precIAB,
         favoriIaNom: bFavoriNom,
       ));
-      if (_pronostics.length > _maxPronostics) _pronostics.removeLast();
+      // ★ C1-a / E1 : éviction sécurisée (archive AVANT retrait).
+      _evincerAuDelaDeLaLimite();
       nbAjoutes++;
     }
 
@@ -1942,7 +2013,8 @@ class IaMemoryService extends ChangeNotifier {
           '${raisonInvalidation.isNotEmpty ? " — $raisonInvalidation" : ""}');
     } else {
       _pronostics.insert(0, nouveauPronostic);
-      if (_pronostics.length > _maxPronostics) _pronostics.removeLast();
+      // ★ C1-a / E1 : éviction sécurisée (archive AVANT retrait).
+      _evincerAuDelaDeLaLimite();
       debugPrint('[IaMem] Nouveau pronostic créé (post-DQ): $courseKey');
     }
 
