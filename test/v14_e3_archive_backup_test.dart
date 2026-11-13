@@ -1171,12 +1171,19 @@ void main() {
     });
   });
 
-  // ═════════════════════════════════════════════════════════════════════════
-  //  Z — RÉINITIALISATIONS EXPLICITES
+  // ═════════════════════════════════════════════════════════
+  //  Z — RÉINITIALISATIONS EXPLICITES : L'ARCHIVE SURVIT (décision E4)
+  //
+  //  La question « un reset doit-il détruire l'archive ? » appartient à E4.
+  //  En attendant cette décision, E3 garantit que TOUT reset préserve
+  //  l'archive : aucune donnée historique n'est perdue par inadvertance.
   // ═════════════════════════════════════════════════════════════════════════
 
-  group('Z — Réinitialisations explicites', () {
-    test('Z-1 — reinitialiserComplet() efface aussi l\'archive', () async {
+  group('Z — Les réinitialisations préservent l\'archive (décision E4)', () {
+    test('Z-1 — reinitialiserComplet() NE DÉTRUIT PAS l\'archive', () async {
+      // Le store doit être installé AVANT l'archivage : _installerStore()
+      // remplace le stockage plateforme et perdrait les shards déjà écrits.
+      final store = _installerStore();
       await _archiver([
         _prono(
             courseKey: _courseKey(1, 30),
@@ -1187,19 +1194,27 @@ void main() {
             datePronostic: DateTime(2026, 2, 28),
             dateResultat: DateTime(2026, 2, 28)),
       ]);
-      final store = _installerStore();
       expect(IaArchiveService.instance.nbVersionsArchivees, 2);
 
       await BackupService.instance.reinitialiserComplet();
       await IaArchiveService.instance.reinitialiserMemoirePourTest();
 
-      expect(IaArchiveService.instance.nbVersionsArchivees, 0,
-          reason: 'l\'archive fait partie des données effacées');
-      expect(store.cles.any((k) => k.startsWith('ia_archive_v1_')), isFalse,
-          reason: 'aucune clé d\'archive ne doit rester sur le disque');
+      // La mémoire IA est bien effacée...
+      expect(IaMemoryService.instance.pronostics, isEmpty);
+      // ...mais l'archive est intacte, sur disque ET après redémarrage.
+      expect(IaArchiveService.instance.nbVersionsArchivees, 2,
+          reason: 'l\'archive survit à un reset complet : la décision '
+              'de la détruire appartient à E4 et n\'est pas autorisée ici');
+      expect(store.cles.where((k) => k.startsWith('ia_archive_v1_')).length, 3,
+          reason: 'manifeste + 2 shards mensuels toujours sur le disque');
+
+      final contenu = await _exportData();
+      final arc = contenu['archiveIA'] as Map<String, dynamic>;
+      expect(arc['nbVersions'], 2);
+      expect(arc['nbPredictions'], 2);
     });
 
-    test('Z-2 — reinitialiserIA() efface l\'archive mais garde le profil',
+    test('Z-2 — reinitialiserIA() efface la mémoire, préserve archive ET profil',
         () async {
       final store = _installerStore();
       final prefs = await SharedPreferences.getInstance();
@@ -1217,11 +1232,223 @@ void main() {
       await BackupService.instance.reinitialiserIA();
       await IaArchiveService.instance.reinitialiserMemoirePourTest();
 
-      expect(IaArchiveService.instance.nbVersionsArchivees, 0);
-      expect(store.cles.any((k) => k.startsWith('ia_archive_v1_')), isFalse);
+      expect(IaMemoryService.instance.pronostics, isEmpty,
+          reason: 'la mémoire de travail est bien effacée');
+      expect(IaArchiveService.instance.nbVersionsArchivees, 1,
+          reason: 'l\'archive historique n\'est pas concernée par E3');
+      expect(store.cles.any((k) => k.startsWith('ia_archive_v1_')), isTrue);
       expect((await SharedPreferences.getInstance()).getString('profil_nom'),
           'TESTEUR',
           reason: 'reinitialiserIA conserve le profil utilisateur');
+    });
+
+    test('Z-3 — effacerTout() reste le SEUL moyen d\'effacer l\'archive',
+        () async {
+      final store = _installerStore();
+      await _archiver([
+        _prono(
+            courseKey: _courseKey(4, 30),
+            datePronostic: DateTime(2026, 4, 30),
+            dateResultat: DateTime(2026, 4, 30)),
+      ]);
+      expect(IaArchiveService.instance.nbVersionsArchivees, 1);
+
+      await IaArchiveService.instance.effacerTout();
+      expect(IaArchiveService.instance.nbVersionsArchivees, 0);
+      expect(store.cles.any((k) => k.startsWith('ia_archive_v1_')), isFalse,
+          reason: 'effacerTout() est l\'unique point de destruction, '
+              'réservé à E4');
+    });
+  });
+
+
+  // ═════════════════════════════════════════════════════════════════════
+  //  W — ÉVICTIONS EN ATTENTE : RÉELLEMENT RÉCUPÉRABLES APRÈS RESTAURATION
+  //
+  //  A-4 démontre seulement que la clé `enAttente` est PRÉSENTE dans le
+  //  fichier exporté. Ce groupe démontre la seconde moitié, qui seule compte :
+  //  une fois le fichier rejoué sur un appareil vierge, ces pronostics
+  //  existent VRAIMENT dans l'archive, durablement, sans doublon, et sans
+  //  jamais entrer dans la mémoire de travail ni dans l'apprentissage.
+  // ═════════════════════════════════════════════════════════════════════
+
+  group('W — Évictions en attente réellement récupérables', () {
+    /// Fabrique un backup dont l'archive ne contient AUCUN shard écrit, mais
+    /// seulement des évictions non confirmées (`enAttente`). C'est l'état
+    /// exact d'un appareil dont le stockage refuse les écritures de shard.
+    Future<Map<String, dynamic>> backupEnAttenteSeulement(
+        List<IaPronostic> enAttente) async {
+      final store = _installerStore();
+      await IaArchiveService.instance.effacerTout();
+      store.echouerEcritures = true;
+      store.clesFautives.add('ia_archive_v1_');
+      for (final p in enAttente) {
+        IaArchiveService.instance.enregistrerEviction(p);
+      }
+      await IaArchiveService.instance.persisterEnAttente();
+      expect(IaArchiveService.instance.nbEvictionsNonArchivees, enAttente.length,
+          reason: 'garde-fou : les évictions doivent rester en file');
+      final contenu = await _exportData();
+      final arc = contenu['archiveIA'] as Map<String, dynamic>;
+      expect(arc['nbShards'], 0, reason: 'aucun shard écrit sur cet appareil');
+      expect(arc['nbEnAttente'], enAttente.length);
+      expect((arc['shards'] as Map), isEmpty);
+      return contenu;
+    }
+
+    test('W-1 — enAttente restauré : les pronostics existent VRAIMENT', () async {
+      final p1 = _prono(
+          courseKey: _courseKey(1, 40),
+          datePronostic: DateTime(2026, 5, 12),
+          resolu: true,
+          arrivee: [2, 5, 1, 3, 4],
+          dateResultat: DateTime(2026, 5, 12));
+      final p2 = _prono(
+          courseKey: _courseKey(2, 40),
+          datePronostic: DateTime(2026, 6, 18),
+          resolu: true,
+          arrivee: [4, 2, 1, 5, 3],
+          dateResultat: DateTime(2026, 6, 18));
+
+      final contenu = await backupEnAttenteSeulement([p1, p2]);
+
+      // Appareil vierge : rien du tout.
+      final store2 = _installerStore();
+      await _effacerAppareil(store2);
+      expect(IaArchiveService.instance.nbVersionsArchivees, 0);
+
+      final import = await _importer(contenu);
+      expect(import.succes, isTrue, reason: 'import échoué : ${import.erreur}');
+
+      // ── Les pronostics sont RÉELLEMENT là, pas seulement dans le fichier.
+      final archive = IaArchiveService.instance;
+      expect(archive.nbVersionsArchivees, 2,
+          reason: 'les évictions en attente doivent être intégrées à l\'archive');
+      expect(archive.nbPredictionsDistinctes, 2);
+      expect(archive.moisConnus, ['2026-05', '2026-06']);
+
+      final r1 = archive.versionRetenue(p1.courseKey);
+      final r2 = archive.versionRetenue(p2.courseKey);
+      expect(r1, isNotNull, reason: 'p1 doit être consultable');
+      expect(r2, isNotNull, reason: 'p2 doit être consultable');
+      expect(r1!.arriveeReelle, [2, 5, 1, 3, 4]);
+      expect(r2!.arriveeReelle, [4, 2, 1, 5, 3]);
+      expect(r1.scoresCriteres.isNotEmpty, isTrue,
+          reason: 'la fiche détaillée est complète, pas un résumé');
+      expect(IaArchiveService.empreinteDe(r1),
+          IaArchiveService.empreinteDe(p1));
+
+      // ── Durabilité CONSTATÉE : après redémarrage, toujours là.
+      await _redemarrer(store2);
+      expect(IaArchiveService.instance.nbVersionsArchivees, 2,
+          reason: 'les évictions récupérées doivent être écrites sur disque');
+      expect(
+          IaArchiveService.instance.versionRetenue(p1.courseKey)!.arriveeReelle,
+          [2, 5, 1, 3, 4]);
+
+      // ── AUCUNE réinjection dans la mémoire de travail / l'apprentissage.
+      expect(IaMemoryService.instance.pronostics, isEmpty,
+          reason: 'jamais de réinjection dans _pronostics');
+      expect(IaMemoryService.instance.pronosticsAvecResultat, isEmpty,
+          reason: 'jamais de réinjection dans l\'apprentissage');
+    });
+
+    test('W-2 — enAttente restauré deux fois : aucun doublon', () async {
+      final p = _prono(
+          courseKey: _courseKey(3, 40),
+          datePronostic: DateTime(2026, 7, 7),
+          resolu: true,
+          arrivee: [1, 3, 5, 2, 4],
+          dateResultat: DateTime(2026, 7, 7));
+
+      final contenu = await backupEnAttenteSeulement([p]);
+      final store2 = _installerStore();
+      await _effacerAppareil(store2);
+
+      await _importer(contenu);
+      await _importer(contenu);
+      await _importer(contenu);
+
+      expect(IaArchiveService.instance.nbVersionsArchivees, 1,
+          reason: 'un même contenu importé N fois = une seule version');
+      expect(IaArchiveService.instance.nbVersions(p.courseKey), 1);
+      await _redemarrer(store2);
+      expect(IaArchiveService.instance.nbVersionsArchivees, 1);
+    });
+
+    test('W-3 — enAttente fusionne avec un shard local de même mois', () async {
+      // Appareil local : une version de mai déjà archivée.
+      final locale = _prono(
+          courseKey: _courseKey(4, 40),
+          datePronostic: DateTime(2026, 5, 1),
+          dateResultat: DateTime(2026, 5, 1));
+      await _archiver([locale]);
+      final store = _installerStore();
+      expect(IaArchiveService.instance.versionsDuMois('2026-05').length, 1);
+
+      // Backup : une AUTRE course de mai, en attente seulement.
+      final autre = _prono(
+          courseKey: _courseKey(5, 40),
+          datePronostic: DateTime(2026, 5, 20),
+          dateResultat: DateTime(2026, 5, 20));
+      final contenu = {
+        'appName': 'Pronostic Hippique',
+        'version': '9.1',
+        'archiveIA': {
+          'format': 1,
+          'shards': <String, String>{},
+          'enAttente': [autre.toJson()],
+          'nbEnAttente': 1,
+        },
+      };
+
+      final import = await _importer(contenu);
+      expect(import.succes, isTrue, reason: 'import échoué : ${import.erreur}');
+
+      final mai = IaArchiveService.instance.versionsDuMois('2026-05');
+      expect(mai.length, 2,
+          reason: 'le shard local et l\'éviction en attente doivent fusionner');
+      expect(mai.map((p) => p.courseKey).toSet(),
+          {locale.courseKey, autre.courseKey});
+
+      await _redemarrer(store);
+      expect(IaArchiveService.instance.versionsDuMois('2026-05').length, 2,
+          reason: 'la fusion doit être durable');
+    });
+
+    test('W-4 — enAttente corrompu : ignoré, archive locale intacte', () async {
+      final locale = _prono(
+          courseKey: _courseKey(6, 40),
+          datePronostic: DateTime(2026, 8, 8),
+          dateResultat: DateTime(2026, 8, 8));
+      await _archiver([locale]);
+
+      final contenu = {
+        'appName': 'Pronostic Hippique',
+        'version': '9.1',
+        'archiveIA': {
+          'format': 1,
+          'shards': <String, String>{},
+          // Entrées volontairement invalides.
+          'enAttente': [
+            {'courseKey': 'X'},          // champs requis absents
+            'pas_une_map',               // type faux
+            42,                          // type faux
+            null,                        // null
+          ],
+          'nbEnAttente': 4,
+        },
+      };
+      final import = await _importer(contenu);
+      expect(import.succes, isTrue,
+          reason: 'un enAttente corrompu ne doit pas faire échouer l\'import');
+      expect(IaArchiveService.instance.nbVersionsArchivees, 1,
+          reason: 'l\'archive locale reste intacte');
+      expect(
+          IaArchiveService.instance
+              .versionRetenue(locale.courseKey)!
+              .courseKey,
+          locale.courseKey);
     });
   });
 }

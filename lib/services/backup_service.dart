@@ -1348,43 +1348,34 @@ class BackupService {
 
   /// Efface uniquement la memoire IA (conserve les paris et le profil)
   ///
-  /// ★ E3 : efface AUSSI l'archive historique, indissociable de la mémoire IA.
-  /// Les clés sont ÉNUMÉRÉES depuis le stockage (manifeste + tous les shards
-  /// réellement présents, y compris illisibles), jamais déduites.
+  /// ⚠️ L'archive historique n'est VOLONTAIREMENT PAS effacée ici.
+  /// La décision « un reset de la mémoire IA doit-il détruire l'archive ? »
+  /// est reportée à l'étape E4 : elle exige un inventaire complet de ce qui
+  /// est supprimé et une confirmation explicite de l'utilisateur.
+  /// En attendant cette décision, l'archive est préservée par tout reset.
   Future<void> reinitialiserIA() async {
     final prefs = await SharedPreferences.getInstance();
     for (final key in _keysIA) {
       await prefs.remove(key);
     }
-    final clesArchive =
-        await IaArchiveService.instance.enumererClesSurStockage();
-    for (final key in clesArchive) {
-      await prefs.remove(key);
-    }
-    await IaArchiveService.instance.effacerTout();
     if (kDebugMode) {
-      debugPrint('[Backup] IA reinitialisee (${_keysIA.length} cles effacees '
-          '+ ${clesArchive.length} cles archive)');
+      debugPrint('[Backup] IA reinitialisee (${_keysIA.length} cles effacees) '
+          '— archive historique préservée (décision reportée à E4)');
     }
   }
 
   /// Efface TOUTES les donnees de l'application (remise a zero complete)
+  ///
+  /// ⚠️ Même réserve que [reinitialiserIA] : l'archive historique survit.
   Future<void> reinitialiserComplet() async {
     final prefs = await SharedPreferences.getInstance();
     for (final key in _toutesLesCles) {
       await prefs.remove(key);
     }
-    // ★ E3 : l'archive historique fait partie des données de l'application.
-    final clesArchive =
-        await IaArchiveService.instance.enumererClesSurStockage();
-    for (final key in clesArchive) {
-      await prefs.remove(key);
-    }
-    await IaArchiveService.instance.effacerTout();
     if (kDebugMode) {
       debugPrint('[Backup] Reinitialisation complete '
-          '(${_toutesLesCles.length} cles effacees '
-          '+ ${clesArchive.length} cles archive)');
+          '(${_toutesLesCles.length} cles effacees) '
+          '— archive historique préservée (décision reportée à E4)');
     }
   }
 
