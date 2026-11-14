@@ -122,6 +122,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
 import 'alert_service.dart'; // ★ v10.26d
 import 'elo_service.dart'; // ★ v8.0
+import 'cote_tracker_service.dart'; // ★ B5b
 import 'ia_memory_service.dart'; // ★ v10.26c
 import 'ia_archive_service.dart'; // ★ E3
 import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
@@ -1386,6 +1387,12 @@ class BackupService {
     //   valeurs et le reset serait annulé. On vide donc la RAM — sans
     //   passer par reinitialiser(), qui recréerait 'elo_ratings_v2' = '{}'.
     EloService.instance.viderMemoirePourResetComplet();
+    // ★ B5b : même défaut pour le suivi de cote. Le disque est effacé, mais
+    //   `_mouvements` alimentait encore les alertes « cotes qui chutent » et
+    //   les écritures différées pouvaient recréer les clés après coup.
+    //   Le vidage attend les écritures en vol et invalide les opérations
+    //   asynchrones déjà démarrées.
+    await CoteTrackerService.instance.viderCachePourResetComplet();
     if (kDebugMode) {
       debugPrint('[Backup] Reinitialisation complete '
           '(${_toutesLesCles.length} cles effacees) '

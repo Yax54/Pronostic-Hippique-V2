@@ -121,6 +121,30 @@ class CoteTrackerService {
   // Alertes déjà envoyées pour éviter les doublons
   final Set<String> _alertesEnvoyees = {};
 
+  /// ★ B5b — Jeton de génération du cache.
+  ///
+  /// Incrémenté à chaque vidage (reset complet). Toute opération asynchrone
+  /// capture la valeur au moment où elle DÉMARRE (`_fetchEtStockerCotes`)
+  /// et abandonne son écriture si le jeton a changé entre-temps : une
+  /// requête HTTP déjà en vol ne peut donc plus repeupler un cache qui
+  /// vient d'être vidé, ni réécrire les clés supprimées.
+  ///
+  /// Portée volontairement limitée à l'écriture : les lectures (`_calculerMouvements`
+  /// sur `_historique`) et le calcul des mouvements ne sont PAS modifiés.
+  int _generationCache = 0;
+
+  /// ★ B5b — Écritures différées en attente (`_sauvegarderMouvements` /
+  /// `_syncMouvementsVersPrefs`). Le vidage les attend avant de rendre la
+  /// main, sinon une écriture déjà partie pourrait recréer une clé APRÈS
+  /// que le reset l'a supprimée.
+  final Set<Future<void>> _ecrituresEnCours = <Future<void>>{};
+
+  /// ★ B5b — Nombre total de vidages effectués (observable par les tests).
+  int get generationCache => _generationCache;
+
+  /// ★ B5b — Nombre d'écritures différées encore en vol (observable).
+  int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
   // ★ v9.99 : clé SharedPreferences pour persister les derniers mouvements
   static const String _prefsKeyMouvements = 'cote_tracker_mouvements_v1';
 
@@ -167,6 +191,42 @@ class CoteTrackerService {
     _pollTimer = null;
   }
 
+  /// ★ B5b — Vide les caches RAM du suivi de cote après un reset complet.
+  ///
+  /// Ce que cette méthode fait :
+  ///   • jette `_historique`, `_mouvements` et `_alertesEnvoyees` ;
+  ///   • incrémente `_generationCache`, ce qui invalide toute opération
+  ///     asynchrone déjà démarrée (écriture différée ou chargement) ;
+  ///   • attend les écritures différées encore en vol, pour qu'aucune ne
+  ///     recrée les clés après leur suppression par le reset.
+  ///
+  /// Ce qu'elle ne fait PAS (volontairement) :
+  ///   • aucun `prefs.remove()` — c'est le rôle de `reinitialiserComplet()` ;
+  ///   • ne touche ni au timer, ni à `_polling`, ni à la fenêtre de 35 min ;
+  ///   • ne modifie aucun calcul, aucune catégorie, aucun seuil.
+  ///   Le suivi reprend normalement au tick suivant, sur des données neuves.
+  Future<void> viderCachePourResetComplet() async {
+    _generationCache++;
+    _historique.clear();
+    _mouvements.clear();
+    _alertesEnvoyees.clear();
+
+    // Attendre les écritures déjà parties : sans cela, une écriture qui a
+    // commencé avant le reset pourrait recréer la clé APRÈS sa suppression.
+    final enVol = List<Future<void>>.from(_ecrituresEnCours);
+    if (enVol.isNotEmpty) {
+      try {
+        await Future.wait(enVol);
+      } catch (_) {
+        // Une écriture qui échoue ne doit jamais faire échouer le reset.
+      }
+    }
+    if (kDebugMode) {
+      debugPrint('[CoteTracker] 🧹 Caches vidés (reset complet, '
+          'génération $_generationCache)');
+    }
+  }
+
   void mettreAJourReunions(List<ZtReunion> reunions) {
     // Relancer le timer avec les nouvelles réunions
     demarrer(reunions);
@@ -177,9 +237,22 @@ class CoteTrackerService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKeyMouvements);
-      if (raw == null || raw.isEmpty) return;
+      // ★ B5b : une clé absente ou vide doit VIDER le cache. Avant ce
+      //   correctif, la méthode sortait sans rien effacer : les mouvements
+      //   encore en RAM survivaient à une suppression du disque. C'est le
+      //   chemin exact par lequel un reset complet se faisait annuler au
+      //   cycle de rafraîchissement suivant.
+      if (raw == null || raw.isEmpty) {
+        _mouvements.clear();
+        // On ne touche pas à `_historique` : ce sont des snapshots de
+        // session, non persistés, et ils ne contiennent aucune donnée que
+        // l'utilisateur aurait « supprimée » via le reset.
+        return;
+      }
+      final int generationAuChargement = _generationCache;
       final Map<String, dynamic> data = jsonDecode(raw) as Map<String, dynamic>;
       final now = DateTime.now();
+      final Map<String, List<MouvementCote>> reconstruits = {};
       data.forEach((courseKey, listRaw) {
         // Ne restaurer que les mouvements du jour (< 6h)
         final dateMatch = RegExp(r'_(\d{8})$').firstMatch(courseKey);
@@ -207,9 +280,21 @@ class CoteTrackerService {
               nbSnapshots:  (j['nbSnapshots'] as int? ?? 1),
             );
           }).toList();
-          _mouvements[courseKey] = list;
+          reconstruits[courseKey] = list;
         } catch (_) {}
       });
+      // ★ B5b : on ne remplace le cache que si aucun vidage n'a eu lieu
+      //   pendant le `await` ci-dessus. Sinon on laisse le cache vide.
+      if (_generationCache != generationAuChargement) {
+        if (kDebugMode) {
+          debugPrint('[CoteTracker] ⏭️ Rechargement abandonné : '
+              'cache vidé entre-temps (génération changée)');
+        }
+        return;
+      }
+      _mouvements
+        ..clear()
+        ..addAll(reconstruits);
       if (kDebugMode) debugPrint('[CoteTracker] ✅ Mouvements restaurés : ${_mouvements.length} course(s)');
     } catch (e) {
       if (kDebugMode) debugPrint('[CoteTracker] ⚠️ Erreur restauration : $e');
@@ -218,25 +303,41 @@ class CoteTrackerService {
 
   // ★ v9.99 : Sauvegarder les mouvements actuels dans SharedPreferences
   Future<void> _sauvegarderMouvements() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final Map<String, dynamic> data = {};
-      _mouvements.forEach((courseKey, mouvs) {
-        data[courseKey] = mouvs.map((m) => {
-          'numero':       m.numero,
-          'nom':          m.nom,
-          'coteDebut':    m.coteDebut,
-          'coteCourante': m.coteCourante,
-          'variationPct': m.variationPct,
-          'premierSnap':  m.premierSnap.toIso8601String(),
-          'dernierSnap':  m.dernierSnap.toIso8601String(),
-          'nbSnapshots':  m.nbSnapshots,
-        }).toList();
-      });
-      await prefs.setString(_prefsKeyMouvements, jsonEncode(data));
-    } catch (e) {
-      if (kDebugMode) debugPrint('[CoteTracker] ⚠️ Erreur sauvegarde : $e');
-    }
+    final int generation = _generationCache;
+    final Future<void> travail = () async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        // ★ B5b : si un vidage a eu lieu pendant le `await`, on abandonne
+        //   AVANT d'écrire — la clé vient d'être supprimée, il ne faut pas
+        //   la recréer. C'est la protection contre l'écriture tardive.
+        if (_generationCache != generation) return;
+        final Map<String, dynamic> data = {};
+        _mouvements.forEach((courseKey, mouvs) {
+          data[courseKey] = mouvs.map((m) => {
+            'numero':       m.numero,
+            'nom':          m.nom,
+            'coteDebut':    m.coteDebut,
+            'coteCourante': m.coteCourante,
+            'variationPct': m.variationPct,
+            'premierSnap':  m.premierSnap.toIso8601String(),
+            'dernierSnap':  m.dernierSnap.toIso8601String(),
+            'nbSnapshots':  m.nbSnapshots,
+          }).toList();
+        });
+        await prefs.setString(_prefsKeyMouvements, jsonEncode(data));
+      } catch (e) {
+        if (kDebugMode) debugPrint('[CoteTracker] ⚠️ Erreur sauvegarde : $e');
+      }
+    }();
+    _suivreEcriture(travail);
+    await travail;
+  }
+
+  /// ★ B5b — Enregistre une écriture différée pour que le vidage puisse
+  /// l'attendre. Ne change rien au comportement de l'écriture elle-même.
+  void _suivreEcriture(Future<void> f) {
+    _ecrituresEnCours.add(f);
+    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
   }
 
   // ── Accès aux mouvements pour une course ─────────────────────────────────
@@ -454,28 +555,36 @@ class CoteTrackerService {
   //                'coteDebut': 0.0, 'coteCourante': 0.0, 'variationPct': 0.0,
   //                'scoreIA': 0.0, 'categorie': '...'}]
   Future<void> _syncMouvementsVersPrefs() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final tous  = <Map<String, dynamic>>[];
-      _mouvements.forEach((courseKey, mouvements) {
-        for (final m in mouvements) {
-          if (m.variationPct.abs() < 5) continue; // ignorer les mouvements insignifiants
-          tous.add({
-            'courseKey':    courseKey,
-            'numero':       m.numero,
-            'nomCheval':    m.nom,
-            'coteDebut':    m.coteDebut,
-            'coteCourante': m.coteCourante,
-            'variationPct': m.variationPct,
-            'scoreIA':      0.0, // sera rempli par le caller qui a accès à scoreIA
-            'categorie':    m.categorie,
-          });
-        }
-      });
-      await prefs.setString('cote_mouvements_live_v1', json.encode(tous));
-    } catch (e) {
-      if (kDebugMode) debugPrint('[CoteTracker] Erreur sync prefs: $e');
-    }
+    final int generation = _generationCache;
+    final Future<void> travail = () async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        // ★ B5b : même protection que _sauvegarderMouvements — ne pas
+        //   recréer 'cote_mouvements_live_v1' après un vidage.
+        if (_generationCache != generation) return;
+        final tous  = <Map<String, dynamic>>[];
+        _mouvements.forEach((courseKey, mouvements) {
+          for (final m in mouvements) {
+            if (m.variationPct.abs() < 5) continue; // ignorer les mouvements insignifiants
+            tous.add({
+              'courseKey':    courseKey,
+              'numero':       m.numero,
+              'nomCheval':    m.nom,
+              'coteDebut':    m.coteDebut,
+              'coteCourante': m.coteCourante,
+              'variationPct': m.variationPct,
+              'scoreIA':      0.0, // sera rempli par le caller qui a accès à scoreIA
+              'categorie':    m.categorie,
+            });
+          }
+        });
+        await prefs.setString('cote_mouvements_live_v1', json.encode(tous));
+      } catch (e) {
+        if (kDebugMode) debugPrint('[CoteTracker] Erreur sync prefs: $e');
+      }
+    }();
+    _suivreEcriture(travail);
+    await travail;
   }
   void nettoyerDonneesPerimees() {
     final now = DateTime.now();
