@@ -292,4 +292,23 @@ class EloService {
     await _sauvegarder();
     debugPrint('[EloService] 🔄 ELO réinitialisés');
   }
+
+  /// ★ B5 — Vide l'état RAM SANS écrire sur le disque.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
+  /// que les clés ELO ont été supprimées du stockage.
+  ///
+  /// Pourquoi ne pas réutiliser [reinitialiser] ? Parce qu'elle termine par
+  /// `_sauvegarder()`, qui fait toujours `setString('elo_ratings_v2', '{}')`
+  /// et `setInt('elo_ratings_v2_ts', ...)`. Utilisée après un reset complet,
+  /// elle **recréerait** les deux clés qu'on vient d'effacer : des données
+  /// anciennes (les ratings encore en RAM) seraient réécrites sur le disque.
+  ///
+  /// Ici : aucun `_sauvegarder()`, donc aucune écriture. Aucune formule,
+  /// aucun K-factor, aucun rating n'est recalculé — on jette simplement
+  /// l'état mémoire devenu obsolète.
+  void viderMemoirePourResetComplet() {
+    _ratings.clear();
+    debugPrint('[EloService] 🧹 Mémoire vidée (reset complet, disque non réécrit)');
+  }
 }

@@ -168,6 +168,11 @@ class BackupService {
   static const _keysELO = [
     'elo_ratings_v2',       // ★ v9.92 : Ratings ELO par cheval×discipline (K-factor adaptatif)
     'elo_ratings_v2_ts',    // ★ v9.92 : Timestamp dernière mise à jour ELO
+    'elo_ratings_v1',       // ★ B5 : relique de migration — réimportée par EloService
+                            //   au démarrage (_charger l.66) si elo_ratings_v2 est
+                            //   absente. Sans cette ligne, un reset complet laisse la
+                            //   clé v1 sur le disque et les anciens ratings
+                            //   ressuscitent au prochain lancement.
     'cote_tracker_mouvements_v1', // ★ v9.97 : Mouvements de cote en temps réel
     'cote_mouvements_live_v1',    // ★ v9.97 : Sync Flutter→Kotlin Worker (alertes cote)
   ];
@@ -329,6 +334,9 @@ class BackupService {
   static List<String> get _toutesLesCles => [
     ..._keysIA,
     ..._keysConfigIA,
+    ..._keysELO,        // ★ B5 : les 5 cles ELO/Cote etaient OMISES — elles
+                        //   survivaient a un reset « complet » alors qu'elles
+                        //   sont bel et bien sauvegardees dans le backup.
     ..._keysParis,
     ..._keysAlertes,
     ..._keysProfil,
@@ -1372,6 +1380,12 @@ class BackupService {
     for (final key in _toutesLesCles) {
       await prefs.remove(key);
     }
+    // ★ B5 : les clés sont effacées du disque, mais EloService garde ses
+    //   ratings EN MÉMOIRE. Sans ce vidage, la prochaine mise à jour ELO
+    //   (mettreAJourApresArrivee → _sauvegarder) réécrirait les anciennes
+    //   valeurs et le reset serait annulé. On vide donc la RAM — sans
+    //   passer par reinitialiser(), qui recréerait 'elo_ratings_v2' = '{}'.
+    EloService.instance.viderMemoirePourResetComplet();
     if (kDebugMode) {
       debugPrint('[Backup] Reinitialisation complete '
           '(${_toutesLesCles.length} cles effacees) '
