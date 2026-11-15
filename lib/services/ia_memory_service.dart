@@ -757,7 +757,7 @@ class IaMemoryService extends ChangeNotifier {
     final IaArchiveService archive = IaArchiveService.instance;
     final Set<String> dejaAjoutees = <String>{};
 
-    for (final version in archive.versionsDuMois(moisStr)) {
+    for (final version in archive.versionsDuMoisParDate(moisStr)) {
       final String cle = version.courseKey;
       // Dédoublonnage de l'apport d'archive lui-même.
       if (!dejaAjoutees.add(cle)) continue;

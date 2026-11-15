@@ -192,7 +192,26 @@ class IaArchiveService extends ChangeNotifier {
   Completer<void>? _loadCompleter;
 
   /// Mois (YYYY-MM) → versions archivées, déjà dédoublonnées par empreinte.
+  /// ⚠️ Clé = mois du SHARD PHYSIQUE (mois d'écriture), pas de la date.
   final Map<String, List<IaPronostic>> _shards = {};
+
+  /// ★ A4-3 — Index mensuel fondé sur la DATE EFFECTIVE (`_moisDe`).
+  ///
+  /// Pourquoi : `_shards` est partitionné par mois d'ÉCRITURE. Une version
+  /// rangée dans un autre shard que celui de sa `datePronostic` était alors
+  /// invisible des DEUX mois : absente du mois réel (elle n'y est pas rangée)
+  /// et rejetée du mois de son shard (le filtre de date la refuse).
+  ///
+  /// Cet index est une SECONDE VUE du même contenu : il ne stocke aucune copie,
+  /// seulement des références aux objets déjà présents dans `_shards`. Le
+  /// rangement physique (`_shards`) et la date des pronostics ne sont jamais
+  /// modifiés.
+  ///
+  /// Synchronisation — uniquement aux 3 points où `_shards` mute :
+  ///   • `_decoderShard`     (chargement / redémarrage)
+  ///   • `_integrerEnMemoire` (éviction, restauration)
+  ///   • `_resetInMemory`    (réinitialisation, effacement total)
+  final Map<String, List<IaPronostic>> _parDateEffective = {};
 
   /// courseKey → empreintes déjà présentes (dédoublonnage O(1)).
   final Map<String, Set<String>> _empreintesParCourse = {};
@@ -445,6 +464,7 @@ class IaArchiveService extends ChangeNotifier {
     _shards[mois] = versions;
     for (final p in versions) {
       _enregistrerIndex(p);
+      _indexerParDateEffective(p);
     }
     return true;
   }
@@ -481,6 +501,7 @@ class IaArchiveService extends ChangeNotifier {
     _charge = false;
     _loadCompleter = null;
     _shards.clear();
+    _parDateEffective.clear();
     _empreintesParCourse.clear();
     _clesShardsConnues.clear();
     _versionRetenue.clear();
@@ -661,6 +682,7 @@ class IaArchiveService extends ChangeNotifier {
 
     final mois = _moisDe(p);
     _shards.putIfAbsent(mois, () => []).add(p);
+    _indexerParDateEffective(p);
     _enregistrerIndex(p);
     _journalVersions.putIfAbsent(p.courseKey, () => []).add({
       'empreinte': emp,
@@ -672,6 +694,15 @@ class IaArchiveService extends ChangeNotifier {
 
   static String _moisDe(IaPronostic p) => '${p.datePronostic.year}-'
       '${p.datePronostic.month.toString().padLeft(2, '0')}';
+
+  /// ★ A4-3 — Alimente l'index par date effective.
+  ///
+  /// Ajout STRICTEMENT parallèle à celui de `_shards` : les deux index
+  /// reçoivent le même objet au même instant. Aucune copie, aucune
+  /// modification de `p`, aucune écriture sur le stockage.
+  void _indexerParDateEffective(IaPronostic p) {
+    _parDateEffective.putIfAbsent(_moisDe(p), () => <IaPronostic>[]).add(p);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════
   //  ÉVICTION — point d'entrée unique, en deux temps
@@ -1069,6 +1100,39 @@ class IaArchiveService extends ChangeNotifier {
   /// Versions archivées d'un mois ('YYYY-MM').
   List<IaPronostic> versionsDuMois(String mois) =>
       List.unmodifiable(_shards[mois] ?? const <IaPronostic>[]);
+
+  /// ★ A4-3 — Versions archivées dont la **DATE EFFECTIVE** appartient au mois.
+  ///
+  /// Différence avec [versionsDuMois] : celle-ci lit le mois du SHARD PHYSIQUE
+  /// (mois d'écriture), alors que la présente lit `datePronostic`. Une version
+  /// rangée dans un autre shard que celui de sa date est donc retrouvée ici,
+  /// et uniquement ici.
+  ///
+  /// Garanties :
+  ///   • **UNE SEULE ENTRÉE PAR COURSE** : on retourne la version retenue par
+  ///     l'index d'autorité existant (`_retenues`), jamais une version écartée.
+  ///     Si la course n'a pas de retenue (impossible en pratique), la version
+  ///     est ignorée plutôt que devinée — aucun fallback heuristique.
+  ///   • **AUCUN DOUBLON** : dédoublonnage par `courseKey`.
+  ///   • **LECTURE SEULE** : aucune date, aucun shard, aucune autorité modifiés.
+  ///   • **O(1) amorti** : simple lecture de l'index, sans parcours des shards.
+  ///   • Équivalente à [versionsDuMois] quand le rangement est correct.
+  List<IaPronostic> versionsDuMoisParDate(String mois) {
+    final candidates = _parDateEffective[mois];
+    if (candidates == null || candidates.isEmpty) {
+      return List.unmodifiable(const <IaPronostic>[]);
+    }
+    final vues = <String>{};
+    final resultat = <IaPronostic>[];
+    for (final p in candidates) {
+      if (!vues.add(p.courseKey)) continue;
+      // Une seule version par course : celle que l'autorité a retenue.
+      final retenue = _retenues[p.courseKey];
+      if (retenue == null) continue;
+      resultat.add(retenue);
+    }
+    return List.unmodifiable(resultat);
+  }
 
   /// Toutes les versions archivées.
   List<IaPronostic> toutesLesVersionsArchivees() =>
