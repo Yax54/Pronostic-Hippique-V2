@@ -2722,7 +2722,19 @@ class IaMemoryService extends ChangeNotifier {
     await _load();
 
     final idx = _pronostics.indexWhere((p) => p.courseKey == courseKey);
-    if (idx < 0) return;
+    if (idx < 0) {
+      // ★ A4-2 — la course a été évincée de la mémoire active (plafond 600).
+      //   Le résultat officiel était jusqu'ici silencieusement perdu.
+      //   Il est désormais consigné dans l'ARCHIVE SEULE.
+      //   Aucune réinjection dans `_pronostics` : l'apprentissage n'est
+      //   jamais déclenché depuis une donnée archivée.
+      await _consignerResultatEnArchive(
+        courseKey:         courseKey,
+        arriveeReelle:     arriveeReelle,
+        cotesPmuParNumero: cotesPmuParNumero,
+      );
+      return;
+    }
 
     final p = _pronostics[idx];
     if (p.resultatsReels) return;
@@ -2836,6 +2848,139 @@ class IaMemoryService extends ChangeNotifier {
     // pronostics nouvellement résolus). Appeler ici causait un
     // double-comptage pour tous les types de paris (×2 dans historiqueComplet).
     notifyListeners();
+  }
+
+  /// ★ A4-2 — Consigne un résultat officiel pour une course ABSENTE de la
+  /// mémoire active (déjà évincée vers l'archive par le plafond 600).
+  ///
+  /// ⚠️ PÉRIMÈTRE STRICT :
+  ///   • n'écrit JAMAIS dans `_pronostics` → aucune réinjection ;
+  ///   • ne modifie NI `_poids`, NI `_seuils`, NI la calibration ;
+  ///   • n'appelle NI `_apprendreParGradient`, NI `_apprendreParDiscipline`,
+  ///     NI `_mettreAJourCalibration`, NI `_apprendreReglesBase`, NI `_save()` ;
+  ///   • n'écrit QUE dans `IaArchiveService` ;
+  ///   • ne modifie AUCUNE règle métier de réussite, Premium ou Gros Paris.
+  ///
+  /// Réutilise les méthodes EXISTANTES pour tout ce qui est factorisable :
+  /// `_poids.poidsIndices.calculerPrecision` (comme `enregistrerResultat`)
+  /// et `_genererDiagnosticCourse`. Le bloc de score de performance et la
+  /// fusion des cotes sont recopiés à l'identique du chemin nominal : aucune
+  /// factorisation n'est introduite, pour ne pas toucher à ce chemin.
+  Future<void> _consignerResultatEnArchive({
+    required String courseKey,
+    required List<int> arriveeReelle,
+    Map<String, double>? cotesPmuParNumero,
+  }) async {
+    final archive = IaArchiveService.instance;
+    await archive.charger();
+
+    final p = archive.versionRetenue(courseKey);
+    // Rien à compléter : on n'invente ni la course, ni son pronostic.
+    if (p == null) {
+      if (kDebugMode) {
+        debugPrint('[IaMem][A4-2] résultat IGNORÉ — $courseKey absente '
+            'de la mémoire active ET de l\'archive (aucune invention)');
+      }
+      return;
+    }
+    // Déjà résolue : idempotence. Interdit toute rétrogradation.
+    if (p.resultatsReels) return;
+
+    final arriveeStr = arriveeReelle.map((n) => n.toString()).toList();
+    final topIA      = p.topNIA;
+    final favori     = topIA.isNotEmpty ? topIA.first : null;
+    final idxFavori  = favori != null ? arriveeStr.indexOf(favori) : -1;
+    final rangFavori = idxFavori >= 0 ? idxFavori + 1 : null;
+
+    final top3IA   = topIA.take(3).toSet();
+    final top3Reel = arriveeStr.take(3).toSet();
+    final nbTop3   = top3IA.intersection(top3Reel).length;
+
+    final top5IA   = topIA.take(5).toSet();
+    final top5Reel = arriveeStr.take(5).toSet();
+    final nbTop5   = top5IA.intersection(top5Reel).length;
+
+    // ── Bloc recopié à l'identique du chemin nominal ──
+    final nbPartants   = arriveeStr.length.clamp(4, 20);
+    final bonusPeloton = nbPartants >= 16 ? 1.15
+        : nbPartants >= 12 ? 1.08
+        : nbPartants >= 8  ? 1.03
+        : 1.0;
+
+    double scorePerfRaw = 0;
+    if (rangFavori == 1) {
+      scorePerfRaw += 40;
+    } else if (rangFavori != null && rangFavori <= 3) {
+      scorePerfRaw += 20;
+    } else if (rangFavori != null && rangFavori <= 5) {
+      scorePerfRaw += 10;
+    }
+    scorePerfRaw += nbTop3 * 15.0;
+    scorePerfRaw += nbTop5 * 5.0;
+    final scorePerf = (scorePerfRaw * bonusPeloton).clamp(0.0, 100.0);
+
+    // ── Réutilisation de la méthode existante ──
+    //    Lecture SEULE de `_poids` : aucune mutation, aucun apprentissage.
+    final bestScoreR  = p.scoresIA.values.isEmpty ? 0.0 :
+        p.scoresIA.values.reduce((a, b) => a > b ? a : b);
+    final confR       = p.confiancePredite ?? 65.0;
+    final tauxMomentR = p.tauxReussiteAuMoment ?? 50.0;
+    final precIAR = _poids.poidsIndices.calculerPrecision(
+      scoreCriteres: bestScoreR,
+      confianceIA:   confR,
+      tauxReussite:  tauxMomentR,
+    );
+
+    // ── Réutilisation de la méthode existante ──
+    final diagCourse = _genererDiagnosticCourse(
+      favoriNom:  p.favoriIaNom,
+      rangFavori: rangFavori,
+      nbTop3:     nbTop3,
+      nbTop5:     nbTop5,
+      scorePerf:  scorePerf,
+      typePari:   p.typePariConseille,
+    );
+
+    // ── Reconstruction ENTIÈRE, à l'identique du chemin nominal ──
+    final IaPronostic complete = IaPronostic(
+      courseKey:              p.courseKey,
+      nomCourse:              p.nomCourse,
+      hippodrome:             p.hippodrome,
+      discipline:             p.discipline,
+      datePronostic:          p.datePronostic,
+      scoresIA:               p.scoresIA,
+      scoresCriteres:         p.scoresCriteres,
+      varianceScores:         p.varianceScores,
+      arriveeReelle:          arriveeReelle,
+      dateResultat:           DateTime.now(),
+      resultatsReels:         true,
+      rangFavoriIaDansArrivee: rangFavori,
+      nbTop3DansArriveeReelle: nbTop3,
+      nbTop5DansArriveeReelle: nbTop5,
+      scorePerformance:       scorePerf,
+      confiancePredite:       p.confiancePredite,
+      typePariConseille:      p.typePariConseille,
+      tauxReussiteAuMoment:   p.tauxReussiteAuMoment,
+      precisionIA:            precIAR,
+      favoriIaNom:            p.favoriIaNom,
+      diagnosticApprentissage: diagCourse,
+      coteFavoriPmu: cotesPmuParNumero != null && p.favoriIA != null
+          ? (cotesPmuParNumero[p.favoriIA!] ?? p.coteFavoriPmu)
+          : p.coteFavoriPmu,
+      cotesPmuParNumero: cotesPmuParNumero ?? p.cotesPmuParNumero,
+    );
+
+    // ── Écriture ARCHIVE uniquement. L'archive dédoublonne par empreinte et
+    //    n'accepte un remplacement que par autorité croissante : une version
+    //    résolue ne peut donc pas être rétrogradée. ──
+    archive.enregistrerEviction(complete, motif: ArchiveReason.eviction);
+    await archive.persisterEnAttente();
+
+    if (kDebugMode) {
+      debugPrint('[IaMem][A4-2] résultat consigné dans l\'archive : '
+          '$courseKey (rang=${IaArchiveService.rangDe(complete)}, '
+          'nbVersions=${archive.nbVersions(courseKey)})');
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
