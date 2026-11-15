@@ -790,6 +790,13 @@ class ZtCourse {
     partants: (j['partants'] as List<dynamic>? ?? [])
         .map((p) => ZtPartant.fromJson(p as Map<String, dynamic>))
         .toList(),
+    // ★ A-3-bis : sans cette clé, un aller-retour JSON (retour d'isolate,
+    //   cache local) remettait dateStr à '' → heureDateTime =
+    //   DateTime(2000,1,1,h,m) → datePronostic fictive → purge des 90 jours
+    //   → perte définitive et silencieuse du pronostic.
+    //   Absence = '' : aucune date n'est inventée. Le sentinel 2000 reste
+    //   le signal d'absence, il n'est jamais converti en date réelle.
+    dateStr: j['dateStr'] as String? ?? '',
   );
 
   Map<String, dynamic> toJson() => {
@@ -807,6 +814,11 @@ class ZtCourse {
     'is_classique_sans_multiple': isClassiqueSansMultiple, // ★ v9.93
     'pronostic_zt': pronosticZt,
     'partants': partants.map((p) => p.toJson()).toList(),
+    // ★ A-3-bis : symétrie obligatoire avec fromJson. Clé 'dateStr' (et non
+    //   'date') pour ne pas entrer en collision avec la clé portée par
+    //   ZtReunion.toJson(). Ajout purement additif : aucune clé existante
+    //   n'est retirée ni renommée.
+    'dateStr': dateStr,
   };
 
   // Heure en DateTime — utilise dateStr (ddmmyyyy) si disponible.
