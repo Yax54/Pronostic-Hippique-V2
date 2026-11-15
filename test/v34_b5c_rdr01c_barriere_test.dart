@@ -196,9 +196,112 @@ class _Scenario {
   });
 }
 
-String _programme({required String lieu, required int numOfficiel}) {
-  final depart =
-      DateTime.now().add(const Duration(hours: 3)).millisecondsSinceEpoch;
+// ═══════════════════════════════════════════════════════════════════════════
+//  ★ CORRECTIF HORAIRE — cohérence `dateStr` / `heure` du départ fictif
+//
+//  CONTRAT DE PRODUCTION (non modifiable ici) : `ZoneTurfService` assemble
+//  `ZtCourse.heure` et `ZtCourse.dateStr` depuis DEUX sources distinctes :
+//    • `dateStr` = jour de la REQUÊTE, `_todayStr()` (zone_turf_service.dart:46,
+//      :980-983) → c'est le jour du chemin d'URL `.../programme/<ddMMyyyy>` ;
+//    • `heure`   = heure LOCALE du timestamp `heureDepart` (l.148-152).
+//  `ZtCourse.heureDateTime` recolle ensuite les deux : `DateTime(<jour de
+//  dateStr>, <h>, <m>)` (zt_models.dart:845-847).
+//
+//  DÉFAUT CORRIGÉ : le mock datait le départ à `DateTime.now() + 3 h`. Dès que
+//  cette somme franchit minuit (donc dès 21h00 locale), l'HEURE appartient au
+//  lendemain mais le JOUR reste celui de `dateStr` ⇒ `heureDateTime` recule au
+//  lieu d'avancer :
+//      `diffMin = heureDateTime.difference(now)` devient très NÉGATIF,
+//      `_detecterNonPartants` sort de sa fenêtre utile
+//      (`diffMin < -30 || diffMin > 240`, data_refresh_service.dart:503-505)
+//      et fait `continue` : la course n'est plus examinée du tout, donc
+//      `reAnalyserCourse` n'est jamais appelé et AUCUNE écriture IA
+//      (`_save()` → `ia_poids_v3`, ia_memory_service.dart:2152/2167) n'a lieu.
+//  Mesuré : 65 880 échecs sur 527 040 instants (12,50 %), heures locales 21-23.
+//  C'est exactement ce que R01c-H mesure via son TÉMOIN 2.
+//
+//  POURQUOI PAS SEULEMENT « PLAFONNER À 23h59 » : le jour du mock et le
+//  `dateStr` de production viennent de DEUX `DateTime.now()` distincts (l'un
+//  dans `_doRefresh`, l'autre dans le mock, séparés par l'appel réseau). Près
+//  de minuit, ces deux lectures peuvent tomber de part et d'autre du passage
+//  de jour → le mock daterait le départ d'un jour et la production le
+//  recollerait au jour précédent. Le plafonnement seul réduirait la fenêtre
+//  d'échec sans supprimer la course temporelle.
+//
+//  SOLUTION RETENUE — le jour N'EST PLUS DEVINÉ, IL EST LU DANS L'URL :
+//  `_jourDemande()` extrait le `ddMMyyyy` du chemin réellement demandé, qui EST
+//  le `dateStr` que la production va utiliser. La cohérence jour/heure devient
+//  vraie PAR CONSTRUCTION et non par coïncidence d'horloge.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Jour civil porté par l'URL réellement demandée (`.../programme/<ddMMyyyy>`).
+/// C'est exactement le `dateStr` que `ZoneTurfService` recollera à l'heure du
+/// timestamp (zone_turf_service.dart:46 puis :148).
+DateTime _jourDemande(Uri url) {
+  final segs = url.pathSegments;
+  final i = segs.indexOf('programme');
+  if (i >= 0 && i + 1 < segs.length) {
+    final s = segs[i + 1];
+    if (s.length == 8) {
+      final d = int.tryParse(s.substring(0, 2));
+      final m = int.tryParse(s.substring(2, 4));
+      final y = int.tryParse(s.substring(4, 8));
+      if (d != null && m != null && y != null) return DateTime(y, m, d);
+    }
+  }
+  // Repli : jour courant (comportement antérieur) — jamais atteint tant que
+  // l'URL garde la forme `.../programme/<ddMMyyyy>`, ce que la production
+  // garantit (zone_turf_service.dart:64-65).
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day);
+}
+
+/// Dernier instant « sûr » de [jour] : 23h59, ou l'heure la plus tardive qui
+/// retombe bien sur le MÊME jour civil. La boucle couvre les rares fuseaux
+/// dont la transition DST tombe à minuit et rend 23h59 inexistant (Dart
+/// normaliserait alors vers le jour suivant, ce qui casserait l'ancrage).
+DateTime _finDeJour(DateTime jour) {
+  for (var h = 23; h >= 12; h--) {
+    final t = DateTime(jour.year, jour.month, jour.day, h, 59);
+    if (t.year == jour.year && t.month == jour.month && t.day == jour.day) {
+      return t;
+    }
+  }
+  return DateTime(jour.year, jour.month, jour.day, 12, 0);
+}
+
+/// Départ fictif « proche », TOUJOURS cohérent avec le contrat `dateStr`+`heure`.
+/// Garantit `heureDateTime.difference(now).inMinutes ∈ [0, 180]` :
+///   • `now + 3 h` tant que cette somme reste dans le jour demandé (⇒ +180 min) ;
+///   • sinon écrêtage à `_finDeJour(jour)` (⇒ 0…180 min, jamais de minuit
+///     franchi, donc jamais de `heureDateTime` dans le passé).
+DateTime _departFictif(Uri url) {
+  final now = DateTime.now();
+  final jour = _jourDemande(url); // jour du dateStr de production
+  final plus3 = now.add(const Duration(hours: 3));
+  if (plus3.year == jour.year &&
+      plus3.month == jour.month &&
+      plus3.day == jour.day) {
+    return plus3;
+  }
+  return _finDeJour(jour);
+}
+
+String _programme({
+  required String lieu,
+  required int numOfficiel,
+  required Uri url,
+}) {
+  final depart = _departFictif(url).millisecondsSinceEpoch;
+  assert(() {
+    // L'ancrage doit survivre à l'aller-retour epoch → local que fait la
+    // production (`DateTime.fromMillisecondsSinceEpoch(ts).toLocal()`, l.149).
+    final relu = DateTime.fromMillisecondsSinceEpoch(depart).toLocal();
+    final jour = _jourDemande(url);
+    return relu.year == jour.year &&
+        relu.month == jour.month &&
+        relu.day == jour.day;
+  }(), 'départ fictif hors du jour civil du dateStr demandé');
   return jsonEncode({
     'programme': {
       'reunions': [
@@ -260,7 +363,9 @@ Future<T> _avecScenario<T>(
       await verrou.future;
     }
     return http.Response(
-        _programme(lieu: s.lieu, numOfficiel: s.numOfficiel), 200,
+        _programme(
+            lieu: s.lieu, numOfficiel: s.numOfficiel, url: request.url),
+        200,
         headers: {'content-type': 'application/json'});
   });
   return http.runWithClient(action, () => client);
