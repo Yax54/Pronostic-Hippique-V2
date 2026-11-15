@@ -18,6 +18,7 @@ import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
 import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55
+import '../utils/date_utils.dart' show dateDepuisCourseKey; // ★ A-2 : date réelle de la course
 import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
 import '../services/quasi_gros_paris_service.dart'; // ★ v10.72 : Gros paris à surveiller
 
@@ -232,7 +233,11 @@ class _BestBetScreenState extends State<BestBetScreen>
           numCourse:   opp.course.numCourse,
           dateStr:     opp.course.dateStr,
         );
-        if (key.isEmpty) return;
+        // ★ A-2 : validation CALENDAIRE RÉELLE (et non `isEmpty`).
+        //   `isEmpty` ne détectait pas `R9C9_` (dateStr vide) ni une date
+        //   aberrante : l'entrée premium partait alors sous la date du
+        //   téléphone. `dateDepuisCourseKey` exige une date réelle.
+        if (dateDepuisCourseKey(key) == null) return;
         premiums.add(PremiumPronosticDuJour(
           courseKey:    key,
           typePari:     opp.typePari,

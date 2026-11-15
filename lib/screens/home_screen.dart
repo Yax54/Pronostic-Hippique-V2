@@ -23,6 +23,7 @@ import '../services/alert_service.dart';         // ★ v10.23
 import '../main.dart' show NavigationNotifier;   // ★ v10.23
 import 'ia_performance_screen.dart';             // ★ v10.27 : raccourci calendrier
 import '../utils/premium_utils.dart';            // ★ v10.55 : helpers premium centralisés
+import '../utils/date_utils.dart' show dateDepuisCourseKey; // ★ A-2 : date réelle de la course
 import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
 import '../services/ia_memory_models.dart' show PremiumStreak; // ★ v10.61
 import '../services/ia_narrative_memory_service.dart'; // ★ v10.68 : présence IA accueil
@@ -484,7 +485,11 @@ class _HomeScreenState extends State<HomeScreen> {
         numCourse:   conseil.course!.numCourse,
         dateStr:     conseil.course!.dateStr,
       );
-      if (keyConseil.isNotEmpty) {
+      // ★ A-2 : validation CALENDAIRE RÉELLE (et non `isNotEmpty`).
+      //   `isNotEmpty` laissait passer `R1C3_` (dateStr vide) et toute date
+      //   aberrante, qui se retrouvaient rangées sous la date du téléphone.
+      //   `dateDepuisCourseKey` exige une date réelle et retourne null sinon.
+      if (dateDepuisCourseKey(keyConseil) != null) {
         // ★ v10.54 : typePari + numeros calculés depuis la course réelle
         final (tp: typePariConseil, nums: numerosConseil) =
             typePariEtNumerosPourCourse(conseil.course!); // ★ v10.55 → premium_utils
@@ -509,7 +514,8 @@ class _HomeScreenState extends State<HomeScreen> {
         numCourse:   meilleur.course!.numCourse,
         dateStr:     meilleur.course!.dateStr,
       );
-      if (keyMeilleur.isNotEmpty) {
+      // ★ A-2 : idem — date réelle exigée, `isNotEmpty` était insuffisant.
+      if (dateDepuisCourseKey(keyMeilleur) != null) {
         // ★ v10.54 : typePari + numeros calculés depuis la course réelle
         // CORRECTION BUG : avant → [meilleur.cheval!.numero] (1 seul)
         // après → tous les chevaux du pari conseillé (ex: 4 pour Quarté+)

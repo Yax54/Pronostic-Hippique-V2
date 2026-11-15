@@ -38,6 +38,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
+import '../utils/date_utils.dart' show dateDepuisCourseKey; // ★ A-2 : date réelle de la course
 
 // import 'elo_service.dart'; // ★ v8.0 — utilisé par DataRefreshService, pas ici directement
 
@@ -5378,30 +5379,83 @@ class IaMemoryService extends ChangeNotifier {
   //    des pronostics sans résultat) : cette partie relève de E2, non traitée ici.
   Future<void> enregistrerPronosticsPremiumDuJour(
       List<PremiumPronosticDuJour> nouveaux) async {
-    final today = _todayKey();
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ A-2 — RANGEMENT SOUS LA DATE RÉELLE DE LA COURSE
+    //
+    //  DÉFAUT CORRIGÉ : `final today = _todayKey();` rangeait TOUTES les
+    //  entrées sous la date du TÉLÉPHONE. Or le lecteur
+    //  `donneesCalendrierJour()` lit sous la date du PRONOSTIC (l.856-861).
+    //  En cas de divergence — lot chargé la veille au soir, cache local de
+    //  8 h (DataRefreshService._cacheLocalDuree), fuseau décalé — l'entrée
+    //  était bien écrite sur le disque mais jamais relue : `hasBestBet`
+    //  restait `false` et l'étoile ⭐ était perdue DÉFINITIVEMENT et en
+    //  silence. Aucun fallback ne la rattrapait (l.858).
+    //
+    //  CE QUI CHANGE : la date de rangement est extraite de `courseKey`
+    //  elle-même (date réelle et calendairement valide de la course).
+    //
+    //  CE QUI NE CHANGE PAS — et ne doit jamais changer :
+    //    • `p.courseKey` n'est JAMAIS modifié : identité complète conservée,
+    //      suffixes compris (le suffixe est toléré, pas rejeté). C'est ce qui
+    //      préserve la correspondance avec `_pronostics` et les résultats,
+    //      `_estPremiumExactGagnantStrict` comparant les courseKey brutes
+    //      (l.5470) ;
+    //    • le filtre historique `courseKey.isNotEmpty` est conservé ;
+    //    • le triplet de dédoublonnage (courseKey, sourceWidget, typePari)
+    //      est conservé à l'identique ;
+    //    • aucune purge, aucune migration, aucune réécriture de l'historique
+    //      existant : les entrées déjà mal datées restent telles quelles ;
+    //    • une seule sauvegarde disque, après regroupement ;
+    //    • AUCUNE date de remplacement n'est inventée : une entrée dont la
+    //      date n'est pas déterminable est REJETÉE et journalisée.
+    // ═══════════════════════════════════════════════════════════════════════
     final valides = nouveaux.where((p) => p.courseKey.isNotEmpty).toList();
     if (valides.isEmpty) return;
 
-    // Mettre à jour l'entrée du jour courant dans l'historique
-    final entreeJour = List<PremiumPronosticDuJour>.from(
-      _premiumHistorique[today] ?? [],
-    );
+    // Regrouper par date réelle de course. `dateDepuisCourseKey` retourne null
+    // si — et seulement si — la clé ne porte pas de date calendaire valide.
+    final parDate = <String, List<PremiumPronosticDuJour>>{};
+    var nbRejetes = 0;
     for (final p in valides) {
-      // Remplacer si même courseKey + sourceWidget + typePari
-      // (évite d'écraser les autres widgets premium de la même course)
-      entreeJour.removeWhere((ex) =>
-          ex.courseKey    == p.courseKey    &&
-          ex.sourceWidget == p.sourceWidget &&
-          ex.typePari     == p.typePari);
-      entreeJour.add(p);
+      final dateCourse = dateDepuisCourseKey(p.courseKey);
+      if (dateCourse == null) {
+        nbRejetes++;
+        if (kDebugMode) {
+          debugPrint('[Premium][A-2] rejeté — date de course indéterminable : '
+              '${p.courseKey} (source=${p.sourceWidget})');
+        }
+        continue;
+      }
+      (parDate[dateCourse] ??= <PremiumPronosticDuJour>[]).add(p);
     }
-    _premiumHistorique[today] = entreeJour;
+    if (nbRejetes > 0 && kDebugMode) {
+      debugPrint('[Premium][A-2] $nbRejetes entrée(s) rejetée(s) sur '
+          '${valides.length} : aucune date de remplacement appliquée');
+    }
+    if (parDate.isEmpty) return;
+
+    // Une seule passe : appliquer le dédoublonnage existant, par date réelle.
+    for (final entree in parDate.entries) {
+      final liste = List<PremiumPronosticDuJour>.from(
+        _premiumHistorique[entree.key] ?? [],
+      );
+      for (final p in entree.value) {
+        // Remplacer si même courseKey + sourceWidget + typePari
+        // (évite d'écraser les autres widgets premium de la même course)
+        liste.removeWhere((ex) =>
+            ex.courseKey    == p.courseKey    &&
+            ex.sourceWidget == p.sourceWidget &&
+            ex.typePari     == p.typePari);
+        liste.add(p);
+      }
+      _premiumHistorique[entree.key] = liste;
+    }
 
     // ★ E5 : purge temporelle à 90 jours SUPPRIMÉE (voir en-tête de la méthode).
     //   Les entrées des jours anciens ne sont plus effacées ici.
     //   _premiumHistoriqueMaxJours n'intervient plus QUE dans calculerStreakPremium.
 
-    // Persister l'historique complet
+    // Persister l'historique complet — UNE seule écriture, tous jours confondus.
     await _sauvegarderPremiumHistorique();
   }
 
