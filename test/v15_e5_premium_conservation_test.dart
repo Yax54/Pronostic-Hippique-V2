@@ -30,7 +30,8 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 // ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/types.dart';
 
-import 'package:pronostic_hippique/models/zt_models.dart';
+// ★ A-3 (Option E′) : `models/zt_models.dart` n'est plus importé — seul S-1
+//   construisait des ZtCourse/ZtPartant, remplacés par le semis historique.
 import 'package:pronostic_hippique/services/backup_service.dart';
 import 'package:pronostic_hippique/services/elo_service.dart';
 import 'package:pronostic_hippique/services/ia_archive_service.dart';
@@ -137,6 +138,7 @@ class _FauxStore extends SharedPreferencesStorePlatform {
 
 const String _kPremiumKey = 'ia_premium_historique_v1';
 const String _kSelectKey = 'premium_widgets_selection_jour_v1';
+const String _kPronosticsKey = 'ia_pronostics_v2'; // ★ A-3 : semis historique résolu
 
 String _ymd(DateTime d) => '${d.year.toString().padLeft(4, '0')}-'
     '${d.month.toString().padLeft(2, '0')}-'
@@ -161,6 +163,55 @@ PremiumPronosticDuJour _premium({
       numeros: numeros,
       sourceWidget: sourceWidget,
     );
+
+/// ★ A-3 (Option E′) — Pronostic historique DÉJÀ RÉSOLU, au format de
+/// persistance (`IaPronostic.toJson()`), destiné à être semé dans
+/// `ia_pronostics_v2` **avant** tout chargement du service.
+///
+/// POURQUOI CE SEMIS REMPLACE LA BOUCLE `enregistrerPronostic()` +
+/// `enregistrerResultat()` :
+///   • `enregistrerResultat()` appelle `_save()`, et `_save()` commence par
+///     `_purgerVieuxPronostics()` (M1). Un pronostic daté de plus de
+///     `_maxPronosticsAge` (90 j) et NON ENCORE résolu au moment de cette
+///     sauvegarde est donc supprimé AVANT d'être résolu. Seuls 91 des 130
+///     survivaient — la purge, jamais l'historique premium, était en cause.
+///   • Le semis passe par le MÉCANISME NORMAL de chargement : `_load()` relit
+///     `ia_pronostics_v2` ; aucun accès aux structures internes n'est forcé.
+///   • M1 n'est PAS contournée ni modifiée : elle continue de purger en
+///     production. Le semis décrit un appareil dont les 130 courses ont été
+///     RÉSOLUES EN LEUR TEMPS ; leurs pronostics sont donc, de fait, résolus.
+///
+/// CHAMPS STRICTEMENT NÉCESSAIRES À `_estPremiumExactGagnantStrict()` :
+///   `courseKey` (égalité), `typePariConseille` (branche « quinté »),
+///   `arriveeReelle` (comparaison des 5 numéros), `resultatsReels` (résolu).
+///   ⚠️ Cette fonction NE LIT AUCUNE COTE : ni `coteFavoriPmu`, ni
+///      `cotesPmuParNumero` n'interviennent dans son verdict.
+Map<String, dynamic> _pronosticResoluHistorique({
+  required DateTime jour,
+  required int r,
+  required int c,
+  List<int> arrivee = const [3, 7, 1, 5, 2],
+  String typePari = 'Quinté+',
+}) =>
+    IaPronostic(
+      courseKey: 'R${r}C${c}_${_ddmmyyyy(jour)}',
+      nomCourse: 'Course historique $c',
+      hippodrome: 'Vincennes',
+      discipline: 'Trot Attelé',
+      datePronostic: jour, // date RÉELLE du jour de course (J−i)
+      dateResultat: jour,
+      scoresIA: const <String, double>{
+        '3': 92.0,
+        '7': 84.0,
+        '1': 76.0,
+        '5': 68.0,
+        '2': 60.0,
+      },
+      scoresCriteres: const <String, ScoresCriteres>{},
+      resultatsReels: true,
+      arriveeReelle: arrivee,
+      typePariConseille: typePari,
+    ).toJson();
 
 /// Historique premium « vieux » injecté directement dans le stockage, comme
 /// le ferait un appareil utilisé depuis des mois. Aucun pronostic associé :
@@ -207,54 +258,11 @@ DateTime _ilYA(int jours) {
   return DateTime(n.year, n.month, n.day).subtract(Duration(days: jours));
 }
 
-// ── Constructeurs ZT, nécessaires au chemin réel enregistrerPronosticsBatch ──
-
-ZtPartant _partant(int num) => ZtPartant(
-      numero: '$num',
-      nom: 'CHEVAL_$num',
-      driver: 'DRIVER_$num',
-      entraineur: 'ENTR_$num',
-      proprietaire: 'PROP_$num',
-      gains: '${num * 10000}',
-      record: '1\'1${num % 10}"0',
-      musique: '1a2a3a4a5a',
-      cote: '4.0',
-      ageSexe: '${4 + num % 6} M',
-      poids: 57.0 + num,
-      placeDepartInt: num,
-      joursRepos: 10 + num,
-      hippodromeActuel: 'VINCENNES',
-      statsJockeyCsv: 'JOCKEY_$num|15|40|12',
-      statsHippodromeCsv: 'VINCENNES|20|45|15',
-      statsEntraineurCsv: 'ENTR_$num|12|33|8',
-      eloRating: 1500.0 + num * 10,
-      eloNbCourses: 20,
-      eloVariationMois: 5.0,
-      statsTerrainCsv: 'bon|6|2|4',
-      gainsDernierAn: num * 5000,
-    );
-
-ZtCourse _course({
-  int numCourse = 1,
-  int nbPartants = 8,
-  String date = '',
-  String heure = '14:15',
-}) =>
-    ZtCourse(
-      numCourse: numCourse,
-      anchor: 'R1C$numCourse',
-      nom: 'PRIX_TEST_$numCourse',
-      heure: heure,
-      distance: '2700',
-      prix: '50000',
-      type: 'Trot Attelé',
-      piste: 'Sable',
-      categorie: 'Course D',
-      isQuinte: true,
-      pronosticZt: const [1, 2, 3, 4, 5],
-      partants: List.generate(nbPartants, (i) => _partant(i + 1)),
-      dateStr: date,
-    );
+// ── Constructeurs ZT ────────────────────────────────────────────────────────
+//  ★ A-3 (Option E′) : `_course()` et `_partant()` ont été RETIRÉS.
+//  Seul S-1 les utilisait, via le couple enregistrerPronostic/enregistrerResultat
+//  que le semis historique a remplacé. Les conserver produisait du code mort
+//  (`unused_element`) ; les supprimer ne retire AUCUNE assertion.
 
 void main() {
   late Directory tmpDir;
@@ -702,36 +710,46 @@ void main() {
   group('S — calculerStreakPremium : borne et règles inchangées', () {
     test('S-1 — série de 130 jours : conservée, et plafonnée par la borne de 90',
         () async {
-      // Chemin de production : enregistrerPronostic() puis enregistrerResultat().
+      // ★ A-3 (Option E′) — HISTORIQUE DÉJÀ RÉSOLU, semé puis CHARGÉ.
+      //
+      // AVANT A-3, ce test construisait les 130 pronostics par une boucle
+      // `enregistrerPronostic()` + `enregistrerResultat()`. Ce chemin ne
+      // fonctionnait QUE parce que `datePronostic` valait `DateTime.now()` :
+      // depuis A-3, la date vient de la course, et le pronostic J−i (i > 90)
+      // était purgé par M1 **avant** sa résolution, dans la `_save()` appelée
+      // par `enregistrerResultat()`. 91 survivants sur 130.
+      //
+      // Le semis ci-dessous décrit ce qui existe réellement sur un appareil
+      // utilisé depuis 130 jours : 130 pronostics RÉSOLUS, datés de leur
+      // JOUR DE COURSE, persistés dans `ia_pronostics_v2`. Il passe par le
+      // chargement normal (`recharger()` → `_load()`), sans forcer aucune
+      // structure interne, et SANS toucher M1.
+      //
       // 130 jours consécutifs gagnants — les numéros premium [3,7,1,5,2]
       // correspondent exactement à l'arrivée réelle déclarée.
       final jours = List.generate(130, (i) => _ilYA(i));
+
       final entries = <String, dynamic>{};
+      final pronosticsSemes = <String>[];
       for (var i = 0; i < jours.length; i++) {
+        // Entrée premium du jour, telle que produite par les widgets.
         entries[_ymd(jours[i])] = [
           _premium(jour: jours[i], r: 1, c: i + 1).toJson(),
         ];
+        // Pronostic correspondant, DÉJÀ RÉSOLU, même courseKey.
+        pronosticsSemes.add(json.encode(_pronosticResoluHistorique(
+          jour: jours[i],
+          r: 1,
+          c: i + 1,
+        )));
       }
       final store = _installerStore(data: <String, Object>{
         'flutter.$_kPremiumKey': json.encode({'entries': entries}),
+        'flutter.$_kPronosticsKey': pronosticsSemes,
       });
       await IaMemoryService.instance.recharger();
 
-      for (var i = 0; i < jours.length; i++) {
-        final key = 'R1C${i + 1}_${_ddmmyyyy(jours[i])}';
-        await IaMemoryService.instance.enregistrerPronostic(
-          courseKey: key,
-          course: _course(
-              numCourse: i + 1, date: _ddmmyyyy(jours[i]), heure: '15:30'),
-          partantsClasses: List.generate(8, (k) => _partant(k + 1)),
-          typePariConseille: 'Quinté+',
-        );
-        await IaMemoryService.instance.enregistrerResultat(
-          courseKey: key,
-          arriveeReelle: const [3, 7, 1, 5, 2],
-        );
-      }
-
+      // ── GARDE-FOU : les 130 pronostics sont réellement chargés et résolus ─
       final nbGagnants = IaMemoryService.instance.pronostics
           .where((p) => p.resultatsReels)
           .length;

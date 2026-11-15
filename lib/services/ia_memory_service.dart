@@ -38,7 +38,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
-import '../utils/date_utils.dart' show dateDepuisCourseKey; // ★ A-2 : date réelle de la course
+import '../utils/date_utils.dart'
+    show dateDepuisCourseKey, estDateCourseCalendaireValide; // ★ A-2/A-3
 
 // import 'elo_service.dart'; // ★ v8.0 — utilisé par DataRefreshService, pas ici directement
 
@@ -2225,6 +2226,80 @@ class IaMemoryService extends ChangeNotifier {
 
   // ── Enregistrement d'un pronostic avec scores par critère ──────────────────
 
+  /// ★ A-3 — Résolution de la date RÉELLE de la course.
+  ///
+  /// DÉFAUT CORRIGÉ : `enregistrerPronostic()` écrivait
+  /// `datePronostic: DateTime.now()`, c'est-à-dire la date du TÉLÉPHONE au
+  /// moment de la validation du pari. Conséquences mesurées :
+  ///   • un pari saisi la veille au soir était daté du lendemain ;
+  ///   • le pronostic était archivé dans le shard du MAUVAIS mois
+  ///     (`IaArchiveService._moisDe` dérive du `datePronostic`) ;
+  ///   • une fois RÉSOLU, `_dateCalendrierEligible()` (l.706) le rangeait dans
+  ///     le mois du téléphone et non dans celui de la course ;
+  ///   • la fenêtre d'apprentissage 45/90 jours (`_apprendreReglesBase`)
+  ///     sélectionnait une population fausse.
+  ///
+  /// CE QUE CETTE MÉTHODE FAIT : elle déduit la date de la COURSE, jamais du
+  /// téléphone, à partir des deux seules sources de vérité disponibles :
+  ///   1. `courseKey` — via `dateDepuisCourseKey()` (A-2, réutilisée telle
+  ///      quelle : formats `ddMMyyyy` et ISO, suffixe toléré, validité
+  ///      calendaire contrôlée par aller-retour) ;
+  ///   2. `course.dateStr` — validé par `estDateCourseCalendaireValide()` (A-2).
+  ///
+  /// RÈGLE DE NON-INVENTION (impérative) : si les deux sources manquent, ou si
+  /// elles se CONTREDISENT, la méthode retourne `null`. Aucune date de
+  /// remplacement n'est jamais fabriquée — « ne rien écrire plutôt que de
+  /// deviner ».
+  ///
+  /// L'HEURE RÉELLE est préservée dès que `dateStr` est valide (c'est lui qui
+  /// alimente `heureDateTime`, zt_models.dart:815-833). Quand seule la
+  /// `courseKey` porte la date, l'heure de départ n'est PAS connue de façon
+  /// fiable : le pronostic est alors daté à minuit, ce qui place la journée
+  /// correctement sans prétendre connaître une heure.
+  ///
+  /// ⚠️ Cette méthode ne modifie AUCUNE règle d'apprentissage : ni `_poids`,
+  ///    ni `_seuils`, ni le gradient, ni le TOP 3, ni `analyseJourneeComplete`.
+  ///    Elle ne change que la VALEUR d'un champ, pas les formules qui le lisent.
+  static DateTime? _dateReelleDeLaCourse(String courseKey, ZtCourse course) {
+    // ── Source 1 : la clé (autorité d'identité du pronostic) ────────────────
+    final isoCle = dateDepuisCourseKey(courseKey); // 'YYYY-MM-DD' ou null
+
+    // ── Source 2 : dateStr de la course (autorité de l'heure) ───────────────
+    final ds = course.dateStr;
+    final dsValide = estDateCourseCalendaireValide(ds);
+
+    // Aucune des deux : on n'écrit rien plutôt que d'inventer.
+    if (isoCle == null && !dsValide) return null;
+
+    // Les deux présentes : elles doivent CONCORDER. Une contradiction est un
+    // signal d'erreur amont, jamais une invitation à choisir arbitrairement.
+    if (isoCle != null && dsValide) {
+      final isoDs = '${ds.substring(4, 8)}-${ds.substring(2, 4)}-${ds.substring(0, 2)}';
+      if (isoCle != isoDs) return null;
+    }
+
+    final iso = isoCle ??
+        '${ds.substring(4, 8)}-${ds.substring(2, 4)}-${ds.substring(0, 2)}';
+    final annee = int.parse(iso.substring(0, 4));
+    final mois  = int.parse(iso.substring(5, 7));
+    final jour  = int.parse(iso.substring(8, 10));
+
+    // Heure réelle préservée uniquement si dateStr est la source retenue.
+    if (dsValide) {
+      final parts = course.heure.split(':');
+      if (parts.length == 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && h >= 0 && h <= 23 && m != null && m >= 0 && m <= 59) {
+          return DateTime(annee, mois, jour, h, m);
+        }
+      }
+    }
+
+    // Date connue, heure inconnue : minuit — la journée est juste.
+    return DateTime(annee, mois, jour);
+  }
+
   Future<void> enregistrerPronostic({
     required String courseKey,
     required ZtCourse course,
@@ -2235,6 +2310,18 @@ class IaMemoryService extends ChangeNotifier {
   }) async {
     await _load();
     if (_pronostics.any((p) => p.courseKey == courseKey)) return;
+
+    // ★ A-3 : la date vient de la COURSE, jamais du téléphone.
+    //   Refus explicite si elle n'est pas déterminable sans invention.
+    final dateReelle = _dateReelleDeLaCourse(courseKey, course);
+    if (dateReelle == null) {
+      if (kDebugMode) {
+        debugPrint('[IaMemory][A-3] pronostic REFUSÉ — date de course '
+            'indéterminable : $courseKey '
+            '(dateStr="${course.dateStr}") — aucune date inventée');
+      }
+      return; // aucun calcul, aucune insertion, aucune écriture
+    }
 
     final scores = <String, double>{};
     for (final p in partantsClasses) {
@@ -2287,7 +2374,7 @@ class IaMemoryService extends ChangeNotifier {
       nomCourse: course.nom.isNotEmpty ? course.nom : 'Course ${course.numCourse}',
       hippodrome: hippo,
       discipline: course.type,
-      datePronostic: DateTime.now(),
+      datePronostic: dateReelle,
       scoresIA: scores,
       scoresCriteres: scoresCriteresMap ?? {},
       varianceScores: variance,

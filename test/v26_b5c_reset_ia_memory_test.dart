@@ -128,10 +128,44 @@ void installerStore() {
   SharedPreferences.resetStatic();
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+//  ★ A-3 — Date de référence CALCULÉE au moment du test, jamais figée.
+//
+//  Jusqu'à A-3, `enregistrerPronostic()` datait le pronostic de
+//  `DateTime.now()` : une date de fixture figée (2026-01-05) ne pouvait donc
+//  jamais devenir « ancienne ». Depuis A-3, la date vient de la COURSE
+//  (`courseKey` / `dateStr`). Une date figée finirait par dépasser
+//  `_maxPronosticsAge` (90 jours) et `_purgerVieuxPronostics()` supprimerait
+//  le pronostic NON RÉSOLU de `amorcer()` : les témoins de non-vacuité
+//  tomberaient, alors que le reset qu'ils éprouvent est intact.
+//
+//  La date est donc calculée à chaque exécution. `courseKey` (format ISO) et
+//  `course.dateStr` (format ddMMyyyy) désignent le MÊME jour : ils concordent,
+//  ce qui est la condition d'acceptation posée par A-3.
+// ───────────────────────────────────────────────────────────────────────────
+DateTime get dateRefA3 {
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day);
+}
+
+/// Date de référence au format `ddMMyyyy` (celui de `ZtCourse.dateStr`).
+String get dateRefDdMmYyyy =>
+    '${dateRefA3.day.toString().padLeft(2, '0')}'
+    '${dateRefA3.month.toString().padLeft(2, '0')}'
+    '${dateRefA3.year}';
+
+/// Date de référence au format ISO `YYYY-MM-DD` (celui des `courseKey` de ce
+/// fichier, et celui que `dateDepuisCourseKey()` sait relire).
+String get dateRefIso =>
+    '${dateRefA3.year.toString().padLeft(4, '0')}-'
+    '${dateRefA3.month.toString().padLeft(2, '0')}-'
+    '${dateRefA3.day.toString().padLeft(2, '0')}';
+
 ZtCourse courseTest(int numCourse, String nom) => ZtCourse(
       numCourse: numCourse,
       anchor: 'c$numCourse',
       nom: nom,
+      dateStr: dateRefDdMmYyyy, // ★ A-3 : date réelle, concordante avec la clé
       heure: '14:00',
       distance: '2700',
       prix: '50000',
@@ -148,15 +182,15 @@ ZtCourse courseTest(int numCourse, String nom) => ZtCourse(
 /// protégée P2), ce qui rend les assertions « clé effacée » non vacues.
 Future<void> amorcer(IaMemoryService mem) async {
   await mem.enregistrerPronostic(
-    courseKey: 'R1C1_2026-01-05',
+    courseKey: 'R1C1_$dateRefIso', // ★ A-3 : date réelle du jour
     course: courseTest(1, 'Prix Amorçage'),
     partantsClasses: const <ZtPartant>[],
     confiancePredite: 72.0,
   );
-  await mem.enregistrerParisPremiumDuJour(<String>['R1C1_2026-01-05']);
-  await mem.enregistrerPronosticsPremiumDuJour(const <PremiumPronosticDuJour>[
+  await mem.enregistrerParisPremiumDuJour(<String>['R1C1_$dateRefIso']);
+  await mem.enregistrerPronosticsPremiumDuJour(<PremiumPronosticDuJour>[
     PremiumPronosticDuJour(
-      courseKey: 'R1C1_2026-01-05',
+      courseKey: 'R1C1_$dateRefIso', // ★ A-3 : date réelle du jour
       typePari: 'Quinté+',
       numeros: <String>['1', '2', '3', '4', '5'],
       sourceWidget: 'conseilJour',
@@ -164,19 +198,19 @@ Future<void> amorcer(IaMemoryService mem) async {
   ]);
   await mem.sauvegarderSelectionWidgetPremiumDuJour(
     SelectionWidgetPremiumDuJour(
-      dateKey: '2026-01-05',
+      dateKey: dateRefIso, // ★ A-3 : date réelle du jour
       sourceWidget: 'conseilJour',
-      courseKey: 'R1C1_2026-01-05',
+      courseKey: 'R1C1_$dateRefIso',
       typePari: 'Quinté+',
       numeros: const <String>['1', '2', '3', '4', '5'],
-      createdAt: DateTime(2026, 1, 5, 12),
+      createdAt: dateRefA3,
     ),
   );
   // Alimente `_journal` par une voie PUBLIQUE. Le gradient n'est PAS lancé :
   // `annulerJourneeAtypique` ne l'appelle que s'il existe des pronostics
   // RÉSOLUS pour la date, et `enregistrerPronostic` n'a créé aucun résultat.
   // Aucun mécanisme d'apprentissage n'est donc sollicité ici.
-  await mem.annulerJourneeAtypique(DateTime(2026, 1, 5));
+  await mem.annulerJourneeAtypique(dateRefA3);
 }
 
 const List<String> kClesIASurDisque = <String>[
@@ -489,12 +523,12 @@ void main() {
       await IaMemoryService.init();
       final mem = IaMemoryService.instance;
       final selection = SelectionWidgetPremiumDuJour(
-        dateKey: '2026-01-06',
+        dateKey: dateRefIso, // ★ A-3 : date réelle du jour
         sourceWidget: 'meilleurPari',
-        courseKey: 'R2C2_2026-01-06',
+        courseKey: 'R2C2_$dateRefIso',
         typePari: 'Tiercé',
         numeros: const <String>['4', '5', '6'],
-        createdAt: DateTime(2026, 1, 6, 10),
+        createdAt: dateRefA3.add(const Duration(hours: 10)),
       );
 
       // ── TÉMOIN « la méthode n'écrit pas quand rien ne change » écarté :
@@ -514,15 +548,22 @@ void main() {
 
       // Contrôle : sans panne, la sélection est bien écrite. On vise une
       // AUTRE date, car « déjà figé » est idempotent et n'écrirait pas.
+      // ★ A-3 : la date de `amorcer()` est celle d'AUJOURD'HUI ; il faut donc
+      //   une date distincte. On prend DEMAIN — toujours différente de la date
+      //   du jour, et jamais figée.
+      final demainRef = dateRefA3.add(const Duration(days: 1));
+      final demainIso = '${demainRef.year.toString().padLeft(4, '0')}-'
+          '${demainRef.month.toString().padLeft(2, '0')}-'
+          '${demainRef.day.toString().padLeft(2, '0')}';
       store.clesEnPanne.clear();
       await mem.sauvegarderSelectionWidgetPremiumDuJour(
         SelectionWidgetPremiumDuJour(
-          dateKey: '2026-01-07',
+          dateKey: demainIso,
           sourceWidget: 'meilleurPari',
-          courseKey: 'R3C3_2026-01-07',
+          courseKey: 'R3C3_$demainIso',
           typePari: 'Tiercé',
           numeros: const <String>['7', '8', '9'],
-          createdAt: DateTime(2026, 1, 7, 10),
+          createdAt: demainRef.add(const Duration(hours: 10)),
         ),
       );
       expect(store.contient(_kPremiumWidgetsSelection), isTrue,
@@ -605,7 +646,7 @@ void main() {
 
       // Ne doit PAS lever : comportement historique de _save().
       await mem.enregistrerPronostic(
-        courseKey: 'R3C3_2026-01-07',
+        courseKey: 'R3C3_$dateRefIso', // ★ A-3 : date réelle du jour
         course: courseTest(3, 'Prix Sans Propagation'),
         partantsClasses: const <ZtPartant>[],
         confiancePredite: 55.0,
