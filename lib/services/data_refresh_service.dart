@@ -181,6 +181,44 @@ class DataRefreshService extends ChangeNotifier {
   static const Duration _refreshInterval = Duration(minutes: 15);
   static const Duration _cacheLocalDuree = Duration(hours: 8);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-01-c — BARRIÈRE DE RÉINITIALISATION.
+  //
+  //  MODÈLE : identique à `AlertService`, `IaMemoryService`, `EloService` et
+  //  `CoteTrackerService`, pour que le raisonnement soit transposable.
+  //    • `_resetEnCours`   : barrière TEMPORELLE, vraie du début du reset à la
+  //                          fin de l'effacement disque.
+  //    • `_generationCache`: verrou DÉFINITIF, jamais décrémenté. Il couvre
+  //                          les opérations dont un `await` se résout APRÈS
+  //                          la fermeture de `_resetEnCours` — c'est-à-dire
+  //                          précisément le cas « reset pendant le chargement
+  //                          réseau » que cette correction traite.
+  //    • `_ecrituresEnCours`: registre des écritures ENGAGÉES, alimenté et
+  //                          vidé par `_ecrireProtege` UNIQUEMENT.
+  //
+  //  CE QUI ÉTAIT FAUX AVANT (mesuré) : `_doRefresh()` traversait un `await
+  //  ZoneTurfService.chargerProgramme()` pouvant durer 20 s. Un reset exécuté
+  //  dans cette fenêtre effaçait le disque, puis le rafraîchissement REPRENAIT
+  //  son cours : `_reunions = reunions` (l.520) repeuplait la RAM vidée par
+  //  R-DR-01-b, `_initialiserEtatPartants` repeuplait `_partantsParCourse`,
+  //  `_lastRefresh` était réécrit, `_sauvegarderCacheLocal` recréait les deux
+  //  clés supprimées par R-DR-01-a, et les cinq effets secondaires
+  //  (pronostics, widget, cotes, résultats, conseils) étaient relancés.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Barrière temporelle : vraie du début du reset à la fin de l'effacement.
+  bool _resetEnCours = false;
+
+  /// Verrou définitif : ne redescend jamais.
+  int _generationCache = 0;
+
+  /// Registre des écritures de cache ENGAGÉES (contrôles franchis).
+  final Set<Future<bool>> _ecrituresEnCours = <Future<bool>>{};
+
+  bool get resetEnCours => _resetEnCours;
+  int get generationCache => _generationCache;
+  int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
   List<ZtReunion> get reunions    => _reunions;
   bool            get loading     => _loading;
   String?         get lastError   => _lastError;
@@ -325,16 +363,76 @@ class DataRefreshService extends ChangeNotifier {
 
   Future<void> _sauvegarderCacheLocal(
       List<ZtReunion> reunions, String dateStr) async {
-    try {
-      final prefs  = await SharedPreferences.getInstance();
-      final cle    = _cleCachePourDate(dateStr);
-      await prefs.setString(cle, jsonEncode(reunions.map((r) => r.toJson()).toList()));
-      await prefs.setInt('${cle}_ts', DateTime.now().millisecondsSinceEpoch);
+    // ★ B5c-RDR-01-c : l'écriture passe par le REGISTRE, donc par la
+    //   barrière. Sans cela, le drain du reset ne la verrait pas : une
+    //   écriture suspendue se terminerait après l'effacement et recréerait
+    //   la paire de clés (scénario mesuré V31b R01-J).
+    //
+    //   ⚠️ `_ecrireProtegeCache` est asynchrone et son corps s'exécute
+    //   jusqu'au premier `await` de façon synchrone : la future est donc
+    //   enregistrée avant tout point de reprise, comme l'exige le drain.
+    await _ecrireProtegeCache((prefs) async {
+      final cle = _cleCachePourDate(dateStr);
+
+      // ───────────────────────────────────────────────────────────────────
+      //  ORDRE D'ÉCRITURE : `_ts` puis JSON, et NON l'inverse.
+      //
+      //  `_chargerCacheLocal` lit le JSON d'abord et sort si `jsonStr == null
+      //  || jsonStr.isEmpty` (l.296-297). Une clé `_ts` orpheline est donc
+      //  inoffensive. À l'inverse, un JSON SANS `_ts` est relu avec
+      //  `timestampMs == null` → `_lastRefresh = null` (l.350-352), donc SANS
+      //  contrôle de péremption. Écrire l'horodatage en premier garantit
+      //  qu'une interruption ne laisse jamais de JSON sans `_ts` : le seul
+      //  résidu possible est une clé `_ts` seule, que R-DR-01-a supprime et
+      //  que la lecture ignore.
+      // ───────────────────────────────────────────────────────────────────
+      final okTs = await prefs.setInt(
+          '${cle}_ts', DateTime.now().millisecondsSinceEpoch);
+
+      // Contrôle de génération entre les DEUX écritures : `setInt` est
+      // asynchrone. Un reset survenu pendant sa résolution rend la paire
+      // incohérente ; on retire alors le `_ts` déjà posé.
+      if (_resetEnCours) {
+        await prefs.remove('${cle}_ts');
+        if (kDebugMode) {
+          debugPrint('[DataRefresh] ⏭️ cache non écrit : reset survenu entre '
+              'les deux écritures — clé _ts orpheline retirée');
+        }
+        return;
+      }
+
+      if (!okTs) {
+        // Écriture d'horodatage REFUSÉE : on n'écrit pas le JSON, sinon on
+        // créerait exactement la paire désynchronisée interdite.
+        _derniereErreurCache =
+            'setInt refusé pour ${cle}_ts — JSON non écrit';
+        debugPrint('[DataRefresh] ⚠️ $_derniereErreurCache');
+        return;
+      }
+
+      final okJson = await prefs.setString(
+          cle, jsonEncode(reunions.map((r) => r.toJson()).toList()));
+
+      if (!okJson) {
+        // Écriture du JSON REFUSÉE : le `_ts` déjà écrit devient orphelin.
+        // On le supprime pour ne laisser aucune clé partielle.
+        await prefs.remove('${cle}_ts');
+        _derniereErreurCache =
+            'setString refusé pour $cle — clé _ts orpheline retirée';
+        debugPrint('[DataRefresh] ⚠️ $_derniereErreurCache');
+        return;
+      }
+
+      _derniereErreurCache = null;
       await _nettoyerAnciensCache(prefs, dateStr);
-    } catch (e) {
-      debugPrint('[DataRefresh] ⚠️ Erreur sauvegarde cache : $e');
-    }
+    });
   }
+
+  /// Dernière erreur d'écriture de cache, pour le diagnostic (et les tests).
+  /// `null` quand la dernière écriture a réussi. Une écriture REFUSÉE par la
+  /// barrière de reset n'est PAS une erreur : elle n'est pas enregistrée ici.
+  String? _derniereErreurCache;
+  String? get derniereErreurCache => _derniereErreurCache;
 
   Future<void> _nettoyerAnciensCache(
       SharedPreferences prefs, String dateActuelle) async {
@@ -493,8 +591,37 @@ class DataRefreshService extends ChangeNotifier {
   }
 
   // ── Rafraîchissement principal ────────────────────────────────────
+  //
+  //  ★ B5c-RDR-01-c — CYCLE COMPLET PROTÉGÉ.
+  //
+  //  La génération est capturée AVANT le premier `await` (le chargement
+  //  réseau) et revérifiée à CHAQUE point de reprise asynchrone. Tout ce qui
+  //  touche la RAM ou le disque est donc conditionné.
+  //
+  //  Ce qui est CONSERVÉ à l'identique : l'ordre des opérations, les
+  //  conditions de changement de signature, la détection des non-partants,
+  //  `_initialiserEtatPartants`, la sauvegarde du cache, et les cinq effets
+  //  secondaires. Aucun calcul, aucune règle métier, aucun seuil n'est touché.
+  //
+  //  Ce qui est AJOUTÉ : trois sorties anticipées, toutes sur le même critère
+  //  `_estObsolete(generation)`, et un `finally` qui ne notifie plus un état
+  //  périmé. Une opération obsolète ne réécrit rien et ne relance rien.
   Future<void> _doRefresh({bool force = false}) async {
     if (_loading) return;
+
+    // ── Capture AVANT tout `await` : c'est le point d'engagement. ────────
+    //  Lue en PREMIER, avant même la pose de `_loading`, pour qu'aucun code
+    //  asynchrone puisse s'intercaler entre la capture et le début du travail.
+    final generationAuDemarrage = _generationCache;
+
+    if (_resetEnCours) {
+      // Un reset est déjà en cours : ne rien démarrer du tout.
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏭️ refresh refusé : reset en cours');
+      }
+      return;
+    }
+
     _loading   = true;
     _lastError = null;
     notifyListeners();
@@ -504,6 +631,18 @@ class DataRefreshService extends ChangeNotifier {
       final todayStr = _todayDateStr();
       final reunions = await ZoneTurfService.chargerProgramme(
           forceRefresh: force);
+
+      // ═══════════════ POINT DE REPRISE ASYNCHRONE N°1 ══════════════════
+      //  Le chargement réseau a pu durer 20 s, pendant lesquelles un reset
+      //  complet s'est éventuellement déroulé. On ne touche plus à rien.
+      if (_estObsolete(generationAuDemarrage)) {
+        if (kDebugMode) {
+          debugPrint('[DataRefresh] ⏭️ refresh abandonné : reset survenu '
+              'pendant le chargement réseau (génération '
+              '$generationAuDemarrage → $_generationCache)');
+        }
+        return;
+      }
 
       if (reunions.isEmpty && _reunions.isNotEmpty) {
         debugPrint('[DataRefresh] ⚠️ API retourne 0 réunion — cache conservé');
@@ -516,6 +655,19 @@ class DataRefreshService extends ChangeNotifier {
           // ★ v9.0 : Détecter les non-partants AVANT de mettre à jour _reunions
           if (_reunions.isNotEmpty && aChange) {
             await _detecterNonPartants(reunions);
+
+            // ═══════════ POINT DE REPRISE ASYNCHRONE N°2 ═══════════════
+            //  `_detecterNonPartants` contient des `await` (recalcul IA par
+            //  course). Le reset a pu s'exécuter pendant l'un d'eux : on ne
+            //  réécrit pas `_reunions` et on ne réinitialise pas l'état des
+            //  partants sur des données d'avant le reset.
+            if (_estObsolete(generationAuDemarrage)) {
+              if (kDebugMode) {
+                debugPrint('[DataRefresh] ⏭️ refresh abandonné : reset survenu '
+                    'pendant la détection des non-partants');
+              }
+              return;
+            }
           }
           _reunions = reunions;
           // ★ v9.0 : Mettre à jour l'état des partants après chaque refresh
@@ -553,12 +705,52 @@ class DataRefreshService extends ChangeNotifier {
       AlertService.instance.verifierNouvellesCoursesConseilIA(reunionsPourConseils).ignore();
 
     } catch (e) {
-      _lastError = e.toString();
+      // Une erreur d'un rafraîchissement OBSOLÈTE ne doit pas s'afficher :
+      // elle décrit un état aboli par le reset.
+      if (!_estObsolete(generationAuDemarrage)) {
+        _lastError = e.toString();
+      }
       debugPrint('[DataRefresh] ❌ Erreur: $e');
     } finally {
       _loading = false;
-      notifyListeners();
+      // Même règle pour la notification : on ne réveille pas l'UI sur un état
+      // périmé. En cas d'obsolescence, R-DR-01-b a déjà vidé la RAM et le
+      // `notifyListeners()` de fin de `reinitialiserComplet()` a prévenu l'UI.
+      if (!_estObsolete(generationAuDemarrage)) {
+        notifyListeners();
+      }
     }
+  }
+
+  /// Vrai si le rafraîchissement engagé sous [generation] ne doit plus rien
+  /// écrire : soit un reset est en cours, soit la génération a changé.
+  ///
+  /// Les deux termes sont nécessaires : `_resetEnCours` couvre la fenêtre
+  /// d'effacement, la génération couvre les reprises postérieures à sa
+  /// fermeture. C'est la même combinaison que `AlertService._ecrireProtege`.
+  bool _estObsolete(int generation) =>
+      _resetEnCours || generation != _generationCache;
+
+  /// Lance [action] en microtâche SI la génération [generation] est encore
+  /// valide au moment où la microtâche s'exécute.
+  ///
+  /// Un seul point de passage, pour que l'invariant « aucun effet secondaire
+  /// obsolète » soit vérifiable à la lecture : chaque tâche différée de ce
+  /// service (pronostics, résultats) est envoyée par ici. Le travail évité
+  /// n'est pas seulement une écriture : ce sont aussi un isolate de calcul
+  /// et des requêtes réseau que le reset vient d'invalider.
+  void _enMicrotacheSiNonObsolete(
+      int generation, Future<void> Function() action, String nom) {
+    Future.microtask(() async {
+      if (_estObsolete(generation)) {
+        if (kDebugMode) {
+          debugPrint('[DataRefresh] ⏭️ $nom non lancé(s) : reset survenu '
+              'avant la microtâche');
+        }
+        return;
+      }
+      await action();
+    });
   }
 
   /// Rafraîchissement manuel
@@ -571,6 +763,10 @@ class DataRefreshService extends ChangeNotifier {
     List<int> disqualifies = const [],
     List<int> retraits     = const [],
   }) async {
+    // ★ B5c-RDR-01-c : capture AVANT tout `await` (il y en a un dans
+    //   `invaliderEtRecalculer`). Voir la garde placée avant la mutation de
+    //   `_reunions`, plus bas.
+    final generationAuDemarrage = _generationCache;
     try {
       final partantsActifs = course.partants
           .where((p) => !p.estHorsCourse)
@@ -616,6 +812,35 @@ class DataRefreshService extends ChangeNotifier {
         raisonInvalidation:  infoMvt,
       );
 
+      // ═══════════════════════════════════════════════════════════════════
+      //  ★ B5c-RDR-01-c — GARDE SUR LA MUTATION RAM DE `reAnalyserCourse`.
+      //
+      //  `invaliderEtRecalculer` ci-dessus contient des `await` et possède
+      //  DÉJÀ sa propre garde (R-DR-04) : elle refuse d'écrire `_pronostics`
+      //  si un reset est intervenu. Mais la boucle ci-dessous, qui mute
+      //  `_reunions` — donc l'état que sert l'UI — n'avait AUCUNE protection.
+      //
+      //  Deux défauts distincts en découlaient :
+      //    1. après un reset, `_reunions` venait d'être vidé : le parcours ne
+      //       trouvait rien et ne faisait rien. Bénin, mais par accident ;
+      //    2. pendant un reset, un rafraîchissement EN VOL avait pu repeupler
+      //       `_reunions` avant le vidage : la boucle retrouvait alors la
+      //       course et réinjectait `courseFiltre` — un `ZtCourse` construit
+      //       à partir d'une réunion d'AVANT le reset — juste avant que le
+      //       `finally` ne vide. La donnée ne survivait pas, mais la mutation
+      //       avait bien eu lieu, ce qui rendait l'invariant indémontrable.
+      //
+      //  Aucune règle métier n'est touchée : on ne fait que conditionner
+      //  l'écriture à la validité de la génération engagée à l'entrée.
+      // ═══════════════════════════════════════════════════════════════════
+      if (_estObsolete(generationAuDemarrage)) {
+        if (kDebugMode) {
+          debugPrint('[DataRefresh] ⏭️ reAnalyserCourse: $courseKey — reset '
+              'intervenu, mise à jour de `_reunions` annulée');
+        }
+        return;
+      }
+
       // Mettre à jour _reunions en mémoire
       for (int i = 0; i < _reunions.length; i++) {
         final r   = _reunions[i];
@@ -643,7 +868,17 @@ class DataRefreshService extends ChangeNotifier {
 
   // ── Enregistrement batch IA ★ v9.0 : dans un isolate via compute() ─
   void _enregistrerPronosticsAuto(List<ZtReunion> reunions) {
-    Future.microtask(() => _enregistrerPronosticsBatchIsolate(reunions));
+    // ★ B5c-RDR-01-c : la génération est capturée AU MOMENT DE L'ENVOI, pas
+    //   dans la microtâche. Un reset survenu entre les deux doit empêcher le
+    //   calcul de partir : c'est un effet secondaire d'un rafraîchissement
+    //   aboli. Le rejet à l'engagement (R-DR-02) reste en place — ces deux
+    //   protections sont complémentaires, la première évite le travail
+    //   inutile, la seconde garantit qu'aucune donnée n'est écrite.
+    _enMicrotacheSiNonObsolete(
+      _generationCache,
+      () => _enregistrerPronosticsBatchIsolate(reunions),
+      'pronostics',
+    );
   }
 
   Future<void> _enregistrerPronosticsBatchIsolate(
@@ -678,15 +913,44 @@ class DataRefreshService extends ChangeNotifier {
 
     if (reunionsFiltrees.isEmpty) return;
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ B5c-RDR-02 — CAPTURE ATOMIQUE DE L'ÉTAT IA
+    //
+    //  Ces quatre lectures sont dans la MÊME section synchrone : aucun `await`
+    //  ne les sépare, ni entre elles, ni de l'entrée de la méthode (le premier
+    //  `await` est celui de `compute()`, plus bas). L'état capturé est donc
+    //  cohérent, et c'est EXACTEMENT celui que l'isolate va recevoir.
+    //
+    //  La génération est lue EN PREMIER, et l'ordre n'est pas décoratif :
+    //    • si un reset s'intercale AVANT ces lignes → génération neuve ET
+    //      poids neufs → le lot sera ACCEPTÉ et calculé avec les bons poids ;
+    //    • si un reset s'intercale APRÈS ces lignes → génération ancienne ET
+    //      poids anciens → le lot sera REJETÉ à l'engagement.
+    //  Les deux valeurs ne peuvent pas être désappariées, faute de `await`
+    //  entre elles. Capturer la génération APRÈS les poids (donc juste avant
+    //  `compute`) fonctionnerait aujourd'hui par accident, mais exprimerait
+    //  une garantie non vérifiée : le jour où un `await` s'introduirait dans
+    //  la préparation du payload, l'erreur serait silencieuse.
+    //
+    //  Hors du `try` pour rester visible du `catch` : le fallback n'en a pas
+    //  besoin (il lit l'état courant de façon atomique), mais ces valeurs
+    //  doivent être définies quel que soit le chemin.
+    // ══════════════════════════════════════════════════════════════════════
+    final generationAvantCalcul = IaMemoryService.instance.generationCache;
+    final poidsJsonAvantCalcul  = IaMemoryService.instance.poids.toJson();
+    final eloJsonAvantCalcul    = EloService.instance.exporterPourBackup();
+    final seuilsJsonAvantCalcul =
+        IaMemoryService.instance.seuilsConfiance.toJson();
+
     try {
       // ★ Préparer le payload pour l'isolate
       final payload = _BatchPayload(
         reunionsJson: reunionsFiltrees
             .map((r) => r.toJson())
             .toList(),
-        poidsJson:   IaMemoryService.instance.poids.toJson(),
-        eloJson:     EloService.instance.exporterPourBackup(),
-        seuilsJson:  IaMemoryService.instance.seuilsConfiance.toJson(),
+        poidsJson:   poidsJsonAvantCalcul,
+        eloJson:     eloJsonAvantCalcul,
+        seuilsJson:  seuilsJsonAvantCalcul,
       );
 
       // ★ Lancer dans un isolate Flutter (ne bloque pas l'UI)
@@ -735,12 +999,26 @@ class DataRefreshService extends ChangeNotifier {
       }
 
       if (batch.isNotEmpty) {
-        await IaMemoryService.instance.enregistrerPronosticsBatch(batch);
+        // ★ B5c-RDR-02 — la génération capturée AVANT `compute()` est
+        //   transmise. Si un reset complet a eu lieu pendant le calcul,
+        //   `enregistrerPronosticsBatch` écarte le lot EN ENTIER : aucune
+        //   insertion RAM, aucune écriture disque. Sans cela, le lot
+        //   réécrirait des pronostics que le reset vient d'effacer,
+        //   avec des scores calculés sur les poids d'avant.
+        await IaMemoryService.instance.enregistrerPronosticsBatch(batch,
+            generationAuDemarrage: generationAvantCalcul);
         debugPrint('[DataRefresh] 🧠 ${batch.length} pronostic(s) IA '
             'enregistrés (isolate)');
       }
     } catch (e) {
       // Fallback : calcul sur le thread principal si l'isolate échoue
+      //
+      // ★ B5c-RDR-02 — le fallback ne reçoit AUCUNE génération, et c'est
+      //   délibéré : il lit l'état IA et construit son lot sans aucun `await`
+      //   intermédiaire (`_enregistrerPronosticsBatchFallback`, l.750→814).
+      //   Son lot est donc TOUJOURS cohérent avec l'état courant. Lui passer
+      //   `generationAvantCalcul` ferait rejeter des pronostics pourtant
+      //   calculés avec les bons poids.
       debugPrint('[DataRefresh] ⚠️ Isolate batch échoué, fallback: $e');
       await _enregistrerPronosticsBatchFallback(reunionsFiltrees);
     }
@@ -818,10 +1096,32 @@ class DataRefreshService extends ChangeNotifier {
 
   // ── Récupération automatique résultats PMU ────────────────────────
   void _recupererResultatsAuto() {
-    Future.microtask(_recupererResultatsBatch);
+    // ★ B5c-RDR-01-c : même raison que pour les pronostics. Cette tâche
+    //   interroge le réseau et déclenche `EloService.mettreAJourApresArrivee`
+    //   (écriture ELO). Une opération obsolète ne doit pas être relancée.
+    _enMicrotacheSiNonObsolete(
+      _generationCache,
+      _recupererResultatsBatch,
+      'résultats',
+    );
   }
 
   Future<void> _recupererResultatsBatch() async {
+    // ★ B5c-RDR-03 — capture de génération pour le cycle de récupération des
+    //   résultats officiels. La méthode est entièrement asynchrone et attend
+    //   le RÉSEAU, suspension invisible de tous les registres de drainage :
+    //   un reset complet peut donc s'exécuter pendant elle. La capture est
+    //   faite avant tout `await`.
+    final generationAuDemarrage = _generationCache;
+    // ★ B5c-RDR-03 — DEUX compteurs DISTINCTS, capturés séparément.
+    //   `_estObsolete()` ci-dessous compare à `_generationCache` de CE service
+    //   (barrière DataRefresh). La garde d'`enregistrerResultat()` compare à
+    //   `IaMemoryService._generationCache`. Transmettre l'un à la place de
+    //   l'autre ferait comparer deux échelles indépendantes : sur un état neuf
+    //   (DataRefresh = 5, IaMemory = 0) tout enregistrement serait refusé à
+    //   tort. On capture donc la génération de `IaMemoryService` ICI, avant
+    //   tout `await`, et c'est elle qu'on transmet.
+    final generationIaAuDemarrage = IaMemoryService.instance.generationCache;
     final now = DateTime.now();
     final pronosticsEnAttente = IaMemoryService.instance.pronostics
         .where((p) => !p.resultatsReels)
@@ -849,9 +1149,27 @@ class DataRefreshService extends ChangeNotifier {
         final arrivee = await _fetchArriveeOfficielle(numR, numC, dateStr);
         if (arrivee.isEmpty) continue;
 
+        // ═══════════════ POINT DE REPRISE ASYNCHRONE ═══════════════════════
+        //  L'appel réseau ci-dessus a pu durer plusieurs secondes, pendant
+        //  lesquelles un reset complet s'est éventuellement déroulé. On ne
+        //  réintroduit plus rien : ni résultat, ni ELO, ni apprentissage.
+        if (_estObsolete(generationAuDemarrage)) {
+          if (kDebugMode) {
+            debugPrint('[DataRefresh] ⏭️ résultat R${numR}C$numC abandonné : '
+                'reset survenu pendant la récupération réseau '
+                '(génération $generationAuDemarrage → $_generationCache)');
+          }
+          return;
+        }
+
         await IaMemoryService.instance.enregistrerResultat(
           courseKey:    p.courseKey,
           arriveeReelle: arrivee,
+          // Génération d'`IaMemoryService`, capturée à l'ENGAGEMENT du cycle :
+          // la garde d'`enregistrerResultat()` la compare au compteur de CE
+          // service. Toute la branche ci-dessus a déjà été validée sur la
+          // génération de `DataRefreshService`.
+          generationAppelante: generationIaAuDemarrage,
         );
 
         // ★ v9.0 : Mettre à jour l'ELO après chaque arrivée officielle
@@ -970,6 +1288,169 @@ class DataRefreshService extends ChangeNotifier {
     return '${now.day.toString().padLeft(2, '0')}'
         '${now.month.toString().padLeft(2, '0')}'
         '${now.year}';
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-01-b — VIDAGE RAM POUR LE RESET COMPLET.
+  //
+  //  POURQUOI : `BackupService.reinitialiserComplet()` efface le disque, mais
+  //  ce service gardait tout son état EN MÉMOIRE. Mesuré V31 R01-H : après un
+  //  reset terminé, `_reunions` contenait encore la réunion d'AVANT le reset
+  //  (`lieu=RAM-SURVIT`), et l'UI la servait telle quelle
+  //  (home_screen.dart l.46 lit `DataRefreshService.instance.reunions`).
+  //
+  //  C'est la MÊME cause que celles traitées en B5/B5c pour EloService,
+  //  PronosticResultatsRepository, QuasiGrosParisService, IaBadgesService et
+  //  IaUserPrefsService : le disque est vidé, la RAM non. D'où le nommage
+  //  identique, pour que l'asymétrie ne puisse plus passer inaperçue.
+  //
+  //  CE QUE CETTE MÉTHODE NE FAIT **PAS**, ET NE DOIT PAS FAIRE :
+  //    • aucun `_doRefresh()` / `refresh()` → pas de récupération réseau ;
+  //    • aucun `_sauvegarderCacheLocal()` → on ne RECRÉE pas les clés que
+  //      R01-a vient de supprimer (même piège que `restaurerDepuisBackup({})`
+  //      ou `reinitialiser()` d'EloService, qui réécrivaient une clé vide) ;
+  //    • aucun calcul IA, aucun appel à `IaMemoryService` ;
+  //    • AUCUN `notifyListeners()` — l'autorisation de cette correction
+  //      exclut toute notification métier supplémentaire. Conséquence
+  //      assumée : l'UI ne se rafraîchit qu'au prochain événement qui notifie
+  //      déjà (fin de `_doRefresh`, ou le `notifyListeners()` de fin de
+  //      `reinitialiserComplet()` côté BackupService).
+  //
+  //  `_lastError` EST remis à `null` : l'UI l'affiche directement
+  //  (home_screen.dart l.2306 : `lastError ?? ''`, programme_screen.dart
+  //  l.73/91/117/126). Sans cette remise à zéro, une erreur réseau ANTÉRIEURE
+  //  au reset resterait affichée alors que plus rien ne la justifie : ce
+  //  serait un signalement faux, de la même famille que celui documenté en
+  //  R-DR-04-G. `_doRefresh` la remet déjà à `null` à son démarrage (l.499)
+  //  et à sa réussite (l.528), donc cette remise à zéro est cohérente avec
+  //  le cycle de vie existant et n'invente aucune règle.
+  // ═══════════════════════════════════════════════════════════════════════
+  void viderMemoirePourResetComplet() {
+    // `_reunions` est une `List` : on la vide SUR PLACE plutôt que de la
+    // réassigner, comme le fait `executerResetComplet` d'IaMemoryService pour
+    // ses collections. Aucun getter ne l'expose mutable, donc les deux formes
+    // sont équivalentes ici ; on garde la forme « sur place » par cohérence.
+    _reunions.clear();
+
+    // État de détection des non-partants : sans ce vidage, le premier refresh
+    // post-reset comparerait les nouveaux partants à l'état d'AVANT le reset
+    // et pourrait notifier des « non-partants » fantômes.
+    _partantsParCourse.clear();
+
+    // Anti-doublon des notifications de non-partants : le vider autorise à
+    // re-notifier les mêmes numéros après un reset, ce qui est le
+    // comportement attendu d'une remise à zéro complète.
+    _nonPartantsNotifies.clear();
+
+    _lastRefresh = null;
+    _lastError = null;
+
+    if (kDebugMode) {
+      debugPrint('[DataRefresh] 🧹 Mémoire vidée (reset complet, '
+          'disque non réécrit)');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-01-c — BARRIÈRE DE RESET DU SERVICE.
+  //
+  //  Appelée EXCLUSIVEMENT par `BackupService.reinitialiserComplet()`, en
+  //  TÊTE, comme `AlertService`, `IaMemoryService` et `EloService`. Elle
+  //  encadre l'effacement disque : c'est la seule position qui permette de
+  //  refuser une écriture NAISSANT pendant l'effacement.
+  //
+  //  TROIS ÉTAPES, dans cet ordre et sans interchangeabilité :
+  //    1. fermer la barrière (`_resetEnCours`) et incrémenter la génération —
+  //       plus aucune écriture ne NAÎT, et toute opération engagée avant est
+  //       définitivement invalide, y compris après réouverture ;
+  //    2. DRAINER les écritures de cache déjà engagées (registre) : sans
+  //       cela, un `setString` suspendu se terminerait APRÈS l'effacement et
+  //       recréerait la clé (scénario mesuré V31b R01-J) ;
+  //    3. exécuter le callback d'effacement, puis vider la RAM dans le
+  //       `finally` — INCONDITIONNEL, y compris si l'effacement lève.
+  //
+  //  POURQUOI LA RAM EST VIDÉE ICI ET PLUS DANS `BackupService` : R-DR-01-b
+  //  l'appelait après la fermeture des barrières. C'était correct pour un
+  //  rafraîchissement ARRÊTÉ, mais pas pour un rafraîchissement EN VOL : ses
+  //  branches d'écriture sont désormais refusées, donc plus rien ne peut
+  //  repeupler la RAM après ce vidage. Le déplacement rend l'invariant
+  //  démontrable au lieu d'être espéré.
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<void> executerResetComplet(
+      Future<void> Function() supprimerLesCles) async {
+    _resetEnCours = true;   // 1. plus aucune écriture ne NAÎT
+    _generationCache++;     //    verrou définitif sur les engagées
+    try {
+      // 2. Drain : on attend la fin de toutes les écritures de cache
+      //    déjà engagées. Boucle (et non `Future.wait` unique) pour la même
+      //    raison que dans AlertService : `whenComplete` s'exécute en
+      //    microtâche APRÈS la complétion.
+      while (_ecrituresEnCours.isNotEmpty) {
+        final enVol = List<Future<bool>>.from(_ecrituresEnCours);
+        try {
+          await Future.wait(enVol);
+        } catch (_) {
+          // Une écriture qui échoue ne doit jamais faire échouer le reset.
+          // Elle a déjà été journalisée par `_executerEcritureCache`.
+        }
+      }
+
+      // 3. Effacement disque — TOUJOURS sous barrière.
+      await supprimerLesCles();
+    } finally {
+      // 4. Vidage RAM INCONDITIONNEL puis libération de la barrière.
+      //    Le vidage est fait AVANT la réouverture : un rafraîchissement qui
+      //    repartirait à la microtâche suivante trouverait une RAM déjà vide.
+      viderMemoirePourResetComplet();
+      _resetEnCours = false;
+    }
+    if (kDebugMode) {
+      debugPrint('[DataRefresh] 🧹 Reset complet effectué '
+          '(génération $_generationCache, disque non réécrit)');
+    }
+  }
+
+  /// Exécute [action] sous barrière, écritures de cache uniquement.
+  ///
+  /// ⚠️ POINT CRUCIAL : entre le franchissement du contrôle 2 et l'ajout au
+  ///    registre, il n'existe AUCUN `await`. Une suspension glissée ici
+  ///    permettrait à une écriture de franchir les contrôles sans être vue du
+  ///    drain — c'est exactement le défaut que cette méthode corrige.
+  Future<bool> _ecrireProtegeCache(
+      Future<void> Function(SharedPreferences prefs) action) async {
+    // Contrôle 1 — à la naissance : aucune écriture ne doit pouvoir DÉMARRER.
+    if (_resetEnCours) return false;
+
+    final generation = _generationCache;
+    final prefs = await SharedPreferences.getInstance();
+
+    // Contrôle 2 — rattrape celles qui étaient suspendues sur `getInstance()`
+    // quand le reset a commencé.
+    if (_resetEnCours || generation != _generationCache) return false;
+
+    // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` ↓↓↓
+    final Future<bool> f = _executerEcritureCache(prefs, action);
+    _ecrituresEnCours.add(f);
+    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
+    // ↑↑↑ aucune écriture ne franchit le contrôle 2 sans être vue du drain ↑↑↑
+
+    return f;
+  }
+
+  /// Corps de l'écriture, isolé pour que `_ecrireProtegeCache` obtienne la
+  /// future AVANT le premier `await`. L'exception est capturée ici : le drain
+  /// peut attendre la future sans erreur asynchrone non gérée.
+  Future<bool> _executerEcritureCache(
+      SharedPreferences prefs,
+      Future<void> Function(SharedPreferences prefs) action) async {
+    try {
+      await action(prefs);
+      return true;
+    } catch (e) {
+      _derniereErreurCache = 'exception : $e';
+      debugPrint('[DataRefresh] ⚠️ Erreur écriture cache: $e');
+      return false;
+    }
   }
 
   @override

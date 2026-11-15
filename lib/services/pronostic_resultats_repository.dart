@@ -230,4 +230,42 @@ class PronosticResultatsRepository {
       if (kDebugMode) debugPrint('[PronosticRepo] Erreur restauration: $e');
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Vidage RAM pour reset complet
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Vide l'état RAM SANS écrire sur le disque.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
+  /// que `pronostic_resultats_repository_v2` a été supprimée du stockage.
+  ///
+  /// Pourquoi ne pas réutiliser [restaurerDepuisBackup] avec une map vide ?
+  /// Parce qu'elle termine par `_sauvegarder()`, qui réécrirait la clé qu'on
+  /// vient d'effacer — avec `[]` au lieu de rien.
+  ///
+  /// Pourquoi `_charge = false` est indispensable : `charger()` sort
+  /// immédiatement si `_charge == true` (l.52). Sans cette remise à zéro,
+  /// `_items` resterait peuplé en RAM et le prochain `ajouterOuRemplacer()`
+  /// réécrirait les anciennes entrées sur le disque.
+  ///
+  /// Pourquoi `_items.clear()` est indispensable *en plus* : le `clear()`
+  /// interne de `charger()` (l.58) est CONDITIONNEL — il ne s'exécute que si
+  /// la clé existe et n'est pas vide. Juste après un reset la clé est
+  /// absente, donc ce `clear()` serait sauté et les anciennes entrées
+  /// survivraient malgré `_charge = false`. Les deux lignes sont nécessaires.
+  ///
+  /// ⚠️ Risque documenté, NON corrigé à cette étape : une écriture déjà en
+  /// vol dans `_sauvegarder()` (suspendue sur `getInstance()` ou
+  /// `setString()`) pourrait recréer la clé après ce vidage. Aucun chemin de
+  /// production ne l'atteint aujourd'hui (3 migrations one-shot au démarrage
+  /// + restauration de backup), mais la fenêtre théorique existe.
+  void viderMemoirePourResetComplet() {
+    _items.clear();
+    _charge = false;
+    if (kDebugMode) {
+      debugPrint('[PronosticRepo] 🧹 Mémoire vidée '
+          '(reset complet, disque non réécrit)');
+    }
+  }
 }

@@ -982,6 +982,42 @@ class ZoneTurfService {
     return _dateToStr(now);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-01-b — PURGE DU CACHE STATIQUE POUR LE RESET COMPLET.
+  //
+  //  POURQUOI : `_cache` et `_cacheTime` (l.33-34) sont des caches STATIQUES
+  //  de 15 minutes. Ils ne sont purgés par AUCUN mécanisme : `grep
+  //  clear|invalidate|purge` sur ce fichier ne renvoyait rien. Mesuré V31b
+  //  R01-N : après un reset complet, un `chargerProgramme()` SANS
+  //  `forceRefresh` — c'est le chemin des écrans (best_bet_screen l.182,
+  //  conseils_screen l.184, races_screen l.67) — sert encore les réunions
+  //  d'AVANT le reset, sans émettre le moindre appel réseau
+  //  (`reunions=1 appelsRéseau=0`).
+  //
+  //  CE QUE CETTE MÉTHODE NE FAIT **PAS** :
+  //    • elle ne touche NI à la durée d'expiration `_cacheLocalDuree` côté
+  //      DataRefreshService, NI au seuil de 15 minutes de `chargerProgramme`
+  //      (l.52-56) : les règles d'expiration sont INCHANGÉES ;
+  //    • elle ne modifie AUCUN parseur ;
+  //    • elle ne modifie pas le comportement de `forceRefresh` : le
+  //      contournement du cache par `forceRefresh: true` fonctionne
+  //      exactement comme avant (mesuré V31b R01-M) ;
+  //    • elle n'émet aucune requête réseau et n'écrit rien sur le disque.
+  //
+  //  Une purge VIDER le cache : le prochain `chargerProgramme()` sans
+  //  `forceRefresh` ne trouvera ni entrée ni horodatage et ira donc
+  //  légitimement au réseau. C'est le comportement voulu après une remise à
+  //  zéro — et c'est aussi pourquoi cette méthode n'est appelée QUE par le
+  //  reset, jamais ailleurs.
+  // ═══════════════════════════════════════════════════════════════════════
+  static void viderCachePourResetComplet() {
+    _cache.clear();
+    _cacheTime.clear();
+    if (kDebugMode) {
+      debugPrint('[ZoneTurf] 🧹 Cache statique vidé (reset complet)');
+    }
+  }
+
   static String _dateToStr(DateTime d) {
     return '${d.day.toString().padLeft(2, '0')}'
         '${d.month.toString().padLeft(2, '0')}'

@@ -53,6 +53,38 @@ class EloService {
   final Map<String, EloScore> _ratings = {};
   bool _charge = false;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-05 — barrière de reset (patron CoteTrackerService B5b /
+  //  IaMemoryService B5c-P1).
+  //
+  //  AUCUNE formule ELO, aucun K-factor, aucun rating n'est concerné : on ne
+  //  fait qu'encadrer les ÉCRITURES disque de `_sauvegarder()`.
+  //
+  //  Les trois protections couvrent trois scénarios DISTINCTS et mesurés
+  //  (V29-A, V29-B, V29-I) — aucun n'est redondant :
+  //    • contrôle 1 (`_resetEnCours`) → écriture née PENDANT l'effacement ;
+  //    • contrôle 2 (génération)      → écriture née APRÈS le reset ;
+  //    • drain                        → écriture ENGAGÉE avant le reset,
+  //      jamais refusable (elle a franchi les deux contrôles).
+  // ══════════════════════════════════════════════════════════════════════════
+  bool _resetEnCours = false;
+  int _generationCache = 0;
+  final Set<Future<void>> _ecrituresEnCours = <Future<void>>{};
+
+  /// Nombre de vidages effectués (observable par les tests).
+  int get generationCache => _generationCache;
+
+  /// Écritures encore en vol (observable par les tests).
+  int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
+  /// Refus par le CONTRÔLE 1 — écriture née pendant l'effacement.
+  int _nbRefusParReset = 0;
+  int get nbRefusParReset => _nbRefusParReset;
+
+  /// Refus par le CONTRÔLE 2 — génération périmée (écriture née avant le reset).
+  int _nbRefusParGeneration = 0;
+  int get nbRefusParGeneration => _nbRefusParGeneration;
+
   static Future<void> init() async => _instance._charger();
 
   Future<void> _charger() async {
@@ -113,9 +145,50 @@ class EloService {
     }
   }
 
+  /// ★ B5c-RDR-05 — Enveloppe l'écriture disque dans la barrière de reset.
+  ///
+  /// Comportement EXTERNE inchangé : retourne `Future<void>`, n'échoue jamais
+  /// bruyamment (les erreurs sont journalisées, comme avant), et écrit
+  /// exactement les deux mêmes clés dans le même ordre.
+  ///
+  /// Ce qui change : l'écriture peut être REFUSÉE (et devient alors un no-op
+  /// silencieux) si un reset complet est en cours ou est intervenu.
+  ///
+  /// Cette protection s'applique AUSSI quand `_sauvegarder()` est appelée
+  /// depuis `_charger()` (l.107) — demandé explicitement par D-M2.
   Future<void> _sauvegarder() async {
+    if (_resetEnCours) {
+      _nbRefusParReset++;
+      return; // Contrôle 1
+    }
+    final generation = _generationCache;
+    SharedPreferences prefs;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      debugPrint('[EloService] ⚠️ Erreur sauvegarde : $e');
+      return;
+    }
+    if (_resetEnCours || generation != _generationCache) {
+      // Contrôle 2 — distinct du contrôle 1 : une génération peut avoir
+      // changé alors qu'aucun reset n'est plus EN COURS (il est terminé).
+      _nbRefusParGeneration++;
+      return;
+    }
+    // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` (invariant P1) ↓↓↓
+    final Future<void> f = _executerSauvegarde(prefs);
+    _ecrituresEnCours.add(f);
+    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
+    return f;
+  }
+
+  /// Corps de l'écriture, isolé pour que [_sauvegarder] obtienne la future
+  /// AVANT le premier `await` — c'est la condition du registre sans trou.
+  ///
+  /// Strictement identique à l'ancien corps : mêmes deux écritures, même
+  /// `try/catch` silencieux, même journalisation.
+  Future<void> _executerSauvegarde(SharedPreferences prefs) async {
+    try {
       final data  = <String, dynamic>{};
       _ratings.forEach((k, v) => data[k] = v.toJson());
       await prefs.setString(_prefsKey, jsonEncode(data));
@@ -293,22 +366,98 @@ class EloService {
     debugPrint('[EloService] 🔄 ELO réinitialisés');
   }
 
-  /// ★ B5 — Vide l'état RAM SANS écrire sur le disque.
+  /// ★ B5-RDR-05 — Vide l'état RAM SANS écrire sur le disque.
   ///
-  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
-  /// que les clés ELO ont été supprimées du stockage.
+  /// ⚠️ DEPUIS R-DR-05, CETTE MÉTHODE N'EST PLUS APPELÉE PAR LE RESET.
+  /// `BackupService.reinitialiserComplet()` utilise désormais
+  /// [executerResetComplet], qui vide `_ratings` dans son `finally`.
   ///
-  /// Pourquoi ne pas réutiliser [reinitialiser] ? Parce qu'elle termine par
-  /// `_sauvegarder()`, qui fait toujours `setString('elo_ratings_v2', '{}')`
-  /// et `setInt('elo_ratings_v2_ts', ...)`. Utilisée après un reset complet,
-  /// elle **recréerait** les deux clés qu'on vient d'effacer : des données
-  /// anciennes (les ratings encore en RAM) seraient réécrites sur le disque.
+  /// Elle est CONSERVÉE parce que :
+  ///   • elle est utilisée comme utilitaire de vidage RAM par
+  ///     `test/v18_b5_reset_elo_test.dart` (setUp, tearDown et simulation de
+  ///     redémarrage) — la supprimer casserait un test validé ;
+  ///   • elle reste le moyen sûr de jeter la mémoire sans recréer les clés
+  ///     (contrairement à [reinitialiser], qui termine par `_sauvegarder()`).
   ///
-  /// Ici : aucun `_sauvegarder()`, donc aucune écriture. Aucune formule,
-  /// aucun K-factor, aucun rating n'est recalculé — on jette simplement
-  /// l'état mémoire devenu obsolète.
+  /// ⚠️ COMPORTEMENT RÉSIDUEL DOCUMENTÉ (décision D-M2, non corrigé) :
+  /// cette méthode est SYNCHRONE et n'attend RIEN. Appelée alors qu'une
+  /// écriture de `_sauvegarder()` est encore en vol, elle vide `_ratings`
+  /// mais n'empêche pas cette écriture d'aboutir avec la map qu'elle a déjà
+  /// sérialisée. Elle ne ferme pas la barrière, n'incrémente pas la
+  /// génération et ne draine pas le registre.
+  /// ⇒ Pour un reset, utiliser [executerResetComplet]. Cette méthode ne doit
+  ///   JAMAIS être utilisée comme substitut d'un encadrement de reset.
   void viderMemoirePourResetComplet() {
     _ratings.clear();
     debugPrint('[EloService] 🧹 Mémoire vidée (reset complet, disque non réécrit)');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c-RDR-05 — ENCADREMENT DU RESET COMPLET
+  //
+  //  Appelé EXCLUSIVEMENT par `BackupService.reinitialiserComplet()`, autour
+  //  de la boucle des 107 suppressions, à l'intérieur des barrières
+  //  d'`AlertService` et d'`IaMemoryService`.
+  //
+  //  Sémantique : identique à celle des autres services. On ne calcule RIEN,
+  //  on jette un état mémoire devenu obsolète. Aucune formule, aucun
+  //  K-factor, aucun rating n'est recalculé ni modifié.
+  //
+  //  Pourquoi le vidage RAM est dans le `finally` (décision D-M1) :
+  //  `supprimerLesCles()` peut lever une `StateError` (C1-a) quand une
+  //  suppression est refusée. Avant R-DR-05, l'appel au vidage était situé
+  //  APRÈS le bloc, donc jamais atteint sur ce chemin : `_ratings` gardait
+  //  les anciennes valeurs alors que les clés ELO avaient été supprimées du
+  //  disque. Le `finally` rend le vidage INCONDITIONNEL, y compris en cas
+  //  d'échec partiel.
+  //
+  //  ⚠️ `supprimerLesCles()` n'est entouré d'AUCUN `catch` : l'exception
+  //  originale remonte telle quelle, avec sa pile, sans être transformée en
+  //  succès. Seul un `finally` est présent.
+  //
+  //  ⚠️ `_charge` n'est PAS touché : il reste `true`. C'est mesuré et voulu
+  //  (V29-C) — repasser `_charge` à `false` ferait relire le disque par
+  //  `_charger()` et IMPORTERAIT les données résiduelles.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> executerResetComplet(
+      Future<void> Function() supprimerLesCles) async {
+    // 1. Barrière SYNCHRONE — aucun `await` avant ces deux lignes, sinon une
+    //    écriture pourrait naître dans la fenêtre.
+    _resetEnCours = true;
+    _generationCache++;
+    try {
+      // 2. Drain des écritures ENGAGÉES. Boucle et non `Future.wait` unique :
+      //    `whenComplete` s'exécute en microtâche APRÈS la complétion, donc
+      //    un `wait` simple peut rendre la main registre non vide.
+      //
+      //    Sans ce drain, une écriture déjà au-delà des deux contrôles
+      //    achèverait son `setString` APRÈS l'effacement et recréerait la clé
+      //    (scénario V29-A, mesuré).
+      while (_ecrituresEnCours.isNotEmpty) {
+        final enVol = List<Future<void>>.from(_ecrituresEnCours);
+        try {
+          await Future.wait(enVol);
+        } catch (_) {
+          // Une écriture en échec ne doit jamais faire échouer le reset :
+          // l'erreur est déjà journalisée par `_executerSauvegarde`.
+        }
+      }
+
+      // 3. Effacement disque — TOUJOURS sous barrière.
+      //    Aucune exception capturée : elle remonte TELLE QUELLE.
+      await supprimerLesCles();
+    } finally {
+      // 4. Libérations INCONDITIONNELLES, même sur exception.
+      //
+      //    `_ratings.clear()` est ici, et pas après le bloc : c'est la
+      //    décision D-M1. Un reset partiellement échoué ne doit pas laisser
+      //    une RAM peuplée face à un disque dont les clés ELO sont parties.
+      //
+      //    Aucun `await` ne sépare ces deux instructions : aucune autre tâche
+      //    ne peut s'intercaler entre le vidage et la réouverture.
+      _ratings.clear();
+      _resetEnCours = false;
+      debugPrint('[EloService] 🧹 Mémoire vidée (reset complet, disque non réécrit)');
+    }
   }
 }

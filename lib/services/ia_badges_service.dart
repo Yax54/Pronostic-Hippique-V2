@@ -204,5 +204,53 @@ class IaBadgesService extends ChangeNotifier {
     await sp.setString(_key, jsonEncode(map));
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Vidage RAM pour reset complet
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Vide la RAM des badges SANS écrire sur le disque.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
+  /// que `ia_badges_v1` a été supprimée du stockage.
+  ///
+  /// Pourquoi `_debloques.clear()` SUFFIT ici, contrairement aux étapes 1
+  /// et 2 : ce service ne possède AUCUN flag `_charge`. `init()` (l.121)
+  /// n'est appelé qu'une fois, au démarrage (main.dart:73), et n'est jamais
+  /// rejoué après un reset. Il n'y a donc aucun lecteur paresseux à réarmer.
+  ///
+  /// Ce que ce vidage empêche réellement : `_sauvegarder()` (l.201) écrit la
+  /// map ENTIÈRE. Sans ce clear, le prochain `debloquer()` — déclenché par
+  /// « Analyser la journée » (ia_performance_screen.dart:1686 → :779) —
+  /// réécrivait TOUTES les anciennes entrées, dates d'origine comprises.
+  ///
+  /// Pourquoi ne pas réutiliser `init()` ? Parce qu'il ne fait qu'AJOUTER
+  /// (l.128-131) et n'a aucune branche `else` : sur clé absente il ne purge
+  /// rien. Il ne peut donc pas servir de méthode de vidage.
+  ///
+  /// `notifyListeners()` — vérifié sans effet secondaire : aucun
+  /// `watch/read/Consumer/Provider.of<IaBadgesService>` n'existe dans lib/,
+  /// et l'unique écouteur direct (profile_profil_tab.dart:45) ne fait qu'un
+  /// `setState` gardé par `mounted`. Aucune écriture, aucun async, aucune
+  /// réentrance possible (`notifyListeners` n'est appelé dans aucun getter).
+  ///
+  /// ⚠️ Risques documentés, NON corrigés à cette étape :
+  ///   R-4 une écriture en vol dans `_sauvegarder()` (suspendue l.202)
+  ///       résume `_debloques` APRÈS l'await (l.203) : elle recréerait la
+  ///       clé avec l'état COURANT, donc VIDE. Jamais les anciennes dates.
+  ///   R-6 `_sauvegarder()` (l.201-205) n'a aucun try/catch, contrairement
+  ///       aux services des étapes 1 et 2.
+  ///   R-7 `init()` (l.121-134) ne fait pas de `clear()` avant de charger.
+  ///       Sans effet aujourd'hui (appel unique sur singleton neuf), mais
+  ///       latent si `init()` était un jour rejoué.
+  void viderMemoirePourResetComplet() {
+    final nb = _debloques.length;
+    _debloques.clear();
+    if (kDebugMode) {
+      debugPrint('[IaBadges] 🧹 $nb badges vidés '
+          '(reset complet, disque non réécrit)');
+    }
+    notifyListeners();
+  }
+
   static const List<String> keysBackup = [_key];
 }

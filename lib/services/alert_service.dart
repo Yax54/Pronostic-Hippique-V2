@@ -390,6 +390,59 @@ class AlertService extends ChangeNotifier {
   final Set<String> _reanalyseEnCours = {};
   Timer? _watchdogTimer;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Barrière d'écriture unifiée
+  //
+  //  Le reset complet efface les clés du disque. Sans barrière, une écriture
+  //  déjà engagée peut se terminer APRÈS l'effacement et recréer les clés
+  //  avec les anciennes données : c'est le défaut B5c, variante 5.
+  //
+  //  Le service possède HUIT chemins d'écriture SharedPreferences :
+  //    1. _save()                                  (6 clés)
+  //    2. _sendNativeNotification()                (file de notifications)
+  //    3. ajouterFavoriPourWorker()                (hippique_favorites_v1)
+  //    4. marquerFavoriCommeParI()                 (hippique_favorites_v1)
+  //    5. nettoyerFavorisObsoletes()               (hippique_favorites_v1)
+  //    6. _sauvegarderConseilIANotifies()          (conseil_ia_notifies_v1)
+  //    7. _resetConseilIANotifiesIfNewDay()        (_date + liste, en un bloc)
+  //    8. verifierCoursesConseilIA()               (conseil_ia_resume_date)
+  //
+  //  Les huit passent OBLIGATOIREMENT par [_ecrireProtege], seul point
+  //  d'enregistrement dans [_ecrituresEnCours].
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Barrière temporelle : vraie du début du reset à la fin de l'effacement.
+  bool _resetEnCours = false;
+
+  /// Verrou définitif : ne redescend jamais. Couvre les écritures dont le
+  /// `SharedPreferences.getInstance()` se résout APRÈS la libération de
+  /// [_resetEnCours] dans le `finally` du reset.
+  int _generationCache = 0;
+
+  /// Registre des écritures ENGAGÉES (contrôles franchis, action démarrée).
+  /// Alimenté et vidé par [_ecrireProtege] UNIQUEMENT — jamais par un appelant.
+  final Set<Future<bool>> _ecrituresEnCours = <Future<bool>>{};
+
+  /// Diagnostic : nombre d'écritures encore en vol.
+  /// Miroir de `CoteTrackerService.nbEcrituresEnCours`.
+  int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
+  /// ★ B5c — Instantané des courses déjà connues au moment du dernier reset.
+  ///
+  /// Capturé AVANT le drain, donc sur le cache `_coursesMatchingConseils`
+  /// d'entrée. Consommé une seule fois par clé (via `remove`).
+  /// Il empêche de rejouer une rafale d'alertes « conseil IA » sur des courses
+  /// que l'utilisateur voyait déjà, tout en laissant passer les courses
+  /// réellement nouvelles.
+  ///
+  /// ⚠️ R-21 (limite assumée) : cet instantané vit en RAM et disparaît au
+  ///    redémarrage. Après un reset suivi d'une relance AVANT tout refresh,
+  ///    le premier refresh notifie une fois chaque course du jour encore dans
+  ///    les critères. Ce ne sont pas d'anciennes alertes (les jours précédents
+  ///    ne sont plus dans le cache), et aucune donnée ne survit au reset.
+  ///    Rendre cet instantané persistant contredirait la décision de vidage.
+  Set<String> _conseilIASilencieux = <String>{};
+
   // État des permissions de notification
   NotificationPermissionStatus _permissionStatus = NotificationPermissionStatus.notChecked;
 
@@ -479,9 +532,73 @@ class AlertService extends ChangeNotifier {
     }
   }
 
-  Future<void> _save() async {
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Enveloppe d'écriture protégée (SEUL point d'enregistrement)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Dernière erreur d'écriture, conservée pour diagnostic.
+  /// Les écritures ne propagent pas d'exception (une écriture « fire and
+  /// forget » ne doit pas produire d'erreur asynchrone non gérée), mais
+  /// l'erreur est journalisée et mémorisée ici : elle reste diagnostiquable.
+  Object? _derniereErreurEcriture;
+  Object? get derniereErreurEcriture => _derniereErreurEcriture;
+
+  /// Exécute [action] sous barrière de reset. Renvoie `true` si l'écriture a
+  /// été exécutée, `false` si elle a été refusée (barrière active) ou si elle
+  /// a échoué.
+  ///
+  /// ⚠️ POINT CRUCIAL — entre le franchissement du contrôle 2 et l'ajout au
+  ///    registre, il n'existe AUCUN `await`. Si une suspension s'y glissait,
+  ///    une écriture pourrait franchir les contrôles sans être vue du drain :
+  ///    c'est exactement le défaut que cette méthode corrige.
+  ///
+  /// ⚠️ Il n'y a QU'UN `add` et QU'UN `whenComplete` par écriture : un
+  ///    appelant ne doit jamais enregistrer lui-même sa future.
+  Future<bool> _ecrireProtege(
+      Future<void> Function(SharedPreferences prefs) action) async {
+    // Contrôle 1 — à la naissance : aucune écriture ne doit pouvoir DÉMARRER.
+    if (_resetEnCours) return false;
+
+    final generation = _generationCache;
+    final prefs = await SharedPreferences.getInstance();
+
+    // Contrôle 2 — avant démarrage effectif de l'action : rattrape celles
+    // qui étaient suspendues sur `getInstance()` quand le reset a commencé.
+    if (_resetEnCours || generation != _generationCache) return false;
+
+    // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` ↓↓↓
+    final Future<bool> f = _executerEcriture(prefs, action);
+    _ecrituresEnCours.add(f);
+    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
+    // ↑↑↑ aucune écriture ne franchit le contrôle 2 sans être vue du drain ↑↑↑
+
+    return f;
+  }
+
+  /// Corps de l'écriture, isolé pour que [_ecrireProtege] obtienne la future
+  /// AVANT le premier `await`. `_executerEcriture` étant `async`, son corps
+  /// s'exécute synchroniquement jusqu'à `await action(prefs)`.
+  ///
+  /// L'exception est capturée ici, journalisée et mémorisée : le drain peut
+  /// attendre la future sans risque d'erreur asynchrone non gérée, et
+  /// l'erreur reste visible pour le diagnostic.
+  Future<bool> _executerEcriture(
+      SharedPreferences prefs,
+      Future<void> Function(SharedPreferences prefs) action) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      await action(prefs);
+      return true;
+    } catch (e, st) {
+      _derniereErreurEcriture = e;
+      debugPrint('AlertService._ecrireProtege error: $e\n$st');
+      return false;
+    }
+  }
+
+  Future<void> _save() async {
+    // ★ B5c : _save ne gère pas le registre, il délègue entièrement.
+    //   Les 6 écritures restent identiques ; seule l'enveloppe change.
+    await _ecrireProtege((prefs) async {
       await prefs.setString(_configKey, json.encode(_config.toJson()));
       final alertsToSave = _alerts.take(50).map((a) => json.encode(a.toJson())).toList();
       await prefs.setStringList(_alertsKey, alertsToSave);
@@ -496,9 +613,7 @@ class AlertService extends ChangeNotifier {
       // ★ v10.24 audit : persister les alertes cote-chute envoyées (max 100, jour glissant)
       final coteChuteToSave = _coteChuteNotifies.take(100).toList();
       await prefs.setStringList(_coteChuteKey, coteChuteToSave);
-    } catch (e) {
-      if (kDebugMode) debugPrint('AlertService._save error: $e');
-    }
+    });
   }
 
   // ── Gestion des permissions Android 13+ ──────────────────────────────────
@@ -556,6 +671,12 @@ class AlertService extends ChangeNotifier {
   // ── Configuration ─────────────────────────────────────────────────────────
 
   Future<void> updateConfig(AlertConfig newConfig) async {
+    // ★ B5c : pendant le reset, la config RAM doit rester `AlertConfig.defaut`.
+    //   Sans ce garde, `_config` serait écrasée par l'ancienne config (RAM)
+    //   alors que sa clé est effacée : `_save()` bloqué, mais l'état RAM
+    //   redeviendrait incohérent avec le disque et pourrait être persisté
+    //   plus tard, restaurant l'ancienne configuration.
+    if (_resetEnCours) return;
     final ancienRappel = _config.activerRappelQuotidien;
     final ancienHeure  = _config.rappelHeure;
     final ancienMinute = _config.rappelMinute;
@@ -581,6 +702,10 @@ class AlertService extends ChangeNotifier {
       _trackedCourses.keys.any((k) => k == baseKey || k.startsWith('${baseKey}_'));
 
   Future<void> ajouterSuivi(TrackedCourse course, {String? overrideKey}) async {
+    // ★ B5c : pendant le reset, un pari ajouté resterait en RAM (map déjà
+    //   vidée) sans jamais atteindre le disque (clé effacée, `_save()` bloqué).
+    //   Ce serait un « pari fantôme » visible jusqu'au redémarrage.
+    if (_resetEnCours) return;
     // ★ Fix option A : plusieurs paris possibles sur la même course
     // On ajoute un timestamp à la clé pour que chaque pari soit unique
     // Ex: R4C7_23042026 → R4C7_23042026_1745000000000
@@ -684,6 +809,11 @@ class AlertService extends ChangeNotifier {
   // ── Ajout d'alerte ────────────────────────────────────────────────────────
 
   void _addAlert(AppAlert alert) {
+    // ★ B5c : pendant le reset, aucune alerte ne doit être émise. Sans ce
+    //   garde, `_sendNativeNotification` écrirait la file de notifications
+    //   natives (chemin d'écriture n°2) hors de tout enregistrement, et
+    //   `_alerts` se repeuplerait juste avant d'être vidé.
+    if (_resetEnCours) return;
     if (_sentAlertIds.contains(alert.id)) return;
     _sentAlertIds.add(alert.id);
     _alerts.insert(0, alert);
@@ -716,8 +846,8 @@ class AlertService extends ChangeNotifier {
 
     // Stratégie 2 : écrire dans SharedPreferences pour que le Worker
     // Kotlin envoie la notification même si l'app est fermée
-    try {
-      final prefs = await SharedPreferences.getInstance();
+    // ★ B5c — chemin d'écriture n°2 : passe par la barrière.
+    await _ecrireProtege((prefs) async {
       // Format JSON compatible Android natif : getString/setString + jsonEncode
       // (setStringList Flutter n'est pas lisible par getStringSet Kotlin)
       final existing = prefs.getString('flutter.hippique_pending_notifs');
@@ -730,7 +860,7 @@ class AlertService extends ChangeNotifier {
       pending.add(entry);
       if (pending.length > 10) pending.removeAt(0);
       await prefs.setString('flutter.hippique_pending_notifs', jsonEncode(pending));
-    } catch (_) {}
+    });
   }
 
   /// Appel externe pour signaler un résultat de course
@@ -752,8 +882,8 @@ class AlertService extends ChangeNotifier {
     String distance = '',
     String prix = '',
   }) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
+    // ★ B5c — chemin d'écriture n°3 : passe par la barrière.
+    await _ecrireProtege((prefs) async {
       final raw = prefs.getString(_favoritesKey) ?? '[]';
       final List<dynamic> list = json.decode(raw) as List<dynamic>;
 
@@ -780,16 +910,14 @@ class AlertService extends ChangeNotifier {
           : list;
 
       await prefs.setString(_favoritesKey, json.encode(trimmed));
-    } catch (e) {
-      if (kDebugMode) debugPrint('[AlertService] Erreur ajouterFavori: $e');
-    }
+    });
   }
 
   /// Marque un favori comme "déjà parié" pour éviter les alertes redondantes.
   /// À appeler quand l'utilisateur place un pari sur cette course.
   Future<void> marquerFavoriCommeParI(int numR, int numC) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
+    // ★ B5c — chemin d'écriture n°4 : passe par la barrière.
+    await _ecrireProtege((prefs) async {
       final raw = prefs.getString(_favoritesKey) ?? '[]';
       final List<dynamic> list = json.decode(raw) as List<dynamic>;
       for (final e in list) {
@@ -798,15 +926,13 @@ class AlertService extends ChangeNotifier {
         }
       }
       await prefs.setString(_favoritesKey, json.encode(list));
-    } catch (e) {
-      if (kDebugMode) debugPrint('[AlertService] Erreur marquerFavoriCommeParI: $e');
-    }
+    });
   }
 
   /// Supprime les favoris des jours passés (nettoyage automatique).
   Future<void> nettoyerFavorisObsoletes() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
+    // ★ B5c — chemin d'écriture n°5 : passe par la barrière.
+    await _ecrireProtege((prefs) async {
       final raw = prefs.getString(_favoritesKey) ?? '[]';
       final List<dynamic> list = json.decode(raw) as List<dynamic>;
       final hier = DateTime.now().subtract(const Duration(days: 1));
@@ -815,7 +941,7 @@ class AlertService extends ChangeNotifier {
         return ajouteLe != null && ajouteLe.isBefore(hier);
       });
       await prefs.setString(_favoritesKey, json.encode(list));
-    } catch (_) {}
+    });
   }
 
   void signalerResultat({
@@ -1007,12 +1133,20 @@ class AlertService extends ChangeNotifier {
   }
 
   /// Sauvegarde les courseKeys notifiées.
+  /// ★ B5c — chemin d'écriture n°6 : passe par la barrière.
   Future<void> _sauvegarderConseilIANotifies() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_conseilIANotifiesKey, _conseilIANotifies.toList());
+    await _ecrireProtege((prefs) async {
+      await prefs.setStringList(_conseilIANotifiesKey, _conseilIANotifies.toList());
+    });
   }
 
   /// Réinitialise les courseKeys notifiées (appelé au changement de jour).
+  ///
+  /// ★ B5c — chemin d'écriture n°7 : les DEUX écritures (`_date` et la liste)
+  ///   sont regroupées dans UN SEUL bloc protégé. Séparées, un reset pourrait
+  ///   s'intercaler entre les deux et laisser `_date` réapparaître sur le
+  ///   disque sans sa liste. Groupées, le drain attend le bloc entier :
+  ///   soit les deux écritures passent puis sont effacées, soit aucune.
   Future<void> _resetConseilIANotifiesIfNewDay() async {
     final prefs   = await SharedPreferences.getInstance();
     final today   = DateTime.now();
@@ -1020,8 +1154,10 @@ class AlertService extends ChangeNotifier {
     final stored  = prefs.getString(_conseilIANotifiesKey + '_date') ?? '';
     if (stored != todayKey) {
       _conseilIANotifies.clear();
-      await prefs.setString(_conseilIANotifiesKey + '_date', todayKey);
-      await _sauvegarderConseilIANotifies();
+      await _ecrireProtege((prefs) async {
+        await prefs.setString(_conseilIANotifiesKey + '_date', todayKey);
+        await prefs.setStringList(_conseilIANotifiesKey, _conseilIANotifies.toList());
+      });
     }
   }
 
@@ -1029,6 +1165,9 @@ class AlertService extends ChangeNotifier {
   /// Appelé à la 1ère connexion du jour depuis HomeScreen.
   /// Retourne le message IA à afficher dans la bulle (ou null si rien à dire).
   Future<String?> verifierCoursesConseilIA(List<ZtReunion> reunions) async {
+    // ★ B5c : pendant le reset, aucune écriture `conseil_ia_resume_date` et
+    //   aucune mutation de `_conseilIANotifies` ne doivent avoir lieu.
+    if (_resetEnCours) return null;
     if (!_config.activerConseilIA) return null;
     await _resetConseilIANotifiesIfNewDay();
     await _chargerConseilIANotifies();
@@ -1043,7 +1182,10 @@ class AlertService extends ChangeNotifier {
     String? messageBulle;
 
     if (resumeDate != todayKey) {
-      await prefs.setString(_conseilIAResumeDateKey, todayKey);
+      // ★ B5c — chemin d'écriture n°8 : passe par la barrière.
+      await _ecrireProtege((prefs) async {
+        await prefs.setString(_conseilIAResumeDateKey, todayKey);
+      });
       if (courses.isEmpty) {
         messageBulle = '🎯 Aucune course ne correspond à tes critères pour aujourd\'hui.';
       } else {
@@ -1059,6 +1201,10 @@ class AlertService extends ChangeNotifier {
   /// ★ v10.23 — Vérification continue : notifie seulement les NOUVELLES courses.
   /// Appelé à chaque refresh des données (DataRefreshService).
   Future<void> verifierNouvellesCoursesConseilIA(List<ZtReunion> reunions) async {
+    // ★ B5c : pendant le reset, la boucle ne doit pas repartir — elle
+    //   déclencherait `_addAlert` → `_save` (bloqué) mais aussi
+    //   `_sauvegarderConseilIANotifies` après le drain.
+    if (_resetEnCours) return;
     if (!_config.activerConseilIA) return;
     await _resetConseilIANotifiesIfNewDay();
     await _chargerConseilIANotifies();
@@ -1072,6 +1218,21 @@ class AlertService extends ChangeNotifier {
 
       final key = '${item.course.nom}_${item.reunion.lieu}';
       if (_conseilIANotifies.contains(key)) continue; // déjà notifié
+
+      // ★ B5c — S1 : course déjà connue AVANT le dernier reset. On l'enregistre
+      //   comme annoncée sans émettre d'alerte, pour ne pas rejouer une rafale
+      //   sur des courses que l'utilisateur voyait déjà. `remove` (et non
+      //   `contains`) garantit qu'une clé n'est tue qu'UNE fois : si elle
+      //   réapparaît plus tard, elle suivra le chemin normal.
+      //   Une course ABSENTE de cet instantané est réellement nouvelle → elle
+      //   est notifiée normalement.
+      //   ⚠️ R-21 : cet instantané vit en RAM ; il disparaît au redémarrage.
+      //   Après un reset suivi d'une relance avant tout refresh, le premier
+      //   refresh notifie une fois les courses du jour (limite documentée).
+      if (_conseilIASilencieux.remove(key)) {
+        _conseilIANotifies.add(key);
+        continue;
+      }
 
       _conseilIANotifies.add(key);
 
@@ -2556,6 +2717,105 @@ class AlertService extends ChangeNotifier {
   /// Formate une date en 'YYYYMMDD' pour l'API PMU et RaceDetailScreen.
   static String _dateStrYYYYMMDD(DateTime dt) =>
       '${dt.year}${dt.month.toString().padLeft(2, '0')}${dt.day.toString().padLeft(2, '0')}';
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Reset complet sous barrière d'écriture
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Vide la RAM d'AlertService PUIS exécute [supprimerLesCles], le tout sous
+  /// une barrière qui empêche les huit chemins d'écriture du service de
+  /// réécrire le disque après son effacement.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, en TÊTE,
+  /// avant les cinq autres services.
+  ///
+  /// Pourquoi `AlertService` encadre-t-il l'effacement, contrairement aux
+  /// autres services ? Parce qu'il est le seul à posséder cette barrière.
+  /// Les autres (`EloService`, `CoteTrackerService`, `PronosticResultats`…)
+  /// sont appelés APRÈS l'effacement, comme validé en B5, B5b et B5c-1..4.
+  ///
+  /// Pourquoi ne pas passer par `recharger()` ? Parce que `_load()` relit le
+  /// disque — vide — mais ne jette pas les collections dont les clés sont
+  /// absentes (`addAll` sans `clear` sur `_sentAlertIds`, `_resultatsVerifies`
+  /// et `_coteChuteNotifies`), et surtout parce que le prochain `_save()`
+  /// réécrirait intégralement l'ancien contenu.
+  ///
+  /// Ordre imposé :
+  ///   1. barrière ON               → aucune écriture ne peut NAÎTRE ;
+  ///   2. génération++              → verrou définitif sur les suspendues ;
+  ///   3. capture S1                → périmètre déjà connu, avant le drain ;
+  ///   4. drain                     → les écritures engagées se terminent ;
+  ///   5. vidage RAM + config défaut ;
+  ///   6. [supprimerLesCles]        → l'effacement, ENCORE sous barrière ;
+  ///   7. `finally`                 → barrière OFF + rappel resynchronisé.
+  ///
+  /// ⚠️ [supprimerLesCles] ne doit contenir que des `prefs.remove()` : toute
+  ///    écriture y serait bloquée par la barrière (comportement voulu).
+  ///
+  /// ⚠️ R-11 ne peut pas être totalement fermé : `MethodChannel
+  ///    .invokeMethod('showNotification')` dans [_sendNativeNotification]
+  ///    n'est pas une écriture SharedPreferences et échappe à la barrière.
+  ///    Le garde placé en tête de [_addAlert] ferme ce chemin à la source.
+  Future<void> executerResetComplet(
+      Future<void> Function() supprimerLesCles) async {
+    _resetEnCours = true;   // 1. plus aucune écriture ne NAÎT
+    _generationCache++;     // 2. verrou définitif sur les suspendues
+    try {
+      // 3. Capture S1 — AVANT le drain, donc sur le cache d'entrée.
+      //    `recalculerCoursesConseilIA` peut modifier ce cache pendant la
+      //    fenêtre ; on veut le périmètre tel que l'utilisateur le voyait.
+      _conseilIASilencieux = {
+        for (final item in _coursesMatchingConseils)
+          '${item.course.nom}_${item.reunion.lieu}',
+      };
+
+      // 4. Drain : on attend la fin de TOUTES les écritures engagées, y
+      //    compris les sept chemins indépendants (registre unifié).
+      //    Boucle plutôt qu'un `Future.wait` unique : `whenComplete` s'exécute
+      //    en microtâche APRÈS la complétion, donc `Future.wait` peut se
+      //    résoudre alors que le `remove` du registre n'a pas encore tourné.
+      //    La condition garantit qu'on ne sort que registre réellement vide.
+      while (_ecrituresEnCours.isNotEmpty) {
+        final enVol = List<Future<bool>>.from(_ecrituresEnCours);
+        try {
+          await Future.wait(enVol);
+        } catch (_) {
+          // Une écriture qui échoue ne doit jamais faire échouer le reset.
+          // L'erreur est déjà journalisée et mémorisée par _executerEcriture.
+        }
+      }
+
+      // 5. État RAM neuf.
+      _alerts.clear();
+      _trackedCourses.clear();
+      _sentAlertIds.clear();
+      _resultatsVerifies.clear();
+      _coteChuteNotifies.clear();
+      _disqDetectes.clear();
+      _conseilIANotifies.clear();
+      _config = AlertConfig.defaut;
+
+      // 6. Effacement disque — TOUJOURS sous barrière.
+      await supprimerLesCles();
+    } finally {
+      // 7. Libération inconditionnelle, même sur exception : sans ce finally,
+      //    une erreur laisserait le service muet jusqu'au redémarrage.
+      _resetEnCours = false;
+      // Rappel quotidien resynchronisé sur la config par défaut.
+      // `_demarrerRappelQuotidien()` commence par `cancel()` puis sort
+      // immédiatement (activerRappelQuotidien == false) : le timer s'arrête.
+      // Il redémarrera si l'utilisateur réactive l'option (updateConfig).
+      // Le watchdog de 60 s n'est PAS touché.
+      _demarrerRappelQuotidien();
+    }
+    if (kDebugMode) {
+      debugPrint('[AlertService] 🧹 Reset complet effectué '
+          '(génération $_generationCache, '
+          '${_conseilIASilencieux.length} courses déjà connues, '
+          'disque non réécrit)');
+    }
+    notifyListeners();
+  }
 
   @override
   void dispose() {

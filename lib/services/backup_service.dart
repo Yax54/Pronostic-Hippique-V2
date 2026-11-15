@@ -127,6 +127,10 @@ import 'ia_memory_service.dart'; // ★ v10.26c
 import 'ia_archive_service.dart'; // ★ E3
 import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
 import 'quasi_gros_paris_service.dart'; // ★ v10.72
+import 'ia_badges_service.dart'; // ★ B5c
+import 'ia_user_prefs_service.dart'; // ★ B5c
+import 'data_refresh_service.dart'; // ★ B5c-RDR-01-b
+import 'zone_turf_service.dart'; // ★ B5c-RDR-01-b
 
 class BackupService {
   BackupService._();
@@ -248,6 +252,13 @@ class BackupService {
     'hippique_favorites_v1',        // ★ v9.5 : Cours favorites (FavoriButton)
     // ★ v9.94 : Conseils IA notifiés (anti-spam + résumé matinal)
     'conseil_ia_notifies_v1',         // CourseKeys déjà notifiées ce jour
+    // ★ B5c R-12 : marqueur de jour associé à 'conseil_ia_notifies_v1'.
+    //   Cette clé était absente de TOUS les groupes : elle survivait donc au
+    //   reset complet. Conséquence : `_resetConseilIANotifiesIfNewDay()`
+    //   comparait `stored == todayKey`, concluait « même jour » et ne remettait
+    //   jamais le compteur anti-doublon à zéro APRÈS le vidage — tout en
+    //   réécrivant la liste effacée au passage.
+    'conseil_ia_notifies_v1_date',
     'conseil_ia_resume_date',         // Date du dernier résumé matinal
     // ★ v9.94-audit : clés manquantes
     'alert_cote_chute_notifies_v1',   // Anti-doublons alertes cote chute (alert_service)
@@ -331,7 +342,46 @@ class BackupService {
     'ia_migration_suite_ia_classique_v1_done',        // Flag migration suite IA classique v10.80
   ];
 
+  // 📨 File de notifications natives en attente (lue par HippiqueWorker.kt)
+  //
+  // ★ B5c R-13 : cette clé est écrite par `AlertService._sendNativeNotification()`
+  //   et consommée par le Worker Kotlin. Elle n'était effacée par aucun groupe,
+  //   donc jusqu'à 10 anciennes notifications pouvaient encore sortir après un
+  //   reset complet.
+  //
+  //   Volontairement ABSENTE de `_collecterDonnees()` : restaurer une file de
+  //   notifications périmées n'a aucun sens. Présente dans `_toutesLesCles` et
+  //   dans `reinitialiserAlertes()`.
+  //
+  //   Rappel technique : `SharedPreferences` préfixe TOUTE clé par 'flutter.'
+  //   côté natif (shared_preferences_legacy.dart:173). La clé réellement écrite
+  //   par Dart est donc 'flutter.flutter.hippique_pending_notifs', et c'est
+  //   bien celle-ci qu'un `prefs.remove('flutter.hippique_pending_notifs')`
+  //   supprime — le préfixe est ajouté automatiquement.
+  static const _keysNotificationsEnAttente = [
+    'flutter.hippique_pending_notifs',
+  ];
+
   // Toutes les cles reunies (pour reinitialisation complete)
+  // ★ B5c-RDR-01-a — PRÉFIXE DES CLÉS DE CACHE DYNAMIQUES.
+  //
+  //  `DataRefreshService` persiste le programme du jour sous DEUX clés dont le
+  //  nom dépend de la date (data_refresh_service.dart l.180, l.288, l.329-330) :
+  //      cache_reunions_<ddmmyyyy>        → JSON des réunions
+  //      cache_reunions_<ddmmyyyy>_ts     → horodatage (epoch ms)
+  //
+  //  Une clé dynamique ne peut pas être nommée dans une liste fixe : elle
+  //  échappait donc totalement à `_toutesLesCles` (mesuré V31 R01-B : les deux
+  //  clés survivaient au reset, puis étaient réinjectées par
+  //  `_chargerCacheLocal()` — mesuré V31 R01-F).
+  //
+  //  La constante est DUPLIQUÉE depuis `DataRefreshService._prefsCachePrefix`,
+  //  qui est privée et donc inaccessible ici. La duplication est volontaire :
+  //  la seule alternative serait d'élargir l'API publique de DataRefreshService,
+  //  ce qui est hors du périmètre autorisé de cette correction. Le préfixe est
+  //  une constante de persistance, pas une règle métier : il ne doit pas varier.
+  static const String _prefsCacheReunionsPrefix = 'cache_reunions_';
+
   static List<String> get _toutesLesCles => [
     ..._keysIA,
     ..._keysConfigIA,
@@ -345,6 +395,7 @@ class BackupService {
     ..._keysLaboIA,
     ..._keysAuditCache,
     ..._keysGrosParis,
+    ..._keysNotificationsEnAttente,  // ★ B5c R-13
   ];
 
   // ════════════════════════════════════════════════════════════════════════
@@ -1378,21 +1429,226 @@ class BackupService {
   /// ⚠️ Même réserve que [reinitialiserIA] : l'archive historique survit.
   Future<void> reinitialiserComplet() async {
     final prefs = await SharedPreferences.getInstance();
-    for (final key in _toutesLesCles) {
-      await prefs.remove(key);
-    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ B5c — AlertService encadre TOUTE la phase d'effacement
+    //
+    //  C'est le SEUL service appelé AVANT la boucle `remove()`, et c'est
+    //  volontaire : `executerResetComplet()` installe une barrière d'écriture
+    //  (`_resetEnCours` + `_generationCache`), draine les écritures déjà
+    //  engagées, puis exécute le callback d'effacement — le tout dans le même
+    //  `try/finally`.
+    //
+    //  Appelé APRÈS la boucle, comme les cinq autres services, le drain
+    //  serait trop tardif : une écriture suspendue dans `prefs.setString()`
+    //  se terminerait après l'effacement et réécrirait les clés avec les
+    //  anciennes données. AlertService possède 8 chemins d'écriture, dont un
+    //  déclenché par le watchdog de 60 s sans action utilisateur.
+    //
+    //  Les cinq autres services n'ont pas de barrière : leur `_sauvegarder()`
+    //  écrirait, ils doivent donc rester APRÈS l'effacement (ordre validé en
+    //  B5, B5b et B5c-1..4).
+    //
+    //  ★ B5c-P3 — IaMemoryService est désormais IMBRIQUÉ à l'intérieur, pas
+    //  ajouté à la liste des six services d'après-effacement. Raison : il
+    //  possède 26 chemins d'écriture (25 `_save()` + 7 unités directes) et un
+    //  `_load()` qui ÉCRIT lui-même (flag de migration l.1596, `_save()`
+    //  l.4280). Appelé après la boucle, son vidage RAM serait trop tardif et
+    //  ses écritures suspendues réécriraient les clés effacées.
+    //
+    //  La boucle des 107 clés reste UNIQUE : elle est passée en callback à la
+    //  barrière INTERNE, qui s'exécute elle-même dans la barrière EXTERNE.
+    //  Les deux barrières sont donc actives pendant tout l'effacement.
+    //
+    //  ★ B5c-C1-a — CONTRÔLE DU RÉSULTAT DE CHAQUE SUPPRESSION
+    //
+    //  `SharedPreferences.remove()` a DEUX modes d'échec :
+    //    1. exception → visible, donc déjà correctement remontée ;
+    //    2. retour `false` → SILENCIEUX. Le contrat (shared_preferences_legacy
+    //       .dart:173-177) est : `_preferenceCache.remove(key)` d'abord, PUIS
+    //       `_store.remove(prefixedKey)` dont le booléen est rendu tel quel.
+    //       Le cache est donc déjà vidé même quand la suppression disque a
+    //       échoué : la clé SURVIT sur le disque alors que la RAM croit le
+    //       contraire. Avant C1-a, ce booléen était ignoré et le reset
+    //       s'annonçait réussi avec des clés encore présentes.
+    //
+    //  On collecte les échecs au lieu de lever immédiatement : la boucle reste
+    //  UNIQUE et parcourt les 107 clés, ce qui donne un diagnostic COMPLET
+    //  (quelles clés ont survécu) plutôt qu'un arrêt à la première. La liste
+    //  des clés n'est pas modifiée et l'ordre de parcours est inchangé.
+    //
+    //  ⚠️ Un reset partiellement effectué n'est PAS une transaction annulée :
+    //     les clés déjà supprimées le restent. L'exception le dit explicitement.
+    // ══════════════════════════════════════════════════════════════════════
+    await AlertService.instance.executerResetComplet(() async {
+      await IaMemoryService.instance.executerResetComplet(() async {
+        // ★ B5c-RDR-05 — EloService encadre la boucle d'effacement au même
+        //   titre que les deux autres. Sa barrière est fermée AVANT, ses
+        //   écritures en vol sont DRAINÉES avant, et son vidage RAM a lieu
+        //   dans un `finally` : il est donc inconditionnel, y compris quand
+        //   la StateError ci-dessous est levée (décision D-M1).
+        //
+        //   Sans cet encadrement, une écriture ELO encore en vol recréait
+        //   `elo_ratings_v2` APRÈS sa suppression (scénarios V29-A/V29-B),
+        //   et une écriture née PENDANT l'effacement survivait à la fin du
+        //   reset (scénario V29-I).
+        //
+        // ★ B5c-RDR-01-c — DataRefreshService rejoint les trois services
+        //   encadrants. Sa barrière est la SEULE qui puisse couvrir le cache
+        //   `cache_reunions_*`, dont l'écriture est faite par `_doRefresh`
+        //   via `.ignore()` (donc invisible de l'appelant), sur un cycle
+        //   pouvant durer 20 s. Trois défauts mesurés la rendent nécessaire :
+        //     • V31b R01-J : reset pendant `setString` → la clé réapparaît ;
+        //     • V31b R01-K : suspension entre `setString` et `setInt` → `_ts`
+        //       orpheline après un reset pourtant terminé ;
+        //     • R01-b l'a montré pour la RAM : un refresh EN VOL repeuplait
+        //       `_reunions` après le vidage.
+        //   Placé IMBRIQUÉ, comme AlertService et IaMemoryService : sa
+        //   barrière est fermée AVANT la boucle et son vidage RAM a lieu dans
+        //   son `finally`, donc avant la réouverture.
+        await EloService.instance.executerResetComplet(() async {
+          await DataRefreshService.instance.executerResetComplet(() async {
+            final echecs = <String>[];
+            for (final key in _toutesLesCles) {
+              // `false` et exception réelle sont deux échecs distincts : le premier
+              // est ajouté ici, le second remonte tel quel et interrompt la boucle.
+              final ok = await prefs.remove(key);
+              if (!ok) echecs.add(key);
+            }
+
+            // ════════════════════════════════════════════════════════════════
+            //  ★ B5c-RDR-01-a — BALAYAGE DES CLÉS DE CACHE DYNAMIQUES.
+            //
+            //  POURQUOI ICI, ET PAS DANS `_toutesLesCles` : la liste est FIXE,
+            //  une clé datée ne peut pas y figurer. Le seul moyen de nommer les
+            //  clés réellement présentes est de les LIRE sur le stockage.
+            //
+            //  POURQUOI APRÈS LA BOUCLE FIXE : l'ordre existant n'est pas
+            //  modifié, et le balayage voit un stockage déjà nettoyé des 107
+            //  clés connues — il ne peut donc pas retomber sur l'une d'elles.
+            //
+            //  PORTÉE : `getKeys()` rend les clés SANS le préfixe natif
+            //  `flutter.` (shared_preferences_legacy.dart l.111 : il expose
+            //  `_preferenceCache.keys`). C'est le même niveau de nommage que
+            //  `prefs.remove(key)`, qui ajoute lui-même ce préfixe. Le filtre
+            //  `startsWith('cache_reunions_')` couvre donc à la fois
+            //  `cache_reunions_<ddmmyyyy>` ET `cache_reunions_<ddmmyyyy>_ts` :
+            //  les clés `_ts` sont des préfixes valides, y compris ORPHELINES
+            //  (une `_ts` sans JSON, laissée par un `setString` en échec —
+            //  comportement mesuré V31b R01-L).
+            //
+            //  ÉCHECS : même logique que la boucle ci-dessus. Un `remove` qui
+            //  rend `false` est enregistré dans `echecs`, qui est le MÊME
+            //  accumulateur — le diagnostic `StateError` reste donc unique et
+            //  complet, et rien n'est avalé silencieusement.
+            //
+            //  LIMITE ASSUMÉE : une clé écrite APRÈS ce balayage (c'est-à-dire
+            //  pendant la suite du reset, ou par une écriture concurrente non
+            //  encore terminée) n'est pas vue ici. Ce point relève de R01-c et
+            //  n'est PAS traité par cette correction — voir V31 R01-J / R01-K,
+            //  qui doivent continuer à démontrer la réapparition jusqu'à R01-c.
+            // ════════════════════════════════════════════════════════════════
+            final clesCacheDynamiques = prefs
+                .getKeys()
+                .where((k) => k.startsWith(_prefsCacheReunionsPrefix))
+                .toList();
+            for (final key in clesCacheDynamiques) {
+              final ok = await prefs.remove(key);
+              if (!ok) echecs.add(key);
+            }
+
+            if (echecs.isNotEmpty) {
+              throw StateError(
+                  'Reset complet INCOMPLET : ${echecs.length} suppression(s) '
+                  'refusée(s) par le stockage sur ${_toutesLesCles.length} '
+                  'clés fixes + ${clesCacheDynamiques.length} clés de cache '
+                  'dynamiques — '
+                  'clés encore présentes sur le disque : ${echecs.join(', ')}. '
+                  'Les suppressions déjà réussies ne sont PAS annulées.');
+            }
+          });
+        });
+      });
+    });
+
     // ★ B5 : les clés sont effacées du disque, mais EloService garde ses
     //   ratings EN MÉMOIRE. Sans ce vidage, la prochaine mise à jour ELO
     //   (mettreAJourApresArrivee → _sauvegarder) réécrirait les anciennes
     //   valeurs et le reset serait annulé. On vide donc la RAM — sans
     //   passer par reinitialiser(), qui recréerait 'elo_ratings_v2' = '{}'.
-    EloService.instance.viderMemoirePourResetComplet();
+    //
+    // ★ B5c-RDR-05 : CET APPEL A ÉTÉ SUPPRIMÉ. Le vidage est désormais fait
+    //   par `EloService.executerResetComplet()`, DANS SON `finally`, donc
+    //   AVANT la fermeture des barrières et AVANT ce point. Le conserver
+    //   serait redondant — et nuisible : exécuté après coup, il masquerait
+    //   l'écart entre « vidé parce que le reset a réussi » et « vidé parce
+    //   qu'un échec partiel a été rattrapé ».
+    //   La méthode `viderMemoirePourResetComplet()` est CONSERVÉE sur
+    //   EloService : elle sert d'utilitaire de vidage RAM à v18 et reste le
+    //   moyen sûr de jeter la mémoire sans recréer les clés.
     // ★ B5b : même défaut pour le suivi de cote. Le disque est effacé, mais
     //   `_mouvements` alimentait encore les alertes « cotes qui chutent » et
     //   les écritures différées pouvaient recréer les clés après coup.
     //   Le vidage attend les écritures en vol et invalide les opérations
     //   asynchrones déjà démarrées.
     await CoteTrackerService.instance.viderCachePourResetComplet();
+    // ★ B5c : même défaut pour le repository de résultats. Le disque est
+    //   effacé, mais `_items` restait peuplé en RAM et `_charge` restait à
+    //   `true`. Comme `charger()` sort immédiatement quand `_charge` est vrai
+    //   (`if (_charge) return`), le prochain `ajouterOuRemplacer()` réécrivait
+    //   toutes les anciennes entrées et annulait le reset.
+    //   On ne passe pas par `restaurerDepuisBackup({})` : elle appelle
+    //   `_sauvegarder()` et recréerait la clé effacée avec `[]`.
+    PronosticResultatsRepository.instance.viderMemoirePourResetComplet();
+    // ★ B5c : même défaut pour les gros paris. Le disque est effacé, mais les
+    //   trois listes restaient peuplées et `_charge` restait à `true`.
+    //   `charger()` sortant immédiatement (`if (_charge) return`), le prochain
+    //   `ajouterSignauxBatch()` — appelé à chaque ouverture de BestBetScreen —
+    //   réécrivait les anciennes entrées et annulait le reset.
+    //   On ne passe pas par `importerDepuisBackup({})` : elle appelle
+    //   `_sauvegarder()` et recréerait les deux clés effacées, vides.
+    QuasiGrosParisService.instance.viderMemoirePourResetComplet();
+    // ★ B5c : même défaut pour les badges. Le disque est effacé, mais
+    //   `_debloques` restait peuplé en RAM. `_sauvegarder()` écrivant la map
+    //   ENTIÈRE (l.203), le prochain `debloquer()` — déclenché par le bouton
+    //   « Analyser la journée » — réécrivait tous les anciens badges avec
+    //   leurs dates d'origine, annulant le reset.
+    //   Contrairement aux étapes 1 et 2, aucun flag `_charge` à réarmer :
+    //   `init()` n'est appelé qu'au démarrage (main.dart:73).
+    IaBadgesService.instance.viderMemoirePourResetComplet();
+    // ★ B5c : idem pour les préférences utilisateur. Le disque est effacé,
+    //   mais `_prefs` gardait les habitudes détectées (hippodrome favori,
+    //   mise habituelle, suggestions de mise), affichées par 3 widgets.
+    //   Contrairement aux étapes 1 à 3, ce service ne fusionne jamais avec
+    //   l'ancien état : `_sauvegarder()` n'a qu'un appelant, qui remplace
+    //   `_prefs` par un recalcul complet. Pas de résurrection disque possible.
+    IaUserPrefsService.instance.viderMemoirePourResetComplet();
+    // ★ B5c-RDR-01-b — même défaut, mesuré cette fois : le disque est effacé
+    //   (107 clés fixes + balayage dynamique R01-a), mais DEUX caches RAM
+    //   conservaient l'état d'AVANT le reset et le réservaient à l'UI.
+    //
+    //   • DataRefreshService : `_reunions` gardait les réunions
+    //     (V31 R01-H : `lieu=RAM-SURVIT` avant ET après reset), et
+    //     `_partantsParCourse` / `_nonPartantsNotifies` / `_lastRefresh` /
+    //     `_lastError` restaient peuplés. `_lastError` était affiché
+    //     directement par l'UI : une erreur d'avant le reset serait restée
+    //     visible sans cause.
+    //   • ZoneTurfService : `_cache` / `_cacheTime` (statiques, 15 min)
+    //     réservaient les réunions d'avant le reset au chemin des écrans,
+    //     qui appelle `chargerProgramme()` SANS `forceRefresh`
+    //     (V31b R01-N : `reunions=1 appelsRéseau=0`).
+    //
+    //   ★ B5c-RDR-01-c — LE VIDAGE DATAREFRESH N'EST PLUS ICI.
+    //     Il a été DÉPLACÉ dans `DataRefreshService.executerResetComplet()`,
+    //     dont le `finally` s'exécute avant la réouverture de la barrière.
+    //     Un appel ici serait non seulement redondant, mais TROMPEUR : il
+    //     laisserait croire que la protection vient de l'ordre des appels de
+    //     `BackupService`, alors qu'elle vient de la barrière du service.
+    //     C'est le même raisonnement que R-DR-05 pour EloService.
+    //
+    //   La purge ZoneTurf, elle, RESTE ICI : ce cache statique n'a pas de
+    //   barrière (aucune écriture disque), il n'a donc rien à drainer.
+    ZoneTurfService.viderCachePourResetComplet();
     if (kDebugMode) {
       debugPrint('[Backup] Reinitialisation complete '
           '(${_toutesLesCles.length} cles effacees) '
@@ -1414,11 +1670,15 @@ class BackupService {
   /// Efface uniquement les alertes
   Future<void> reinitialiserAlertes() async {
     final prefs = await SharedPreferences.getInstance();
-    for (final key in _keysAlertes) {
+    // ★ B5c R-13 : la file de notifications natives fait partie des données
+    //   d'alertes. Elle est traitée ici en plus de `reinitialiserComplet()`.
+    for (final key in [..._keysAlertes, ..._keysNotificationsEnAttente]) {
       await prefs.remove(key);
     }
     if (kDebugMode) {
-      debugPrint('[Backup] Alertes reinitialisees (${_keysAlertes.length} cles effacees)');
+      debugPrint('[Backup] Alertes reinitialisees '
+          '(${_keysAlertes.length + _keysNotificationsEnAttente.length} '
+          'cles effacees)');
     }
   }
 }

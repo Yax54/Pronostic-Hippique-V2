@@ -61,6 +61,17 @@ import 'pronostic_resultats_repository.dart' show PronosticResultatsRepository;
 import '../models/quasi_gros_paris_models.dart' show evaluerPariOrdreDesordre;
 import '../models/pronostic_resultat_utilisateur.dart' show PronosticResultatUtilisateur;
 
+/// ★ B5c-P1 : issue d'une écriture protégée.
+///
+/// Trois états distincts, volontairement :
+///  • [ecrite]            — toutes les opérations disque ont abouti ;
+///  • [refuseeParReset]   — refusée par la barrière, AUCUNE écriture tentée ;
+///  • [echec]             — exception réelle pendant l'action disque.
+///
+/// Un simple `bool` confondrait « refusée » et « échouée », ce qui
+/// transformerait une erreur réelle de sauvegarde en refus silencieux.
+enum ResultatEcriture { ecrite, refuseeParReset, echec }
+
 class IaMemoryService extends ChangeNotifier {
   static final IaMemoryService _instance = IaMemoryService._();
   static IaMemoryService get instance => _instance;
@@ -139,6 +150,63 @@ class IaMemoryService extends ChangeNotifier {
   IaPoidsAdaptatifs _poids = IaPoidsAdaptatifs.defaut();
   bool _loaded = false;
   Completer<void>? _loadCompleter; // ★ v9.90 : évite le double chargement concurrent
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c-P1 : barrière d'écriture (même patron que AlertService, étape 5)
+  //
+  //  ⚠️ P1 : la barrière n'est PAS encore raccordée au reset. `_resetEnCours`
+  //  reste `false` en production et `_generationCache` ne bouge pas : le
+  //  comportement fonctionnel est donc STRICTEMENT identique à l'existant.
+  //
+  //  P3 raccordera `executerResetComplet()` sur ces trois champs.
+  // ══════════════════════════════════════════════════════════════════════════
+  bool _resetEnCours = false;
+  int _generationCache = 0;
+
+  /// ★ B5c-RDR-02 — Génération courante, LECTURE SEULE.
+  ///
+  /// Sert aux appelants qui déclenchent un calcul asynchrone long
+  /// (`compute()`) et doivent pouvoir invalider leur lot si un reset complet
+  /// est intervenu entre le calcul et l'enregistrement.
+  ///
+  /// Le compteur est incrémenté à l'ÉTAPE 1 d'`executerResetComplet()`, donc
+  /// AVANT le drain et AVANT le vidage RAM : une valeur capturée avant un
+  /// reset est donc toujours différente de la valeur d'après.
+  ///
+  /// Aucun effet de bord : ce getter ne calcule rien, n'écrit rien et ne
+  /// touche à aucune règle IA.
+  int get generationCache => _generationCache;
+
+  final Set<Future<ResultatEcriture>> _ecrituresEnCours =
+      <Future<ResultatEcriture>>{};
+
+  /// ★ B5c-P4 — HOOK DE TEST, `null` EN PRODUCTION.
+  ///
+  /// Point de suspension OBSERVABLE entre la capture de génération et le
+  /// contrôle 2 de [_ecrireProtege]. Sans lui, cette fenêtre ne contient
+  /// AUCUN `await` (invariant P1) : elle est donc inobservable, et le
+  /// deuxième contrôle (génération) ne peut pas être distingué du premier.
+  ///
+  /// Garanties :
+  ///   • `null` par défaut, jamais affecté par le code métier ;
+  ///   • `if (hook != null) await hook()` n'introduit AUCUN point de
+  ///     suspension quand le hook est nul : le chemin nominal est
+  ///     strictement identique à avant ;
+  ///   • aucune clé, aucune règle IA, aucune formule n'est concernée.
+  @visibleForTesting
+  Future<void> Function()? hookApresGetInstancePourTest;
+
+  /// Nombre d'écritures engagées et non terminées (diagnostic et drain).
+  int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
+  /// Dernière exception réelle rencontrée par une écriture protégée.
+  /// Reste `null` sur une écriture réussie ou refusée par le reset.
+  Object? _derniereErreurEcriture;
+  Object? get derniereErreurEcriture => _derniereErreurEcriture;
+
+  /// Nombre d'écritures refusées par la barrière de reset (jamais des échecs).
+  int _nbEcrituresRefuseesParReset = 0;
+  int get nbEcrituresRefuseesParReset => _nbEcrituresRefuseesParReset;
 
   IaPoidsAdaptatifs       get poids     => _poids;
   List<IaPronostic>       get pronostics => List.unmodifiable(_pronostics);
@@ -492,7 +560,14 @@ class IaMemoryService extends ChangeNotifier {
     final resolus = _pronostics.where((p) => p.resultatsReels).toList();
     await alimenterRepositoryDepuisPronosticsClassiques(resolus);
 
-    await prefs.setBool(_migrationSuiteIAClassiqueKey, true);
+    // ★ B5c-P2 : écriture directe protégée (une seule opération disque).
+    //   Placée exactement là où était `setBool` : après l'alimentation du
+    //   repository, avant le log de fin. Aucune sauvegarde ajoutée.
+    // ★ B5c-C2 : propagation historique rétablie — avant P2, l'exception de
+    //   `prefs.setBool` remontait. Un refus par reset ne lève jamais.
+    await _ecrireProtege(
+        (prefs) => prefs.setBool(_migrationSuiteIAClassiqueKey, true),
+        propagerErreur: true);
 
     if (kDebugMode) {
       debugPrint('[v10.80] Migration suite IA classique — terminée.');
@@ -1390,6 +1465,185 @@ class IaMemoryService extends ChangeNotifier {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B5c-P3 — RESET COMPLET DE LA MÉMOIRE IA
+  //
+  //  Appelé EXCLUSIVEMENT par `BackupService.reinitialiserComplet()`, à
+  //  l'INTÉRIEUR du callback d'`AlertService.executerResetComplet()` (barrière
+  //  externe). Une seule boucle d'effacement, celle de `_toutesLesCles`, est
+  //  passée ici en callback : elle s'exécute pendant que les DEUX barrières
+  //  sont actives.
+  //
+  //  Sémantique : remise à l'état de premier démarrage. Les poids et seuils
+  //  appris REVIENNENT AUX VALEURS D'USINE — c'est le sens de « réinitialiser
+  //  la mémoire IA », et c'est déjà ce que faisait l'effacement de
+  //  `ia_poids_v3` / `ia_seuils_v1` sur le disque. Aucune formule, aucune
+  //  constante, aucun apprentissage n'est modifié : on ne calcule RIEN, on
+  //  jette un état mémoire devenu obsolète.
+  //
+  //  Aucun `_save()`, aucun `_load()` terminal : ils recréeraient les clés
+  //  qu'on vient d'effacer. Même raisonnement que
+  //  `EloService.viderMemoirePourResetComplet()`.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> executerResetComplet(
+      Future<void> Function() supprimerLesCles) async {
+    // 1. Barrière SYNCHRONE — aucun `await` avant ces deux lignes, sinon une
+    //    écriture pourrait naître dans la fenêtre.
+    _resetEnCours = true;
+    _generationCache++;
+    try {
+      // 2. Drain des écritures DÉJÀ engagées (P1/P2). Boucle et non
+      //    `Future.wait` unique : `whenComplete` s'exécute en microtâche
+      //    APRÈS la complétion, donc un `wait` simple peut rendre la main
+      //    alors que le registre n'est pas encore vide.
+      while (_ecrituresEnCours.isNotEmpty) {
+        final enVol = List<Future<ResultatEcriture>>.from(_ecrituresEnCours);
+        try {
+          await Future.wait(enVol);
+        } catch (_) {
+          // Une écriture en échec ne doit jamais faire échouer le reset :
+          // l'erreur est déjà mémorisée par `_executerEcriture`.
+        }
+      }
+
+      // 3. Attente du chargement ÉVENTUELLEMENT en cours.
+      //    On attend la future existante : on ne l'annule pas, on ne la met
+      //    pas à `null` ici, et on ne crée aucun `Completer`. L'appelant qui
+      //    attendait cette future sera servi. `_loadCompleter` est remis à
+      //    `null` en fin d'étape (8), APRÈS que le corps en vol a fini de le
+      //    rédiger.
+      final enVolLoad = _loadCompleter;
+      if (enVolLoad != null) {
+        try {
+          await enVolLoad.future;
+        } catch (_) {
+          // Chargement en échec : rien à récupérer, le disque va être effacé.
+        }
+      }
+
+      // 3bis. B5c-C1-b — l'état de chargement n'est PLUS déclaré « à jour ».
+      //    `_loaded = true` était posé AVANT l'effacement (ancienne étape 7),
+      //    donc avant de savoir si l'effacement réussissait : il affirmait une
+      //    cohérence RAM/disque que rien n'avait encore établie.
+      //
+      //    Le `false` est posé ICI et pas plus tôt, par construction :
+      //    - après (2) le registre d'écritures est vide, donc plus aucune
+      //      écriture `IaMemoryService` ne peut réécrire une clé effacée ;
+      //    - après (3) le chargement en vol a fini de rédiger : `_load()` a
+      //      déjà fait `complete()`/`completeError()` puis `_loadCompleter =
+      //      null`, donc AUCUN Future orphelin ne reste derrière nous et
+      //      aucun appelant suspendu n'est abandonné.
+      //    Le poser avant (2) ou (3) aurait laissé un `_load()` démarrer
+      //    pendant qu'une écriture ou un chargement était encore en vol.
+      //
+      //    Conséquence voulue : sur le chemin d'échec (8), l'état reste
+      //    `_loaded == false`. Un `_load()` ultérieur relira donc le disque
+      //    et rendra VISIBLES les données résiduelles réellement présentes —
+      //    c'est la traduction en code de « un reset partiellement effectué
+      //    n'est pas une transaction annulée ».
+      _loaded = false;
+
+      // 4. Vidage RAM — 13 champs identifiés à l'audit, plus les 2 caches
+      //    d'arrivées. Les `final` sont des collections : on les vide sur
+      //    place, jamais on ne les réassigne.
+      _pronostics.clear();
+      _journal.clear();
+      _rapports.clear();
+      _bilansSemaine.clear();
+      _bilansMois.clear();
+      _statsTypes.clear();
+      _precisionParType.clear();
+      _statsLabels.clear();
+      _premiumCourseKeys = <String>{};
+      _premiumHistorique = <String, List<PremiumPronosticDuJour>>{};
+      _pendingBilanHebdo = null;
+      _arriveeCache.clear();
+      _arriveeEnCours.clear();
+
+      // 5. D1 option A — retour aux valeurs d'usine, SANS recalcul.
+      //    `IaPoidsAdaptatifs.defaut()` est strictement identique à
+      //    `IaPoidsAdaptatifs()` (ia_memory_models.dart:854) ; les seuils
+      //    reprennent les constantes de classe (ia_memory_service.dart:5891).
+      _poids = IaPoidsAdaptatifs.defaut();
+      _seuils = SeuilsConfianceAdaptatifs();
+
+      // 6. R-32 — resynchronisation du registre statique. Sans elle, la
+      //    confiance affichée resterait pondérée par l'ancienne calibration
+      //    alors que `_poids.calibrationScore` vaut de nouveau 50.0.
+      //    `update()` est une simple affectation avec `clamp` : aucun calcul.
+      IaCalibrationRegistry.update(_poids.calibrationScore);
+
+      // 7. (fusionné avec l'étape 8 — voir 3bis et 8.)
+
+      // 8. Effacement disque — TOUJOURS sous les deux barrières.
+      //
+      //    B5c-C1-b — la réussite est CONDITIONNELLE. `supprimerLesCles()`
+      //    peut échouer de deux façons :
+      //      • exception (canal rompu) ;
+      //      • un `remove()` a rendu `false` → `BackupService` (C1-a) lève
+      //        alors une `StateError` listant les clés survivantes.
+      //    `_loaded` ne repasse à `true` QUE si l'appel est allé au bout :
+      //    c'est la seule écriture du fait « RAM et disque sont cohérents ».
+      //
+      //    B5c-C1-c — sur le chemin d'échec UNIQUEMENT, `prefs.reload()`
+      //    resynchronise le cache avec le disque. Nécessité démontrée : le
+      //    contrat de `remove()` (shared_preferences_legacy.dart:173-177) est
+      //    `_preferenceCache.remove(key)` PUIS `_store.remove(prefixedKey)` ;
+      //    une suppression refusée par le store laisse donc la clé sur le
+      //    disque alors que le cache, lui, est déjà vide. Sans `reload()`, le
+      //    cache MENT et `_load()` (qui ne fait que `getInstance()`, donc
+      //    réutilise CE cache) ne verrait pas les données résiduelles.
+      //
+      //    Garanties du `reload()` :
+      //      • il ne restaure PAS les clés supprimées avec succès — il ne
+      //        rétablit que la cohérence avec le stockage réellement restant ;
+      //      • il n'est JAMAIS exécuté sur le chemin nominal (aucun `reload()`
+      //        supplémentaire : le cache y est déjà juste) ;
+      //      • l'exception propagée est l'INITIALE, avec sa pile d'origine :
+      //        un échec de `reload()` est seulement journalisé, il ne peut pas
+      //        masquer l'erreur du reset ni le transformer en succès.
+      try {
+        await supprimerLesCles();
+      } catch (e, st) {
+        try {
+          // Même instance que celle utilisée par `_load()` : `getInstance()`
+          // rend le cache déjà construit, c'est précisément lui qu'il faut
+          // resynchroniser.
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.reload();
+        } catch (eRechargement) {
+          // État résiduel assumé : le cache reste tel qu'il était après les
+          // suppressions — vide pour les clés que le store a refusées, alors
+          // que ces clés existent encore sur le disque. Aucun autre levier ici.
+          // `_loaded` reste `false`, donc le prochain `_load()` (nouveau
+          // `getInstance()` au redémarrage) repartira du disque réel.
+          if (kDebugMode) {
+            debugPrint('[IaMemory] ⚠️ Reset en échec PUIS `reload()` en échec : '
+                'cache SharedPreferences laissé incohérent ($eRechargement). '
+                'Erreur du reset conservée : $e');
+          }
+        }
+        Error.throwWithStackTrace(e, st);
+      }
+
+      // 9. Succès COMPLET de l'effacement : seul point où le service peut
+      //    affirmer que sa RAM vide est cohérente avec un disque vide.
+      _loaded = true;
+      _loadCompleter = null; // plus aucun chargement en vol à ce stade
+    } finally {
+      // 10. Libération inconditionnelle. Sans ce `finally`, une exception
+      //     laisserait le service muet jusqu'au redémarrage.
+      _resetEnCours = false;
+    }
+    if (kDebugMode) {
+      debugPrint('[IaMemory] 🧹 Reset complet effectué '
+          '(génération $_generationCache, '
+          '${_pronostics.length} pronostics, '
+          'disque non réécrit)');
+    }
+    notifyListeners();
+  }
+
   /// Force le rechargement complet depuis SharedPreferences.
   /// Utilisé après une restauration backup pour mettre à jour
   /// la RAM avec les données restaurées (poids IA, pronostics, journal…).
@@ -1411,6 +1665,17 @@ class IaMemoryService extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    // ★ B5c-P3 : pendant un reset complet, AUCUN chargement ne démarre.
+    //   Le disque est en cours d'effacement : lire maintenant repeuplerait la
+    //   RAM avec des données que le reset vient de jeter, ou pire, ferait
+    //   écrire `ia_precision_migrated_v3` et `_save()` (l.1596 et l.4280)
+    //   pendant la phase d'effacement.
+    //
+    //   Sortie PURE : aucun champ muté, aucun `Completer` créé, aucune
+    //   suspension. `_loaded` et `_loadCompleter` sont pilotés exclusivement
+    //   par `executerResetComplet()`, qui les fixe APRÈS le drainage et le
+    //   vidage RAM — jamais ici.
+    if (_resetEnCours) return;
     if (_loaded) return;
     if (_loadCompleter != null) return _loadCompleter!.future;
     _loadCompleter = Completer<void>();
@@ -1556,7 +1821,16 @@ class IaMemoryService extends ChangeNotifier {
     final flagMigration = prefs.getBool('ia_precision_migrated_v3') ?? false;
       if (!flagMigration && _pronostics.any((p) => p.resultatsReels)) {
         await _recalculerPrecisionParTypeDepuisPronostics();
-        await prefs.setBool('ia_precision_migrated_v3', true);
+        // ★ B5c-P2 : écriture directe protégée. L'ordonnancement est conservé
+        //   (après le recalcul, avant le log) et les conditions d'exécution
+        //   sont inchangées. Aucune sauvegarde ajoutée.
+        // ★ B5c-C2 : propagation historique rétablie — avant P2, l'exception
+        //   remontait et `_load()` tombait dans son `catch`, qui appelait
+        //   `_loadCompleter?.completeError(e)`. Les appelants suspendus sur le
+        //   chargement sont donc de nouveau avertis d'une panne réelle.
+        await _ecrireProtege(
+            (p) => p.setBool('ia_precision_migrated_v3', true),
+            propagerErreur: true);
         if (kDebugMode) {
           debugPrint('[IaMemory] ✅ Flag ia_precision_migrated_v3 posé.');
         }
@@ -1783,6 +2057,84 @@ class IaMemoryService extends ChangeNotifier {
     return excedent.length;
   }
 
+  /// Enveloppe une écriture disque dans la barrière de reset.
+  ///
+  /// ★ B5c-P1 : même patron que `AlertService._ecrireProtege` (étape 5), à une
+  /// différence près : l'issue est un [ResultatEcriture] à TROIS états, jamais
+  /// un `bool`. Un booléen confondrait « refusée par le reset » et « échouée »,
+  /// et transformerait une erreur réelle de sauvegarde en refus silencieux.
+  ///
+  /// ⚠️ P1 : `_resetEnCours` reste `false` et `_generationCache` ne bouge pas.
+  /// Les deux contrôles passent donc toujours : comportement identique à
+  /// l'existant. P3 raccordera le reset sur ces champs.
+  ///
+  /// ★ B5c-C2 : [propagerErreur] rétablit la propagation HISTORIQUE des
+  /// exceptions réelles sur les sites qui la laissaient remonter avant P2.
+  /// Le défaut reste `false`, donc `_save()` et tout appel non modifié
+  /// conservent exactement le comportement de P1/P2.
+  ///
+  /// Distinction maintenue : un REFUS (contrôle 1 ou 2) n'est PAS une erreur,
+  /// il retourne [ResultatEcriture.refuseeParReset] sans jamais lever, quel
+  /// que soit [propagerErreur].
+  Future<ResultatEcriture> _ecrireProtege(
+      Future<void> Function(SharedPreferences prefs) action,
+      {bool propagerErreur = false}) async {
+    if (_resetEnCours) {
+      _nbEcrituresRefuseesParReset++;
+      return ResultatEcriture.refuseeParReset; // Contrôle 1
+    }
+    final generation = _generationCache;
+    final prefs = await SharedPreferences.getInstance();
+    // ★ B5c-P4 : point de suspension de TEST, nul en production. Permet de
+    //   laisser le reset s'exécuter ENTIÈREMENT entre la capture de la
+    //   génération et le contrôle 2, ce que le chemin nominal ne permet pas
+    //   (il n'y a aucun `await` ici, par construction — invariant P1).
+    //   Quand `hookApresGetInstancePourTest` est nul, le `await` n'existe pas.
+    final hook = hookApresGetInstancePourTest;
+    if (hook != null) {
+      await hook();
+    }
+    if (_resetEnCours || generation != _generationCache) {
+      _nbEcrituresRefuseesParReset++;
+      return ResultatEcriture.refuseeParReset; // Contrôle 2
+    }
+    // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` ↓↓↓
+    final Future<ResultatEcriture> f =
+        _executerEcriture(prefs, action, propager: propagerErreur);
+    _ecrituresEnCours.add(f);
+    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
+    return f;
+  }
+
+  /// Corps de l'écriture, isolé pour que [_ecrireProtege] obtienne la future
+  /// AVANT le premier `await`. `_executerEcriture` étant `async`, son corps
+  /// s'exécute synchroniquement jusqu'à `await action(prefs)`.
+  ///
+  /// L'exception est capturée ici et mémorisée dans [_derniereErreurEcriture] :
+  /// le drain peut attendre la future sans risque d'erreur asynchrone non
+  /// gérée, et l'erreur reste observable pour le diagnostic et les tests.
+  ///
+  /// ★ B5c-C2 : si [propager] est vrai, l'exception est RELANCÉE après
+  /// mémorisation, avec sa pile d'origine préservée (`Error.throwWithStackTrace`).
+  /// La future de registre rejette alors, ce qui est sans danger : elle est
+  /// consommée par le `whenComplete(...).ignore()` ci-dessus et, pendant un
+  /// drain, par le `Future.wait` déjà entouré d'un `catch (_)`.
+  Future<ResultatEcriture> _executerEcriture(SharedPreferences prefs,
+      Future<void> Function(SharedPreferences prefs) action,
+      {bool propager = false}) async {
+    try {
+      await action(prefs);
+      return ResultatEcriture.ecrite;
+    } catch (e, st) {
+      _derniereErreurEcriture = e;
+      if (kDebugMode) {
+        debugPrint('IaMemoryService._ecrireProtege error: $e\n$st');
+      }
+      if (propager) Error.throwWithStackTrace(e, st);
+      return ResultatEcriture.echec;
+    }
+  }
+
   Future<void> _save() async {
     try {
       // ★ Lot 4 : Purger les vieux pronostics avant sauvegarde
@@ -1790,67 +2142,81 @@ class IaMemoryService extends ChangeNotifier {
       // ★ v9.91 : Bascule automatique des rapports dans la hiérarchie semaine/mois
       _basculerBilans();
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_poidsKey, json.encode(_poids.toJson()));
-      // ★ Lot 4 : Compression des pronostics si activée
-      // ★ C1-a / E1 : protéger la tranche excédentaire AVANT l'écriture
-      //   tronquée (elle serait sinon détruite sur le disque sans archive).
-      _securiserExcedentAvantEcriture();
-      final pronosticsAsSauvegarder = _pronostics.take(_maxPronostics).toList();
-      // ★ C1-a / E1 : tentative d'écriture durable de la file d'archive AVANT
-      //   de décider du gel du blob. Si la file se vide, le blob est réécrit
-      //   normalement au cours de ce même cycle.
-      final archive = IaArchiveService.instance;
-      try {
-        await archive.persisterEnAttente();
-      } catch (_) {
-        // Ne jamais faire échouer _save() à cause de l'archive.
-      }
-      // ★ C1-a / E1 : GEL DU BLOB — si des évictions ne sont pas encore
-      //   durablement archivées, réécrire le blob détruirait leur dernière
-      //   copie sur disque. On conserve donc la version précédente.
-      //   Toutes les autres clés (poids, journal, rapports, seuils, stats…)
-      //   sont écrites normalement : l'apprentissage n'est jamais affecté.
-      if (!archive.doitGelerBlobPronostics) {
-        if (_useCompression && pronosticsAsSauvegarder.length > 20) {
-          // Encoder en JSON unique puis compresser en gzip
-          final jsonStr  = json.encode(pronosticsAsSauvegarder.map((p) => p.toJson()).toList());
-          final bytes    = utf8.encode(jsonStr);
-          final gzipped  = GZipCodec().encode(bytes);
-          final b64      = base64Encode(gzipped);
-          await prefs.setString(_compressionKey, b64);
-          await prefs.remove(_pronosticsKey); // supprimer l'ancienne clé non compressée
-        } else {
-          await prefs.setStringList(_pronosticsKey,
-              pronosticsAsSauvegarder.map((p) => json.encode(p.toJson())).toList());
-          await prefs.remove(_compressionKey);
+      // ★ B5c-P1 : les 13 opérations disque forment UNE SEULE unité protégée.
+      //   Les envelopper individuellement laisserait le reset s'intercaler
+      //   entre la 4ᵉ et la 5ᵉ, et 9 clés seraient réécrites après effacement.
+      //
+      //   Ordre des opérations STRICTEMENT inchangé, y compris la place de
+      //   `_securiserExcedentAvantEcriture()` (RAM + file d'archive) qui reste
+      //   entre l'écriture des poids et celle du blob.
+      final resultat = await _ecrireProtege((prefs) async {
+        await prefs.setString(_poidsKey, json.encode(_poids.toJson()));
+        // ★ Lot 4 : Compression des pronostics si activée
+        // ★ C1-a / E1 : protéger la tranche excédentaire AVANT l'écriture
+        //   tronquée (elle serait sinon détruite sur le disque sans archive).
+        _securiserExcedentAvantEcriture();
+        final pronosticsAsSauvegarder = _pronostics.take(_maxPronostics).toList();
+        // ★ C1-a / E1 : tentative d'écriture durable de la file d'archive AVANT
+        //   de décider du gel du blob. Si la file se vide, le blob est réécrit
+        //   normalement au cours de ce même cycle.
+        final archive = IaArchiveService.instance;
+        try {
+          await archive.persisterEnAttente();
+        } catch (_) {
+          // Ne jamais faire échouer _save() à cause de l'archive.
         }
-      } else if (kDebugMode) {
-        debugPrint('[IaMemory] ⏸️ Blob pronostics gelé : '
-            '${archive.nbEvictionsNonArchivees} éviction(s) non archivée(s) — '
-            'dernière copie disque préservée.');
+        // ★ C1-a / E1 : GEL DU BLOB — si des évictions ne sont pas encore
+        //   durablement archivées, réécrire le blob détruirait leur dernière
+        //   copie sur disque. On conserve donc la version précédente.
+        //   Toutes les autres clés (poids, journal, rapports, seuils, stats…)
+        //   sont écrites normalement : l'apprentissage n'est jamais affecté.
+        if (!archive.doitGelerBlobPronostics) {
+          if (_useCompression && pronosticsAsSauvegarder.length > 20) {
+            // Encoder en JSON unique puis compresser en gzip
+            final jsonStr  = json.encode(pronosticsAsSauvegarder.map((p) => p.toJson()).toList());
+            final bytes    = utf8.encode(jsonStr);
+            final gzipped  = GZipCodec().encode(bytes);
+            final b64      = base64Encode(gzipped);
+            await prefs.setString(_compressionKey, b64);
+            await prefs.remove(_pronosticsKey); // supprimer l'ancienne clé non compressée
+          } else {
+            await prefs.setStringList(_pronosticsKey,
+                pronosticsAsSauvegarder.map((p) => json.encode(p.toJson())).toList());
+            await prefs.remove(_compressionKey);
+          }
+        } else if (kDebugMode) {
+          debugPrint('[IaMemory] ⏸️ Blob pronostics gelé : '
+              '${archive.nbEvictionsNonArchivees} éviction(s) non archivée(s) — '
+              'dernière copie disque préservée.');
+        }
+        await prefs.setStringList(_journalKey,
+            _journal.take(_maxJournal).map((e) => json.encode(e.toJson())).toList());
+        // ★ Sauvegarde des rapports journaliers
+        await prefs.setStringList(_rapportsKey,
+            _rapports.take(_maxRapports).map((r) => json.encode(r.toJson())).toList());
+        // ★ v9.91 : Sauvegarde des bilans semaine et mois
+        await prefs.setStringList(_bilansSemaineKey,
+            _bilansSemaine.map((s) => json.encode(s.toJson())).toList());
+        await prefs.setStringList(_bilansMoisKey,
+            _bilansMois.map((m) => json.encode(m.toJson())).toList());
+        // ★ Sauvegarde des stats par type de pari
+        await prefs.setStringList(_statsTypesKey,
+            _statsTypes.values.map((s) => json.encode(s.toJson())).toList());
+        // ★ Sauvegarde de la précision IA par type de pari
+        await prefs.setString(_precisionIAKey, json.encode(
+            _precisionParType.map((k, v) => MapEntry(k, v.toJson()))));
+        // ★ Sauvegarde des seuils de confiance adaptatifs
+        await prefs.setString(_seuilsKey, json.encode(_seuils.toJson()));
+        // ★ v9.0 : Sauvegarde des stats par label IA
+        await prefs.setString(_statsLabelsKey, json.encode(
+            _statsLabels.map((k, v) => MapEntry(k, v.toJson()))));
+      });
+
+      // ★ B5c-P1 : une erreur réelle reste observable, exactement comme avant.
+      //   Le message reprend la forme historique « IaMemoryService._save error: ».
+      if (resultat == ResultatEcriture.echec && kDebugMode) {
+        debugPrint('IaMemoryService._save error: $_derniereErreurEcriture');
       }
-      await prefs.setStringList(_journalKey,
-          _journal.take(_maxJournal).map((e) => json.encode(e.toJson())).toList());
-      // ★ Sauvegarde des rapports journaliers
-      await prefs.setStringList(_rapportsKey,
-          _rapports.take(_maxRapports).map((r) => json.encode(r.toJson())).toList());
-      // ★ v9.91 : Sauvegarde des bilans semaine et mois
-      await prefs.setStringList(_bilansSemaineKey,
-          _bilansSemaine.map((s) => json.encode(s.toJson())).toList());
-      await prefs.setStringList(_bilansMoisKey,
-          _bilansMois.map((m) => json.encode(m.toJson())).toList());
-      // ★ Sauvegarde des stats par type de pari
-      await prefs.setStringList(_statsTypesKey,
-          _statsTypes.values.map((s) => json.encode(s.toJson())).toList());
-      // ★ Sauvegarde de la précision IA par type de pari
-      await prefs.setString(_precisionIAKey, json.encode(
-          _precisionParType.map((k, v) => MapEntry(k, v.toJson()))));
-      // ★ Sauvegarde des seuils de confiance adaptatifs
-      await prefs.setString(_seuilsKey, json.encode(_seuils.toJson()));
-      // ★ v9.0 : Sauvegarde des stats par label IA
-      await prefs.setString(_statsLabelsKey, json.encode(
-          _statsLabels.map((k, v) => MapEntry(k, v.toJson()))));
     } catch (e) {
       if (kDebugMode) debugPrint('IaMemoryService._save error: $e');
     }
@@ -1941,8 +2307,58 @@ class IaMemoryService extends ChangeNotifier {
   // ── Enregistrement batch de pronostics (sans save intermédiaire) ─────────
   // Utilisé par DataRefreshService pour enregistrer tous les pronostics du
   // jour en une seule passe — un seul appel _save() à la fin.
-  Future<void> enregistrerPronosticsBatch(List<Map<String, dynamic>> items) async {
+  Future<void> enregistrerPronosticsBatch(
+    List<Map<String, dynamic>> items, {
+    int? generationAuDemarrage,
+  }) async {
     await _load();
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ B5c-RDR-02 — REJET D'UN LOT CALCULÉ AVANT UN RESET COMPLET
+    //
+    //  `generationAuDemarrage` est capturée par l'appelant AVANT son calcul
+    //  asynchrone (`compute()`). Si elle diffère de la génération courante,
+    //  un reset complet a eu lieu entre-temps :
+    //    • les scores du lot ont été établis avec des poids et des seuils qui
+    //      ne sont plus ceux de la mémoire (l'isolate a reçu un payload
+    //      d'avant le reset) ;
+    //    • les pronostics correspondants viennent d'être effacés du disque.
+    //  Enregistrer ce lot annulerait le reset.
+    //
+    //  Le rejet est TOTAL : aucune insertion RAM, aucun `_save()`, aucune
+    //  éviction, aucune écriture d'archive. Rien n'est « rattrapé » : un lot
+    //  périmé est jeté, comme le reset jette l'état qu'il visait.
+    //
+    //  Aucune règle IA n'est concernée : `enregistrerPronosticsBatch`
+    //  n'apprend rien (ni `_apprendreParGradient`, ni
+    //  `_mettreAJourCalibration`, ni `analyseJourneeComplete()`).
+    //
+    //  Le placement APRÈS `_load()` est volontaire : si `_load()` suspend et
+    //  qu'un reset s'intercale pendant cette suspension, la comparaison a
+    //  lieu à la reprise, sur la génération courante.
+    //
+    //  Rétro-compatibilité : les appelants qui ne fournissent pas le
+    //  paramètre (`ia_performance_screen`, tests V4/V6/V7/V8/V9/V10/V11/V13/
+    //  V15) conservent exactement le comportement d'origine — `null` ⇒
+    //  aucun contrôle.
+    //
+    //  ⚠️ Le fallback de `DataRefreshService` ne fournit PAS ce paramètre, et
+    //     c'est volontaire : il lit l'état IA et construit son lot sans aucun
+    //     `await` intermédiaire (data_refresh_service.dart:766→814), donc son
+    //     lot est toujours cohérent avec l'état courant. Lui passer la
+    //     génération d'avant `compute()` ferait rejeter des pronostics
+    //     pourtant calculés avec les bons poids.
+    // ══════════════════════════════════════════════════════════════════════
+    if (generationAuDemarrage != null &&
+        generationAuDemarrage != _generationCache) {
+      if (kDebugMode) {
+        debugPrint('[IaMem] ⏭️ Lot de ${items.length} pronostic(s) écarté : '
+            'calculé en génération $generationAuDemarrage, '
+            'mémoire en génération $_generationCache (reset intervenu).');
+      }
+      return;
+    }
+
     int nbAjoutes = 0;
 
     for (final item in items) {
@@ -2034,6 +2450,16 @@ class IaMemoryService extends ChangeNotifier {
     required double confiance,
     String raisonInvalidation = '',
   }) async {
+    // ★ B5c-RDR-04 — CAPTURE DE GÉNÉRATION AVANT LE PREMIER `await`.
+    //
+    // `_load()` peut suspendre (premier démarrage, ou après `recharger()`).
+    // Pendant cette suspension, un reset complet peut s'exécuter ENTIÈREMENT :
+    // il vide `_pronostics` (l.1553) et incrémente `_generationCache` (l.1493).
+    // Sans capture préalable, la méthode ne saurait pas qu'un reset est
+    // intervenu et écrirait un résultat calculé sur un état disparu.
+    //
+    // Aucune formule n'est concernée : on ne fait que noter une version.
+    final generationAuDemarrage = _generationCache;
     await _load();
 
     final idx = _pronostics.indexWhere((p) => p.courseKey == courseKey);
@@ -2102,6 +2528,48 @@ class IaMemoryService extends ChangeNotifier {
               .firstOrNull?.nom,
     );
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ B5c-RDR-04 — GARDE DE GÉNÉRATION SUR LA MUTATION RAM.
+    //
+    //  Même cause que R-DR-02 (`IaMemoryService`) et R-DR-05 (`EloService`) :
+    //  un reset complet a pu s'exécuter pendant le calcul de cette méthode.
+    //  Le disque est DÉJÀ protégé (`_save()` → `_ecrireProtege`, l.2082-2106 :
+    //  contrôle 1, contrôle 2, registre + drain). Les mutations ci-dessous,
+    //  elles, sont SYNCHRONES et ne l'étaient pas.
+    //
+    //  Sans cette garde, la mutation s'exécute APRÈS le vidage
+    //  `_pronostics.clear()` du reset : le pronostic réapparaît en RAM alors
+    //  que le disque est vide (mesuré V30-R04-C), puis le premier `_save()`
+    //  légitime le persiste — la réinitialisation est DÉFINITIVEMENT ANNULÉE
+    //  (mesuré V30-R04-D).
+    //
+    //  EMPLACEMENT — décidé en vérification préalable :
+    //    • AVANT la mutation (`_pronostics[idx] = …` / `.insert(0, …)`) ;
+    //    • AVANT `_evincerAuDelaDeLaLimite()` (l.2528), donc aucune éviction
+    //      ni écriture `IaArchiveService` ne peut être déclenchée par un
+    //      recalcul refusé (mesuré V30-R04-F) ;
+    //    • APRÈS les calculs, qui sont PURS (aucun effet de bord sur
+    //      `_pronostics`, `_poids`, `_seuils`) : les exécuter puis les jeter
+    //      ne laisse aucune trace.
+    //
+    //  DEUX CONDITIONS, et non une seule :
+    //    • `_resetEnCours`    → le reset n'a pas encore rendu la main ;
+    //    • `generation != …`  → le reset est TERMINÉ mais le calcul est périmé.
+    //  Chacune couvre un scénario distinct et mesuré (mutations M31/M32).
+    //
+    //  Aucun changement de signature : la méthode reste `Future<void>`.
+    //  Le faux signalement de `DataRefreshService` (mesuré V30-R04-G) est
+    //  DOCUMENTÉ et laissé intact — il relève d'un correctif séparé.
+    // ══════════════════════════════════════════════════════════════════════
+    if (_resetEnCours || generationAuDemarrage != _generationCache) {
+      if (kDebugMode) {
+        debugPrint('[IaMem] invaliderEtRecalculer: $courseKey — reset intervenu '
+            '(génération $generationAuDemarrage→$_generationCache), '
+            'mutation RAM annulée');
+      }
+      return;
+    }
+
     if (idx >= 0) {
       _pronostics[idx] = nouveauPronostic;
       debugPrint('[IaMem] Pronostic mis à jour (invalidé+recalculé): $courseKey'
@@ -2121,7 +2589,48 @@ class IaMemoryService extends ChangeNotifier {
     required String courseKey,
     required List<int> arriveeReelle,
     Map<String, double>? cotesPmuParNumero, // ★ v10.31
+    int? generationAppelante,
   }) async {
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ B5c-RDR-03 — GARDE DE GÉNÉRATION SUR L'ENREGISTREMENT DE RÉSULTAT.
+    //
+    //  DÉFAUT MESURÉ (avant correction) : `_recupererResultatsBatch` ATTEND
+    //  `_fetchArriveeOfficielle(...)`, un appel RÉSEAU. Ce point de suspension
+    //  n'est enregistré dans AUCUN registre de drainage : contrairement à
+    //  `_save()`, il est invisible pour toutes les barrières. Un reset complet
+    //  peut donc s'exécuter ENTIÈREMENT pendant l'attente réseau.
+    //
+    //  Sans cette garde, au retour du réseau la méthode :
+    //    • écrit `_pronostics[idx]` → RAM repeuplée après le vidage du reset ;
+    //    • appelle `_save()` → réécrit les clés effacées ;
+    //    • appelle `_apprendreParGradient()` → MODIFIE `_poids` et `_seuils`
+    //      à partir d'un état disparu : APPRENTISSAGE OBSOLÈTE NON AUTORISÉ.
+    //
+    //  La capture est faite ICI, en PREMIÈRE instruction et avant `_load()`
+    //  (qui peut suspendre). Les DEUX contrôles sont nécessaires :
+    //    • contrôle 1 : `_resetEnCours` — un reset est en cours, on n'écrit pas ;
+    //    • contrôle 2 : génération différente — le reset est TERMINÉ mais le
+    //      résultat est périmé.
+    //
+    //  `generationAppelante` permet à un appelant qui possède déjà SA propre
+    //  capture (ex. `DataRefreshService`) de la transmettre, pour que l'appel
+    //  soit refusé dès son ENGAGEMENT et pas seulement à l'arrivée du réseau.
+    //
+    //  ⚠️ AUCUNE règle métier n'est touchée : ni le calcul du score de
+    //  performance, ni `_apprendreParGradient`, ni `_apprendreParDiscipline`,
+    //  ni `_mettreAJourCalibration`. On conditionne l'appel, pas son contenu.
+    //  Le paramètre est optionnel : tout appelant existant garde son
+    //  comportement, la garde étant calculée sur la génération courante.
+    // ═══════════════════════════════════════════════════════════════════════
+    final generationAuDemarrage = generationAppelante ?? _generationCache;
+    if (_resetEnCours || generationAuDemarrage != _generationCache) {
+      if (kDebugMode) {
+        debugPrint('[IaMem] ⏭️ enregistrerResultat $courseKey refusé : reset '
+            '(génération $generationAuDemarrage→$_generationCache, '
+            'resetEnCours=$_resetEnCours)');
+      }
+      return;
+    }
     await _load();
 
     final idx = _pronostics.indexWhere((p) => p.courseKey == courseKey);
@@ -2182,6 +2691,20 @@ class IaMemoryService extends ChangeNotifier {
       scorePerf:  scorePerf,
       typePari:   p.typePariConseille,
     );
+
+    // ── SECOND CONTRÔLE, juste avant la mutation RAM ────────────────────
+    //  `_load()` ci-dessus peut avoir suspendu. On revérifie donc la
+    //  génération AVANT `_pronostics[idx] = …`, exactement comme R-DR-04 le
+    //  fait dans `invaliderEtRecalculer`. Ce point est placé APRÈS les calculs
+    //  (purs : scorePerformance, precisionIA, diagnostic) et AVANT toute
+    //  écriture, disque comprise.
+    if (_resetEnCours || generationAuDemarrage != _generationCache) {
+      if (kDebugMode) {
+        debugPrint('[IaMem] ⏭️ enregistrerResultat $courseKey : reset survenu '
+            'pendant `_load()` — résultat, sauvegarde et apprentissage annulés');
+      }
+      return;
+    }
 
     _pronostics[idx] = IaPronostic(
       courseKey:              p.courseKey,
@@ -4820,11 +5343,15 @@ class IaMemoryService extends ChangeNotifier {
   Future<void> enregistrerParisPremiumDuJour(List<String> courseKeys) async {
     final todayKey = _todayKey();
     _premiumCourseKeys.addAll(courseKeys.where((k) => k.isNotEmpty));
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _premiumDuJourKey,
-      '$todayKey|${_premiumCourseKeys.join(',')}',
-    );
+    // ★ B5c-P2 : écriture directe protégée. La mutation RAM ci-dessus reste
+    //   hors protection (elle ne touche pas au disque) ; seule l'écriture
+    //   est encadrée. Contenu de la clé et format STRICTEMENT inchangés.
+    // ★ B5c-C2 : propagation historique rétablie — avant P2, l'exception de
+    //   `prefs.setString` remontait à l'appelant.
+    await _ecrireProtege((prefs) => prefs.setString(
+          _premiumDuJourKey,
+          '$todayKey|${_premiumCourseKeys.join(',')}',
+        ), propagerErreur: true);
   }
 
   // ★ v10.38 : Enregistrer les pronostics premium dans l'historique multi-jours
@@ -4879,12 +5406,18 @@ class IaMemoryService extends ChangeNotifier {
   }
 
   Future<void> _sauvegarderPremiumHistorique() async {
-    final prefs = await SharedPreferences.getInstance();
-    final json = {
-      'entries': _premiumHistorique.map((date, items) =>
-          MapEntry(date, items.map((p) => p.toJson()).toList())),
-    };
-    await prefs.setString(_premiumHistoriqueKey, jsonEncode(json));
+    // ★ B5c-P2 : écriture directe protégée. Le JSON est construit DANS
+    //   l'action, donc au moment de l'écriture réelle : la sérialisation
+    //   reste contemporaine de l'écriture, comme avant.
+    // ★ B5c-C2 : propagation historique rétablie — avant P2, l'exception de
+    //   `prefs.setString` remontait à `enregistrerPronosticsPremiumDuJour`.
+    await _ecrireProtege((prefs) {
+      final json = {
+        'entries': _premiumHistorique.map((date, items) =>
+            MapEntry(date, items.map((p) => p.toJson()).toList())),
+      };
+      return prefs.setString(_premiumHistoriqueKey, jsonEncode(json));
+    }, propagerErreur: true);
   }
 
   String _todayKey() {
@@ -5184,35 +5717,40 @@ class IaMemoryService extends ChangeNotifier {
     final keyDate =
         '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
-    final prefs = await SharedPreferences.getInstance();
-
-    // 1. Supprimer l'entrée de l'historique premium pour cette date
-    final raw = prefs.getString(_premiumHistoriqueKey);
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw) as Map<String, dynamic>;
-        if (decoded.containsKey('entries')) {
-          // Format encapsulé {entries: {date: [...]}}
-          final entries = decoded['entries'] as Map<String, dynamic>? ?? {};
-          entries.remove(keyDate);
-          decoded['entries'] = entries;
-          await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
-        } else {
-          // Format plat {date: [...]} (compat)
-          decoded.remove(keyDate);
-          await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
+    // ★ B5c-P2 : les DEUX écritures de cette méthode (réécriture de
+    //   l'historique puis suppression éventuelle du pronostic du jour) forment
+    //   UNE SEULE unité protégée — un reset ne peut plus s'intercaler entre
+    //   elles. Ordre strictement conservé, aucune sauvegarde ajoutée.
+    //   Les lectures et le traitement JSON restent identiques.
+    await _ecrireProtege((prefs) async {
+      // 1. Supprimer l'entrée de l'historique premium pour cette date
+      final raw = prefs.getString(_premiumHistoriqueKey);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw) as Map<String, dynamic>;
+          if (decoded.containsKey('entries')) {
+            // Format encapsulé {entries: {date: [...]}}
+            final entries = decoded['entries'] as Map<String, dynamic>? ?? {};
+            entries.remove(keyDate);
+            decoded['entries'] = entries;
+            await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
+          } else {
+            // Format plat {date: [...]} (compat)
+            decoded.remove(keyDate);
+            await prefs.setString(_premiumHistoriqueKey, jsonEncode(decoded));
+          }
+        } catch (_) {
+          // Parsing échoué → on laisse tel quel, pas de crash
         }
-      } catch (_) {
-        // Parsing échoué → on laisse tel quel, pas de crash
       }
-    }
 
-    // 2. Si c'est aujourd'hui → supprimer aussi ia_premium_du_jour_v1
-    final todayKey = _todayKey();
-    if (keyDate == todayKey) {
-      await prefs.remove(_premiumDuJourKey);
-      _premiumCourseKeys = {};
-    }
+      // 2. Si c'est aujourd'hui → supprimer aussi ia_premium_du_jour_v1
+      final todayKey = _todayKey();
+      if (keyDate == todayKey) {
+        await prefs.remove(_premiumDuJourKey);
+        _premiumCourseKeys = {};
+      }
+    }, propagerErreur: true);
 
     // 3. Rechargement mémoire + rafraîchissement UI
     _premiumHistorique.remove(keyDate);
@@ -5228,9 +5766,15 @@ class IaMemoryService extends ChangeNotifier {
   // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics, résultats.
   // ══════════════════════════════════════════════════════════════════════════
   Future<void> resetToutesEtoilesPremium() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_premiumHistoriqueKey);
-    await prefs.remove(_premiumDuJourKey);
+    // ★ B5c-P2 : les DEUX suppressions forment UNE SEULE unité protégée —
+    //   un reset ne peut plus s'intercaler entre elles. Ordre conservé
+    //   (historique puis jour), aucune sauvegarde ajoutée, clés inchangées.
+    // ★ B5c-C2 : propagation historique rétablie — avant P2, l'exception
+    //   remontait avant le vidage des caches RAM et `notifyListeners()`.
+    await _ecrireProtege((prefs) async {
+      await prefs.remove(_premiumHistoriqueKey);
+      await prefs.remove(_premiumDuJourKey);
+    }, propagerErreur: true);
     // Vider les caches mémoire
     _premiumHistorique = {};
     _premiumCourseKeys = {};
@@ -5351,7 +5895,15 @@ class IaMemoryService extends ChangeNotifier {
       dateEntries[selection.sourceWidget] = selection.toJson();
       root[selection.dateKey] = dateEntries;
 
-      await prefs.setString(premiumWidgetsSelectionKey, jsonEncode(root));
+      // ★ B5c-P2 : écriture directe protégée. La sérialisation reste dans
+      //   l'action, donc contemporaine de l'écriture réelle comme avant.
+      //   Le `catch (e)` englobant de la méthode est conservé à l'identique.
+      // ★ B5c-C2 : propagation historique rétablie. Le `catch (e)` englobant
+      //   avale l'exception comme avant P2 et RÉÉMET le log « ❌ Erreur
+      //   sauvegarde » qui avait disparu en P2.
+      await _ecrireProtege(
+          (prefs) => prefs.setString(premiumWidgetsSelectionKey, jsonEncode(root)),
+          propagerErreur: true);
       if (kDebugMode) {
         debugPrint('[PremiumFigeage] 💾 Sauvegardé — ${selection.sourceWidget} '
             '@ ${selection.dateKey} | courseKey=${selection.courseKey} '

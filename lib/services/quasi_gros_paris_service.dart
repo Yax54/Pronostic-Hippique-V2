@@ -1277,6 +1277,54 @@ class QuasiGrosParisService {
       if (kDebugMode) debugPrint('[QuasiGros] Erreur import backup (ignoré): $e');
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Vidage RAM pour reset complet
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Vide les TROIS caches RAM SANS écrire sur le disque.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
+  /// que `ia_quasi_gros_paris_v1` et `ia_gros_paris_resultats_v1` ont été
+  /// supprimées du stockage.
+  ///
+  /// Pourquoi ne pas réutiliser [importerDepuisBackup] avec une map vide ?
+  /// Parce qu'elle termine par `_sauvegarder()` (l.1270), qui réécrirait les
+  /// DEUX clés qu'on vient d'effacer, avec des listes vides.
+  ///
+  /// Pourquoi `_charge = false` est indispensable : `charger()` sort
+  /// immédiatement si `_charge == true` (l.190). Sans cette remise à zéro,
+  /// les trois listes resteraient peuplées en RAM et le prochain
+  /// `ajouterSignauxBatch()` — `best_bet_screen.dart:197`, seul écrivain
+  /// vivant — réécrirait toutes les anciennes entrées.
+  ///
+  /// Pourquoi les trois `clear()` sont indispensables *en plus* : les
+  /// `clear()` internes de `charger()` sont CONDITIONNELS, et il existe
+  /// DEUX gardes distinctes — l.196 pour `_signaux` et `_quasiGagnants`,
+  /// l.220 pour `_grosParisGagnants`. Juste après un reset les deux clés
+  /// sont absentes, donc les trois `clear()` seraient sautés et les
+  /// anciennes entrées survivraient malgré `_charge = false`.
+  ///
+  /// ⚠️ Risques documentés, NON corrigés à cette étape :
+  ///   R-4 une écriture déjà en vol dans `_sauvegarder()` (suspendue sur
+  ///       `getInstance()` l.247, `setString()` l.253 ou l.258) pourrait
+  ///       recréer les clés. Aucun chemin de production ne l'atteint : le
+  ///       seul écrivain vivant est `ajouterSignauxBatch()`, jamais appelé
+  ///       pendant un reset.
+  ///   R-5 `_sauvegarder()` écrit les deux clés INCONDITIONNELLEMENT et
+  ///       `BestBetScreen` recalcule puis réécrit à chaque ouverture : les
+  ///       clés peuvent donc réapparaître VIDES après le reset. C'est une
+  ///       recréation de clés vides, pas une résurrection de données.
+  void viderMemoirePourResetComplet() {
+    _signaux.clear();
+    _quasiGagnants.clear();
+    _grosParisGagnants.clear();
+    _charge = false;
+    if (kDebugMode) {
+      debugPrint('[QuasiGros] 🧹 Caches vidés '
+          '(reset complet, disque non réécrit)');
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════

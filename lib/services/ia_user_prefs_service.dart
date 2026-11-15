@@ -195,5 +195,57 @@ class IaUserPrefsService extends ChangeNotifier {
     return parts.isEmpty ? 'Aucune préférence détectée' : parts.join(' · ');
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ B5c — Vidage RAM pour reset complet
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Remet les préférences à leur valeur par défaut SANS écrire sur le disque.
+  ///
+  /// Appelé exclusivement par `BackupService.reinitialiserComplet()`, APRÈS
+  /// que `ia_user_prefs_v1` a été supprimée du stockage.
+  ///
+  /// Réinitialisation par une instance `const IaUserPrefs()` VIDES et non un
+  /// `clear()` de collection : `_prefs` est un objet immuable remplacé en bloc
+  /// (l.137), pas une collection mutable.
+  ///
+  /// Pourquoi ce vidage est nécessaire : `_prefs` est lu par 3 widgets
+  /// (profile_profil_tab.dart:685, profile_progression_tab.dart:230 et :263).
+  /// Sans ce vidage, la section « Préférences détectées » continuait d'afficher
+  /// l'ancien hippodrome favori, l'ancienne mise habituelle et les anciennes
+  /// suggestions de mise — alors que le disque était vide.
+  ///
+  /// Pourquoi il n'y a AUCUN flag `_charge` à réarmer : ce service n'a pas de
+  /// lecteur paresseux. `init()` (l.99) n'est appelé qu'une fois, au démarrage
+  /// (main.dart:72), et n'est jamais rejoué après un reset.
+  ///
+  /// ⚠️ Risque RÉSIDUEL RÉEL, NON corrigé à cette étape (voir R-8) :
+  ///   après ce vidage, un `analyserDepuisParis()` qui s'exécuterait AVANT que
+  ///   `AlertService` (source de `preds`) n'ait été vidé pourrait recalculer
+  ///   des préférences depuis des données périmées et les réécrire. En pratique
+  ///   le risque est neutralisé : `analyserDepuisParis` est TOUJOURS appelé APRÈS
+  ///   le vidage d'`AlertService` dans le même méthode `_lancerAnalyseJournee`,
+  ///   et `verifierTout` (qui dure bien plus longtemps) s'intercale entre les
+  ///   deux. Sans correctif sur `AlertService` (étape 5), cette garantie
+  ///   n'est pas démontrable — voir le rapport B5c-4.
+  ///
+  /// ⚠️ Pas de résurrection DISQUE possible par ce service : `_sauvegarder()`
+  ///   (l.149) a UN SEUL appelant, `analyserDepuisParis()` (l.145), qui
+  ///   REMPLACE `_prefs` (l.137) par un recalcul complet. Ce service ne fait
+  ///   JAMAIS de fusion avec l'ancien état. Ce n'est pas le défaut des
+  ///   étapes 1, 2 et 3.
+  void viderMemoirePourResetComplet() {
+    final avait = _prefs.frequenceParType.isNotEmpty ||
+        _prefs.frequenceHippodrome.isNotEmpty ||
+        _prefs.misesUtilisees.isNotEmpty ||
+        _prefs.frequenceDiscipline.isNotEmpty ||
+        _prefs.frequenceHeure.isNotEmpty;
+    _prefs = const IaUserPrefs();
+    if (kDebugMode) {
+      debugPrint('[IaUserPrefs] 🧹 Préférences réinitialisées '
+          '(reset complet, disque non réécrit — avait des données : $avait)');
+    }
+    notifyListeners();
+  }
+
   static const List<String> keysBackup = [_key];
 }
