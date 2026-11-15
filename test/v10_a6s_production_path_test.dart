@@ -254,32 +254,90 @@ void main() {
   // ═══════════════════════════════════════════════════════════════════════
   //  T2 (obligatoire 2) — Courses futures du jour : toujours exclues.
   //
-  //  On prend des départs dans 3 h et 5 h. Aucune requête PMU ne doit
-  //  partir et nbCoursesFutures doit les compter.
+  //  ★ Indépendance à l'heure d'exécution (correctif) : les deux départs sont
+  //  placés à des HEURES FIXES (14h15 et 16h40) d'un jour civil GARANTI
+  //  FUTUR — « demain », obtenu par arithmétique de CALENDRIER
+  //  (`DateTime(y, m, d + 1)`) et non par ajout d'une durée absolue.
+  //
+  //  Pourquoi la version précédente (`DateTime.now()` + 3 h / + 5 h) était
+  //  instable — deux contraintes de la PRODUCTION, non modifiables ici :
+  //    1. `analyseJourneeComplete({date})` ne retient que les pronostics de
+  //       la journée de `date` : `now = date ?? DateTime.now()` (l.3934),
+  //       puis fenêtre [00h00(date) − 1 h, 00h00(date) + 24 h)
+  //       (ia_memory_service.dart:3952-3953, filtre l.3967-3969).
+  //    2. la classification « future » se fait sur l'HORLOGE RÉELLE
+  //       (`_refTemporelle = DateTime.now()`, ia_memory_service.dart:4173),
+  //       et NON sur le paramètre `date` — les deux références divergent.
+  //  Entre 19h00 et 20h59 (heure locale), `now + 5 h` tombe le LENDEMAIN,
+  //  donc HORS de la fenêtre (contrainte 1), tandis que `now + 3 h` y reste :
+  //  la sélection ne contient qu'UNE course, `nbCoursesFutures` vaut 1 et le
+  //  test échoue (`Expected: <2> / Actual: <1>`) sans aucune modification de
+  //  production. Mesuré sur les 527 040 instants de 2024 (minute par minute),
+  //  replis de sélection inclus (J-1…J-7, fenêtre 48 h, « tous sans
+  //  résultat ») : 43 920 échecs de l'ancien montage, soit 8,33 % — les
+  //  2 heures locales 19 et 20 sur 24. Hors de cette plage, l'ancien montage
+  //  passait parfois PAR ACCIDENT (les deux courses hors fenêtre, donc
+  //  rabattues par le repli « tous sans résultat ») : le test n'était pas
+  //  seulement instable, il était non déterministe. À l'inverse, une date
+  //  fixe arbitraire violerait la contrainte 2 dès que son heure serait
+  //  passée.
+  //
+  //  Le montage retenu satisfait les deux contraintes PAR CONSTRUCTION :
+  //    • tout instant du jour civil J+1 est STRICTEMENT postérieur à tout
+  //      instant du jour civil J ⇒ les deux départs sont toujours futurs,
+  //      quelle que soit l'heure d'exécution (contrainte 2) ;
+  //    • les deux départs sont sur le MÊME jour civil J+1 et `date` porte ce
+  //      même jour ⇒ ils sont dans la fenêtre analysée (contrainte 1).
+  //  `DateTime(y, m, d + 1)` est une opération de CALENDRIER : le débordement
+  //  de fin de mois/année est normalisé par Dart et aucun changement d'heure
+  //  ne peut décaler le jour obtenu (contrairement à `add(Duration(days: 1))`,
+  //  qui ajoute 24 h absolues).
   // ═══════════════════════════════════════════════════════════════════════
   test('T2 — courses futures du jour : exclues, aucune requête PMU', () async {
-    final t = DateTime.now();
+    final maintenant = DateTime.now();
+    // Jour civil J+1, par arithmétique de calendrier.
+    final jour = DateTime(
+        maintenant.year, maintenant.month, maintenant.day + 1);
     final departs = [
-      t.add(const Duration(hours: 3)),
-      t.add(const Duration(hours: 5)),
+      DateTime(jour.year, jour.month, jour.day, 14, 15),
+      DateTime(jour.year, jour.month, jour.day, 16, 40),
     ];
+
+    // ── Invariants du montage, vérifiés AVANT d'appeler la production ──
+    expect(_fmt(departs[0]), _fmt(departs[1]),
+        reason: 'les deux courses doivent partager le MÊME jour civil — '
+            'c\'est la propriété que l\'ancien montage supposait à tort');
+    for (final d in departs) {
+      expect(d.isAfter(maintenant), isTrue,
+          reason: 'chaque départ doit être STRICTEMENT futur par rapport à '
+              'l\'horloge réelle, seule référence de la production ($d)');
+    }
+
     final reunion = _reunion('R1', departs);
     await _creerPronostics([reunion]);
+    expect(IaMemoryService.instance.pronostics.length, 2,
+        reason: 'les deux pronostics doivent exister avant l\'analyse');
 
     final urls = <Uri>[];
     final res = await _avecPmuSimule(
-      () => IaMemoryService.instance.analyseJourneeComplete(date: t),
+      () => IaMemoryService.instance.analyseJourneeComplete(
+          date: departs.first),
       urlsVues: urls,
     );
 
     // ignore: avoid_print
     print('  [T2] futures=${res.nbCoursesFutures} '
         'analysées=${res.nbCoursesAnalysees} '
+        'sansRésultat=${res.nbSansResultat} '
         'requêtes=${urls.length}');
 
     expect(res.nbCoursesFutures, 2,
         reason: 'les 2 courses à venir doivent être classées futures');
+    expect(res.nbCoursesAnalysees, 0,
+        reason: 'aucune course ne doit être comptée comme analysée/traitée');
     expect(res.nbNouveauxResultats, 0);
+    expect(res.nbSansResultat, 0,
+        reason: 'aucune course ne doit être vue « passée sans résultat »');
     expect(urls, isEmpty,
         reason: 'aucune requête PMU ne doit être émise pour une course '
             'non courue — c\'est la protection que A6-S ne devait PAS casser');
