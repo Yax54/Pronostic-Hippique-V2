@@ -14,6 +14,12 @@
 //   • absorber A2 (version active NON RÉSOLUE prioritaire sur l'archive
 //     résolue : comportement actuel conservé).
 //
+//  ★ A2 CORRIGÉ (V48) : le repli n'est plus un simple `??` d'ABSENCE mais un
+//  ARBITRAGE PAR AUTORITÉ (`_versionLaPlusAutoritaire`). Le bloc A1-E a été
+//  réécrit : une fiche active NON RÉSOLUE ne masque plus une fiche archivée
+//  RÉSOLUE. Les garanties de ce fichier — aucune victoire inventée, aucune
+//  réinjection, règles de réussite intactes — sont strictement préservées.
+//
 //  R1 : l'archive doit être chargée AVANT le premier rendu, sinon le repli
 //  d'A1 est sans effet (`versionRetenue` renvoie null). Ce fichier vérifie
 //  le chargement, son idempotence, et l'absence de blocage en cas d'erreur.
@@ -483,16 +489,24 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  BLOC A1-E — A2 RESTE NON CORRIGÉ
+  //  BLOC A1-E — ARBITRAGE PAR AUTORITÉ (A2, corrigé en V48)
   // ═══════════════════════════════════════════════════════════════════════
 
-  group('A1-E — A2 conservé', () {
-    test('A1-T10 — version active NON RÉSOLUE + archive RÉSOLUE : série de 0',
-        () async {
+  // ★ A2 — Le test A1-T10 verrouillait la règle ANTÉRIEURE : `getPronostic(...)
+  //   ?? versionRetenue(...)`, où une fiche ACTIVE non résolue masquait une
+  //   fiche ARCHIVÉE résolue, et la série retombait à 0.
+  //   Depuis V48, la sélection passe par `_versionLaPlusAutoritaire`
+  //   (règle 4 : actif non résolu + archive résolue → archive). L'assertion
+  //   est réécrite pour décrire la NOUVELLE règle métier. Ce qui reste
+  //   interdit et est toujours vérifié : aucune victoire inventée, aucune
+  //   réinjection, aucune modification de la règle de victoire elle-même.
+  group('A1-E — arbitrage par autorité (A2)', () {
+    test('A1-T10 — version active NON RÉSOLUE + archive RÉSOLUE : la série '
+        'est retrouvée', () async {
       final cle = cleCourse(9, 1, j(1));
       await amorcer(
         construireStore(
-          // Mémoire : la même course, NON résolue (priorité actuelle).
+          // Mémoire : la même course, NON résolue.
           enMemoire: [prono(courseKey: cle, date: j(1), resolu: false)],
           // Archive : la même course, RÉSOLUE ET GAGNANTE.
           enArchive: [prono(courseKey: cle, date: j(1))],
@@ -503,13 +517,61 @@ void main() {
         chargerArchive: true,
       );
 
+      // Prérequis : la mémoire active est bien restée non résolue ET l'archive
+      // contient bien la version résolue — c'est exactement la règle 4.
       expect(IaMemoryService.instance.getPronostic(cle)?.resultatsReels, isFalse,
-          reason: 'la mémoire reste prioritaire (comportement A2 inchangé)');
+          reason: 'la fiche active est non résolue (aucune réinjection)');
       expect(IaArchiveService.instance.versionRetenue(cle)?.resultatsReels,
           isTrue, reason: 'l\'archive contient bien la version résolue');
+      expect(IaArchiveService.rangDe(
+              IaArchiveService.instance.versionRetenue(cle)!),
+          2, reason: 'la version archivée est résolue complète (rang 2)');
+
+      expect(serie('conseilJour', j(1)), 1,
+          reason: 'A2 : la fiche active NON RÉSOLUE ne masque plus la fiche '
+              'archivée RÉSOLUE — la victoire est retrouvée et la série ne '
+              'retombe plus à 0');
+
+      // Non-régression : la règle de victoire n'a pas été touchée, et la
+      // mémoire active n'a pas été modifiée par la lecture.
+      expect(
+        IaMemoryService.instance.estPremiumGagnantStrict(
+          premium: PremiumPronosticDuJour(
+            courseKey: cle,
+            typePari: 'Tiercé',
+            numeros: kNumerosTierce,
+            sourceWidget: 'conseilJour',
+          ),
+          prono: IaArchiveService.instance.versionRetenue(cle)!,
+        ),
+        isTrue,
+        reason: 'la victoire vient de la règle INCHANGÉE appliquée à la fiche '
+            'archivée, jamais d\'une fabrication',
+      );
+      expect(IaMemoryService.instance.getPronostic(cle)?.resultatsReels, isFalse,
+          reason: 'aucune complétion sur place de la fiche active');
+    });
+
+    test('A1-T10b — archive RÉSOLUE mais PERDANTE : la série reste à 0',
+        () async {
+      final cle = cleCourse(9, 2, j(1));
+      await amorcer(
+        construireStore(
+          enMemoire: [prono(courseKey: cle, date: j(1), resolu: false)],
+          // Résolue, mais arrivée sans aucun cheval de la sélection premium.
+          enArchive: [
+            prono(courseKey: cle, date: j(1), arrivee: kArriveePerdante),
+          ],
+          premiumParDate: {
+            dk(j(1)): [premiumJson(courseKey: cle, source: 'conseilJour')],
+          },
+        ),
+        chargerArchive: true,
+      );
+
       expect(serie('conseilJour', j(1)), 0,
-          reason: 'A2 NON CORRIGÉ : la version active non résolue masque '
-              'l\'archive résolue — c\'est le comportement actuel, préservé');
+          reason: 'A2 change la SOURCE de la fiche, jamais la règle de '
+              'victoire : une fiche résolue perdante ne produit rien');
     });
   });
 

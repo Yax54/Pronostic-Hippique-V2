@@ -712,59 +712,71 @@ class IaMemoryService extends ChangeNotifier {
     return d;
   }
 
-  /// ★ E2 — Pronostics éligibles du mois : MÉMOIRE DE TRAVAIL **puis** ARCHIVE.
+  /// ★ E2 + A2 — Pronostics éligibles du mois : MÉMOIRE DE TRAVAIL
+  /// **arbitrée avec** l'ARCHIVE.
   ///
   /// Objectif : rendre visibles dans le calendrier les journées dont les
   /// pronostics ont été évincés du blob de travail (plafond `_maxPronostics`
   /// ou purge à 90 jours) mais qui subsistent dans l'archive mensuelle.
   ///
-  /// Garanties (conditions 1, 2, 3, 7 de l'autorisation E2) :
-  ///   • MÉMOIRE PRIORITAIRE : toute course dont le `courseKey` figure dans
-  ///     `_pronostics` — y compris sous une forme non résolue ou non éligible —
-  ///     est EXCLUE de l'apport d'archive. Le résultat affiché pour une course
-  ///     déjà en mémoire est donc rigoureusement identique à avant E2 :
-  ///     mêmes pronostics, mêmes pourcentages, mêmes couleurs, mêmes étoiles.
-  ///   • AUCUN DOUBLON : l'apport d'archive est dédoublonné par `courseKey`.
-  ///   • UNE SEULE VERSION PAR COURSE : l'apport d'archive utilise
-  ///     `versionRetenue(courseKey)` (ordre d'autorité de `IaArchiveService`),
-  ///     jamais une version écartée, et ne crée donc jamais deux journées
-  ///     concurrentes.
-  ///   • RE-VÉRIFICATION APRÈS SÉLECTION : la version retenue est soumise au
-  ///     MÊME filtre d'éligibilité que la mémoire (une version retenue dont la
-  ///     date sortirait du mois affiché est ignorée).
+  /// ★ A2 : la mémoire n'est plus prioritaire À L'AVEUGLE. Pour un même
+  /// `courseKey`, la version retenue est celle qui est la PLUS AUTORITAIRE
+  /// au sens de `IaArchiveService.comparerAutorite` — règle de lecture pure,
+  /// identique à celle appliquée par `_premiumSourceGagnantLeJour`.
+  /// Conséquence voulue : une fiche active NON RÉSOLUE ne masque plus une
+  /// fiche archivée RÉSOLUE, et la journée correspondante redevient visible.
+  ///
+  /// Garanties conservées (conditions 1, 3, 7 de l'autorisation E2) :
+  ///   • UNICITÉ PAR COURSE : une seule version par `courseKey`, quel que
+  ///     soit le nombre d'entrées (mémoire, archive, doublons éventuels).
+  ///     Aucun double comptage possible dans les agrégats du jour.
+  ///   • AUCUN DOUBLON : l'apport d'archive est dédoublonné par `courseKey`
+  ///     ET exclut toute course déjà traitée à l'étape mémoire.
+  ///   • UNE SEULE VERSION PAR COURSE DANS L'ARCHIVE : l'apport d'archive
+  ///     utilise `versionRetenue(courseKey)` (ordre d'autorité interne de
+  ///     `IaArchiveService`, INCHANGÉ), jamais une version écartée.
+  ///   • COHÉRENCE DES DATES : le filtre `_dateCalendrierEligible` est
+  ///     appliqué à l'identique APRÈS sélection, sur la version retenue.
   ///   • LECTURE SEULE : l'archive n'est jamais écrite, jamais réintégrée, et
   ///     `_pronostics` n'est jamais modifié (condition 7).
-  ///   • Si l'archive n'est pas encore chargée, `versionsDuMois` retourne une
-  ///     liste vide : la fonction dégénère exactement en l'ancien comportement.
+  ///   • Si l'archive n'est pas encore chargée, `versionsDuMoisParDate`
+  ///     retourne une liste vide : la fonction dégénère exactement en
+  ///     l'ancien comportement (mémoire seule).
   List<IaPronostic> _pronosticsDuMoisFusionnes(int annee, int mois) {
     final List<IaPronostic> resultat = [];
 
-    // ── 1. Mémoire de travail (prioritaire) ────────────────────────────────
-    // On note TOUTES les courses présentes, éligibles ou non : une course
-    // présente mais non résolue reste « présente » et bloque l'apport
-    // d'archive (condition 2).
-    final Set<String> clesEnMemoire = <String>{};
+    // ── 1. Mémoire de travail, version ARBITRÉE par autorité ──────────────
+    // `_pronostics` est parcouru dans son ordre : la PREMIÈRE occurrence d'un
+    // `courseKey` fixe la fiche active de référence, exactement comme
+    // `getPronostic()` (firstWhere). Les occurrences suivantes — anormales —
+    // sont ignorées, ce qui garantit l'unicité par course.
+    final IaArchiveService archive = IaArchiveService.instance;
+    final Set<String> clesTraitees = <String>{};
     for (final p in _pronostics) {
-      clesEnMemoire.add(p.courseKey);
-      if (_dateCalendrierEligible(p, annee, mois) != null) {
-        resultat.add(p);
+      if (!clesTraitees.add(p.courseKey)) continue;
+      // A2 : la fiche la plus autoritaire entre actif et archive.
+      // `_versionLaPlusAutoritaire` reçoit directement la fiche active :
+      // aucune recherche linéaire supplémentaire (l'archive est indexée O(1)).
+      final IaPronostic retenue =
+          _versionLaPlusAutoritaire(p, archive.versionRetenue(p.courseKey)) ?? p;
+      if (_dateCalendrierEligible(retenue, annee, mois) != null) {
+        resultat.add(retenue);
       }
     }
 
-    // ── 2. Archive (complète les courses ABSENTES uniquement) ──────────────
+    // ── 2. Archive : uniquement les courses ABSENTES de la mémoire ────────
     final String moisStr =
         '$annee-${mois.toString().padLeft(2, '0')}';
-    final IaArchiveService archive = IaArchiveService.instance;
     final Set<String> dejaAjoutees = <String>{};
 
     for (final version in archive.versionsDuMoisParDate(moisStr)) {
       final String cle = version.courseKey;
       // Dédoublonnage de l'apport d'archive lui-même.
       if (!dejaAjoutees.add(cle)) continue;
-      // Mémoire prioritaire : jamais de substitution.
-      if (clesEnMemoire.contains(cle)) continue;
+      // Déjà arbitré à l'étape 1 : ne jamais produire deux entrées.
+      if (clesTraitees.contains(cle)) continue;
 
-      // Une seule version par course : celle retenue par l'autorité.
+      // Une seule version par course : celle retenue par l'autorité interne.
       final IaPronostic retenue = archive.versionRetenue(cle) ?? version;
 
       // Même filtre que la mémoire, re-vérifié APRÈS sélection.
@@ -5549,12 +5561,102 @@ class IaMemoryService extends ChangeNotifier {
     return nbCrees;
   }
 
+  /// ★ INCHANGÉ (A2) — Fiche de la MÉMOIRE ACTIVE seule.
+  ///
+  /// Ne consulte JAMAIS l'archive : c'est le contrat historique, utilisé
+  /// notamment par les gardes anti-recéation (`DataRefreshService`) et par
+  /// l'écran IA Stats. A2 ne modifie pas cette méthode.
   IaPronostic? getPronostic(String courseKey) {
     try {
       return _pronostics.firstWhere((p) => p.courseKey == courseKey);
     } catch (_) {
       return null;
     }
+  }
+
+  /// ★ A2 — Arbitrage LECTURE SEULE entre une fiche ACTIVE et la fiche
+  /// ARCHIVÉE retenue pour le même `courseKey`.
+  ///
+  /// RÈGLES (dans cet ordre, strictement) :
+  ///   1. archive absente            → l'actif (comportement historique) ;
+  ///   2. actif absent               → l'archive (l'appelant décide du repli) ;
+  ///   3. actif RÉSOLU, archive NON  → l'actif ;
+  ///   4. actif NON, archive RÉSOLUE → l'archive ;
+  ///   5. DEUX fiches RÉSOLUES       → `IaArchiveService.comparerAutorite`
+  ///                                    (RANG → COMPLÉTUDE → DATE → EMPREINTE,
+  ///                                    fonction PROTÉGÉE, non modifiée) ;
+  ///   6. deux fiches NON RÉSOLUES   → l'actif (aucun gain d'autorité : on ne
+  ///                                    substitue pas une fiche à l'autre) ;
+  ///   7. autorité STRICTEMENT égale → l'actif (priorité active conservée).
+  ///
+  /// GARDE DE COHÉRENCE DE JOUR (règle 0, AVANT toutes les autres) :
+  ///   si les deux fiches ne portent pas le MÊME JOUR CIVIL (année, mois, jour)
+  ///   dans leur `datePronostic`, l'actif est retenu sans arbitrage.
+  ///
+  /// ★ R-1 — la garde porte sur le JOUR, jamais sur l'INSTANT :
+  ///   l'heure, la minute, la seconde et les microsecondes sont IGNORÉES. Deux
+  ///   versions d'un même `courseKey` peuvent légitimement différer d'heure :
+  ///   une fiche héritée d'avant A-3 portait `DateTime.now()`, une fiche
+  ///   recréée sans `dateStr` porte minuit (sentinelle A-3-bis), et une
+  ///   correction d'heure de départ par le PMU est possible. Comparer l'INSTANT
+  ///   faisait alors rejeter une archive RÉSOLUE au profit d'une fiche active
+  ///   NON RÉSOLUE : la correction A2 ne s'appliquait plus. Comparer le JOUR
+  ///   supprime ce blocage sans rien perdre.
+  ///
+  ///   Ce que la garde protège encore : une `datePronostic` qui désignerait un
+  ///   AUTRE JOUR que celui encodé par le `courseKey` (`R{n}C{n}_JJMMAAAA`).
+  ///   C'est le signal d'une donnée corrompue ou étrangère, jamais un cas
+  ///   nominal : on ne substitue pas, on conserve l'actif. Le mois et l'année
+  ///   étant figés par le même `courseKey`, un arbitrage légitime ne peut
+  ///   jamais faire sortir la course du mois affiché — la garde ne s'y oppose
+  ///   donc pas. Aucune date n'est recalculée, comparée à l'horloge, ni inventée.
+  ///   Aucun fuseau ni aucune conversion UTC n'intervient : `datePronostic` est
+  ///   toujours un `DateTime` LOCAL (`DateTime(y,m,d,h,m)` ou `DateTime(y,m,d)`),
+  ///   et `toIso8601String()` sans suffixe `Z` restitue les mêmes composantes.
+  ///
+  /// GARANTIES :
+  ///   • aucune écriture, aucune mutation : `_pronostics`, `_poids`, `_seuils`
+  ///     et l'archive sont intacts après appel ;
+  ///   • aucune réinjection d'archive dans `_pronostics` ;
+  ///   • aucun champ n'est recombiné : c'est TOUJOURS une version ENTIÈRE qui
+  ///     est retournée, jamais une fusion de deux fiches ;
+  ///   • aucun résultat n'est inventé : les deux candidates existent déjà ;
+  ///   • O(1) : `versionRetenue` lit un index, aucune recherche linéaire.
+  ///
+  /// ⚠️ Ne modifie AUCUNE règle métier : ni `_estBonConseilParType`, ni
+  ///    `_estPremiumExactGagnantStrict`, ni `Gagnant+Placé`, ni le gradient,
+  ///    ni le TOP 3, ni la calibration, ni la purge 90 jours, ni le plafond
+  ///    600. C'est exclusivement une règle de SÉLECTION DE LECTURE.
+  static IaPronostic? _versionLaPlusAutoritaire(
+    IaPronostic? actif,
+    IaPronostic? archive,
+  ) {
+    if (archive == null) return actif;   // règle 1
+    if (actif == null) return archive;   // règle 2
+
+    // Règle 0 (R-1) — cohérence de JOUR : l'heure et la minute sont IGNORÉES.
+    // Deux versions d'un même courseKey peuvent différer d'heure sans que
+    // l'arbitrage soit illégitime ; seul un JOUR différent bloque la
+    // substitution (donnée corrompue ou étrangère → on garde l'actif).
+    final DateTime dActif   = actif.datePronostic;
+    final DateTime dArchive = archive.datePronostic;
+    if (dActif.year  != dArchive.year ||
+        dActif.month != dArchive.month ||
+        dActif.day   != dArchive.day) {
+      return actif;
+    }
+
+    final bool actifResolu   = actif.resultatsReels;
+    final bool archiveResolue = archive.resultatsReels;
+
+    if (actifResolu && !archiveResolue) return actif;    // règle 3
+    if (!actifResolu && archiveResolue) return archive;  // règle 4
+    if (!actifResolu && !archiveResolue) return actif;   // règle 6
+
+    // règle 5 / 7 : deux fiches résolues → autorité, égalité → actif.
+    return IaArchiveService.comparerAutorite(archive, actif) > 0
+        ? archive
+        : actif;
   }
 
   Future<void> clearHistory() async {
@@ -5867,12 +5969,21 @@ class IaMemoryService extends ChangeNotifier {
   /// Vérifie si un sourceWidget donné a eu AU MOINS UN pronostic premium
   /// gagnant strict ce jour-là. Dédoublonne : plusieurs entrées = 1 seul vote.
   ///
-  /// ★ A1 — SOURCE DU PRONOSTIC : mémoire de travail PRIORITAIRE, puis archive.
+  /// ★ A1 — SOURCE DU PRONOSTIC : mémoire de travail ET archive.
   ///   Un pronostic gagnant évincé de la mémoire de travail (plafond 600) était
   ///   introuvable : la journée était sautée et la série retombait à 0. Le repli
-  ///   sur `versionRetenue` (lecture PURE de la version retenue par autorité)
-  ///   permet de retrouver la fiche sans jamais la réinjecter ni la modifier.
-  ///   L'archive doit être chargée (voir `main()` — R1) pour que ce repli opère.
+  ///   sur l'archive permet de retrouver la fiche sans jamais la réinjecter ni
+  ///   la modifier. L'archive doit être chargée (voir `main()` — R1) pour que
+  ///   ce repli opère.
+  ///
+  /// ★ A2 — ARBITRAGE, et non plus simple repli d'ABSENCE :
+  ///   l'ancien code était `getPronostic(...) ?? versionRetenue(...)`, donc une
+  ///   fiche ACTIVE **non résolue** masquait une fiche ARCHIVÉE **résolue** :
+  ///   la victoire était perdue et la série interrompue à tort. La sélection
+  ///   passe désormais par [_versionLaPlusAutoritaire], qui applique les règles
+  ///   documentées plus bas. Aucune règle de victoire n'est touchée :
+  ///   `_estPremiumExactGagnantStrict` reçoit simplement une fiche PLUS
+  ///   autoritaire, jamais une fiche recombinée ni inventée.
   bool _premiumSourceGagnantLeJour(String sourceWidget, String dateKey) {
     final premiumsDuJour = _premiumHistorique[dateKey] ?? [];
     // Garder uniquement les entrées pour ce widget (dédoublonnage par courseKey)
@@ -5880,8 +5991,12 @@ class IaMemoryService extends ChangeNotifier {
     for (final p in premiumsDuJour) {
       if (p.sourceWidget != sourceWidget) continue;
       if (!seen.add(p.courseKey)) continue; // doublon même course → skip
-      final prono = getPronostic(p.courseKey)
-          ?? IaArchiveService.instance.versionRetenue(p.courseKey);
+      // A2 : actif ET archive sont lus, puis arbitrés par autorité.
+      // `getPronostic` reste INCHANGÉ (il ne connaît que la mémoire active).
+      final prono = _versionLaPlusAutoritaire(
+        getPronostic(p.courseKey),
+        IaArchiveService.instance.versionRetenue(p.courseKey),
+      );
       if (prono == null) continue;
       if (_estPremiumExactGagnantStrict(premium: p, prono: prono)) return true;
     }

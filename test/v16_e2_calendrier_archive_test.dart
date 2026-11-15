@@ -3,15 +3,22 @@
 //
 //  Objet : prouver que `donneesCalendrierJour()` agrège désormais
 //  MÉMOIRE DE TRAVAIL **puis** ARCHIVE, sans jamais :
-//   • modifier un résultat déjà présent en mémoire (mémoire prioritaire) ;
 //   • créer un doublon de course (dédoublonnage par courseKey) ;
 //   • afficher une journée issue d'un pronostic NON RÉSOLU ;
 //   • inventer une étoile (la règle hasBestBet est inchangée) ;
 //   • réinjecter quoi que ce soit dans l'apprentissage.
 //
+//  ★ A2 (V48) : la sélection entre les deux sources n'est plus « mémoire
+//  prioritaire à l'aveugle » mais un ARBITRAGE PAR AUTORITÉ
+//  (`_versionLaPlusAutoritaire`, réutilisant `IaArchiveService.comparerAutorite`).
+//  Pour un même `courseKey`, une fiche active NON RÉSOLUE ne masque plus une
+//  fiche archivée RÉSOLUE. Le groupe B a été réécrit en conséquence ; son
+//  objet — aucune fusion, aucun doublon, aucune écriture, aucune invention —
+//  est strictement préservé.
+//
 //  Groupes :
 //   A — la fusion apporte les journées absentes de la mémoire
-//   B — la mémoire reste prioritaire (aucune substitution)
+//   B — arbitrage par autorité (A2) : plus de priorité aveugle
 //   C — filtres conservés (non résolu, type invalide, hors mois)
 //   D — paliers, taux, ordre/désordre, étoiles inchangés
 //   E — une seule version par course (autorité)
@@ -335,27 +342,57 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  B — LA MÉMOIRE RESTE PRIORITAIRE
-  // ═══════════════════════════════════════════════════════════════════════
-
-  group('B — priorité absolue de la mémoire de travail', () {
-    test('B-1 — même courseKey dans les deux sources : la mémoire gagne',
+  // ★ A2 — LA MÉMOIRE N'EST PLUS PRIORITAIRE À L'AVEUGLE
+  //
+  // Les trois tests de ce groupe verrouillaient la règle ANTÉRIEURE, où la
+  // seule présence d'un `courseKey` dans `_pronostics` — même sous une forme
+  // non résolue — excluait l'apport d'archive.
+  //
+  // Depuis A2, la sélection passe par `_versionLaPlusAutoritaire` : pour un
+  // même `courseKey`, c'est la fiche la PLUS AUTORITAIRE qui est retenue
+  // (règle 4 : actif non résolu + archive résolue → archive). Les
+  // assertions sont donc réécrites pour décrire la NOUVELLE règle métier.
+  //
+  // Ce qui reste ABSOLUMENT interdit et est toujours vérifié ici :
+  //   • aucun doublon de course ;
+  //   • aucune fusion de champs entre les deux versions ;
+  //   • aucune écriture dans `_pronostics` ;
+  //   • aucune journée inventée sans résultat réel ;
+  //   • les journées de mémoire pure restent strictement identiques.
+  group('B — arbitrage par autorité (A2)', () {
+    test('B-1 — deux fiches RÉSOLUES : la plus autoritaire gagne, sans doublon',
         () async {
       final jour = _jour(5);
       final cle = _cleCourse(1, 1, jour);
+      // Actif : résolu mais PERDANT. Archive : résolue et GAGNANTE.
       await _preparerMemoire([_pronoPerdant(courseKey: cle, date: jour)]);
 
       await _archiver([_pronoGagnant(courseKey: cle, date: jour)]);
       IaArchiveService.instance.oublierChargementPourTest();
       await IaArchiveService.instance.charger();
 
+      // Prérequis explicites : les deux versions sont résolues, donc la
+      // règle 4 (actif non résolu) NE s'applique PAS ici — c'est bien
+      // l'autorité (`comparerAutorite`) qui tranche.
+      final active = IaMemoryService.instance.getPronostic(cle)!;
+      final archive = IaArchiveService.instance.versionRetenue(cle)!;
+      expect(active.resultatsReels, isTrue);
+      expect(archive.resultatsReels, isTrue);
+      expect(IaArchiveService.comparerAutorite(archive, active), greaterThan(0),
+          reason: 'prérequis : l\'archive est plus autoritaire (plus complète)');
+
       final d = IaMemoryService.instance.donneesCalendrierJour(
           _moisRef.year, _moisRef.month);
       expect(d[5]!.nbCourses, 1, reason: 'aucun doublon');
-      expect(d[5]!.pronostics.length, 1);
-      expect(d[5]!.nbBons, 0,
-          reason: 'la version mémoire (perdante) reste celle affichée');
-      expect(d[5]!.palier, PalierCalendrier.rouge);
+      expect(d[5]!.pronostics.length, 1,
+          reason: 'une seule entrée par course : jamais deux journées '
+              'concurrentes');
+      expect(d[5]!.pronostics.single.courseKey, cle);
+      expect(d[5]!.nbBons, 1,
+          reason: 'A2 : la version RÉSOLUE GAGNANTE et plus complète (archive) '
+              'est retenue — la fiche active perdante n\'écrase plus une fiche '
+              'plus autoritaire');
+      expect(d[5]!.palier, PalierCalendrier.or);
     });
 
     test('B-2 — les journées mémoire restent IDENTIQUES après chargement',
@@ -379,12 +416,14 @@ void main() {
       final apres = _instantane(_moisRef.year, _moisRef.month);
       for (final jour in avant.keys) {
         expect(apres[jour], avant[jour],
-            reason: 'jour $jour : la mémoire ne doit pas bouger');
+            reason: 'jour $jour : aucune course n\'étant présente dans les '
+                'DEUX sources, l\'arbitrage A2 est sans effet — la mémoire '
+                'ne doit pas bouger');
       }
       expect(apres.containsKey(15), isTrue);
     });
 
-    test('B-3 — course mémoire NON RÉSOLUE : elle bloque l\'apport d\'archive',
+    test('B-3 — course mémoire NON RÉSOLUE : l\'archive RÉSOLUE est retenue',
         () async {
       final jour = _jour(8);
       final cle = _cleCourse(1, 1, jour);
@@ -396,11 +435,28 @@ void main() {
       IaArchiveService.instance.oublierChargementPourTest();
       await IaArchiveService.instance.charger();
 
+      // Prérequis : l'actif est bien non résolu (rang 0), l'archive résolue
+      // complète (rang 2). C'est exactement le cas de la règle 4.
+      expect(IaMemoryService.instance.getPronostic(cle)?.resultatsReels, isFalse);
+      expect(
+          IaArchiveService.rangDe(
+              IaArchiveService.instance.versionRetenue(cle)!),
+          2);
+
       final d = IaMemoryService.instance.donneesCalendrierJour(
           _moisRef.year, _moisRef.month);
-      expect(d.containsKey(8), isFalse,
-          reason: 'une course présente en mémoire ne peut pas être '
-              '« complétée » par l\'archive');
+      expect(d.containsKey(8), isTrue,
+          reason: 'A2 : une fiche active NON RÉSOLUE ne masque plus une fiche '
+              'archivée RÉSOLUE — la journée redevient visible');
+      expect(d[8]!.nbCourses, 1, reason: 'aucun doublon');
+      expect(d[8]!.nbBons, 1, reason: 'la victoire archivée est comptée');
+      expect(d[8]!.pronostics.single.resultatsReels, isTrue,
+          reason: 'la version retenue est la version résolue');
+
+      // Non-régression : la mémoire active n'a PAS été modifiée par la lecture.
+      expect(IaMemoryService.instance.getPronostic(cle)?.resultatsReels, isFalse,
+          reason: 'aucune réinjection ni complétion sur place de la fiche '
+              'active');
     });
   });
 
