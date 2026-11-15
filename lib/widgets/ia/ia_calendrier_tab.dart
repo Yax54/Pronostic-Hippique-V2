@@ -699,17 +699,41 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         const SizedBox(height: 12),
 
         // ── Ligne 2 : Légende cliquable — chaque puce ouvre son sheet ──
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
+        // ★ D — RESPONSIVE : la Row `spaceAround` débordait horizontalement
+        //   (mesuré 105 px à 320 dp, 65 px à 360 dp, 32 px à 393 dp,
+        //   13 px à 412 dp) car les 6 puces ont une largeur intrinsèque
+        //   totale de ≈ 370 dp, supérieure à l'espace disponible.
+        //   Solution retenue (la plus simple) : `LayoutBuilder` + `Wrap`.
+        //   Chaque puce reçoit une largeur = espace disponible / colonnes.
+        //   • 6 colonnes si la place le permet (≥ 6 × largeur mini) → 1 ligne ;
+        //   • sinon 3 colonnes → 2 lignes de 3, lisibilité conservée.
+        //   Aucune police, aucune icône, aucune couleur n'est réduite.
+        //   Aucun défilement horizontal n'est introduit.
+        LayoutBuilder(builder: (context, contraintes) {
+          // Largeur intrinsèque maximale mesurée d'une puce ('≥30%', 14 dp gras)
+          // augmentée d'une marge de sécurité.
+          const double largeurMinPuce = 64.0;
+          final bool uneSeuleLigne =
+              contraintes.maxWidth >= largeurMinPuce * 6;
+          final int colonnes = uneSeuleLigne ? 6 : 3;
+          final double largeurPuce = contraintes.maxWidth / colonnes;
+          final List<Widget> puces = [
             _legendePuce(PalierCalendrier.or,     '🥇', 'Noble',    null),
             _legendePuce(PalierCalendrier.vert,   '✅', '≥${_seuilVert.toStringAsFixed(0)}%',   PalierCalendrier.vert),
             _legendePuce(PalierCalendrier.jaune,  '📊', '≥${_seuilJaune.toStringAsFixed(0)}%',  PalierCalendrier.jaune),
             _legendePuce(PalierCalendrier.orange, '⚠️', '≥${_seuilOrange.toStringAsFixed(0)}%', PalierCalendrier.orange),
             _legendePuce(PalierCalendrier.rouge,  '❌', '<${_seuilOrange.toStringAsFixed(0)}%',  PalierCalendrier.rouge),
             _legendePuce(PalierCalendrier.gris,   '💤', 'Repos',    null),
-          ],
-        ),
+          ];
+          return Wrap(
+            alignment: WrapAlignment.center,
+            runSpacing: 10,
+            children: [
+              for (final puce in puces)
+                SizedBox(width: largeurPuce, child: puce),
+            ],
+          );
+        }),
         // ★ v10.37/v10.52 : Légende étoile Best Bet — Expanded pour éviter overflow
         const SizedBox(height: 10),
         Row(
@@ -723,6 +747,57 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 13),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+                softWrap: true,
+              ),
+            ),
+          ],
+        ),
+        // ★ C — Signification des symboles restants (🔥 / ⭐🔥 / 🏆).
+        //   Ajout PUR d'explications : aucune règle d'attribution n'est
+        //   modifiée, aucune case du calendrier ne reçoit de trophée.
+        //   Aucune hauteur fixe, aucun `maxLines` : la bulle s'agrandit et
+        //   les textes ne sont jamais tronqués.
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('🔥', style: TextStyle(fontSize: 16)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Gros Paris gagnant',
+                style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 13),
+                softWrap: true,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('⭐🔥', style: TextStyle(fontSize: 16)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Best Bet et Gros Paris gagnants',
+                style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 13),
+                softWrap: true,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('🏆', style: TextStyle(fontSize: 16)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Série Premium — ≥2 jours gagnants consécutifs '
+                '(même sous-catégorie Best Bet)',
+                style: TextStyle(color: _cGold.withValues(alpha: 0.75), fontSize: 13),
                 softWrap: true,
               ),
             ),
@@ -1039,16 +1114,56 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
         ),
         child: Column(children: [
-          // Ligne stats principales
-          Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _statBox('$joursActifs', 'jours actifs', const Color(0xFF42A5F5)),
-            _divV(),
-            _statBox('$totalC', 'courses', Colors.white54),
-            _divV(),
-            _statBox('$totalB', 'bons conseils', _cGreen),
-            _divV(),
-            _statBox('${taux.toStringAsFixed(0)}%', 'réussite', tauxColor),
-          ]),
+          // ★ E2 — STATS PRINCIPALES : DISPOSITION RESPONSIVE.
+          //   La Row `spaceAround` d'origine débordait horizontalement à TOUTES
+          //   les largeurs de téléphone (mesuré sur l'écran complet :
+          //   311 px à 320 dp, 271 px à 360 dp, 238 px à 393 dp, 219 px à
+          //   412 dp, 151 px à 480 dp). Cause : les 4 `_statBox` sont des
+          //   `Column` rigides et `spaceAround` ne les réduit pas ; la somme
+          //   des largeurs intrinsèques de « jours actifs » et « bons conseils »
+          //   dépasse à elle seule l'espace disponible.
+          //   Correction : `LayoutBuilder` + `Expanded`, aucune police réduite,
+          //   aucun libellé tronqué, valeurs / couleurs / séparateurs / calculs
+          //   INCHANGÉS. `_statBox()` et `_divV()` ne sont pas modifiés.
+          //   • ≥ 352 dp de largeur utile → 4 colonnes sur une ligne.
+          //   • sinon → 2 lignes de 2 colonnes.
+          LayoutBuilder(builder: (context, contraintes) {
+            // 4 × 88 dp = largeur minimale pour que « jours actifs » et
+            // « bons conseils » tiennent sur une ligne avec les séparateurs.
+            const double seuilQuatreColonnes = 352.0;
+            final Widget jours = _statBox(
+                '$joursActifs', 'jours actifs', const Color(0xFF42A5F5));
+            final Widget courses =
+                _statBox('$totalC', 'courses', Colors.white54);
+            final Widget bons = _statBox('$totalB', 'bons conseils', _cGreen);
+            final Widget reussite = _statBox(
+                '${taux.toStringAsFixed(0)}%', 'réussite', tauxColor);
+
+            if (contraintes.maxWidth >= seuilQuatreColonnes) {
+              return Row(children: [
+                Expanded(child: jours),
+                _divV(),
+                Expanded(child: courses),
+                _divV(),
+                Expanded(child: bons),
+                _divV(),
+                Expanded(child: reussite),
+              ]);
+            }
+            return Column(children: [
+              Row(children: [
+                Expanded(child: jours),
+                _divV(),
+                Expanded(child: courses),
+              ]),
+              const SizedBox(height: 14),
+              Row(children: [
+                Expanded(child: bons),
+                _divV(),
+                Expanded(child: reussite),
+              ]),
+            ]);
+          }),
           const SizedBox(height: 14),
 
           // Barre de répartition des paliers

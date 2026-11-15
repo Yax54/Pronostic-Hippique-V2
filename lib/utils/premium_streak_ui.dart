@@ -30,14 +30,20 @@ PremiumStreak streakPourSource({
 ///
 /// Retourne [SizedBox.shrink()] si streak == null ou streak.jours < 2.
 /// Sinon affiche :
-///   🔥 Ce pari est gagnant depuis X jours consécutifs
+///   🏆 Ce pari est gagnant depuis X jours consécutifs
+///
+/// ★ B — SÉMANTIQUE DES SYMBOLES (validée propriétaire) :
+///   ⭐ = Best Bet gagnant · 🔥 = Gros Paris gagnant · ⭐🔥 = les deux.
+///   🏆 est RÉSERVÉ à la série Premium (≥ 2 jours consécutifs gagnants dans
+///   la MÊME sous-catégorie Best Bet). Ces symboles ne sont jamais mélangés :
+///   les 🔥 de Gros Paris ne passent pas par ce helper.
 Widget buildPremiumStreakPhrase({required PremiumStreak? streak}) {
   if (streak == null || streak.jours < 2) return const SizedBox.shrink();
 
   return Padding(
     padding: const EdgeInsets.only(top: 4),
     child: Text(
-      '🔥 Ce pari est gagnant depuis '
+      '🏆 Ce pari est gagnant depuis '
       '${streak.jours} jour${streak.jours > 1 ? 's' : ''} consécutifs',
       maxLines: 2,
       overflow: TextOverflow.ellipsis,

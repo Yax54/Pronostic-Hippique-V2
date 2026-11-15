@@ -4,6 +4,8 @@
 //  ★ v10.68 : Présence IA 🧠 — glow breathing + bottom sheet premium
 //             Référence moteur narratif V3 via IaNarrativeMemoryService
 // ═══════════════════════════════════════════════════════════════════
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../widgets/favori_button.dart';
 import 'package:provider/provider.dart';
@@ -49,6 +51,34 @@ class _HomeScreenState extends State<HomeScreen> {
   // ★ v10.63 : écoute NavigationNotifier pour recalculer le bandeau Conseils IA
   // au retour de la page Conseils (index 1 → index 0).
   int _dernierIndexNav = 0;
+
+  /// Référence gardée du [NavigationNotifier].
+  ///
+  /// ⚠ CYCLE DE VIE — ne JAMAIS relire le Provider dans `dispose()`.
+  /// `dispose()` s'exécute pendant `_InactiveElements._unmountAll()`, quand
+  /// l'élément est déjà désactivé : un `context.read<T>()` y lève
+  /// « Looking up a deactivated widget's ancestor is unsafe ».
+  /// Cette exception interrompt la boucle de démontage
+  /// (`framework.dart`, `elements.reversed.forEach(_unmount)`) : les éléments
+  /// suivants ne sont JAMAIS démontés, leurs `dispose()` ne s'exécutent pas,
+  /// leurs minuteurs périodiques restent pendants et leurs animations restent
+  /// enregistrées. La référence est donc capturée dans `initState()`.
+  NavigationNotifier? _navNotifier;
+
+  /// Minuteur de la bulle matinale, annulable.
+  ///
+  /// ⚠ CYCLE DE VIE — `Future.delayed` n'est pas annulable : le rappel restait
+  /// enregistré après le démontage de l'écran et se déclenchait sur un arbre
+  /// mort (`!mounted` protégeait le corps, pas le minuteur). Un [Timer] que
+  /// l'on annule dans `dispose()` supprime la référence pendante.
+  ///
+  /// ⚠ H1 — AUCUN `Completer`, AUCUNE ATTENTE SUSPENDUE.
+  /// La version précédente faisait `await completer.future` : si `dispose()`
+  /// annulait le [Timer] avant son échéance, `complete()` n'était jamais
+  /// appelé et le `Future` restait suspendu À VIE, retenant ce `State`.
+  /// Le corps est désormais appelé DIRECTEMENT depuis le callback du [Timer] :
+  /// il n'existe plus aucun `Future` en attente à annuler ou à compléter.
+  Timer? _bulleMatinaleTimer;
 
   // ★ fix #7 : cache pour éviter recalcul O(n²) à chaque rebuild
   List<ZtReunion>? _cachedReunionsPourCalc;
@@ -221,9 +251,18 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // ★ v9.85 : Bulle matinale de l'IA au 1er chargement du jour
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ★ H3 — Le sous-arbre peut avoir été démonté DANS LA MÊME FRAME que
+      //   `initState()` (remplacement de route, destruction du parent).
+      //   Sans ce garde, le callback s'exécuterait après `dispose()` :
+      //   il armerait un minuteur sur un `State` mort et AJOUTERAIT un
+      //   listener sur le `NavigationNotifier` qui ne serait jamais retiré
+      //   (`dispose()` étant déjà passé) → fuite définitive.
+      if (!mounted) return;
       _declencherBulleMatinale();
       // ★ v10.63 : écouter les changements de navigation pour synchroniser le bandeau
+      // ⚠ La référence est GARDÉE : `dispose()` ne doit pas relire le Provider.
       final navNotifier = context.read<NavigationNotifier>();
+      _navNotifier = navNotifier;
       navNotifier.addListener(_onNavigationChange);
       // ★ v10.68 : charger le narratif accueil (glow IA)
       _chargerNarratifAccueil();
@@ -235,8 +274,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     // ★ v10.63 : retirer le listener pour éviter les fuites mémoire
-    final navNotifier = context.read<NavigationNotifier>();
-    navNotifier.removeListener(_onNavigationChange);
+    // ⚠ On utilise la référence capturée : relire le Provider ici lèverait
+    // « Looking up a deactivated widget's ancestor is unsafe » et
+    // interromprait le démontage des éléments suivants.
+    _navNotifier?.removeListener(_onNavigationChange);
+    _navNotifier = null;
+    // ⚠ Le minuteur de la bulle matinale doit être annulé AVANT `super.dispose()`
+    // pour ne laisser aucune référence pendante après le démontage.
+    _bulleMatinaleTimer?.cancel();
+    _bulleMatinaleTimer = null;
     super.dispose();
   }
 
@@ -450,9 +496,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Fin v10.68 ────────────────────────────────────────────────────────────
 
-  Future<void> _declencherBulleMatinale() async {
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
+  void _declencherBulleMatinale() {
+    // ★ H1 — Minuteur annulable, SANS `Completer` ni attente suspendue.
+    //   L'ancienne version faisait `await completer.future` : si `dispose()`
+    //   annulait le [Timer] avant son échéance, `complete()` n'était jamais
+    //   appelé, le `Future` restait suspendu À VIE et retenait ce `State`.
+    //   Ici le corps est appelé DIRECTEMENT depuis le callback du [Timer] :
+    //   il n'y a plus aucun `Future` en attente, donc rien à compléter.
+    //   Délai : 2 s, INCHANGÉ.
+    _bulleMatinaleTimer?.cancel();
+    _bulleMatinaleTimer = Timer(const Duration(seconds: 2), () {
+      // Le minuteur a fait son office : on relâche la référence.
+      _bulleMatinaleTimer = null;
+      // Double barrière : `cancel()` empêche déjà l'exécution du callback,
+      // ce garde couvre le cas d'un callback déjà placé dans la file au
+      // moment exact du démontage.
+      if (!mounted) return;
+      // `unawaited` : le callback du [Timer] est synchrone et ne peut pas
+      // attendre. Les erreurs ne sont PAS ignorées : elles sont journalisées
+      // explicitement (voir `catchError` ci-dessous), ce qui préserve la
+      // traçabilité qu'offrait l'ancien `Future.delayed` non capturé.
+      unawaited(_afficherBulleMatinale().catchError(
+        (Object erreur, StackTrace pile) {
+          debugPrint('[HomeScreen] _afficherBulleMatinale a échoué : $erreur');
+          debugPrint('$pile');
+        },
+      ));
+    });
+  }
+
+  /// Corps historique de la bulle matinale, inchangé.
+  Future<void> _afficherBulleMatinale() async {
     final svc       = IaPersonalityService.instance;
     final reunions  = DataRefreshService.instance.reunions;
     final nbCourses = reunions.fold<int>(0, (sum, r) => sum + r.courses.length);

@@ -20,6 +20,7 @@ import 'services/data_refresh_service.dart';
 import 'services/ia_personality_service.dart'; // ★ v9.85
 import 'services/ia_user_prefs_service.dart';  // ★ v9.85
 import 'services/ia_badges_service.dart';      // ★ v9.85
+import 'services/ia_archive_service.dart';      // ★ A1/R1 — archive des pronostics évincés
 import 'services/quasi_gros_paris_service.dart' show QuasiGrosParisService; // ★ v10.75b
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
 import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
@@ -67,6 +68,17 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AlertService.init();
   await IaMemoryService.init();
+  // ★ A1/R1 — L'archive est chargée AVANT `runApp()` afin que les séries
+  //   Premium (Home, Best Bet) retrouvent les pronostics évincés dès le
+  //   PREMIER rendu. Sans ce chargement, le repli d'A1 reste sans effet
+  //   (`versionRetenue` renvoie null) : le calendrier était le seul écran à
+  //   déclencher `charger()`, et seulement à son ouverture.
+  //   • `charger()` est idempotent : l'appel du calendrier devient un no-op.
+  //   • Aucun chargement disque répétitif (mesuré : 2e appel ≈ 0,1 ms).
+  //   • Il absorbe ses erreurs : une panne de stockage ne bloque pas le
+  //     démarrage, le comportement redevient celui d'avant A1.
+  //   • Lecture seule : rien n'est réinjecté dans les 600 pronostics actifs.
+  await IaArchiveService.instance.charger();
   await EloService.init();
   await IaPersonalityService.init(); // ★ v9.85
   await IaUserPrefsService.init();   // ★ v9.85
@@ -510,8 +522,23 @@ class _NavItem extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 2),
+            // ★ F1 — LE LIBELLÉ NE DOIT JAMAIS SE REPLIER.
+            //   Sans contrainte, un libellé plus large que la place disponible
+            //   se replie sur 2 lignes et fait déborder la `Column` du bas de
+            //   la barre de navigation (mesuré : 6,0 px puis 3,0 px par onglet,
+            //   soit les 9 erreurs de `test/widget_test.dart`). Le repli
+            //   dépendait de la police du harnais (Ahem, 1 caractère = 1 em),
+            //   mais le chemin non défilant de `_buildBottomNav` (écrans
+            //   ≥ 836 dp) produit une troncature SILENCIEUSE en production.
+            //   `maxLines: 1` + `softWrap: false` fixent la hauteur du libellé
+            //   à une ligne ; `ellipsis` rend la troncature explicite au lieu
+            //   de la couper net. Police, taille, couleur, graisse, données et
+            //   navigation : INCHANGÉES. Hauteur de barre : 78 dp inchangée.
             Text(
               def.label,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 // ★ v10.26 : label coloré quand actif, gris discret sinon
                 color: isActive ? activeColor : inactiveColor,

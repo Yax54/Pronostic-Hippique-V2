@@ -5866,6 +5866,13 @@ class IaMemoryService extends ChangeNotifier {
 
   /// Vérifie si un sourceWidget donné a eu AU MOINS UN pronostic premium
   /// gagnant strict ce jour-là. Dédoublonne : plusieurs entrées = 1 seul vote.
+  ///
+  /// ★ A1 — SOURCE DU PRONOSTIC : mémoire de travail PRIORITAIRE, puis archive.
+  ///   Un pronostic gagnant évincé de la mémoire de travail (plafond 600) était
+  ///   introuvable : la journée était sautée et la série retombait à 0. Le repli
+  ///   sur `versionRetenue` (lecture PURE de la version retenue par autorité)
+  ///   permet de retrouver la fiche sans jamais la réinjecter ni la modifier.
+  ///   L'archive doit être chargée (voir `main()` — R1) pour que ce repli opère.
   bool _premiumSourceGagnantLeJour(String sourceWidget, String dateKey) {
     final premiumsDuJour = _premiumHistorique[dateKey] ?? [];
     // Garder uniquement les entrées pour ce widget (dédoublonnage par courseKey)
@@ -5873,7 +5880,8 @@ class IaMemoryService extends ChangeNotifier {
     for (final p in premiumsDuJour) {
       if (p.sourceWidget != sourceWidget) continue;
       if (!seen.add(p.courseKey)) continue; // doublon même course → skip
-      final prono = getPronostic(p.courseKey);
+      final prono = getPronostic(p.courseKey)
+          ?? IaArchiveService.instance.versionRetenue(p.courseKey);
       if (prono == null) continue;
       if (_estPremiumExactGagnantStrict(premium: p, prono: prono)) return true;
     }
