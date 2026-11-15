@@ -1330,7 +1330,12 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       if (!_estDansPeriodeStats(dateCours)) continue;
 
       final t = p.typePariConseille ?? '';
-      if (t.isEmpty || t == 'Inconnu' || t == 'A surveiller') continue;
+      // ★ A4-4 : littéral corrigé — le libellé réellement produit par l'IA est
+      // « À surveiller » (accentué). L'ancien filtre « A surveiller » (sans
+      // accent) ne correspondait à aucune donnée : il était donc inopérant et
+      // laissait les abstentions gonfler ce panneau. Aucune autre condition
+      // n'est modifiée.
+      if (t.isEmpty || t == 'Inconnu' || t == 'À surveiller') continue;
       nbByType[t]    = (nbByType[t]    ?? 0) + 1;
       if (mem.estBonConseil(p, t)) {
         bonsbyType[t] = (bonsbyType[t] ?? 0) + 1;

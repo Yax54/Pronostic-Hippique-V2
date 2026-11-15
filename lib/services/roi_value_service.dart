@@ -25,12 +25,35 @@ class RoiValueService {
 
   // ════════════════════════════════════════════════════════════════════════════
   //  FILTRAGE — applique discipline / période / typePari
+  //
+  //  ★ A4-4 (portée corrigée) : le filtre ne porte plus sur les ABSTENTIONS.
+  //  Il ne restait plus que l'exclusion des données INVALIDES (« Inconnu » /
+  //  type vide), qui n'ont jamais été un pari conseillé et ne peuvent donc
+  //  figurer dans aucune analyse.
+  //
+  //  L'exclusion des abstentions du ROI FINANCIER n'est plus faite ici mais
+  //  dans `calculerResume()`, seul endroit qui engage une mise virtuelle.
+  //  Motif : ce filtre-ci est partagé par 4 méthodes. Appliqué aux quatre, il
+  //  privait `detecterValue`, `analyserOutsiders` et `detecterFauxFavoris` de
+  //  pronostics « À surveiller » qu'aucune formule financière ne concerne.
+  //  Le restreindre à `calculerResume` conserve la correction métier du ROI
+  //  tout en préservant l'accès aux autres analyses.
   // ════════════════════════════════════════════════════════════════════════════
 
   List<IaPronostic> _filtrer(RoiValueFilters f) {
     final all = IaMemoryService.instance.pronosticsAvecResultat;
 
     return all.where((p) {
+      // ── ★ A4-4 : exclusion des données INVALIDES ──────────────────────────
+      // « Inconnu » et un type vide ne sont pas des paris conseillés mais des
+      // données non exploitables : elles sont écartées de toutes les analyses.
+      // « À surveiller » est VOLONTAIREMENT ABSENT de ce filtre (voir l'en-tête
+      // ci-dessus et le garde-fou placé dans calculerResume).
+      final typePariProno = p.typePariConseille ?? '';
+      if (typePariProno.isEmpty || typePariProno == 'Inconnu') {
+        return false;
+      }
+
       // ── Discipline ────────────────────────────────────────────────────────
       if (f.discipline != 'Toutes') {
         final disc = p.discipline.toLowerCase();
@@ -126,7 +149,29 @@ class RoiValueService {
     double retours    = 0;
     double sommeCoteG = 0;
 
+    // ★ A4-4 : nombre de pronostics retenus PAR LE FILTRE et porteurs d'un
+    // pari conseillé. C'est exactement la valeur que `nbCourses` avait avant
+    // le déplacement du filtre : les abstentions ne comptent pas comme une
+    // course pariée. Aucune formule de rentabilité n'est touchée.
+    int    nbCoursesPariees = 0;
+
     for (final p in pronos) {
+      // ── ★ A4-4 : exclusion des ABSTENTIONS du ROI FINANCIER ───────────────
+      // « À surveiller » ne désigne pas un pari conseillé : l'IA y recommande
+      // explicitement de ne pas parier. L'inclure reviendrait à compter une
+      // abstention comme une mise, donc à gonfler mises, gagnants, taux de
+      // réussite et ROI — alors qu'aucun euro n'a été engagé.
+      //
+      // Ce garde-fou est placé ICI et non dans `_filtrer` : `calculerResume`
+      // est la SEULE méthode du service qui engage une mise virtuelle de 1 €.
+      // Les analyses non financières (Value, Outsiders, Faux favoris) doivent
+      // au contraire pouvoir voir les abstentions — c'est l'objet de cet
+      // ajustement de portée.
+      //
+      // Les formules de rentabilité ci-dessous restent STRICTEMENT inchangées.
+      if ((p.typePariConseille ?? '') == 'À surveiller') continue;
+      nbCoursesPariees++;
+
       final cote = _coteFavori(p);
       if (cote == null) continue; // pas de cote = exclu du ROI
 
@@ -148,7 +193,7 @@ class RoiValueService {
     final roi     = mises == 0 ? 0.0 : (gainNet / mises) * 100.0;
 
     return RoiSummary(
-      nbCourses:            pronos.length,
+      nbCourses:            nbCoursesPariees,
       nbParisRoi:           nbParisRoi,
       mises:                mises,
       retours:              retours,

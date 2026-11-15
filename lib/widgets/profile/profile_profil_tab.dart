@@ -374,14 +374,23 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
                 : const Color(0xFFEF5350);
 
     // Mois courant
+    // ★ A4-4 : « À surveiller » est une ABSTENTION, pas un pari conseillé.
+    // Il est exclu du dénominateur mensuel exactement comme il l'est déjà du
+    // dénominateur global (voir le filtre identique plus haut dans cette même
+    // méthode). Sans cela, un pronostic « ne pas parier » était compté comme
+    // une course ratée et faisait chuter le taux mensuel.
     final now      = DateTime.now();
-    final pronosMois = pronos.where((p) =>
-        p.datePronostic.year  == now.year &&
-        p.datePronostic.month == now.month).toList();
+    final pronosMois = pronos.where((p) {
+      if (p.datePronostic.year  != now.year) return false;
+      if (p.datePronostic.month != now.month) return false;
+      final t = p.typePariConseille ?? '';
+      if (t.isEmpty || t == 'Inconnu' || t == 'À surveiller') return false;
+      return true;
+    }).toList();
     int bonsMois = 0;
     for (final p in pronosMois) {
       final t = p.typePariConseille ?? '';
-      if (t.isNotEmpty && mem.estBonConseil(p, t)) bonsMois++;
+      if (mem.estBonConseil(p, t)) bonsMois++;
     }
     final tauxMois = pronosMois.isNotEmpty
         ? bonsMois / pronosMois.length : 0.0;
