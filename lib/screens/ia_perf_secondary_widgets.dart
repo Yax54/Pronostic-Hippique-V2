@@ -855,9 +855,29 @@ extension IaPerfSecondaryWidgets on _IaPerformanceScreenState {
           // groupes L0 : ce bloc est purement visuel.
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Arrivée réelle :', style: TextStyle(color: Colors.white38, fontSize: 15)),
+              // ★ A6 : encadré gris « Ex æquo » à droite du titre. `Wrap`
+              // plutôt que `Row` : la colonne étroite de la carte compacte ne
+              // peut pas déborder (mesuré : une `Row` débordait de 209 px à
+              // 320 dp). Sans ex æquo, le `Wrap` ne contient que le titre.
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                children: [
+                  const Text('Arrivée réelle :', style: TextStyle(color: Colors.white38, fontSize: 15)),
+                  if (arriveeAvecExAequo(groupesL0)) const BadgeExAequo(),
+                ],
+              ),
               if (groupesL0 != null) ...[
-                _buildGroupesArriveeMemoire(groupesL0, topIA, fontSize: 15),
+                // ★ A6 : nouveau rendu SEULEMENT en présence d'un ex æquo.
+                // Sans ex æquo, le rendu historique est conservé tel quel.
+                if (arriveeAvecExAequo(groupesL0))
+                  LigneArriveeExAequo(
+                    groupes: groupesL0,
+                    fontSize: 15,
+                    numerosIa: topIA.take(5).toSet(),
+                  )
+                else
+                  _buildGroupesArriveeMemoire(groupesL0, topIA, fontSize: 15),
                 const SizedBox(height: 3),
                 // Dans un Wrap : le badge ne peut pas déborder de la colonne
                 // étroite de la carte compacte.

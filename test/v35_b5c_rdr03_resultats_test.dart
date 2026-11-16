@@ -211,12 +211,24 @@ String _participants(List<int> nums) => jsonEncode({
 /// Arrivée officielle : ordre [3, 1, 2].
 ///
 /// ⚠️ FORMAT RÉEL de l'API PMU et de `_fetchArriveeOfficielle`
-/// (data_refresh_service.dart:1233) : la racine est une **List** d'objets
-/// `{typePari, rapports:[{combinaison, rapport}]}`. Le gagant est lu dans
-/// `E_SIMPLE_GAGNANT.rapports.first.combinaison` (inséré en tête), les
-/// suivants dans `E_SIMPLE_PLACE.rapports[].combinaison` (ajoutés dans
-/// l'ordre). Une racine objet provoquerait le cast
-/// `'_Map<String, dynamic>' is not a subtype of type 'List<dynamic>'`.
+/// (data_refresh_service.dart:1228) : la racine est une **List** d'objets
+/// `{typePari, rapports:[{combinaison, rapport}]}`. Une racine objet
+/// provoquerait une erreur de cast (une Map n'est pas une List).
+///
+/// ⚠️ ADAPTATION DE FIXTURE — FINALISATION A6 (P4).
+/// ANCIENNE FIXTURE : `E_SIMPLE_GAGNANT` (3) puis `E_SIMPLE_PLACE` (1, 2),
+/// sans aucun rapport ORDONNÉ. `_fetchArriveeOfficielle` empilait alors le
+/// gagnant puis l'ordre fourni par les PLACÉ, et rendait `[3, 1, 2]`.
+/// Ce `[3, 1, 2]` n'était donc pas un ordre officiel : c'était l'ordre
+/// d'énumération des rapports PLACÉ, pris à tort pour un classement.
+/// Depuis A6, une telle arrivée est REFUSÉE (aucun rapport ordonné), donc
+/// aucun résultat n'était plus enregistré et les témoins R-DR-03 de ce
+/// fichier ne pouvaient plus s'armer — mesuré : R03-B et R03-E échouaient
+/// sur leur TÉMOIN, pas sur leur assertion de fond.
+/// NOUVELLE FIXTURE : un rapport `E_QUINTE_ORDRE` officiel publie l'ordre
+/// `3-1-2` attendu par les trois assertions de ce fichier. Le scénario
+/// (barrières R-DR-03) et ses témoins sont intégralement conservés ; seule
+/// la source de l'arrivée devient conforme à ce que la production exige.
 String _rapportsDefinitifs() => jsonEncode([
       {
         'typePari': 'E_SIMPLE_GAGNANT',
@@ -229,6 +241,13 @@ String _rapportsDefinitifs() => jsonEncode([
         'rapports': [
           {'combinaison': '1', 'rapport': 3.2},
           {'combinaison': '2', 'rapport': 4.8},
+        ],
+      },
+      // ★ A6 : rapport ORDONNÉ officiel — seule source d'arrivée admise.
+      {
+        'typePari': 'E_QUINTE_ORDRE',
+        'rapports': [
+          {'combinaison': '3-1-2', 'rapport': 250.0},
         ],
       },
     ]);

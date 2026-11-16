@@ -6,6 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ia_memory_service.dart';
+// ★ A6 : décision d'arrivée partagée (L0 prioritaire + contrôle d'appartenance).
+// `arrivee_pmu_ordonnee.dart` n'est plus importé ici : la décision P5 ne
+// consulte plus directement `analyserRapportsPmu` (mesuré : 0 occurrence).
+import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + appartenance
+import 'arrivee_officielle_service.dart'; // ★ A6 : lecture L0 en RAM (copie profonde)
 import 'zone_turf_service.dart';
 import 'data_refresh_service.dart';
 import '../models/zt_models.dart';
@@ -2061,11 +2066,35 @@ class AlertService extends ChangeNotifier {
       final List<dynamic> rapports =
           jsonDecode(resp.body) as List<dynamic>;
 
+      // ★ FINALISATION A6 (P5) : L0 PRIORITAIRE, décision PARTAGÉE avec
+      //   P1, P2 et P3.
+      //
+      //   AVANT : ce chemin ne consultait QUE les rapports PMU ordonnés. Une
+      //   égalité officielle CONNUE (L0) pouvait donc être écrasée par un
+      //   ordre PMU aplati — exactement ce que le mandat interdit.
+      //
+      //   APRÈS : `deciderArriveeOfficielle` lit L0 d'abord (lecture PURE,
+      //   copie profonde `arrivee_officielle_service.dart:593-599`) et ne
+      //   retombe sur le repli PMU ordonné que si L0 est ABSENT.
+      //
+      //   `tc.key` est déjà au format L0 exact
+      //   (`R{numReunion}C{numCourse}_JJMMAAAA`, alert_service.dart:2965-2969).
+      //
+      //   CONTRÔLE D'APPARTENANCE : les partants fiables sont ceux du
+      //   programme déjà en mémoire (`DataRefreshService.instance.reunions`),
+      //   comme `_triggerReanalyseCourse` le fait l.1977-1993. Liste absente
+      //   → contrôle IMPOSSIBLE, donc aucune arrivée refusée pour ce motif ;
+      //   aucune liste n'est inventée depuis la longueur de l'arrivée.
+      final DecisionArriveeOfficielle decision = deciderArriveeOfficielle(
+        groupesL0: ArriveeOfficielleService.instance.arrivee(tc.key),
+        rapportsPmu: rapports,
+        partants: _partantsDeLaCourse(tc),
+      );
+
       // ── Extraire TOUS les résultats utiles depuis l'API PMU ──────────────
       String? numGagnant;
       double? coteGagnant;
       double? cotePlace;           // cote Placé réelle PMU
-      final List<int> arriveeOfficielle = []; // ordre d'arrivée complet
       final List<int> placesOfficielles = [];  // top 3 placés
       double? dividendeTierce;         // Tiercé ORDRE
       double? dividendeTierceDesordre; // Tiercé DÉSORDRE
@@ -2086,33 +2115,26 @@ class AlertService extends ChangeNotifier {
           final d = rap['dividendePourUnEuro'];
           return d != null ? (d as num).toDouble() / 100.0 : null;
         }
-        void _extractCombo(String combo) {
-          for (final part in combo.split('-')) {
-            final n = int.tryParse(part.trim());
-            if (n != null && !arriveeOfficielle.contains(n)) arriveeOfficielle.add(n);
-          }
-        }
 
-        // ── Simple Gagnant → cheval N°1 + cote réelle ─────────────────────
+        // ── Simple Gagnant → gagnant officiel + cote réelle ───────────────
+        // ⚠️ A6 (P5) : ce bloc ne sert PLUS à constituer une arrivée. Il ne
+        //    fournit que le numéro gagnant officiel (identique à
+        //    `decision.gagnant`) et sa cote. La liste d'arrivée vient
+        //    uniquement de `decision.ordre`.
         if (typePari == 'E_SIMPLE_GAGNANT' && rList.isNotEmpty) {
           final rap = rList.first as Map<String, dynamic>;
-          numGagnant = rap['combinaison']?.toString();
-          coteGagnant = _div(rap);
-          final n = int.tryParse(numGagnant ?? '');
-          if (n != null && !arriveeOfficielle.contains(n)) arriveeOfficielle.add(n);
+          numGagnant ??= rap['combinaison']?.toString();
+          coteGagnant ??= _div(rap);
         }
 
-        // ── Simple Placé → top 3 + cote Placé réelle ──────────────────────
+        // ── Simple Placé → places + cote Placé (JAMAIS un classement) ─────
         if (typePari == 'E_SIMPLE_PLACE' && rList.isNotEmpty) {
           // On garde la cote du 1er cheval placé comme référence
-          if (cotePlace == null && rList.isNotEmpty) {
-            cotePlace = _div(rList.first as Map<String, dynamic>);
-          }
+          cotePlace ??= _div(rList.first as Map<String, dynamic>);
           for (final p in rList) {
             final n = int.tryParse((p as Map)['combinaison']?.toString() ?? '');
-            if (n != null) {
+            if (n != null && !placesOfficielles.contains(n)) {
               placesOfficielles.add(n);
-              if (!arriveeOfficielle.contains(n)) arriveeOfficielle.add(n);
             }
           }
         }
@@ -2122,9 +2144,9 @@ class AlertService extends ChangeNotifier {
             (typePari == 'E_TIERCE' || typePari == 'E_TIERCE_ORDRE' ||
              typePari == 'TIERCE'   || typePari == 'TIERCE_ORDRE') &&
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE')) {
-          final rap = rList.first as Map<String, dynamic>;
-          dividendeTierce ??= _div(rap);
-          _extractCombo(rap['combinaison']?.toString() ?? '');
+          // ⚠️ A6 (P5) : le dividende est conservé ; la combinaison n'alimente
+          //    PLUS l'arrivée — celle-ci vient uniquement de `decision.ordre`.
+          dividendeTierce ??= _div(rList.first as Map<String, dynamic>);
         }
 
         // ── Tiercé DÉSORDRE ───────────────────────────────────────────────
@@ -2141,9 +2163,8 @@ class AlertService extends ChangeNotifier {
             (typePari == 'E_QUARTE' || typePari == 'E_QUARTE_PLUS' ||
              typePari == 'QUARTE'   || typePari == 'QUARTE_PLUS') &&
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE')) {
-          final rap = rList.first as Map<String, dynamic>;
-          dividendeQuarte ??= _div(rap);
-          _extractCombo(rap['combinaison']?.toString() ?? '');
+          // ⚠️ A6 (P5) : dividende conservé, combinaison non utilisée.
+          dividendeQuarte ??= _div(rList.first as Map<String, dynamic>);
         }
 
         // ── Quarté+ DÉSORDRE ──────────────────────────────────────────────
@@ -2161,9 +2182,8 @@ class AlertService extends ChangeNotifier {
              typePari == 'QUINTE'   || typePari == 'QUINTE_PLUS') &&
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE') &&
             !typePari.contains('4SUR5') && !typePari.contains('4/5')) {
-          final rap = rList.first as Map<String, dynamic>;
-          dividendeQuinte ??= _div(rap);
-          _extractCombo(rap['combinaison']?.toString() ?? '');
+          // ⚠️ A6 (P5) : dividende conservé, combinaison non utilisée.
+          dividendeQuinte ??= _div(rList.first as Map<String, dynamic>);
         }
 
         // ── Quinté+ DÉSORDRE ──────────────────────────────────────────────
@@ -2202,17 +2222,62 @@ class AlertService extends ChangeNotifier {
         }
       }
 
-      // Si pas de gagnant mais qu'on a l'arrivée complète (ex: résultat Tiercé/Quinté)
-      // on peut quand même traiter le résultat
-      if (numGagnant == null && arriveeOfficielle.isEmpty) {
+      // ═══════════════════════════════════════════════════════════════════
+      //  ★ FINALISATION A6 (P5) — ARRIVÉE ET GAGNANT ISSUS D'UNE DÉCISION
+      //  PARTAGÉE, PLUS DE FABRICATION DE GAIN DEPUIS UN RAPPORT PLACÉ.
+      //
+      //  AVANT (l.2213-2215) :
+      //      if (numGagnant == null && arriveeOfficielle.isNotEmpty) {
+      //        numGagnant = arriveeOfficielle.first.toString();
+      //      }
+      //  Ce repli promouvait le PREMIER cheval d'une liste construite par
+      //  empilement des rapports `E_SIMPLE_PLACE` — un cheval simplement PLACÉ —
+      //  au rang de GAGNANT, puis `estGagnant` devenait vrai et un gain était
+      //  ANNONCÉ. C'est exactement « fabriquer un gain à partir d'un rapport
+      //  PLACÉ », que le mandat interdit.
+      //
+      //  APRÈS : `numGagnant` ne provient PLUS QUE du rapport
+      //  `E_SIMPLE_GAGNANT` officiel (`decision.gagnant`), et `arriveeOfficielle`
+      //  ne provient PLUS QUE d'un rapport ORDONNÉ, d'au moins
+      //  `kLongueurMinimaleArrivee` chevaux, cohérent avec le Simple Gagnant
+      //  lorsqu'il existe. `placesOfficielles` reste ce qu'elle est : la liste
+      //  des placés, jamais un classement.
+      //
+      //  Ce qui est PRÉSERVÉ à l'identique : la logique de paiement
+      //  `Gagnant+Placé` (CAS 1), les dividendes Tiercé / Quarté / Quinté et
+      //  leurs variantes DÉSORDRE, et les alertes non liées au résultat.
+      // ═══════════════════════════════════════════════════════════════════
+
+      // Si ni gagnant officiel ni arrivée exploitable → réessayer plus tard.
+      if (numGagnant == null && !decision.disponible) {
         // Résultats pas encore disponibles → réessayer au prochain cycle
         _resultatsVerifies.remove(resultKey);
         return;
       }
-      // Fallback : prendre le 1er de l'arrivée officielle si pas de Simple Gagnant
-      if (numGagnant == null && arriveeOfficielle.isNotEmpty) {
-        numGagnant = arriveeOfficielle.first.toString();
+
+      // ⚠️ A6 (P5) : EX ÆQUO OFFICIEL → AUCUNE notification de résultat et
+      //    AUCUN enregistrement. `IaPronostic.arriveeReelle` est `List<int>?`
+      //    (ia_memory_models.dart:285) : aplatir `[[7,12],[8]]` en `[7,12,8]`
+      //    inventerait un rang pour 12 et fausserait `rangFavoriIaDansArrivee`,
+      //    `nbTop3`, `nbTop5`, `scorePerformance` puis l'ELO. L0 reste intact :
+      //    l'affichage des ex æquo passe par les écrans, jamais par ce chemin.
+      if (decision.aDesExAequo) {
+        if (kDebugMode) {
+          debugPrint('[AlertService] ⚠️ ${tc.key} : ${decision.motif}');
+        }
+        _resultatsVerifies.remove(resultKey);
+        return;
       }
+
+      // ⚠️ A6 (P5) : la liste transmise à la mémoire IA est la liste RETENUE,
+      //    jamais la liste empilée. Si la décision est refusée, `arriveeRetenue`
+      //    est vide et l'enregistrement l.2649 est sauté : rien n'est appris, et
+      //    la course reste récupérable au cycle suivant.
+      final List<int> arriveeRetenue = decision.arriveePlate;
+
+      // ⚠️ A6 (P5) : plus AUCUNE promotion du premier placé en gagnant.
+      //    Si `numGagnant` est null, `estGagnant` reste faux et le message
+      //    « Perdu » ne peut plus nommer un gagnant inexistant.
 
       // ── Analyser le résultat selon le type de pari enregistré ───────────
       final mise = tc.miseEngagee ?? 0.0;
@@ -2221,12 +2286,12 @@ class AlertService extends ChangeNotifier {
       final monNumero = tc.numeroCheval?.toString();
 
       // Top 3 officiels (pour Tiercé, Placé)
-      final top3 = arriveeOfficielle.take(3).toList();
-      final top4 = arriveeOfficielle.take(4).toList();
-      final top5 = arriveeOfficielle.take(5).toList();
+      final top3 = arriveeRetenue.take(3).toList();
+      final top4 = arriveeRetenue.take(4).toList();
+      final top5 = arriveeRetenue.take(5).toList();
 
       // Résumé de l'arrivée à afficher
-      final arriveeStr = arriveeOfficielle.take(5).map((n) => 'N°$n').join(' - ');
+      final arriveeStr = arriveeRetenue.take(5).map((n) => 'N°$n').join(' - ');
 
       String titre;
       String messageResultat;
@@ -2244,8 +2309,8 @@ class AlertService extends ChangeNotifier {
         // ── CAS Couplé Gagnant : les 2 chevaux dans le top 2 ──────────────
         // ── CAS Couplé Placé   : les 2 chevaux dans le top 3 ──────────────
         final mesNums = mesNumeros.take(2).toSet();
-        final top2Set = arriveeOfficielle.take(2).toSet();
-        final top3Set = arriveeOfficielle.take(3).toSet();
+        final top2Set = arriveeRetenue.take(2).toSet();
+        final top3Set = arriveeRetenue.take(3).toSet();
         final estCoupleGagne = typePari == 'Couplé Gagnant'
             ? mesNums.length == 2 && mesNums.containsAll(top2Set) && top2Set.containsAll(mesNums)
             : mesNums.length == 2 && mesNums.every((n) => top3Set.contains(n));
@@ -2285,7 +2350,7 @@ class AlertService extends ChangeNotifier {
         final estGagnant = monNumero == numGagnant;
         // Placé = dans les placesOfficielles PMU OU dans les 3 premiers de l'arrivée officielle
         final monNumeroInt = int.tryParse(monNumero ?? '');
-        final estPlaceViaArrivee = monNumeroInt != null && arriveeOfficielle.take(3).contains(monNumeroInt);
+        final estPlaceViaArrivee = monNumeroInt != null && arriveeRetenue.take(3).contains(monNumeroInt);
         final estPlace = placesOfficielles.map((n) => n.toString()).contains(monNumero) || estPlaceViaArrivee;
 
         if (estGagnant) {
@@ -2599,7 +2664,7 @@ class AlertService extends ChangeNotifier {
       // On considère qu'il y a un DQ significatif si on en a détecté pendant
       // la course ET qu'il n'est pas dans l'arrivée officielle
       final disqNonDansArrivee = disqFinaux.where(
-          (n) => !arriveeOfficielle.contains(n)).toList();
+          (n) => !arriveeRetenue.contains(n)).toList();
       if (disqNonDansArrivee.isNotEmpty) {
         final disqStr = disqNonDansArrivee.map((n) => 'N°$n').join(', ');
         _addAlert(AppAlert(
@@ -2646,18 +2711,18 @@ class AlertService extends ChangeNotifier {
       // La mémoire IA compare les pronostics et ajuste les poids adaptatifs.
       // On utilise iaMemKey si disponible (clé précise depuis le pari),
       // sinon on construit la clé standard pour rétrocompatibilité.
-      if (arriveeOfficielle.isNotEmpty) {
+      if (arriveeRetenue.isNotEmpty) {
         final _aj = tc.heureDepart.day.toString().padLeft(2, '0');
         final _am = tc.heureDepart.month.toString().padLeft(2, '0');
         final memKey = tc.iaMemKey ??
             '${tc.key}_$_aj$_am${tc.heureDepart.year}';
         await IaMemoryService.instance.enregistrerResultat(
           courseKey: memKey,
-          arriveeReelle: arriveeOfficielle,
+          arriveeReelle: arriveeRetenue,
         );
         if (kDebugMode) {
           if (kDebugMode) debugPrint('IA Mémoire : résultat enregistré pour $memKey - '
-              'Arrivée: ${arriveeOfficielle.take(5).join("-")}');
+              'Arrivée: ${arriveeRetenue.take(5).join("-")}');
         }
       }
 
@@ -2667,6 +2732,41 @@ class AlertService extends ChangeNotifier {
       // En cas d'erreur réseau, on retire la clé pour réessayer
       _resultatsVerifies.remove(resultKey);
     }
+  }
+
+  /// ★ A6 (P5) — Liste FIABLE des partants d'une course suivie, ou `null`.
+  ///
+  /// Lit le programme déjà en mémoire (`DataRefreshService.programme`), exactement
+  /// comme le fait déjà ce fichier pour retrouver une course (l.2085-2103).
+  /// `ZtEquivHorse.numero` est une **String** (`z_models.dart:94`) : elle est
+  /// convertie, jamais concaténée.
+  ///
+  /// Renvoie `null` si la course est absente du programme chargé ou si sa liste
+  /// de partants est vide. Ce `null` signifie « vérification impossible », et
+  /// **jamais** « arrivée suspecte » : l'appelant ne refuse rien dans ce cas.
+  /// Aucune liste n'est jamais déduite de la longueur de l'arrivée.
+  Set<int>? _partantsDeLaCourse(TrackedCourse tc) {
+    for (final reunion in DataRefreshService.instance.reunions) {
+      final rMatch = RegExp(r'R(\d+)').firstMatch(reunion.code);
+      final rNum =
+          rMatch != null ? int.tryParse(rMatch.group(1) ?? '') ?? 0 : 0;
+      if (rNum != tc.numReunion) continue;
+      ZtCourse? course;
+      for (final c in reunion.courses) {
+        if (c.numCourse == tc.numCourse) {
+          course = c;
+          break;
+        }
+      }
+      if (course == null || course.partants.isEmpty) return null;
+      final numeros = <int>{};
+      for (final p in course.partants) {
+        final n = int.tryParse(p.numero);
+        if (n != null) numeros.add(n);
+      }
+      return numeros.isEmpty ? null : numeros;
+    }
+    return null;
   }
 
   // ── Affichage in-app overlay ──────────────────────────────────────────────

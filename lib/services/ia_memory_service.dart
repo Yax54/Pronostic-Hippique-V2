@@ -52,6 +52,20 @@ import 'ia_memory_models.dart';
 // ★ C1-a / E1 : archive permanente des pronostics évincés (ÉCRITURE SEULE).
 //   Ce service n'est lu par AUCUNE fonction d'apprentissage.
 import 'ia_archive_service.dart' show IaArchiveService, ArchiveReason;
+// ★ A6 n° 2-b-1 : LECTURE NON INTRUSIVE de L0 depuis P3, à seule fin de
+//   MESURER la disponibilité des arrivées officielles. `arrivee()` est une
+//   lecture PURE (copie défensive, arrivee_officielle_service.dart:593-599) :
+//   aucun octet écrit, aucune arrivée substituée. Ce service n'importe RIEN
+//   de ce fichier (mesuré : ses seuls imports sont dart:async, dart:convert,
+//   dart:io, flutter/foundation, shared_preferences et ../utils/date_utils) :
+//   aucun cycle d'import n'est créé.
+import 'arrivee_officielle_service.dart';
+// ★ FINALISATION A6 : décision d'arrivée issue des rapports PMU, partagée par
+//   P1 (`analyseJourneeComplete`) et P2 (`fetchArriveeDirecte`) de ce fichier,
+//   ainsi que par P4 (`data_refresh_service`) et P5 (`alert_service`).
+//   Ce helper est PUR : aucun réseau, aucun disque, aucun état.
+import 'arrivee_pmu_ordonnee.dart';
+import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + décision partagée
 import 'ia_pronostic_engine.dart';
 import 'ia_audit_cache_service.dart'; // ★ v10.32 : invalidation cache audit
 // ★ v10.75b : accès aux gros paris gagnants pour stats (lecture seule, jamais gradient)
@@ -197,6 +211,31 @@ class IaMemoryService extends ChangeNotifier {
   ///   • aucune clé, aucune règle IA, aucune formule n'est concernée.
   @visibleForTesting
   Future<void> Function()? hookApresGetInstancePourTest;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ A6 n° 2-b-2 — INJECTION DE LA SOURCE DE PROGRAMME HISTORIQUE.
+  //
+  //  POURQUOI UNE INJECTION ET NON UN IMPORT :
+  //  `data_refresh_service.dart:24` importe déjà `ia_memory_service.dart`.
+  //  Importer `DataRefreshService` ici créerait un CYCLE
+  //  (ia_memory_service ↔ data_refresh_service). Ce cycle serait
+  //  probablement inoffensif — aucun initialiseur top-level dans l'un ni
+  //  l'autre, singletons `static final` donc paresseux — mais il n'est pas
+  //  nécessaire : l'appelant réel de P3
+  //  (`ia_performance_screen.dart:1789`) importe DÉJÀ `DataRefreshService`
+  //  (`:21`). Ce fichier ne gagne donc AUCUN import, et le cycle n'est pas
+  //  créé.
+  //
+  //  PORTÉE : `null` par défaut → P3 se comporte EXACTEMENT comme avant
+  //  2-b-2 (aucun chargement historique, aucune requête supplémentaire).
+  //  Le chemin nominal de l'application le renseigne une fois au démarrage.
+  //
+  //  CONTRAT : reçoit une date DÉJÀ normalisée à minuit, rend les réunions
+  //  chargées pour cette date (liste vide en cas d'échec réseau — c'est le
+  //  comportement de `chargerProgramme`, qui retourne `[]` et ne met RIEN
+  //  en cache sur échec, donc un réessai reste possible).
+  // ═══════════════════════════════════════════════════════════════════════
+  Future<List<ZtReunion>> Function(DateTime date)? sourceProgrammeHistorique;
 
   /// Nombre d'écritures engagées et non terminées (diagnostic et drain).
   int get nbEcrituresEnCours => _ecrituresEnCours.length;
@@ -1146,6 +1185,27 @@ class IaMemoryService extends ChangeNotifier {
         'total': 0,
         'details': <String>[],
         'message': 'Aucun pronostic passé sans résultat trouvé.',
+        // ★ A6 n° 2-b-1 : les compteurs de MESURE L0 existent aussi sur cette
+        //   sortie anticipée — un appelant qui lit les clés les trouve
+        //   toujours, sans branche conditionnelle. Ici aucun parcours n'a eu
+        //   lieu, donc aucune lecture L0 : les trois compteurs valent 0.
+        'l0Present': 0,
+        'l0Absent': 0,
+        'incoherencesDate': 0,
+        // ★ A6 n° 2-b-2 : mêmes clés sur la sortie anticipée, pour qu'aucun
+        //   appelant n'ait à tester leur présence. Aucune course n'étant
+        //   sélectionnée, aucun chargement historique n'a lieu.
+        'historiqueTente':  false,
+        'journeeChargee':   null,
+        'coursesChargees':  0,
+        'journeesRestantes': 0,
+        'l0PresentAvant':   0,
+        'l0PresentApres':   0,
+        // ★ A6 n° 2-b-3 : clés de la règle « L0 source unique », présentes
+        //   sur la sortie anticipée pour qu'aucun appelant n'ait à tester
+        //   leur présence. Aucune course sélectionnée ⇒ aucun enregistrement.
+        'enregistresDepuisL0': 0,
+        'exAequoDifferes':     0,
       };
     }
 
@@ -1156,9 +1216,255 @@ class IaMemoryService extends ChangeNotifier {
     int erreurs     = 0;
     final details   = <String>[];
 
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ A6 n° 2-b-1 — COMPTEURS D'OBSERVATION DE L0 (MESURE SEULE).
+    //
+    //  OBJET : mesurer, parmi les courses que P3 sélectionne, combien
+    //  possèdent déjà une arrivée officielle dans L0 et combien n'en ont pas.
+    //  Ces trois compteurs ne pilotent AUCUNE décision :
+    //    • ils ne filtrent pas `aRelancer` (établi avant, l.1134-1139) ;
+    //    • ils ne modifient pas `arriveeOfficielle` (construit uniquement
+    //      depuis les rapports PMU, dans la boucle ci-dessous) ;
+    //    • ils ne modifient pas les arguments d'`enregistrerResultat()`
+    //      (l.1376-1382) ;
+    //    • ils n'écrivent rien : `arrivee()` rend une COPIE PROFONDE.
+    //
+    //  PORTÉE DE LA PREUVE — à ne pas surinterpréter : ces compteurs prouvent
+    //  le FONCTIONNEMENT du comptage. Ils ne mesurent le taux de couverture
+    //  RÉEL des utilisateurs qu'une fois exécutés sur des données réelles.
+    //  Aucun taux n'est déduit ici d'un jeu simulé.
+    // ═══════════════════════════════════════════════════════════════════════
+    int l0Present       = 0; // courses avec arrivée officielle dans L0
+    int l0Absent        = 0; // courses sans arrivée officielle dans L0
+    int incoherencesDate = 0; // courseKey et datePronostic se contredisent
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ A6 n° 2-b-3 — COMPTEURS DE LA RÈGLE « L0 SOURCE UNIQUE ».
+    //
+    //  Ces deux compteurs mesurent ce que la boucle de récupération DÉCIDE :
+    //    • `enregistresDepuisL0` : nombre de résultats effectivement enregistrés,
+    //      et il n'en existe plus qu'une seule origine possible — L0 ;
+    //    • `exAequoDifferes` : nombre d'arrivées L0 RICHES EN EX ÆQUO qui ont
+    //      été VOLONTAIREMENT différées parce qu'`IaPronostic.arriveeReelle`
+    //      est une liste PLATE, incapable de représenter un groupe d'ex æquo
+    //      sans le dégrader silencieusement.
+    // ═══════════════════════════════════════════════════════════════════════
+    int enregistresDepuisL0 = 0; // résultats enregistrés, tous issus de L0
+    int exAequoDifferes     = 0; // arrivées L0 avec ex æquo → différées
+    /// Détail des incohérences de date, borné pour ne pas noyer le journal.
+    const maxIncoherencesDetaillees = 10;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ A6 n° 2-b-2 — CHARGEMENT HISTORIQUE CONTRÔLÉ (UNE SEULE DATE).
+    //
+    //  OBJET : alimenter L0 pour les journées passées, AFIN QUE LA MESURE
+    //  2-b-1 puisse ensuite constater une couverture. Ce bloc ne modifie
+    //  AUCUNE décision de récupération : la boucle ci-dessous, les appels
+    //  aux rapports PMU, `arriveeOfficielle` et les arguments transmis à
+    //  `enregistrerResultat()` sont inchangés.
+    //
+    //  ÉTAPE 1 — COUVERTURE AVANT CHARGEMENT.
+    //  On regroupe les pronostics NON RÉSOLUS par JOUR CALENDAIRE de
+    //  `datePronostic` (et non par la date de la clé : c'est `datePronostic`
+    //  qui pilote les URL de P3, donc c'est la seule base cohérente pour
+    //  décider quelle journée charger).
+    //
+    //  ÉTAPE 2 — SÉLECTION D'UNE SEULE DATE.
+    //  ★ A6 n° 2-b-3 : une journée est candidate dès qu'AU MOINS UNE de ses
+    //  courses non résolues n'a pas d'arrivée L0 (`couvertes < courses`).
+    //  La règle antérieure (`couvertes == 0`, soit « aucune course couverte »)
+    //  rendait une journée PARTIELLEMENT couverte définitivement inéligible :
+    //  ses courses dépourvues de L0 ne pouvaient plus jamais être enregistrées
+    //  dès lors que L0 est la seule source d'arrivée (2-b-3). Le chargement
+    //  est de nouveau possible pour ces journées, et reste borné à UNE date
+    //  par exécution.
+    //  Parmi elles on retient la PLUS ANCIENNE : sans cela les vieilles
+    //  journées resteraient indéfiniment dernières et ne seraient jamais
+    //  chargées. Le rechargement est impossible dans une même exécution :
+    //  une seule date est retenue, et un ensemble `Set` de journée garantit
+    //  qu'aucun doublon de date ne peut être produit — la structure le rend
+    //  impossible par construction, non par vérification.
+    //
+    //  ÉTAPE 3 — UN SEUL APPEL, POSSIBLEMENT ABSENT.
+    //  `sourceProgrammeHistorique` vaut `null` sur tout chemin qui ne l'a pas
+    //  renseigné : dans ce cas RIEN n'est chargé et le comportement est
+    //  exactement celui d'avant 2-b-2. Il n'y a donc aucun blocage synchrone
+    //  nouveau sur les chemins existants.
+    //
+    //  ÉTAPE 4 — COUVERTURE APRÈS CHARGEMENT.
+    //  Recomptée sur les SEULES courses de la journée chargée, pour rendre le
+    //  diagnostic lisible (avant → après). Aucune arrivée n'est extraite :
+    //  L0 est lu, jamais réinjecté.
+    //
+    //  ÉCHEC RÉSEAU : `sourceProgrammeHistorique` rend une liste vide et
+    //  `ZoneTurfService.chargerProgramme` ne met RIEN en cache lorsqu'il
+    //  échoue (ses `return []` précèdent les affectations `_cache[date]`).
+    //  La journée reste donc « non couverte » et sera re-sélectionnée à
+    //  l'exécution suivante : aucun échec n'est définitif.
+    //
+    //  ⚠️ AUCUNE LIMITE D'ÂGE N'EST INTRODUITE ICI. Le mandat l'interdit ;
+    //  la purge à 90 jours et le plafond de 600 restent les seuls filtres,
+    //  inchangés.
+    // ═══════════════════════════════════════════════════════════════════════
+    final nonResolus = _pronostics.where((p) => !p.resultatsReels).toList();
+
+    // Regroupement par journée. `Set` de clés = aucune date en double.
+    final clesJournee = <String>{};
+    final parJournee = <String, List<IaPronostic>>{};
+    final dateDeJournee = <String, DateTime>{};
+    final aujourdHui = DateTime(now.year, now.month, now.day);
+    for (final p in nonResolus) {
+      final j = p.datePronostic;
+      final cleJournee = '${j.year.toString().padLeft(4, '0')}-'
+          '${j.month.toString().padLeft(2, '0')}-'
+          '${j.day.toString().padLeft(2, '0')}';
+      clesJournee.add(cleJournee);
+      dateDeJournee[cleJournee] = DateTime(j.year, j.month, j.day);
+      parJournee.putIfAbsent(cleJournee, () => <IaPronostic>[]).add(p);
+    }
+
+    /// Compte les courses d'une journée déjà couvertes par L0.
+    int couvertesDuJour(List<IaPronostic> courses) => courses
+        .where((p) => ArriveeOfficielleService.instance.arrivee(p.courseKey) != null)
+        .length;
+
+    int l0PresentAvant = 0;
+    for (final p in nonResolus) {
+      if (ArriveeOfficielleService.instance.arrivee(p.courseKey) != null) {
+        l0PresentAvant++;
+      }
+    }
+
+    // Journées candidates : AU MOINS UNE course non résolue sans L0
+    // (`couvertes < courses`), ET journée déjà commencée.
+    //
+    // La borne « déjà commencée » n'est PAS une limite d'âge (interdite par
+    // le mandat) : c'est une condition de SENS. Une journée future n'a, par
+    // définition, aucune arrivée officielle — elle serait donc éternellement
+    // « sans L0 » et serait chargée pour rien, en coût réseau pur, dès que
+    // toutes les journées passées seraient couvertes. On l'exclut.
+    // Triées de la plus ancienne à la plus récente ; la première est retenue.
+    final journeesSansL0 = clesJournee
+        .where((k) =>
+            !dateDeJournee[k]!.isAfter(aujourdHui) &&
+            couvertesDuJour(parJournee[k]!) < parJournee[k]!.length)
+        .toList()
+      ..sort();
+
+    final journeeACharger = journeesSansL0.isEmpty ? null : journeesSansL0.first;
+
+    int l0PresentApres = l0PresentAvant;
+    int coursesChargees = 0;
+    bool chargementTente = false;
+    String? journeeChargee;
+
+    if (journeeACharger != null && sourceProgrammeHistorique != null) {
+      chargementTente = true;
+      journeeChargee = journeeACharger;
+      final j = parJournee[journeeACharger]!.first.datePronostic;
+      final dateMinuit = DateTime(j.year, j.month, j.day);
+
+      onProgress?.call('📅 Chargement historique du $journeeACharger…');
+
+      try {
+        // UN SEUL appel pour TOUTE la journée : les courses de cette journée
+        // sont servies par la même réponse. Aucun appel par course ici.
+        final reunions = await sourceProgrammeHistorique!(dateMinuit);
+        coursesChargees = reunions.fold<int>(
+            0, (n, r) => n + r.courses.length);
+
+        // L0 vient d'être alimenté par `_capturerArriveesOfficielles`
+        // (zone_turf_service.dart:239-243). On recompte, en lecture seule,
+        // sur les SEULES courses de la journée chargée.
+        l0PresentApres = 0;
+        for (final p in nonResolus) {
+          if (ArriveeOfficielleService.instance.arrivee(p.courseKey) != null) {
+            l0PresentApres++;
+          }
+        }
+
+        final couvertesJour = couvertesDuJour(parJournee[journeeACharger]!);
+        details.add('📅 Historique $journeeACharger : ${reunions.length} '
+            'réunion(s), $coursesChargees course(s) chargée(s), '
+            '$couvertesJour couverte(s) en L0 après chargement');
+      } catch (e) {
+        // Échec ABSORBÉ : la journée reste non couverte et sera retentée à
+        // l'exécution suivante. Aucun marquage, aucun abandon.
+        details.add('⚠️ Historique $journeeACharger : échec de chargement '
+            '($e) — réessai possible à la prochaine exécution');
+      }
+    } else if (journeeACharger == null && nonResolus.isNotEmpty) {
+      details.add('📅 Aucune journée sans L0 à charger '
+          '(${clesJournee.length} journée(s) déjà couverte(s))');
+    }
+
     for (int i = 0; i < aRelancer.length; i++) {
       final p = aRelancer[i];
       final courseKey = p.courseKey;
+      // Date depuis datePronostic (date réelle de la course).
+      // Déclarée ICI, une seule fois, pour être partagée par la mesure L0
+      // (ci-dessous) et par la construction de `dateStr` (plus bas).
+      // Aucune de ses deux utilisations ne la modifie.
+      final d = p.datePronostic;
+
+      // ═════════════════════════════════════════════════════════════════════
+      //  ★ A6 n° 2-b-1 — MESURE L0 (LECTURE PURE) + CONTRÔLE DE COHÉRENCE.
+      //
+      //      (1) LECTURE L0 — `arrivee(courseKey)` (arrivee_officielle_service
+      //      .dart:593-599) rend une COPIE PROFONDE des rangs enregistrés,
+      //      ou `null`. Aucune écriture, aucun accès réseau, aucun accès
+      //      disque : `main.dart:83-101` charge L0 en RAM avant `runApp()`,
+      //      et `arrivee()` ne lit QUE la RAM.
+      //
+      //      Clé interrogée = la clé BRUTE `courseKey`, EXACTEMENT la forme
+      //      sous laquelle L0 est alimenté : `ZoneTurfService` construit
+      //      `'R${numOfficiel}C$numOrdre' '_$dateStr'`
+      //      (zone_turf_service.dart:192) et c'est cette clé qui est passée à
+      //      `ArriveeOfficielleService.depuisJsonCourse` (l.193-196). La clé
+      //      suffixée `memKey` (l.1373) n'est JAMAIS écrite dans L0 :
+      //      l'interroger mesurerait une absence systématique, donc une
+      //      mesure fausse.
+      //
+      //      Ce résultat N'EST PAS utilisé comme arrivée : il ne remplace
+      //      jamais `arriveeOfficielle` (construite plus bas à partir des
+      //      rapports PMU) et n'entre pas dans `enregistrerResultat()`.
+      //
+      //  (2) COHÉRENCE — `dateDepuisCourseKey(courseKey)` rend 'AAAA-MM-JJ'
+      //      (date_utils.dart:145-170) ou `null` si la clé ne porte pas de
+      //      date calendaire valide. On le compare à la date de
+      //      `datePronostic`.
+      //
+      //      ⚠️ SIGNALER, JAMAIS CORRIGER (exigence explicite du mandat) :
+      //      cette branche ne touche NI `dateStr` (calculé depuis
+      //      `datePronostic` et utilisé tel quel dans l'URL), NI
+      //      `keyAUtiliser`, NI les arguments d'`enregistrerResultat()`.
+      //      Une incohérence est COMPTÉE et JOURNALISÉE, rien d'autre.
+      //
+      //  (3) PLACEMENT — la mesure est faite AVANT le contrôle de forme de
+      //      `courseKey` et avant `continue`. Toute course SÉLECTIONNÉE par P3
+      //      est donc comptée, y compris celle dont la clé est illisible :
+      //      c'est ce qui rend l'invariant
+      //        l0Present + l0Absent == total
+      //      exactement vrai, et donc testable sans exception.
+      // ═════════════════════════════════════════════════════════════════════
+      final arriveeL0 = ArriveeOfficielleService.instance.arrivee(courseKey);
+      if (arriveeL0 != null) {
+        l0Present++;
+      } else {
+        l0Absent++;
+      }
+
+      final isoCle = dateDepuisCourseKey(courseKey);
+      final isoPronostic = '${d.year.toString().padLeft(4, '0')}-'
+          '${d.month.toString().padLeft(2, '0')}-'
+          '${d.day.toString().padLeft(2, '0')}';
+      if (isoCle != isoPronostic) {
+        incoherencesDate++;
+        if (incoherencesDate <= maxIncoherencesDetaillees) {
+          details.add('⚠️ $courseKey : datePronostic=$isoPronostic ≠ date de '
+              'la clé=${isoCle ?? "illisible"} — signalé, NON corrigé');
+        }
+      }
 
       // Parser le courseKey : R{numR}C{numC}_{JJMMAAAA}
       final match = RegExp(r'^R(\d+)C(\d+)_').firstMatch(courseKey);
@@ -1171,8 +1477,6 @@ class IaMemoryService extends ChangeNotifier {
       final numR = match.group(1)!;
       final numC = match.group(2)!;
 
-      // Date depuis datePronostic (date réelle de la course)
-      final d    = p.datePronostic;
       final jour  = d.day.toString().padLeft(2, '0');
       final mois  = d.month.toString().padLeft(2, '0');
       final annee = d.year.toString();
@@ -1203,8 +1507,20 @@ class IaMemoryService extends ChangeNotifier {
         final List<dynamic> rapports =
             jsonDecode(resp.body) as List<dynamic>;
 
-        // Extraire l'arrivée officielle depuis les rapports PMU
-        final List<int> arriveeOfficielle = [];
+        // ★ A6 n° 2-b-3 — LES RAPPORTS PMU NE FOURNISSENT PLUS L'ARRIVÉE.
+        //
+        //  Ancien comportement : `arriveeOfficielle`, reconstruite depuis les
+        //  rapports, était transmise telle quelle à `enregistrerResultat()`.
+        //  Nouvelle règle : l'arrivée ne peut provenir QUE de L0. La liste
+        //  reconstruite est donc renommée `arriveePMU` et RESTREINTE au seul
+        //  usage qui reste licite : servir de TÉMOIN de publication (une course
+        //  dont les rapports ne contiennent aucun cheval n'a pas encore de
+        //  résultat). Elle ne franchit JAMAIS la frontière d'`enregistrerResultat`.
+        //
+        //  Les COTES, elles, continuent d'être extraites des rapports : c'est
+        //  l'autre raison d'être de cet appel HTTP, et le mandat exige de le
+        //  conserver intégralement.
+        final List<int> arriveePMU = []; // témoin de publication, jamais enregistré
         // ★ v10.31 : cotes PMU Simple Gagnant par numéro
         final Map<String, double> cotesParNumero = {};
 
@@ -1219,7 +1535,7 @@ class IaMemoryService extends ChangeNotifier {
               final m = rap as Map<String, dynamic>;
               final n = int.tryParse(m['combinaison']?.toString().trim() ?? '');
               if (n == null) continue;
-              if (arriveeOfficielle.isEmpty) arriveeOfficielle.add(n);
+              if (arriveePMU.isEmpty) arriveePMU.add(n);
               // Dividende → cote (dividendePourUnEuro en centimes)
               final rawDiv = m['dividendePourUnEuro'] ?? m['dividende'];
               if (rawDiv != null) {
@@ -1243,8 +1559,8 @@ class IaMemoryService extends ChangeNotifier {
             final combo = rap['combinaison']?.toString() ?? '';
             for (final part in combo.split('-')) {
               final n = int.tryParse(part.trim());
-              if (n != null && !arriveeOfficielle.contains(n)) {
-                arriveeOfficielle.add(n);
+              if (n != null && !arriveePMU.contains(n)) {
+                arriveePMU.add(n);
               }
             }
           }
@@ -1254,16 +1570,103 @@ class IaMemoryService extends ChangeNotifier {
             for (final item in rList) {
               final n = int.tryParse(
                   (item as Map)['combinaison']?.toString() ?? '');
-              if (n != null && !arriveeOfficielle.contains(n)) {
-                arriveeOfficielle.add(n);
+              if (n != null && !arriveePMU.contains(n)) {
+                arriveePMU.add(n);
               }
             }
           }
         }
 
-        if (arriveeOfficielle.isEmpty) {
+        // Témoin de publication : aucun cheval dans les rapports ⇒ la course
+        // n'a pas encore de résultat. Ce n'est PAS une arrivée : elle n'est
+        // jamais enregistrée. La récupération est simplement abandonnée pour
+        // cette course, sans marquage, donc réessayable.
+        if (arriveePMU.isEmpty) {
           introuvables++;
-          details.add('⏳ $nomCourt ($jour/$mois) : résultats PMU pas encore disponibles');
+          details.add('⏳ $nomCourt ($jour/$mois) : rapports PMU sans cheval — résultat non publié');
+          continue;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  ★ A6 n° 2-b-3 — ENREGISTREMENT DEPUIS L0, ET RIEN D'AUTRE.
+        //
+        //  L0 a été relu EN TÊTE de cette itération (`arriveeL0`, l.1420) et
+        //  n'a pas bougé depuis : `arrivee()` rend une copie profonde et aucun
+        //  code de cette boucle n'écrit dans L0. `arriveeL0` est donc l'état
+        //  exact de la source officielle pour cette course.
+        //
+        //  Trois issues, et trois seulement :
+        //    (1) L0 absent → DIFFÉRER. Aucun résultat, aucun apprentissage,
+        //        aucun marquage : la course reste non résolue et sera
+        //        re-sélectionnée à l'exécution suivante. On ne reconstruit
+        //        JAMAIS une arrivée depuis les rapports PMU.
+        //    (2) L0 avec ex æquo → DIFFÉRER et SIGNALER. `arriveeReelle` est
+        //        `List<int>?` (ia_memory_models.dart:285) : un groupe `[7, 4]`
+        //        n'y est représentable qu'aplati, ce qui ferait passer le
+        //        second cheval du groupe du rang 1 au rang 2 — `rangFavoriIA`
+        //        et `scorePerformance` seraient alors faux, et l'apprentissage
+        //        serait nourri d'une vérité déformée. On préfère ne rien
+        //        apprendre que d'apprendre faux.
+        //    (3) L0 exploitable → APLATIR (aucun groupe de plus d'un cheval,
+        //        donc aucune perte d'information) et enregistrer, avec les
+        //        cotes du jour. `enregistrerResultat` n'écrase jamais un
+        //        résultat existant, ce qui satisfait « ne jamais modifier un
+        //        résultat déjà enregistré » sans ajouter de code.
+        // ═══════════════════════════════════════════════════════════════════
+        if (arriveeL0 == null) {
+          // (1) L0 absent : rien n'est enregistré, rien n'est marqué.
+          introuvables++;
+          details.add('⏸️ $nomCourt ($jour/$mois) : arrivée officielle L0 '
+              'absente — enregistrement reporté, réessai possible');
+          continue;
+        }
+
+        if (arriveeL0.any((g) => g.length > 1)) {
+          // (2) Ex æquo : la structure officielle n'est pas représentable.
+          exAequoDifferes++;
+          final groupes = arriveeL0
+              .map((g) => '[${g.join(',')}]')
+              .join(' ');
+          details.insert(
+              0,
+              '⚠️ $nomCourt ($jour/$mois) : ex æquo dans l\'arrivée L0 '
+              '($groupes) — enregistrement REFUSÉ pour ne pas aplatir '
+              'silencieusement l\'ordre officiel ; L0 non modifié');
+          continue;
+        }
+
+        // (3) L0 exploitable : aplatissement sans perte (tout groupe est
+        //     de longueur 1, garanti par le test ci-dessus).
+        final List<int> arriveeL0Plate =
+            <int>[for (final groupe in arriveeL0) ...groupe];
+
+        // ── ★ A6 — CONTRÔLE D'APPARTENANCE DES PARTANTS (P3) ──────────────
+        //  Placé AVANT `enregistrerResultat`, donc en AMONT de tout mécanisme
+        //  protégé : rien n'est modifié dans le gradient, les poids, les
+        //  seuils, la calibration, l'ELO ni la signature d'enregistrerResultat.
+        //
+        //  Liste fiable : `p.scoresIA` porte un score par partant analysé
+        //  (`scores[p.numero] = p.scoreIA` pour chaque `partantsClasses`,
+        //  l.2811-2814), déjà utilisée comme dénombrement de partants l.3692.
+        //  Elle n'est PAS déduite de la longueur de l'arrivée.
+        //
+        //  Liste absente ou vide → `numerosEtrangers` rend `null` → contrôle
+        //  IMPOSSIBLE, donc AUCUN refus : l'absence de liste fiable n'est
+        //  jamais une preuve d'incohérence. Aucune arrivée déjà enregistrée
+        //  n'est touchée : on refuse seulement d'en écrire une nouvelle.
+        final Set<int> partantsP3 = p.scoresIA.keys
+            .map(int.tryParse)
+            .whereType<int>()
+            .toSet();
+        final etrangersP3 =
+            numerosEtrangers(<List<int>>[arriveeL0Plate], partantsP3);
+        if (etrangersP3 != null && etrangersP3.isNotEmpty) {
+          introuvables++;
+          details.insert(
+              0,
+              '⚠️ $nomCourt ($jour/$mois) : numéros absents des partants '
+              '(${etrangersP3.join(', ')}) — enregistrement REFUSÉ, '
+              'L0 non modifié');
           continue;
         }
 
@@ -1279,12 +1682,15 @@ class IaMemoryService extends ChangeNotifier {
 
         await enregistrerResultat(
           courseKey:          keyAUtiliser,
-          arriveeReelle:      arriveeOfficielle,
+          arriveeReelle:      arriveeL0Plate,
           cotesPmuParNumero:  cotesParNumero.isNotEmpty ? cotesParNumero : null,
         );
 
         recuperes++;
-        details.add('✅ $nomCourt ($jour/$mois) : arrivée ${arriveeOfficielle.take(5).map((n) => "N°$n").join(" - ")} enregistrée');
+        enregistresDepuisL0++;
+        details.add('✅ $nomCourt ($jour/$mois) : arrivée officielle L0 '
+            '${arriveeL0Plate.take(5).map((n) => "N°$n").join(" - ")} '
+            'enregistrée');
 
       } catch (e) {
         erreurs++;
@@ -1298,16 +1704,71 @@ class IaMemoryService extends ChangeNotifier {
       notifyListeners();
     }
 
+    // ★ A6 n° 2-b-2 : ligne de diagnostic du chargement historique, AVANT
+    //   celle de la mesure 2-b-1, pour que le lecteur voie « ce qui a été
+    //   chargé » puis « ce qui est couvert ». Ajout de lignes uniquement.
+    details.insert(
+        0,
+        chargementTente
+            ? '📅 Historique : $journeeChargee chargée · '
+                '$coursesChargees course(s) · L0 avant=$l0PresentAvant '
+                'après=$l0PresentApres'
+            : '📅 Historique : aucun chargement '
+                '(${journeeACharger == null ? "toutes les journées passées sont couvertes" : "source non disponible"}) '
+                '· L0=$l0PresentAvant');
+
+    // ★ A6 n° 2-b-3 : ligne de diagnostic de la règle « L0 source unique ».
+    //   Insérée AVANT la ligne de mesure de 2-b-1 afin que celle-ci reste en
+    //   TÊTE du journal (`details.first`), comme depuis 2-b-1 : aucune
+    //   assertion existante n'est déplacée. Les trois nombres sont des
+    //   COMPTES BRUTS.
+    details.insert(
+        0,
+        '📚 Source des résultats : $enregistresDepuisL0 enregistré(s) depuis '
+        'L0 · $exAequoDifferes ex æquo différé(s) · '
+        '$introuvables différé(s) sans L0');
+
+    // ★ A6 n° 2-b-1 : ligne de diagnostic L0 ajoutée au journal, en TÊTE pour
+    //   rester visible; elle ne remplace ni n'altère aucune ligne existante.
+    //   Aucun taux n'est affiché : seuls des COMPTES BRUTS sont présentés.
+    details.insert(
+        0,
+        '📊 Mesure L0 : $l0Present avec arrivée officielle · '
+        '$l0Absent sans arrivée officielle · '
+        '$incoherencesDate incohérence(s) de date');
+
     String message;
     if (recuperes == aRelancer.length) {
       message = '✅ $recuperes résultat(s) récupéré(s) sur ${aRelancer.length}';
     } else if (recuperes > 0) {
-      message = '✅ $recuperes récupéré(s) · ⏳ $introuvables en attente PMU · ❌ $erreurs erreur(s)';
+      message = '✅ $recuperes récupéré(s) · ⏳ $introuvables en attente de la '
+          'source officielle · ❌ $erreurs erreur(s)';
     } else if (introuvables > 0) {
-      message = '⏳ Résultats PMU pas encore publiés pour ${introuvables} course(s) — réessayez après 20h';
+      message = '⏳ Aucun résultat enregistré : $introuvables course(s) sans '
+          'arrivée officielle L0 — réessai possible';
     } else {
       message = '❌ Aucun résultat récupéré ($erreurs erreur(s) réseau)';
     }
+
+    // ★ A6 n° 2-b-1 : le message de synthèse porte un supplément L0. Le
+    //   message existant est CONSERVÉ à l'identique en préfixe : aucun test
+    //   ni écran ne le compare à une chaîne exacte (mesuré : seul un
+    //   `debugPrint` de `rapport['message']` existe, v26:851).
+    message = '$message · 📚 L0 : $l0Present présente(s), '
+        '$l0Absent absente(s), $incoherencesDate incohérence(s) date';
+
+    // ★ A6 n° 2-b-2 : supplément « historique » du message. Ajout en QUEUE du
+    //   message déjà enrichi : le préfixe historique reste intact.
+    if (chargementTente) {
+      message = '$message · 📅 historique $journeeChargee : '
+          '$l0PresentAvant → $l0PresentApres';
+    }
+
+    // ★ A6 n° 2-b-1 : dernière ligne de progression — diagnostic de MESURE.
+    //   Émise APRÈS la boucle : elle ne remplace aucune progression
+    //   intermédiaire, qui restent toutes émises comme avant.
+    onProgress?.call('📚 Mesure L0 : $l0Present présente(s) · '
+        '$l0Absent absente(s) · $incoherencesDate incohérence(s) de date');
 
     return {
       'recuperes':    recuperes,
@@ -1316,6 +1777,30 @@ class IaMemoryService extends ChangeNotifier {
       'total':        aRelancer.length,
       'details':      details,
       'message':      message,
+      // ★ A6 n° 2-b-1 : compteurs d'OBSERVATION. Ajout de clés uniquement —
+      //   les six clés historiques restent présentes et de même type. Le seul
+      //   consommateur (`ia_performance_screen.dart:1802-1807`) lit les clés
+      //   une à une et ignore celles qu'il ne connaît pas.
+      'l0Present':        l0Present,
+      'l0Absent':         l0Absent,
+      'incoherencesDate': incoherencesDate,
+      // ★ A6 n° 2-b-2 : diagnostic du chargement historique.
+      //   `journeeChargee` vaut `null` (donc clé JSON-safe) si aucun
+      //   chargement n'a été tenté ; `l0Avant`/`l0Apres` permettent de
+      //   constater l'effet réel du chargement.
+      'historiqueTente':  chargementTente,
+      'journeeChargee':   journeeChargee,
+      'coursesChargees':  coursesChargees,
+      'journeesRestantes': journeesSansL0.length,
+      'l0PresentAvant':   l0PresentAvant,
+      'l0PresentApres':   l0PresentApres,
+      // ★ A6 n° 2-b-3 : preuves de la règle « L0 source unique ».
+      //   `enregistresDepuisL0` égale toujours `recuperes` par construction :
+      //   il n'existe plus aucun autre chemin d'enregistrement dans P3.
+      //   `exAequoDifferes` compte les arrivées officielles refusées pour
+      //   cause d'ex æquo, sans qu'aucune n'ait été enregistrée ni apprise.
+      'enregistresDepuisL0': enregistresDepuisL0,
+      'exAequoDifferes':     exAequoDifferes,
     };
   }
 
@@ -1370,6 +1855,13 @@ class IaMemoryService extends ChangeNotifier {
   ///
   /// Retourne la liste des numéros dans l'ordre d'arrivée (vide si pas dispo).
   /// Le résultat est mis en cache RAM pour éviter les appels répétés.
+  ///
+  /// ★ FINALISATION A6 : une liste VIDE n'a plus qu'une seule signification
+  /// fiable — « aucune arrivée exploitable pour l'instant ». Elle couvre trois
+  /// cas distincts, tous récupérables : réponse HTTP non-200, appel déjà en
+  /// cours, et surtout REFUS motivé par `analyserRapportsPmu` (aucun rapport
+  /// ordonné, arrivée partielle, ou incohérence avec le Simple Gagnant).
+  /// Un refus n'est JAMAIS mis en cache : le cycle suivant doit pouvoir réessayer.
   Future<List<int>> fetchArriveeDirecte({
     required String courseKey,
     required DateTime heureDepart,
@@ -1407,56 +1899,90 @@ class IaMemoryService extends ChangeNotifier {
         _arriveeEnCours.remove(courseKey);
         return [];
       }
+      // ═══════════════════════════════════════════════════════════════════
+      //  ★ A6 — L0 PRIORITAIRE (P2). Décision unique, groupes préservés.
+      //
+      //  AVANT : ce chemin ne consultait QUE les rapports PMU, alors que L0
+      //  (`ArriveeOfficielleService`) détient l'arrivée officielle complète,
+      //  ex æquo compris. Une égalité officielle connue pouvait donc être
+      //  écrasée par un ordre PMU aplati : c'est exactement ce que le mandat
+      //  interdit (« ne jamais écraser une égalité officielle connue »).
+      //
+      //  APRÈS : `deciderArriveeOfficielle` consulte L0 d'abord (lecture
+      //  pure, copie profonde) et ne retombe sur le repli PMU ordonné que si
+      //  L0 est ABSENT. Trois issues :
+      //    • L0 avec ex æquo → groupes RENDUS pour l'affichage, mais
+      //      `peutEnregistrer` FAUX : aucun `enregistrerResultat`, donc
+      //      aucun apprentissage et aucun ELO fondés sur un ordre inventé ;
+      //    • L0 plate ou repli PMU → enregistrement autorisé ;
+      //    • rien d'exploitable → aucun cache négatif, réessai possible.
+      //
+      //  Le cache RAM reçoit l'APLATISSEMENT SANS PERTE (`arriveePlate`) :
+      //  il n'est alimenté que si `peutEnregistrer`, donc jamais depuis un
+      //  ex æquo. La structure de `IaPronostic` n'est pas modifiée.
+      // ═══════════════════════════════════════════════════════════════════
+      //  CONTRÔLE D'APPARTENANCE : la liste fiable disponible ici est celle du
+      //  pronostic analysé. `scoresIA` porte un score par partant
+      //  (`ia_memory_service.dart:2811-2814`) et sert déjà de dénombrement de
+      //  partants l.3692. `_load()` est idempotent (`if (_loaded) return;`)
+      //  et déjà appelé plus bas : le devancer ne fait que rendre la liste
+      //  disponible AVANT la décision, sans lecture supplémentaire du disque.
+      //  Pronostic absent → liste `null` → contrôle IMPOSSIBLE, donc aucune
+      //  arrivée refusée pour ce motif.
+      await _load();
+      final int idxPartants =
+          _pronostics.indexWhere((p) => p.courseKey == courseKey);
+      Set<int>? partants;
+      if (idxPartants >= 0) {
+        final numeros = _pronostics[idxPartants]
+            .scoresIA
+            .keys
+            .map(int.tryParse)
+            .whereType<int>()
+            .toSet();
+        partants = numeros.isEmpty ? null : numeros;
+      }
 
-      final List<dynamic> rapports = jsonDecode(resp.body) as List<dynamic>;
-      final List<int> arrivee = [];
+      final DecisionArriveeOfficielle decision = deciderArriveeOfficielle(
+        groupesL0: ArriveeOfficielleService.instance.arrivee(courseKey),
+        rapportsPmu: jsonDecode(resp.body) as List<dynamic>,
+        partants: partants,
+      );
 
-      for (final r in rapports) {
-        final typePari = r['typePari'] as String? ?? '';
-        final rList = (r['rapports'] as List<dynamic>? ?? []);
-        if (rList.isEmpty) continue;
+      final List<int> arrivee = decision.arriveePlate;
 
-        // Simple Gagnant → 1er cheval
-        if (typePari == 'E_SIMPLE_GAGNANT' && arrivee.isEmpty) {
-          final rap = rList.first as Map<String, dynamic>;
-          final n = int.tryParse(rap['combinaison']?.toString() ?? '');
-          if (n != null && !arrivee.contains(n)) arrivee.add(n);
+      if (!decision.disponible) {
+        // Ni L0 ni PMU exploitable : aucun cache négatif, aucun
+        // enregistrement — la course reste récupérable au cycle suivant.
+        if (kDebugMode) {
+          debugPrint('[IaMemory] ⏸️ Arrivée directe $courseKey REFUSÉE : '
+              '${decision.motif} — réessai possible au prochain cycle');
         }
+        _arriveeEnCours.remove(courseKey);
+        return <int>[];
+      }
 
-        // Simple Placé → top 3
-        if (typePari == 'E_SIMPLE_PLACE') {
-          for (final item in rList) {
-            final n = int.tryParse(
-                (item as Map)['combinaison']?.toString() ?? '');
-            if (n != null && !arrivee.contains(n)) arrivee.add(n);
-          }
+      if (decision.aDesExAequo) {
+        // EX ÆQUO : la course est officiellement arrivée, mais l'ordre entre
+        // chevaux ex æquo n'existe pas. On ne met RIEN en cache d'arrivée
+        // plate et on n'enregistre RIEN : `arriveePlate` est vide. Les
+        // groupes restent disponibles pour l'affichage via L0.
+        if (kDebugMode) {
+          debugPrint('[IaMemory] ⚠️ Arrivée directe $courseKey : '
+              '${decision.motif}');
         }
-
-        // Tiercé / Quarté / Quinté ORDRE → arrivée complète
-        final isOrdre = (typePari.contains('TIERCE') ||
-                         typePari.contains('TIERCÉ') ||
-                         typePari.contains('QUARTE') ||
-                         typePari.contains('QUINTE')) &&
-                        !typePari.contains('DESORDRE') &&
-                        !typePari.contains('DÉSORDRE') &&
-                        !typePari.contains('4SUR5') &&
-                        !typePari.contains('4_SUR_5');
-        if (isOrdre) {
-          final rap = rList.first as Map<String, dynamic>;
-          final combo = rap['combinaison']?.toString() ?? '';
-          for (final part in combo.split('-')) {
-            final n = int.tryParse(part.trim());
-            if (n != null && !arrivee.contains(n)) arrivee.add(n);
-          }
-        }
+        notifyListeners();
+        _arriveeEnCours.remove(courseKey);
+        return <int>[];
       }
 
       if (arrivee.isNotEmpty) {
-        // Mettre en cache RAM
+        // Mettre en cache RAM UNIQUEMENT une arrivée retenue.
         _arriveeCache[courseKey] = arrivee;
         if (kDebugMode) {
           debugPrint('[IaMemory] ✅ Arrivée directe $courseKey : '
-              '${arrivee.take(5).map((n) => "N°$n").join(" - ")}');
+              '${arrivee.take(5).map((n) => "N°$n").join(" - ")} '
+              '(${decision.motif})');
         }
         // Si un pronostic IA existe pour cette course → mettre à jour aussi
         await _load();
@@ -4216,57 +4742,102 @@ class IaMemoryService extends ChangeNotifier {
               continue;
             }
 
-            // ── Parser l'arrivée (même logique qu'alert_service) ──────────
-            final List<int> arrivee = [];
-            // ★ v10.31 : cotes PMU Simple Gagnant par numéro
-            final Map<String, double> cotesJ = {};
+            // ═══════════════════════════════════════════════════════════════
+            //  ★ FINALISATION A6 (P1) — DÉCISION PARTAGÉE, PLUS DE RECONSTRUCTION
+            //
+            //  AVANT : `E_SIMPLE_GAGNANT` était inséré en tête puis les rapports
+            //  `E_SIMPLE_PLACE` étaient AJOUTÉS dans l'ordre fourni par l'API.
+            //  Cet ordre n'est pas celui de l'arrivée officielle : les rangs 2
+            //  et 3 étaient donc INVENTÉS, et cette arrivée fausse nourrissait
+            //  `rangFavoriIaDansArrivee`, `nbTop3`, `nbTop5` puis
+            //  `scorePerformance` — donc l'apprentissage. Un seul cheval
+            //  (`E_SIMPLE_GAGNANT` seul) était également accepté comme arrivée.
+            //
+            //  APRÈS : même règle que P2/P4/P5, source unique de décision. Seule
+            //  une arrivée ORDONNÉE (Tiercé / Quarté / Quinté ORDRE, DÉSORDRE
+            //  et 4sur5 exclus) d'au moins `kLongueurMinimaleArrivee` chevaux,
+            //  cohérente avec le Simple Gagnant, est retenue. Un refus motive et
+            //  n'écrit RIEN : `nbSansResultat` est incrémenté et la course reste
+            //  récupérable au cycle suivant.
+            //
+            //  Les COTES PMU sont conservées telles quelles : elles ne dépendent
+            //  pas de l'ordre d'arrivée, et les perdre priverait l'apprentissage
+            //  d'une information officielle.
+            // ═══════════════════════════════════════════════════════════════
+            final List<dynamic> rapports;
             try {
-              final rapports = jsonDecode(resp.body) as List<dynamic>;
-              for (final r in rapports) {
-                final typePari = r['typePari'] as String? ?? '';
-                final rList    = (r['rapports'] as List<dynamic>?) ?? [];
-                if (rList.isEmpty) continue;
-
-                // Simple Gagnant → cheval N°1 + cotes de tous les participants
-                if (typePari == 'E_SIMPLE_GAGNANT') {
-                  for (final rap in rList) {
-                    final m = rap as Map<String, dynamic>;
-                    final n = int.tryParse(m['combinaison']?.toString().trim() ?? '');
-                    if (n == null) continue;
-                    if (arrivee.isEmpty) arrivee.insert(0, n);
-                    final rawDiv = m['dividendePourUnEuro'] ?? m['dividende'];
-                    if (rawDiv != null) {
-                      final cote = (rawDiv as num).toDouble() / 100.0;
-                      if (cote > 1.0) cotesJ[n.toString()] = cote;
-                    }
-                  }
-                }
-                // Placés → top 3
-                if (typePari == 'E_SIMPLE_PLACE') {
-                  for (final pl in rList) {
-                    final n = int.tryParse(
-                        (pl as Map)['combinaison']?.toString().trim() ?? '');
-                    if (n != null && !arrivee.contains(n)) arrivee.add(n);
-                  }
-                }
-                // Tiercé / Quarté / Quinté → ordre complet
-                if (typePari.contains('TIERCE') || typePari.contains('QUARTE') ||
-                    typePari.contains('QUINTE')) {
-                  final combo = (rList.first as Map)['combinaison']?.toString() ?? '';
-                  for (final part in combo.split('-')) {
-                    final n = int.tryParse(part.trim());
-                    if (n != null && !arrivee.contains(n)) arrivee.add(n);
-                  }
-                }
-              }
-            } catch (_) {}
-
-            if (arrivee.isEmpty) {
+              rapports = jsonDecode(resp.body) as List<dynamic>;
+            } catch (e) {
+              // Corps non décodable : refus, jamais d'exception propagée.
               nbSansResultat++;
-              coursesAnalysees.add('${p.nomCourse} ⏳ [résultat PMU pas encore disponible]');
+              coursesAnalysees.add(
+                  '${p.nomCourse} ⏳ [rapports PMU illisibles : $e]');
               nbCoursesAnalysees++;
               continue;
             }
+
+            // ★ v10.31 : cotes PMU Simple Gagnant par numéro (INCHANGÉES).
+            //   Les cotes ne dépendent pas de l'ordre d'arrivée : les perdre
+            //   priverait l'apprentissage d'une information officielle. Elles
+            //   sont donc lues AVANT la décision et conservées telles quelles,
+            //   quel que soit le sort de l'arrivée.
+            //   `analyserRapportsPmu` est PURE et ne lève jamais d'exception
+            //   (arrivee_pmu_ordonnee.dart:140) : aucun risque ici.
+            final Map<String, double> cotesJ =
+                analyserRapportsPmu(rapports).cotes;
+
+            // ★ FINALISATION A6 (P1) — MÊME DÉCISION QUE P2 / P3 / P4 / P5.
+            //   L0 est PRIORITAIRE : si une arrivée officielle complète est
+            //   stockée, c'est elle qui fait foi, et le repli PMU n'est même
+            //   pas consulté. Le repli ne prétend jamais détecter une égalité
+            //   inconnue : une combinaison PMU est plate par construction.
+            //
+            //   CONTRÔLE D'APPARTENANCE : `scoresIA` porte un score par
+            //   partant analysé (`ia_memory_service.dart:2811-2814`,
+            //   `scores[p.numero] = p.scoreIA` pour chaque `partantsClasses`).
+            //   C'est la liste de partants FIABLE disponible dans P1, déjà
+            //   mesurée comme telle l.3692 (`scoresIA.length` = nb partants).
+            //   Elle n'est pas inventée depuis la longueur de l'arrivée. Si
+            //   elle est vide, le contrôle est simplement IMPOSSIBLE et
+            //   l'arrivée n'est pas refusée pour autant.
+            final DecisionArriveeOfficielle decision = deciderArriveeOfficielle(
+              groupesL0: ArriveeOfficielleService.instance.arrivee(courseKey),
+              rapportsPmu: rapports,
+              partants: p.scoresIA.keys
+                  .map(int.tryParse)
+                  .whereType<int>()
+                  .toSet(),
+            );
+
+            if (!decision.disponible) {
+              nbSansResultat++;
+              coursesAnalysees.add(
+                  '${p.nomCourse} ⏳ [${decision.motif}]');
+              nbCoursesAnalysees++;
+              continue;
+            }
+
+            if (decision.aDesExAequo) {
+              // Ex æquo officiel : l'AFFICHAGE reste possible (L0 est intact
+              // et lu par les écrans), mais RIEN n'est enregistré ici.
+              // `IaPronostic.arriveeReelle` est `List<int>?`
+              // (ia_memory_models.dart:285) : aplatir `[[7,12],[8],[6]]` en
+              // `[7,12,8,6]` placerait 12 au rang 2 alors qu'il est premier ex
+              // æquo, et `rangFavoriIaDansArrivee`, `nbTop3`, `nbTop5` puis
+              // `scorePerformance` seraient faux. Aucun apprentissage, aucun
+              // ELO ne doit naître d'un ordre inventé.
+              nbSansResultat++;
+              final groupesAffiches = decision.groupes
+                  .map((g) => '[${g.join(',')}]')
+                  .join(' ');
+              coursesAnalysees.add('${p.nomCourse} ⚠️ [ex æquo L0 '
+                  '$groupesAffiches — enregistrement différé, ordre '
+                  'officiel préservé]');
+              nbCoursesAnalysees++;
+              continue;
+            }
+
+            final List<int> arrivee = decision.arriveePlate;
 
             // ── DELTA : comparer pronostic IA vs arrivée réelle ───────────
             final idx = _pronostics.indexWhere((pr) => pr.courseKey == courseKey);

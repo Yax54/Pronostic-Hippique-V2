@@ -26,6 +26,8 @@ import 'paris_detail_screen.dart';
 
 import '../services/ia_personality_service.dart'; // ★ v9.85 IA bulle
 import '../widgets/ia/ia_bubble_widget.dart';      // ★ v9.85 IA bulle
+import '../services/arrivee_officielle_service.dart'; // ★ A6 — lecture L0
+import '../widgets/arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu ex æquo
 
 // ★ v9.85 : deepLinkCourseKeyNotifier retiré de main.dart — notifier local
 final deepLinkCourseKeyNotifier = ValueNotifier<String?>(null);
@@ -928,6 +930,23 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   // État de la vérification automatique du résultat
   bool _checkingResult = false;
   List<int>? _arrivee; // ordre d'arrivée récupéré depuis l'API
+
+  // ★ A6 : groupes d'ex æquo à afficher, ou `null`.
+  //
+  // PURE : `ArriveeOfficielleService.arrivee()` lit la RAM, rend une COPIE
+  // PROFONDE et n'écrit rien. Cette méthode ne décide QUE de l'affichage :
+  // elle n'alimente ni `_arrivee`, ni un calcul de gain, ni un apprentissage.
+  //
+  // Non nul UNIQUEMENT si L0 possède l'arrivée ET qu'au moins un groupe
+  // contient 2 chevaux ou plus. Sans ex æquo, on retourne `null` et la carte
+  // conserve son texte historique (exigence : affichage strictement inchangé).
+  List<List<int>>? _groupesExAequoAffiches() {
+    final groupes = ArriveeOfficielleService.instance.arrivee(widget.course.key);
+    if (groupes == null || groupes.isEmpty) return null;
+    if (groupes.any((g) => g.isEmpty)) return null;
+    if (!arriveeAvecExAequo(groupes)) return null;
+    return groupes;
+  }
   List<int> _disqualifies = []; // numéros des chevaux disqualifiés
   bool? _isGagnant;   // résultat calculé localement
   String? _resultMessage;
@@ -1856,12 +1875,47 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                     ),
                   ],
                   // Ordre arrivée
-                  if (_arrivee != null && _arrivee!.isNotEmpty) ...[ 
+                  if (_arrivee != null && _arrivee!.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      'Arrivée officielle : ${_arrivee!.take(5).map((n) => 'N°$n').join(' - ')}',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
+                    // ★ A6 : L0 d'abord (lecture pure, ex æquo préservés).
+                    // `groupesExAequo` n'est NON NULL que si L0 possède
+                    // l'arrivée ET qu'elle contient un ex æquo réel. Dans
+                    // tous les autres cas, le texte historique ci-dessous
+                    // reste STRICTEMENT identique à avant A6.
+                    if (_groupesExAequoAffiches() != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // ★ A6 — LISIBILITÉ : `Wrap` et non `Row`.
+                          // Un `Row` ne peut pas se replier : sur un petit
+                          // écran (320 dp) ou avec un texte agrandi par les
+                          // réglages d'accessibilité, il déborde. `Wrap`
+                          // renvoie le badge à la ligne SANS réduire la
+                          // taille des caractères (mesuré : 209 px de
+                          // débordement sur un rendu comparable).
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 6,
+                            runSpacing: 2,
+                            children: const [
+                              Text('Arrivée officielle :',
+                                  style: TextStyle(
+                                      color: Colors.white54, fontSize: 12)),
+                              BadgeExAequo(),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          LigneArriveeExAequo(
+                            groupes: _groupesExAequoAffiches()!,
+                            fontSize: 12,
+                          ),
+                        ],
+                      )
+                    else
+                      Text(
+                        'Arrivée officielle : ${_arrivee!.take(5).map((n) => 'N°$n').join(' - ')}',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
                     // ★ Badge DQ si des chevaux ont été disqualifiés
                     if (_disqualifies.isNotEmpty) ...[
                       const SizedBox(height: 4),

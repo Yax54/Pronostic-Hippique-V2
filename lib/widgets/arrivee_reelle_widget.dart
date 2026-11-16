@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import '../services/ia_memory_service.dart';
 import '../services/arrivee_officielle_service.dart'; // ★ L2-1 — lecture L0
+import 'arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu ex æquo
 
 /// Construit la courseKey au format utilisé par IaMemoryService :
 /// "R{numReunion}C{numCourse}_{ddmmyyyy}"
@@ -206,6 +207,13 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
           Expanded(
             child: _buildContenu(arrivee, fontSize: 12),
           ),
+          // ★ A6 : petit encadré gris « Ex æquo » à droite du titre,
+          // UNIQUEMENT quand l'arrivée affichée comporte un ex æquo.
+          if (widget.isTerminee &&
+              arriveeAvecExAequo(_groupesL0)) ...[
+            const SizedBox(width: 6),
+            const BadgeExAequo(),
+          ],
           // ★ L2-1 : provenance affichée UNIQUEMENT quand sourceL0 est actif.
           // À false, rien n'est ajouté : rendu strictement identique à avant.
           if (widget.sourceL0 && _source != null && widget.isTerminee) ...[
@@ -245,6 +253,11 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              // ★ A6 : encadré gris « Ex æquo » à droite du titre.
+              if (arriveeAvecExAequo(_groupesL0)) ...[
+                const SizedBox(width: 6),
+                const BadgeExAequo(),
+              ],
               if (arrivee != null && arrivee.isNotEmpty) ...[
                 const Spacer(),
                 // ★ L2-1 : « Officielle complète » (L0) ou « Résultat
@@ -418,16 +431,36 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
     );
   }
 
-  // ── ★ L2-1 : rendu GROUPÉ des ex æquo (L0 uniquement)
+  // ── ★ A6 : sélection du rendu groupé
   //
-  //  `[[4,7],[2]]` n'est pas `[4,7,2]`. Le rendu doit rendre la
-  //  simultanéité visible, sinon l'utilisateur lit un ordre qui n'existe pas.
-  //  Convention retenue : un badge par numéro, et un séparateur « = » entre
-  //  les numéros d'un même rang, les rangs étant séparés par « · ».
-  //    [[4,7],[2]]  →  N°4 = N°7  ·  N°2
-  //  Le rang affiché (1er, 2e…) est le rang RÉEL, pas l'index du groupe :
-  //  les ex æquo occupent le même rang et le suivant saute.
+  //  DEUX rendus coexistent, et le choix est EXPLICITE :
+  //
+  //  (a) `arriveeAvecExAequo(_groupesL0)` est FAUX → `_buildGroupesL0Historique`,
+  //      reproduction EXACTE du rendu d'avant A6. Aucun rang sous les
+  //      numéros, aucun encadré « Ex æquo » : l'exigence « conserver
+  //      strictement l'affichage actuel » est tenue au caractère près.
+  //
+  //  (b) au moins un groupe de 2 chevaux ou plus → `_buildGroupesL0`, qui
+  //      délègue au widget partagé `LigneArriveeExAequo` : fond jaune doré
+  //      et bordure assortie sur les SEULS chevaux ex æquo, rang officiel
+  //      (« 2e », « 3e »…) sous chacun d'eux, positions sautées respectées.
   Widget _buildGroupesL0({required double fontSize}) {
+    if (!arriveeAvecExAequo(_groupesL0)) {
+      return _buildGroupesL0Historique(fontSize: fontSize);
+    }
+    return LigneArriveeExAequo(
+      groupes: _groupesL0!,
+      fontSize: fontSize,
+      numerosIa: widget.selectionIA.toSet(),
+    );
+  }
+
+  // ── Rendu HISTORIQUE (avant A6) — à l'identique
+  //
+  //  Conservé SANS modification pour toute arrivée sans ex æquo. Toute
+  //  retouche ici changerait l'affichage de la grande majorité des courses,
+  //  ce que la spécification interdit explicitement.
+  Widget _buildGroupesL0Historique({required double fontSize}) {
     final groupes = _groupesL0!;
     final children = <Widget>[];
 
@@ -449,8 +482,6 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
         textColor = const Color(0xFFFFD700);
         bgColor = const Color(0xFFFFD700).withValues(alpha: 0.12);
       } else if (estExAequo) {
-        // ★ Ex æquo : bordure AMBRE en pointillés visuels (bordure épaisse),
-        // distincte de l'or (1er net) et du vert (sélection IA).
         borderColor = const Color(0xFFFFB74D).withValues(alpha: 0.85);
         textColor = const Color(0xFFFFB74D);
         bgColor = const Color(0xFFFFB74D).withValues(alpha: 0.16);

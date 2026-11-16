@@ -33,6 +33,7 @@ import '../widgets/ia/ia_tab_backtesting.dart';     // ★ v9.90 découpage
 import '../widgets/ia/ia_bubble_widget.dart';        // ★ v9.93 bulles
 import '../widgets/ia/ia_calendrier_tab.dart';       // ★ v10.25 calendrier performances
 import '../services/arrivee_officielle_service.dart'; // ★ L2-4.1 — lecture L0
+import '../widgets/arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu ex æquo
 import '../services/quasi_gros_paris_service.dart'
     show evaluerPariOrdreDesordre; // ★ v10.76 : évaluateur unifié
 // import 'ia_journal_screen.dart'; // ★ v9.85 — conservé pour navigation (non utilisé directement)
@@ -1779,6 +1780,25 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   onPressed: () async {
                     setState(() => _relanceEnCours = true);
                     final mem = IaMemoryService.instance;
+
+                    // ★ A6 n° 2-b-2 — CÂBLAGE DU CHARGEMENT HISTORIQUE.
+                    //
+                    // Ce fichier importe DÉJÀ `DataRefreshService` (`:21`) :
+                    // la dépendance est donc fournie ICI, dans l'écran, et
+                    // `ia_memory_service.dart` n'a AUCUN import à ajouter.
+                    // Le cycle `ia_memory_service` ↔ `data_refresh_service`
+                    // est ainsi évité par construction, et non par
+                    // convention.
+                    //
+                    // `chargerPourDate` délègue à
+                    // `ZoneTurfService.chargerProgramme(date:, forceRefresh:)`
+                    // (data_refresh_service.dart:1292-1295) : il n'écrit PAS
+                    // `_reunions` (seule affectation : l.672, dans
+                    // `_doRefresh`), donc l'affichage de la journée courante
+                    // est préservé.
+                    mem.sourceProgrammeHistorique =
+                        (DateTime date) => DataRefreshService.instance
+                            .chargerPourDate(date, force: false);
 
                     // Afficher le début dans le message de progression
                     if (mounted) {

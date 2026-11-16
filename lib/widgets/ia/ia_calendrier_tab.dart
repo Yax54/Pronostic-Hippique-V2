@@ -23,6 +23,7 @@ import '../../services/ia_memory_models.dart';
 import '../../services/ia_archive_service.dart'; // ★ E2 — chargement de l'archive
 import '../../services/quasi_gros_paris_service.dart'; // ★ v10.72
 import '../../services/arrivee_officielle_service.dart'; // ★ L2-3 — lecture L0
+import '../arrivee_officielle_groupes_widget.dart';     // ★ A6 — rendu ex æquo
 import '../../utils/source_pronostic_utils.dart';        // ★ v10.78
 import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
     show
@@ -2893,11 +2894,29 @@ class _DetailJourSheet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Arrivée réelle',
-            style: TextStyle(color: Colors.white38, fontSize: 14)),
+        // ★ A6 : encadré gris « Ex æquo » placé à droite du titre, sur la
+        // MÊME ligne, mais sans `Row` rigide : le `Wrap` peut passer à la
+        // ligne et ne provoque donc aucun débordement dans la colonne
+        // étroite du détail de journée (mesuré : une `Row` débordait de
+        // 53 px). Sans ex æquo, le `Wrap` ne contient que le titre et le
+        // rendu est identique à l'existant.
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          children: [
+            const Text('Arrivée réelle',
+                style: TextStyle(color: Colors.white38, fontSize: 14)),
+            if (arriveeAvecExAequo(groupes)) const BadgeExAequo(),
+          ],
+        ),
         const SizedBox(height: 3),
         if (groupes != null)
-          _buildGroupesArrivee(groupes, fontSize: 14)
+          // ★ A6 : nouveau rendu UNIQUEMENT en présence d'un ex æquo ; sinon
+          // `_buildGroupesArrivee` conserve le rendu historique à l'identique.
+          if (arriveeAvecExAequo(groupes))
+            LigneArriveeExAequo(groupes: groupes, fontSize: 14)
+          else
+            _buildGroupesArrivee(groupes, fontSize: 14)
         else
           // ★ v10.30 : Arrivée réelle en doré — rendu IDENTIQUE à l'existant
           Text(platHistorique,

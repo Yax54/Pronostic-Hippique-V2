@@ -21,6 +21,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'zone_turf_service.dart';
+import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + appartenance
+import 'arrivee_officielle_service.dart';      // ★ A6 : lecture L0 (RAM, copie profonde)
 import 'ia_memory_service.dart';
 import 'ia_personality_service.dart'; // ★ v9.85
 import 'ia_memory_models.dart';
@@ -1225,6 +1227,21 @@ class DataRefreshService extends ChangeNotifier {
     ).ignore();
   }
 
+  /// Récupère l'arrivée officielle d'une course depuis les rapports PMU.
+  ///
+  /// ★ FINALISATION A6 (P4) — DÉCISION PARTAGÉE, PLUS DE RECONSTRUCTION.
+  ///
+  /// AVANT : `E_SIMPLE_GAGNANT` était inséré en tête puis les rapports
+  /// `E_SIMPLE_PLACE` étaient AJOUTÉS dans l'ordre fourni par l'API. Cet ordre
+  /// n'est pas celui de l'arrivée officielle : les rangs 2 et 3 étaient donc
+  /// INVENTÉS. Aucune garde de longueur n'existait : un seul cheval devenait
+  /// une « arrivée », puis `enregistrerResultat()` l'inscrivait définitivement
+  /// — la garde d'idempotence interdisant toute réécriture ultérieure.
+  ///
+  /// APRÈS : décision unique et PARTAGÉE avec P1, P2 et P5
+  /// (`analyserRapportsPmu`). Une liste vide signifie « aucune arrivée
+  /// exploitable pour l'instant » et n'écrit rien : la course reste non
+  /// résolue, donc récupérable au cycle suivant.
   Future<List<int>> _fetchArriveeOfficielle(
       int numR, int numC, String dateStr) async {
     final url = 'https://turfinfo.api.pmu.fr/rest/client/7'
@@ -1236,45 +1253,84 @@ class DataRefreshService extends ChangeNotifier {
         .get(Uri.parse(url), headers: {'Accept': 'application/json'})
         .timeout(const Duration(seconds: 15));
 
-    if (resp.statusCode != 200) return [];
+    if (resp.statusCode != 200) return const <int>[];
 
-    final List<dynamic> rapports = jsonDecode(resp.body) as List<dynamic>;
-    final List<int> arrivee = [];
-
-    for (final r in rapports) {
-      final typePari = r['typePari'] as String? ?? '';
-      final rList    = (r['rapports'] as List<dynamic>? ?? []);
-      if (rList.isEmpty) continue;
-
-      if (typePari == 'E_SIMPLE_GAGNANT' ||
-          typePari == 'SIMPLE_GAGNANT' ||
-          typePari == 'GAGNANT') {
-        final rap = rList.first as Map<String, dynamic>;
-        final n   = int.tryParse(rap['combinaison']?.toString() ?? '');
-        if (n != null && !arrivee.contains(n)) arrivee.insert(0, n);
+    // ═══════════════════════════════════════════════════════════════════
+    //  ★ A6 — L0 PRIORITAIRE + CONTRÔLE D'APPARTENANCE (P4).
+    //
+    //  AVANT : ce chemin ignorait totalement L0 et n'exerçait aucun contrôle
+    //  sur les numéros reçus. Une arrivée contenant un numéro absent des
+    //  partants pouvait donc être enregistrée.
+    //
+    //  ICI, la liste des partants EST DISPONIBLE : `_partantsDeLaCourse`
+    //  la lit dans `_reunions` (données déjà chargées par cet écran). Le
+    //  contrôle est donc effectif : tout numéro inconnu fait REJETER
+    //  l'arrivée. Si les partants ne sont pas disponibles, la fonction
+    //  retourne `null` et AUCUN rejet n'est prononcé — une absence de
+    //  données n'est pas une preuve d'incohérence.
+    //
+    //  L0 est consulté EN PREMIER. S'il contient un ex æquo, l'arrivée ne
+    //  doit pas être transmise à l'apprentissage : la fonction retourne une
+    //  liste vide, ce qui suffit car l'appelant n'appelle `enregistrerResultat`
+    //  ET `_mettreAJourEloApresArrivee` qu'après `if (arrivee.isEmpty) continue;`.
+    //  Aucune signature, aucun mécanisme protégé n'est modifié.
+    // ═══════════════════════════════════════════════════════════════════
+    final DecisionArriveeOfficielle decision;
+    try {
+      decision = deciderArriveeOfficielle(
+        groupesL0: ArriveeOfficielleService.instance
+            .arrivee('R${numR}C$numC' '_$dateStr'),
+        rapportsPmu: jsonDecode(resp.body) as List<dynamic>,
+        partants: _partantsDeLaCourse(numR, numC),
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏸️ R${numR}C$numC : rapports illisibles ($e)');
       }
-
-      if (typePari == 'E_SIMPLE_PLACE' ||
-          typePari == 'SIMPLE_PLACE' ||
-          typePari == 'PLACE') {
-        for (final pl in rList) {
-          final n = int.tryParse((pl as Map)['combinaison']?.toString() ?? '');
-          if (n != null && !arrivee.contains(n)) arrivee.add(n);
-        }
-      }
-
-      if (typePari.contains('TIERCE') ||
-          typePari.contains('QUARTE') ||
-          typePari.contains('QUINTE')) {
-        final rap   = rList.first as Map<String, dynamic>;
-        final combo = rap['combinaison']?.toString() ?? '';
-        for (final part in combo.split('-')) {
-          final n = int.tryParse(part.trim());
-          if (n != null && !arrivee.contains(n)) arrivee.add(n);
-        }
-      }
+      return const <int>[];
     }
-    return arrivee;
+
+    if (decision.aDesExAequo) {
+      // Ex æquo officiel : affichable via L0, mais JAMAIS enregistrable.
+      // Liste vide → ni apprentissage, ni mise à jour ELO en aval.
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⚠️ R${numR}C$numC : ${decision.motif}');
+      }
+      return const <int>[];
+    }
+
+    if (!decision.disponible || !decision.peutEnregistrer) {
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏸️ R${numR}C$numC : arrivée REFUSÉE — '
+            '${decision.motif} (réessai possible au prochain cycle)');
+      }
+      return const <int>[];
+    }
+
+    return decision.arriveePlate;
+  }
+
+  /// Ensemble FIABLE des numéros partants d'une course, ou `null`.
+  ///
+  /// PURE : lecture seule de `_reunions`, déjà en mémoire. `null` si la
+  /// course ou ses partants ne sont pas disponibles — auquel cas le contrôle
+  /// d'appartenance est IMPOSSIBLE et ne doit produire aucun rejet.
+  Set<int>? _partantsDeLaCourse(int numR, int numC) {
+    for (final reunion in _reunions) {
+      final rMatch = RegExp(r'R(\d+)').firstMatch(reunion.code);
+      final rNum = rMatch != null ? int.tryParse(rMatch.group(1) ?? '') ?? 0 : 0;
+      if (rNum != numR) continue;
+      final course = reunion.courses.where((c) => c.numCourse == numC).firstOrNull;
+      if (course == null) return null;
+      if (course.partants.isEmpty) return null;
+      final numeros = <int>{};
+      for (final p in course.partants) {
+        final n = int.tryParse(p.numero);
+        if (n != null) numeros.add(n);
+      }
+      return numeros.isEmpty ? null : numeros;
+    }
+    return null;
   }
 
   /// Rafraîchissement pour une date spécifique (écran Courses)
