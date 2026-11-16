@@ -816,6 +816,9 @@ class _CourseCard extends StatelessWidget {
                     .toList(),
                 // ★ R1 : calendrier = consultation → pas de récupération réseau
                 autoriserRecuperation: false,
+                // ★ L2-1 : source officielle complète (ex æquo préservés),
+                // repli automatique sur l'historique IA si L0 ne l'a pas.
+                sourceL0: true,
               ),
 
               // ── Bouton Parier ──

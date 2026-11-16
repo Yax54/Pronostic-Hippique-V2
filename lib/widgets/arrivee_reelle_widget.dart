@@ -18,6 +18,7 @@
 
 import 'package:flutter/material.dart';
 import '../services/ia_memory_service.dart';
+import '../services/arrivee_officielle_service.dart'; // ★ L2-1 — lecture L0
 
 /// Construit la courseKey au format utilisé par IaMemoryService :
 /// "R{numReunion}C{numCourse}_{ddmmyyyy}"
@@ -29,6 +30,14 @@ String buildCourseKey({
   // reunionCode peut être "R1", "R2"... on extrait le numéro
   final numR = reunionCode.replaceAll(RegExp(r'[^0-9]'), '');
   return 'R${numR}C${numCourse}_$dateStr';
+}
+
+/// ★ L2-1 : d'où vient l'arrivée affichée.
+enum _SourceArrivee {
+  /// Groupes officiels complets lus dans L0 — ex æquo préservés.
+  l0,
+  /// Repli : pronostic IA historique, liste plate (comportement d'avant L2-1).
+  historique,
 }
 
 /// Widget affichant l'arrivée réelle PMU.
@@ -54,6 +63,17 @@ class ArriveReelleWidget extends StatefulWidget {
   /// est déjà connue, mais ne provoque ni appel API PMU, ni écriture,
   /// ni apprentissage. Utilisé par les écrans en consultation (calendrier).
   final bool autoriserRecuperation;
+  /// ★ L2-1 : true = lire l'arrivée officielle complète dans L0
+  /// (`ArriveeOfficielleService`), qui conserve les groupes d'ex æquo.
+  ///
+  /// Défaut `false` → les autres écrans gardent exactement le comportement
+  /// d'avant L2-1 (repli sur `IaMemoryService.arriveeConnue`, liste plate).
+  ///
+  /// À `true`, l'ordre de lecture est : L0 d'abord ; si L0 ne possède pas
+  /// l'arrivée, repli sur `IaMemoryService.arriveeConnue`. La provenance est
+  /// signalée à l'utilisateur (« Officielle complète » / « Résultat
+  /// historique ») pour qu'il ne confonde jamais les deux fidélités.
+  final bool sourceL0;
 
   const ArriveReelleWidget({
     super.key,
@@ -64,6 +84,7 @@ class ArriveReelleWidget extends StatefulWidget {
     this.compact = true,
     this.isClassiqueSansMultiple = false, // ★ v9.93
     this.autoriserRecuperation = true, // ★ R1
+    this.sourceL0 = false, // ★ L2-1
   });
 
   @override
@@ -108,10 +129,45 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
     });
   }
 
+  /// ★ L2-1 : provenance de l'arrivée affichée.
+  /// `l0` = groupes officiels complets (ex æquo préservés), `historique` =
+  /// repli sur la liste plate de `IaMemoryService`.
+  _SourceArrivee? _source;
+  /// Groupes L0 quand la source est `l0`. JAMAIS aplatis pour l'affichage.
+  List<List<int>>? _groupesL0;
+
+  /// Lit l'arrivée selon [ArriveReelleWidget.sourceL0].
+  ///
+  /// L0 d'abord (aucun effet de bord : `arrivee()` lit la RAM et ne charge
+  /// rien). Si L0 ne possède pas l'arrivée, repli sur le chemin historique.
+  /// Aucune conversion des groupes L0 en liste plate n'est effectuée ici : le
+  /// rendu groupé les consomme tels quels.
+  List<int>? _resoudreArrivee() {
+    _source = null;
+    _groupesL0 = null;
+
+    if (widget.sourceL0) {
+      final groupes = ArriveeOfficielleService.instance.arrivee(widget.courseKey);
+      if (groupes != null && groupes.isNotEmpty) {
+        _groupesL0 = groupes;
+        _source = _SourceArrivee.l0;
+        // Projection PLATE utilisée UNIQUEMENT comme repli de rendu pour les
+        // branches héritées (isClassiqueSansMultiple.length). Elle ne sert
+        // JAMAIS à afficher les numéros quand _groupesL0 est disponible.
+        return groupes.expand((g) => g).toList(growable: false);
+      }
+    }
+
+    final historique = IaMemoryService.instance.arriveeConnue(widget.courseKey);
+    if (historique != null && historique.isNotEmpty) {
+      _source = _SourceArrivee.historique;
+    }
+    return historique;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // ★ v9.6 : utiliser arriveeConnue() qui cherche dans le cache RAM + pronostics
-    final arrivee = IaMemoryService.instance.arriveeConnue(widget.courseKey);
+    final arrivee = _resoudreArrivee();
 
     if (widget.compact) {
       return _buildCompact(arrivee);
@@ -150,6 +206,12 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
           Expanded(
             child: _buildContenu(arrivee, fontSize: 12),
           ),
+          // ★ L2-1 : provenance affichée UNIQUEMENT quand sourceL0 est actif.
+          // À false, rien n'est ajouté : rendu strictement identique à avant.
+          if (widget.sourceL0 && _source != null && widget.isTerminee) ...[
+            const SizedBox(width: 6),
+            _buildBadgeSource(),
+          ],
         ],
       ),
     );
@@ -185,25 +247,31 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
               ),
               if (arrivee != null && arrivee.isNotEmpty) ...[
                 const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4CAF7D).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                        color:
-                            const Color(0xFF4CAF7D).withValues(alpha: 0.4)),
-                  ),
-                  child: const Text(
-                    'Officiel',
-                    style: TextStyle(
-                      color: Color(0xFF4CAF7D),
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
+                // ★ L2-1 : « Officielle complète » (L0) ou « Résultat
+                // historique » (repli IA). À sourceL0=false, le libellé
+                // reste « Officiel » — comportement inchangé.
+                if (widget.sourceL0 && _source != null)
+                  _buildBadgeSource()
+                else
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF7D).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                          color:
+                              const Color(0xFF4CAF7D).withValues(alpha: 0.4)),
+                    ),
+                    child: const Text(
+                      'Officiel',
+                      style: TextStyle(
+                        color: Color(0xFF4CAF7D),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
               ],
             ],
           ),
@@ -252,6 +320,12 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
 
   // ── Contenu commun : badges numéros ou texte d'état
   Widget _buildContenu(List<int>? arrivee, {required double fontSize}) {
+    // ★ L2-1 : si les groupes L0 sont disponibles, ils sont la SEULE source
+    // du rendu. On ne passe jamais par la liste plate.
+    if (_groupesL0 != null && _groupesL0!.isNotEmpty && widget.isTerminee) {
+      return _buildGroupesL0(fontSize: fontSize);
+    }
+
     // Pas encore terminée
     if (!widget.isTerminee) {
       return Text(
@@ -341,6 +415,139 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  // ── ★ L2-1 : rendu GROUPÉ des ex æquo (L0 uniquement)
+  //
+  //  `[[4,7],[2]]` n'est pas `[4,7,2]`. Le rendu doit rendre la
+  //  simultanéité visible, sinon l'utilisateur lit un ordre qui n'existe pas.
+  //  Convention retenue : un badge par numéro, et un séparateur « = » entre
+  //  les numéros d'un même rang, les rangs étant séparés par « · ».
+  //    [[4,7],[2]]  →  N°4 = N°7  ·  N°2
+  //  Le rang affiché (1er, 2e…) est le rang RÉEL, pas l'index du groupe :
+  //  les ex æquo occupent le même rang et le suivant saute.
+  Widget _buildGroupesL0({required double fontSize}) {
+    final groupes = _groupesL0!;
+    final children = <Widget>[];
+
+    // Rang cumulé : un groupe de k chevaux consomme k places.
+    var rang = 1;
+    for (var gi = 0; gi < groupes.length; gi++) {
+      final groupe = groupes[gi];
+      final plusieurs = groupe.length > 1;
+      final estPremier = rang == 1;
+      final estExAequo = plusieurs;
+
+      // Couleur : or pour le 1er rang, ambre pour un ex æquo non premier,
+      // vert si dans la sélection IA, blanc sinon.
+      Color borderColor;
+      Color textColor;
+      Color bgColor;
+      if (estPremier && !plusieurs) {
+        borderColor = const Color(0xFFFFD700).withValues(alpha: 0.7);
+        textColor = const Color(0xFFFFD700);
+        bgColor = const Color(0xFFFFD700).withValues(alpha: 0.12);
+      } else if (estExAequo) {
+        // ★ Ex æquo : bordure AMBRE en pointillés visuels (bordure épaisse),
+        // distincte de l'or (1er net) et du vert (sélection IA).
+        borderColor = const Color(0xFFFFB74D).withValues(alpha: 0.85);
+        textColor = const Color(0xFFFFB74D);
+        bgColor = const Color(0xFFFFB74D).withValues(alpha: 0.16);
+      } else if (groupe.any((n) => widget.selectionIA.contains(n.toString()))) {
+        borderColor = const Color(0xFF4CAF7D).withValues(alpha: 0.6);
+        textColor = const Color(0xFF4CAF7D);
+        bgColor = const Color(0xFF4CAF7D).withValues(alpha: 0.12);
+      } else {
+        borderColor = Colors.white.withValues(alpha: 0.2);
+        textColor = Colors.white54;
+        bgColor = Colors.white.withValues(alpha: 0.04);
+      }
+
+      // Séparateur entre groupes.
+      if (gi > 0) {
+        children.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Text(
+            '·',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.35),
+              fontSize: fontSize,
+            ),
+          ),
+        ));
+      }
+
+      for (var ni = 0; ni < groupe.length; ni++) {
+        final num = groupe[ni];
+        final isIA = widget.selectionIA.contains(num.toString());
+
+        // « = » entre deux numéros du MÊME rang : marque l'ex æquo.
+        if (ni > 0) {
+          children.add(Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              '=',
+              style: TextStyle(
+                color: const Color(0xFFFFB74D),
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ));
+        }
+
+        children.add(Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: fontSize > 12 ? 7 : 5,
+            vertical: fontSize > 12 ? 4 : 2,
+          ),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: borderColor),
+          ),
+          child: Text(
+            'N°$num',
+            style: TextStyle(
+              color: textColor,
+              fontSize: fontSize,
+              fontWeight: (estPremier || estExAequo || isIA)
+                  ? FontWeight.bold
+                  : FontWeight.normal,
+            ),
+          ),
+        ));
+      }
+
+      rang += groupe.length;
+    }
+
+    return Wrap(spacing: 4, runSpacing: 4, children: children);
+  }
+
+  // ── ★ L2-1 : badge de provenance
+  Widget _buildBadgeSource() {
+    final l0 = _source == _SourceArrivee.l0;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: (l0 ? const Color(0xFF4CAF7D) : const Color(0xFF64B5F6))
+            .withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: (l0 ? const Color(0xFF4CAF7D) : const Color(0xFF64B5F6))
+              .withValues(alpha: 0.45),
+        ),
+      ),
+      child: Text(
+        l0 ? 'Officielle complète' : 'Résultat historique',
+        style: TextStyle(
+          color: l0 ? const Color(0xFF4CAF7D) : const Color(0xFF64B5F6),
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
     );
   }
 }

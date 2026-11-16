@@ -21,6 +21,7 @@ import 'services/ia_personality_service.dart'; // ★ v9.85
 import 'services/ia_user_prefs_service.dart';  // ★ v9.85
 import 'services/ia_badges_service.dart';      // ★ v9.85
 import 'services/ia_archive_service.dart';      // ★ A1/R1 — archive des pronostics évincés
+import 'services/arrivee_officielle_service.dart'; // ★ L2-1 — arrivées officielles complètes (L0)
 import 'services/quasi_gros_paris_service.dart' show QuasiGrosParisService; // ★ v10.75b
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
 import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
@@ -79,6 +80,25 @@ void main() async {
   //     démarrage, le comportement redevient celui d'avant A1.
   //   • Lecture seule : rien n'est réinjecté dans les 600 pronostics actifs.
   await IaArchiveService.instance.charger();
+  // ★ L2-1 — Initialisation de L0 AVANT `runApp()`.
+  //
+  //   `ArriveeOfficielleService.arrivee()` lit UNIQUEMENT la RAM (`_shards`)
+  //   et ne déclenche AUCUN chargement. Sans cet appel, le service resterait
+  //   `_charge == false` tant qu'aucune arrivée n'aurait été capturée dans le
+  //   cycle courant (`zone_turf_service.dart:293` sort AVANT `charger()` si
+  //   `entrees` est vide). L'affichage L0 retournerait alors `null` en
+  //   silence, alors que les arrivées sont bien sur le disque.
+  //
+  //   • `charger()` est idempotent : l'appel de `zone_turf_service` devient
+  //     un no-op (mesuré : retour immédiat si `_charge`).
+  //   • Il absorbe ses erreurs : une panne de stockage ne bloque pas le
+  //     démarrage.
+  //   • Il peut REJOUER la file d'attente déjà persistée (`persisterEnAttente`)
+  //     — reprise d'entrées préexistantes, jamais création. Rejeu par
+  //     processus, gardé par `_rejeuFileEffectue`.
+  //   • AUCUN effet sur l'IA : pas d'apprentissage, pas de poids, pas de
+  //     seuil, pas d'ELO, aucun appel réseau, aucune arrivée créée.
+  await ArriveeOfficielleService.instance.charger();
   await EloService.init();
   await IaPersonalityService.init(); // ★ v9.85
   await IaUserPrefsService.init();   // ★ v9.85
