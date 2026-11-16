@@ -32,6 +32,7 @@ import '../widgets/ia/ia_tab_conseils.dart';        // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_backtesting.dart';     // ★ v9.90 découpage
 import '../widgets/ia/ia_bubble_widget.dart';        // ★ v9.93 bulles
 import '../widgets/ia/ia_calendrier_tab.dart';       // ★ v10.25 calendrier performances
+import '../services/arrivee_officielle_service.dart'; // ★ L2-4.1 — lecture L0
 import '../services/quasi_gros_paris_service.dart'
     show evaluerPariOrdreDesordre; // ★ v10.76 : évaluateur unifié
 // import 'ia_journal_screen.dart'; // ★ v9.85 — conservé pour navigation (non utilisé directement)

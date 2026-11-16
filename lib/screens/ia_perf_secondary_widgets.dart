@@ -657,9 +657,146 @@ extension IaPerfSecondaryWidgets on _IaPerformanceScreenState {
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ L2-4.1 — Provenance de l'arrivée affichée dans la carte MÉMOIRE IA
+  //
+  //  Portée STRICTE : `_buildPronosticCard` de l'onglet 0
+  //  (« 🧠 Mémoire IA ») de `IaPerformanceScreen`. Aucune autre carte,
+  //  aucun autre onglet n'utilise ces membres.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Résout l'arrivée à afficher pour [p] : L0 prioritaire (ex æquo
+  /// préservés), repli sur `IaPronostic.arriveeReelle` tronquée à 5.
+  ///
+  /// PURE : aucun état n'est écrit, `p` n'est JAMAIS modifié. Les groupes L0
+  /// (`groupesL0`) servent EXCLUSIVEMENT au rendu ; ils ne sont jamais
+  /// aplatis, jamais transmis à un calcul, jamais réinjectés dans le modèle.
+  ///
+  /// Aucun effet de bord réseau : `ArriveeOfficielleService.arrivee()` lit la
+  /// RAM (`_shards` / `_enAttente`) et ne charge rien, n'écrit rien, n'apprend
+  /// rien.
+  ({List<List<int>>? groupesL0, List<int> historique}) _resoudreArriveeMemoire(
+      IaPronostic p) {
+    // 1. L0 d'abord. `arrivee()` retourne null si la courseKey n'a pas de date
+    //    calendaire exploitable ou si l'arrivée n'est pas stockée : dans ce
+    //    cas on ne fabrique rien, on retombe sur le chemin historique.
+    final groupes = ArriveeOfficielleService.instance.arrivee(p.courseKey);
+    if (groupes != null &&
+        groupes.isNotEmpty &&
+        // Aucun groupe vide : on ne fabrique aucun trou.
+        groupes.every((g) => g.isNotEmpty)) {
+      return (groupesL0: groupes, historique: const <int>[]);
+    }
+
+    // 2. Repli STRICTEMENT historique : liste plate tronquée à 5, comme avant.
+    return (
+      groupesL0: null,
+      historique: p.arriveeReelle?.take(5).toList() ?? const <int>[],
+    );
+  }
+
+  /// Rend les groupes L0 : « = » entre chevaux d'un même rang (ex æquo),
+  /// « · » entre groupes de rangs différents. Tous les rangs disponibles sont
+  /// affichés — AUCUNE troncature.
+  ///   [[4,7],[2],[9,1]]  →  N°4 = N°7 · N°2 · N°9 = N°1
+  /// Aucun rang n'est recalculé, aucun numéro n'est dédupliqué : les données
+  /// L0 sont rendues telles quelles, y compris d'éventuels doublons.
+  Widget _buildGroupesArriveeMemoire(
+    List<List<int>> groupes,
+    List<String> topIA, {
+    required double fontSize,
+  }) {
+    final children = <Widget>[];
+    for (var gi = 0; gi < groupes.length; gi++) {
+      final groupe = groupes[gi];
+      if (groupe.isEmpty) continue;
+
+      if (gi > 0) {
+        children.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Text('·',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.35),
+                fontSize: fontSize,
+              )),
+        ));
+      }
+
+      for (var ni = 0; ni < groupe.length; ni++) {
+        if (ni > 0) {
+          // « = » entre deux numéros du MÊME rang : marque l'ex æquo.
+          children.add(Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text('=',
+                style: TextStyle(
+                  color: const Color(0xFFFFB74D),
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.bold,
+                )),
+          ));
+        }
+        final num = groupe[ni];
+        // Même règle de couleur que le rendu historique : vert si le numéro
+        // appartient à la sélection IA, gris sinon.
+        final isIATop = topIA.contains(num.toString());
+        children.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: isIATop
+                ? _green.withValues(alpha: 0.2)
+                : Colors.white.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+                color: isIATop ? _green.withValues(alpha: 0.5) : Colors.white12),
+          ),
+          child: Text('N°$num',
+              style: TextStyle(
+                color: isIATop ? _green : Colors.white54,
+                fontSize: fontSize,
+                fontWeight: isIATop ? FontWeight.bold : FontWeight.normal,
+              )),
+        ));
+      }
+    }
+    return Wrap(spacing: 4, runSpacing: 4, children: children);
+  }
+
+  /// Badge de provenance compact — même convention visuelle que L2-1/L2-3 :
+  /// vert « Officielle complète » (L0), bleu « Résultat historique » (repli).
+  ///
+  /// Taille réduite (fontSize 10) et texte court pour rester lisible dans une
+  /// carte compacte : le badge est placé dans un `Wrap` avec `softWrap`, donc
+  /// il peut passer à la ligne au lieu de déborder.
+  Widget _buildBadgeArriveeMemoire(bool l0) {
+    final coul = l0 ? _green : const Color(0xFF64B5F6);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: coul.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: coul.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        l0 ? 'Officielle complète' : 'Résultat historique',
+        style: TextStyle(
+          color: coul,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
   Widget _buildPronosticCard(IaPronostic p) {
     final topIA   = p.topNIA.take(5).toList();
-    final arrivee = p.arriveeReelle?.take(5).toList() ?? [];
+    // ★ L2-4.1 : la résolution remplace l'ancien `take(5)` inconditionnel.
+    // `arrivee` reste la liste plate historique — utilisée UNIQUEMENT pour
+    // décider de l'affichage du bloc, jamais comme source quand L0 existe.
+    final resolution = _resoudreArriveeMemoire(p);
+    final groupesL0  = resolution.groupesL0;
+    final arrivee    = resolution.historique;
     final rang    = p.rangFavoriIaDansArrivee;
     final score   = p.scorePerformance ?? 0;
 
@@ -713,26 +850,43 @@ extension IaPerfSecondaryWidgets on _IaPerformanceScreenState {
             ]),
           ),
           const SizedBox(width: 8),
-          // Arrivée réelle
+          // Arrivée réelle — ★ L2-4.1 : L0 d'abord (ex æquo préservés, tous
+          // les rangs), repli historique sinon. Aucun calcul ne reçoit les
+          // groupes L0 : ce bloc est purement visuel.
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Arrivée réelle :', style: TextStyle(color: Colors.white38, fontSize: 15)),
-              Wrap(spacing: 4, children: arrivee.asMap().entries.map((e) {
-                final isIATop = topIA.take(5).contains(e.value.toString());
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isIATop ? _green.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: isIATop ? _green.withValues(alpha: 0.5) : Colors.white12),
-                  ),
-                  child: Text('N°${e.value}', style: TextStyle(
-                    color: isIATop ? _green : Colors.white54,
-                    fontSize: 15,
-                    fontWeight: isIATop ? FontWeight.bold : FontWeight.normal,
-                  )),
-                );
-              }).toList()),
+              if (groupesL0 != null) ...[
+                _buildGroupesArriveeMemoire(groupesL0, topIA, fontSize: 15),
+                const SizedBox(height: 3),
+                // Dans un Wrap : le badge ne peut pas déborder de la colonne
+                // étroite de la carte compacte.
+                Wrap(children: [_buildBadgeArriveeMemoire(true)]),
+              ] else ...[
+                Wrap(spacing: 4, children: arrivee.asMap().entries.map((e) {
+                  final isIATop = topIA.take(5).contains(e.value.toString());
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isIATop ? _green.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: isIATop ? _green.withValues(alpha: 0.5) : Colors.white12),
+                    ),
+                    child: Text('N°${e.value}', style: TextStyle(
+                      color: isIATop ? _green : Colors.white54,
+                      fontSize: 15,
+                      fontWeight: isIATop ? FontWeight.bold : FontWeight.normal,
+                    )),
+                  );
+                }).toList()),
+                // ★ L2-4.1 : badge de provenance uniquement quand une arrivée
+                // historique existe réellement. Aucune arrivée → rien de neuf,
+                // comportement strictement identique à avant.
+                if (arrivee.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  _buildBadgeArriveeMemoire(false),
+                ],
+              ],
             ]),
           ),
         ]),
