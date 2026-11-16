@@ -587,6 +587,15 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 isClassiqueSansMultiple: widget.course.isClassiqueSansMultiple, // ★ v9.93
                 // ★ R1 : la consultation ne déclenche aucune récupération
                 autoriserRecuperation: !widget.lectureSeule,
+                // ★ L2-2 : la source officielle complète (L0, ex æquo
+                // préservés) est réservée au détail ouvert en consultation
+                // depuis le calendrier. `lectureSeule` vaut `false` par
+                // défaut, donc les neuf autres appelants (best_bet, conseils,
+                // home, mes_paris, programme, alert_widgets) gardent
+                // exactement le comportement historique : repli sur
+                // `IaMemoryService.arriveeConnue`, liste plate, badge
+                // « Officiel ».
+                sourceL0: widget.lectureSeule,
               ),
             );
           }),
