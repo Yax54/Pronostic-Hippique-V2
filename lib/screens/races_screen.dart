@@ -467,7 +467,13 @@ class _RacesScreenState extends State<RacesScreen> {
           terminee: _estTerminee(item.course),
           cotesDisponibles: !sansCote,
           onTap: () => Navigator.push(ctx, MaterialPageRoute(
-            builder: (_) => CourseDetailScreen(course: item.course, reunion: item.reunion),
+            // ★ R1 : consultation depuis le calendrier → mode lecture seule
+            // propagé jusqu'au détail, aucune récupération ni apprentissage.
+            builder: (_) => CourseDetailScreen(
+              course: item.course,
+              reunion: item.reunion,
+              lectureSeule: true,
+            ),
           )),
           onBet: _estTerminee(item.course) ? null : () => ouvrirPari(item.course, item.reunion),
         );
@@ -808,6 +814,8 @@ class _CourseCard extends StatelessWidget {
                     .take(5)
                     .map((p) => p.numero)
                     .toList(),
+                // ★ R1 : calendrier = consultation → pas de récupération réseau
+                autoriserRecuperation: false,
               ),
 
               // ── Bouton Parier ──

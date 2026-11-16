@@ -24,11 +24,17 @@ import '../services/outsider_service.dart';      // ★ v9.92
 class CourseDetailScreen extends StatefulWidget {
   final ZtCourse course;
   final ZtReunion reunion;
+  /// ★ R1 : true = écran ouvert en consultation (ex. calendrier).
+  /// Aucune récupération d'arrivée déclenchée depuis cet écran :
+  /// ni appel réseau, ni écriture, ni apprentissage.
+  /// Défaut false → comportement inchangé pour tous les autres appelants.
+  final bool lectureSeule;
 
   const CourseDetailScreen({
     super.key,
     required this.course,
     required this.reunion,
+    this.lectureSeule = false, // ★ R1
   });
 
   @override
@@ -579,6 +585,8 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
                 selectionIA: selIA,
                 compact: false,
                 isClassiqueSansMultiple: widget.course.isClassiqueSansMultiple, // ★ v9.93
+                // ★ R1 : la consultation ne déclenche aucune récupération
+                autoriserRecuperation: !widget.lectureSeule,
               ),
             );
           }),

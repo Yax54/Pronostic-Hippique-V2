@@ -48,6 +48,12 @@ class ArriveReelleWidget extends StatefulWidget {
   /// ★ v9.93 : true si grande course classique (Groupe 1/2, Poule, etc.)
   /// → afficher message explicatif quand PMU retourne seulement 3 arrivants
   final bool isClassiqueSansMultiple;
+  /// ★ R1 : autorise (true, défaut) ou interdit (false) le déclenchement
+  /// d'une récupération réseau depuis ce widget.
+  /// À false, le widget reste purement passif : il affiche l'arrivée si elle
+  /// est déjà connue, mais ne provoque ni appel API PMU, ni écriture,
+  /// ni apprentissage. Utilisé par les écrans en consultation (calendrier).
+  final bool autoriserRecuperation;
 
   const ArriveReelleWidget({
     super.key,
@@ -57,6 +63,7 @@ class ArriveReelleWidget extends StatefulWidget {
     this.selectionIA = const [],
     this.compact = true,
     this.isClassiqueSansMultiple = false, // ★ v9.93
+    this.autoriserRecuperation = true, // ★ R1
   });
 
   @override
@@ -83,6 +90,10 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
   }
 
   void _fetchSiNecessaire() {
+    // ★ R1 : mode consultation → aucune récupération réseau, aucune écriture,
+    // aucun apprentissage. L'affichage des arrivées déjà connues est conservé
+    // par build() qui lit arriveeConnue() sans effet de bord.
+    if (!widget.autoriserRecuperation) return;
     final svc = IaMemoryService.instance;
     // Déjà en cache → rien à faire
     if (svc.arriveeConnue(widget.courseKey) != null) return;
