@@ -22,6 +22,7 @@ import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';
 import '../../services/ia_archive_service.dart'; // ★ E2 — chargement de l'archive
 import '../../services/quasi_gros_paris_service.dart'; // ★ v10.72
+import '../../services/arrivee_officielle_service.dart'; // ★ L2-3 — lecture L0
 import '../../utils/source_pronostic_utils.dart';        // ★ v10.78
 import '../../utils/premium_utils.dart' // ★ v10.55 — détection premium gagnant strict
     show
@@ -2577,6 +2578,38 @@ class _SparklinePainter extends CustomPainter {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  ★ L2-3 — Provenance de l'arrivée affichée dans le DÉTAIL DE JOURNÉE
+//
+//  Portée STRICTE : le bottom sheet ouvert au clic sur une date
+//  (`_ouvrirDetailJour` → `_DetailJourSheet` → `_buildPronosticCard`).
+//  Aucun autre widget du calendrier n'utilise ces types : les cartes
+//  Gros Paris Gagnants, les cartes Quasi Gagnants, les fiches de
+//  quasi-gagnants, la grille mensuelle, les bilans et la vue annuelle
+//  restent strictement inchangés.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// D'où provient l'arrivée affichée.
+enum _SourceArriveeDetail {
+  /// Groupes officiels complets lus dans L0 — ex æquo préservés.
+  l0,
+
+  /// Repli : `IaPronostic.arriveeReelle`, liste plate (comportement historique).
+  historique,
+}
+
+/// Résultat PUR de la résolution d'affichage.
+///
+/// [groupesL0] est non-null UNIQUEMENT pour [source] == l0. Ces groupes ne
+/// sont jamais aplatis, jamais transmis à un calcul, jamais réinjectés dans
+/// `IaPronostic.arriveeReelle` : ils servent exclusivement au rendu.
+class _ResolutionArriveeDetail {
+  final _SourceArriveeDetail? source;
+  final List<List<int>>?       groupesL0;
+
+  const _ResolutionArriveeDetail({required this.source, this.groupesL0});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  BOTTOM SHEET — Détail d'une journée
 // ═══════════════════════════════════════════════════════════════════════════
 class _DetailJourSheet extends StatelessWidget {
@@ -2795,6 +2828,166 @@ class _DetailJourSheet extends StatelessWidget {
     if (taux >= 0.20)
       return '$pct% de pronostics corrects — en dessous de la norme (20–24%). L\'IA continue d\'apprendre.';
     return '$pct% de pronostics corrects — journée difficile (<20%).';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ★ L2-3 — RÉSOLUTION D'AFFICHAGE DE L'ARRIVÉE DANS LE DÉTAIL DE JOURNÉE
+  //
+  //  Périmètre STRICT : affichage. `p.arriveeReelle` n'est JAMAIS modifié,
+  //  jamais réaffecté, jamais aplati vers L0. Les groupes L0 servent
+  //  UNIQUEMENT au rendu ; aucun calcul (rang, statut, nbTrouves/nbRequis,
+  //  résultat de pari) ne les consomme.
+  //
+  //  Lecture pure : `ArriveeOfficielleService.arrivee()` lit la RAM
+  //  (`_shards` / `_enAttente`) et ne charge rien, n'écrit rien, n'apprend
+  //  rien. Aucun appel réseau n'est déclenché par l'ouverture du détail.
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Résout l'arrivée à afficher pour [p] : L0 prioritaire (ex æquo
+  /// préservés), repli sur `IaPronostic.arriveeReelle`.
+  ///
+  /// PURE : aucun état n'est écrit. `_DetailJourSheet` est un
+  /// `StatelessWidget`, ses champs sont `final` — la résolution retourne
+  /// donc un objet immuable au lieu de muter le widget.
+  ///
+  /// Aucune conversion des groupes en liste plate n'est produite ici : le
+  /// rendu groupé les consomme tels quels, et RIEN d'autre ne les consomme.
+  static _ResolutionArriveeDetail _resoudreArriveeDetail(IaPronostic p) {
+    // 1. L0 d'abord. `arrive()` retourne null si la courseKey n'a pas de date
+    //    calendaire exploitable ou si l'arrivée n'est pas stockée.
+    final groupes = ArriveeOfficielleService.instance.arrivee(p.courseKey);
+    if (groupes != null &&
+        groupes.isNotEmpty &&
+        // Aucun groupe vide : on ne fabrique aucun trou.
+        groupes.every((g) => g.isNotEmpty)) {
+      return _ResolutionArriveeDetail(
+        source: _SourceArriveeDetail.l0,
+        groupesL0: groupes,
+      );
+    }
+    // Groupes absents, vides ou partiels → aucune arrivée exploitable :
+    // on ne fabrique rien, on retombe sur le chemin historique.
+
+    // 2. Repli : arrivée historique du pronostic (liste plate, inchangée).
+    final historique = p.arriveeReelle;
+    if (historique != null && historique.isNotEmpty) {
+      return const _ResolutionArriveeDetail(
+        source: _SourceArriveeDetail.historique,
+      );
+    }
+
+    // 3. Rien de connu : aucun badge, aucun groupe — rendu inchangé.
+    return const _ResolutionArriveeDetail(source: null);
+  }
+
+  /// Le bloc « arrivée » du détail : soit les groupes L0 (`=` / `·`), soit
+  /// le texte plat historique, suivi du badge de provenance.
+  ///
+  /// [p] et [platHistorique] ne sont JAMAIS modifiés : [platHistorique] est
+  /// la valeur historique calculée une seule fois par l'appelant.
+  Widget _buildArriveeDetail(IaPronostic p, String platHistorique) {
+    final resolution = _resoudreArriveeDetail(p);
+    final groupes = resolution.groupesL0;
+    final source = resolution.source;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Arrivée réelle',
+            style: TextStyle(color: Colors.white38, fontSize: 14)),
+        const SizedBox(height: 3),
+        if (groupes != null)
+          _buildGroupesArrivee(groupes, fontSize: 14)
+        else
+          // ★ v10.30 : Arrivée réelle en doré — rendu IDENTIQUE à l'existant
+          Text(platHistorique,
+              style: const TextStyle(
+                color: Color(0xFFFFD700), // doré = résultat réel PMU
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              )),
+        if (source != null) ...[
+          const SizedBox(height: 4),
+          _buildBadgeArrivee(source == _SourceArriveeDetail.l0),
+        ],
+      ],
+    );
+  }
+
+  /// Badge de provenance — même convention visuelle que L2-1 :
+  /// vert « Officielle complète » (L0), bleu « Résultat historique » (repli).
+  Widget _buildBadgeArrivee(bool l0) {
+    final coul = l0 ? const Color(0xFF4CAF7D) : const Color(0xFF64B5F6);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: coul.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: coul.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        l0 ? 'Officielle complète' : 'Résultat historique',
+        style: TextStyle(
+          color: coul,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  /// Rend les groupes L0 : « = » entre chevaux d'un même rang (ex æquo),
+  /// « · » entre groupes de rangs différents.
+  ///   [[4,7],[2],[9,1]]  →  N°4 = N°7 · N°2 · N°9 = N°1
+  /// Le rang réel n'est pas affiché ici : aucun rang n'est recalculé.
+  Widget _buildGroupesArrivee(List<List<int>> groupes, {required double fontSize}) {
+    final children = <Widget>[];
+    for (var gi = 0; gi < groupes.length; gi++) {
+      final groupe = groupes[gi];
+      if (groupe.isEmpty) continue;
+
+      if (gi > 0) {
+        children.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Text('·',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.35),
+                fontSize: fontSize,
+              )),
+        ));
+      }
+
+      for (var ni = 0; ni < groupe.length; ni++) {
+        if (ni > 0) {
+          // « = » entre deux numéros du MÊME rang : marque l'ex æquo.
+          children.add(Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text('=',
+                style: TextStyle(
+                  color: const Color(0xFFFFB74D),
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.bold,
+                )),
+          ));
+        }
+        children.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFD700).withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+                color: const Color(0xFFFFD700).withValues(alpha: 0.55)),
+          ),
+          child: Text('N°${groupe[ni]}',
+              style: TextStyle(
+                color: const Color(0xFFFFD700),
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
+              )),
+        ));
+      }
+    }
+    return Wrap(spacing: 4, runSpacing: 4, children: children);
   }
 
   // ★ v10.27 : Card plus grande, titre blanc (jamais vert sur fond vert), contraste renforcé
@@ -3032,16 +3225,10 @@ class _DetailJourSheet extends StatelessWidget {
             Container(width: 1, height: 36, color: Colors.white12),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Arrivée réelle',
-                style: TextStyle(color: Colors.white38, fontSize: 14)),
-              const SizedBox(height: 3),
-              // ★ v10.30 : Arrivée réelle en doré — distinct de la prévision IA (blanc)
-              Text(arriv,
-                style: const TextStyle(
-                  color: Color(0xFFFFD700), // doré = résultat réel PMU
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                )),
+              // ★ L2-3 : arrivée résolue L0 d'abord (ex æquo préservés), sinon
+              // repli sur la liste plate historique. Aucun calcul ne reçoit les
+              // groupes L0 : ce bloc est purement visuel.
+              _buildArriveeDetail(p, arriv),
             ])),
             if (rang != null) ...[
               const SizedBox(width: 8),
