@@ -125,6 +125,10 @@ import 'elo_service.dart'; // ★ v8.0
 import 'cote_tracker_service.dart'; // ★ B5b
 import 'ia_memory_service.dart'; // ★ v10.26c
 import 'ia_archive_service.dart'; // ★ E3
+// ★ L0 : stockage passif des arrivées officielles complètes (lecture seule
+//   vis-à-vis de l'apprentissage). Utilisé UNIQUEMENT pour l'export et la
+//   restauration des sauvegardes, jamais pour déclencher un calcul.
+import 'arrivee_officielle_service.dart';
 import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
 import 'quasi_gros_paris_service.dart'; // ★ v10.72
 import 'ia_badges_service.dart'; // ★ B5c
@@ -599,6 +603,29 @@ class BackupService {
     } catch (e) {
       // Clé ABSENTE en cas d'échec = règle « local préservé » à la restauration.
       if (kDebugMode) debugPrint('[Backup] ARC export partiel : $e');
+    }
+
+    // ── 🏁 ARRIVÉES OFFICIELLES COMPLÈTES ★ L0 ─────────────────────────────
+    // Stockage passif des arrivées PMU complètes (`ordreArrivee` de la course,
+    // ex æquo conservés). Découverte DYNAMIQUE des clés mensuelles par
+    // `exporterPourBackup()` : une liste figée de mois ne pourrait pas couvrir
+    // un mois écrit par une version future de l'application.
+    //
+    // Lecture seule vis-à-vis de l'apprentissage : ce bloc ne lit, ne modifie
+    // et ne réécrit AUCUNE donnée de `IaMemoryService`, d'`EloService` ou des
+    // statistiques. Il ne fait que recopier des clés de stockage.
+    try {
+      final arriveesData =
+          await ArriveeOfficielleService.instance.exporterPourBackup();
+      data['arriveesOfficielles'] = arriveesData;
+      if (kDebugMode) {
+        debugPrint('[Backup] ARR -> ${arriveesData['nbClefs']} shard(s) '
+            'mensuel(s), ${(arriveesData['enAttente'] as List).length} '
+            'en attente');
+      }
+    } catch (e) {
+      // Clé ABSENTE en cas d'échec = règle « local préservé » à la restauration.
+      if (kDebugMode) debugPrint('[Backup] ARR export partiel : $e');
     }
 
     // ── 🏇 ELO SERVICE ★ v8.0 ──────────────────────────────────────────────
@@ -1154,6 +1181,45 @@ class BackupService {
       } else if (kDebugMode) {
         debugPrint('[Backup] archiveIA absent → archive locale préservée '
             '(compat v<9.1)');
+      }
+
+      // ── 🏁 ARRIVÉES OFFICIELLES COMPLÈTES ★ L0 ───────────────────────────
+      // EXIGENCES :
+      //   • `arriveesOfficielles` PRÉSENTE → FUSION ADDITIVE : on n'ajoute que
+      //     les courses absentes localement. Une arrivée officielle est un
+      //     FAIT : en cas de divergence, on ne réécrit pas l'histoire.
+      //   • `arriveesOfficielles` ABSENTE → on ne touche À RIEN : le stockage
+      //     local reste intact (toutes les sauvegardes antérieures à L0
+      //     restent compatibles).
+      //   • clé mal typée → même règle : local préservé.
+      //
+      // Aucune réinjection dans la mémoire active : ce bloc n'écrit que dans
+      // les clés `arrivee_officielle_complete_v1_*`.
+      if (data.containsKey('arriveesOfficielles')) {
+        try {
+          final brut = data['arriveesOfficielles'];
+          if (brut is Map<String, dynamic>) {
+            final res = await ArriveeOfficielleService.instance
+                .restaurerDepuisBackup(brut);
+            if (kDebugMode) {
+              debugPrint('[Backup] ARR restauration -> '
+                  '${res.shardsLus} shard(s) lu(s), '
+                  '${res.shardsIllisibles} illisible(s), '
+                  '${res.entreesAjoutees} arrivée(s) ajoutée(s), '
+                  '${res.entreesDejaPresentes} doublon(s) évité(s)'
+                  '${res.aDesConflits ? ', ⚠️ ${res.conflits.length} CONFLIT(S) '
+                      'NON RÉSOLU(S) — local conservé : ${res.conflits.join(", ")}' : ''}'
+                  '${res.moisNonEcrits > 0 ? ', ${res.moisNonEcrits} mois non écrit(s)' : ''}');
+            }
+          } else if (kDebugMode) {
+            debugPrint('[Backup] arriveesOfficielles mal typée → local préservé');
+          }
+        } catch (e) {
+          if (kDebugMode) debugPrint('[Backup] ARR restauration partielle : $e');
+        }
+      } else if (kDebugMode) {
+        debugPrint('[Backup] arriveesOfficielles absent → stockage local '
+            'préservé (compat sauvegardes < L0)');
       }
 
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes

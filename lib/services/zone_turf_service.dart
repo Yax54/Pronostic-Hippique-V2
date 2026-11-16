@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/zt_models.dart';
+import 'arrivee_officielle_service.dart';
 import 'ia_pronostic_engine.dart';
 
 class ZoneTurfService {
@@ -33,6 +34,21 @@ class ZoneTurfService {
   static final Map<String, List<ZtReunion>> _cache = {};
   static final Map<String, DateTime> _cacheTime = {};
 
+  /// ★ L1 — Compteur de reset, incrémenté UNIQUEMENT par
+  /// [viderCachePourResetComplet]. Il ne sert qu'à une chose : permettre à un
+  /// `chargerProgramme()` EN VOL de constater qu'un reset a eu lieu pendant son
+  /// appel réseau, et donc de ne PAS écrire la capture L0 d'un état aboli.
+  ///
+  /// Il ne protège pas le cache lui-même (c'est le rôle de la purge, inchangée)
+  /// et ne conditionne AUCUN comportement existant : il n'est lu que par la
+  /// capture L0.
+  static int _generationReset = 0;
+
+  /// Nombre de resets observés depuis le démarrage du processus. Exposé pour
+  /// les tests ; ne doit pas être utilisé comme décision métier.
+  @visibleForTesting
+  static int get generationReset => _generationReset;
+
   // Rétro-compat supprimé (fix #5 — champs unused)
 
   // ──────────────────────────────────────────────────────────────────
@@ -44,6 +60,12 @@ class ZoneTurfService {
     DateTime? date,
   }) async {
     final dateStr = date != null ? _dateToStr(date) : _todayStr();
+
+    // ★ L1 : témoin de reset. Photographié ICI, AVANT l'appel réseau, pour
+    // pouvoir détecter un reset survenu PENDANT le chargement (le réseau peut
+    // durer 20 s). Si la génération a bougé, la capture L0 est abandonnée :
+    // un chargement rendu obsolète par un reset ne doit rien écrire.
+    final generationResetAuDemarrage = _generationReset;
 
     // Vérifier le cache (valide 15 min)
     final cached = _cache[dateStr];
@@ -82,6 +104,11 @@ class ZoneTurfService {
 
       // ── Étape 2 : convertir en ZtReunion et charger les partants ──
       final List<ZtReunion> reunions = [];
+
+      // ★ L1 — Captures d'arrivées officielles complètes, accumulées pendant
+      // les boucles puis écrites en UNE SEULE fois (voir l'appel groupé après
+      // les boucles). Aucune écriture n'a lieu ici.
+      final List<EntreeArrivee> arriveesACapturer = <EntreeArrivee>[];
 
       for (final rJson in reunionsJson) {
         final r = rJson as Map<String, dynamic>;
@@ -150,6 +177,27 @@ class ZoneTurfService {
           final heureStr =
               '${heureDt.hour.toString().padLeft(2, '0')}:${heureDt.minute.toString().padLeft(2, '0')}';
 
+          // ★ L1 — Capture de l'arrivée officielle COMPLÈTE, lue DIRECTEMENT
+          // sur le JSON brut de `/programme/{date}`. `ordreArrivee` est un
+          // `List<List<int>>` natif : le passer tel quel préserve les ex æquo.
+          //
+          // `depuisJsonCourse` retourne `null` — et rien n'est alors capturé —
+          // si le statut n'est pas `ARRIVEE_DEFINITIVE_COMPLETE`, si
+          // `ordreArrivee` est absent/vide/mal typé, ou si une date est
+          // illisible. Une course sans arrivée définitive est donc IGNORÉE
+          // SANS ERREUR : c'est le cas normal d'une course à venir.
+          //
+          // Aucune reconstruction depuis `rapports-definitifs` : la source est
+          // ici, et nulle part ailleurs.
+          final courseKey = 'R${numOfficiel}C$numOrdre' '_$dateStr';
+          final entree = ArriveeOfficielleService.depuisJsonCourse(
+            c,
+            courseKey: courseKey,
+          );
+          if (entree != null) {
+            arriveesACapturer.add(entree);
+          }
+
           // Charger les partants via API PMU
           final List<ZtPartant> partants = await _chargerPartants(
               dateStr, numOfficiel, numOrdre, heureDt);
@@ -184,6 +232,16 @@ class ZoneTurfService {
         }
       }
 
+      // ── L1 : UNE SEULE écriture groupée par cycle de chargement ──────────
+      // Placée AVANT le retour anticipé « aucune réunion » : la capture ne
+      // dépend pas du filtrage des réunions, seulement de ce que l'API a
+      // réellement renvoyé.
+      await _capturerArriveesOfficielles(
+        arriveesACapturer,
+        generationResetAuDemarrage: generationResetAuDemarrage,
+        dateStr: dateStr,
+      );
+
       if (reunions.isEmpty) {
         if (kDebugMode) debugPrint('PMU API: 0 réunion française après filtrage');
         return []; // ★ v91 : aucune course française aujourd'hui
@@ -200,6 +258,79 @@ class ZoneTurfService {
     } catch (e) {
       if (kDebugMode) debugPrint('PMU API erreur: $e');
       return []; // ★ v91 : erreur réseau — pas de données fictives
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // ★ L1 — CAPTURE DES ARRIVÉES OFFICIELLES COMPLÈTES
+  //
+  // But : alimenter le stockage L0 déjà validé (`ArriveeOfficielleService`)
+  // avec les arrivées définitives complètes que l'API PMU renvoie DÉJÀ dans
+  // le JSON de `/programme/{date}`. Aucune requête supplémentaire, aucune
+  // reconstruction depuis `rapports-definitifs`.
+  //
+  // GARANTIES :
+  //   • UNE SEULE écriture groupée par cycle de chargement (cet appel unique,
+  //     hors des boucles). Un cycle = N arrivées → 1 écriture par mois.
+  //   • Entrées vides → aucun appel de stockage du tout.
+  //   • Les erreurs sont ABSORBÉES : ce `try/catch` ne relance rien et ne
+  //     touche ni `reunions`, ni `_cache`, ni le code de retour. Une panne du
+  //     stockage L0 ne peut donc pas bloquer le chargement du programme.
+  //   • Chargement obsolète : si un reset est survenu entre l'entrée dans
+  //     `chargerProgramme()` et cet appel, rien n'est écrit. Respecte les
+  //     protections contre les chargements obsolètes sans en modifier aucune.
+  //   • AUCUN effet sur l'IA : pas d'apprentissage, pas de poids, pas de
+  //     seuil, pas d'ELO, pas de statistique. Ce service ne fait que stocker.
+  // ──────────────────────────────────────────────────────────────────
+  static Future<void> _capturerArriveesOfficielles(
+    List<EntreeArrivee> entrees, {
+    required int generationResetAuDemarrage,
+    required String dateStr,
+  }) async {
+    if (entrees.isEmpty) return; // rien à écrire : aucun accès au stockage
+
+    try {
+      // Chargement obsolète : un reset a eu lieu pendant l'appel réseau.
+      // Ce qui a été lu décrit un état aboli — on n'écrit rien.
+      if (generationResetAuDemarrage != _generationReset) {
+        if (kDebugMode) {
+          debugPrint('[ZoneTurf] ⏭️ capture L0 abandonnée : reset survenu '
+              'pendant le chargement ($generationResetAuDemarrage → '
+              '$_generationReset)');
+        }
+        return;
+      }
+
+      // ★ L1 — CHARGEMENT AVANT ÉCRITURE (obligatoire).
+      // `enregistrerGroupe` fusionne avec l'état EN MÉMOIRE (`_shards[mois]`).
+      // Écrire sans avoir chargé écraserait les shards déjà présents sur le
+      // disque par un ensemble vide. `charger()` est idempotent et absorbé :
+      // il ne lève pas et ne modifie ni `reunions`, ni `_cache`.
+      //
+      // NOTE : cet appel est aussi le POINT D'INITIALISATION UNIQUE de L0 côté
+      // production. Il déclenche, au premier chargement du processus, le rejeu
+      // idempotent de la file d'attente durable (voir `_chargerInterne`).
+      await ArriveeOfficielleService.instance.charger();
+
+      final r = await ArriveeOfficielleService.instance.enregistrerGroupe(
+        entrees,
+      );
+
+      if (kDebugMode) {
+        debugPrint('[ZoneTurf] 📥 capture L0 ($dateStr) : '
+            '${entrees.length} arrivée(s) définitive(s) complète(s) — '
+            'écrites=${r.nbEcrites}, enAttente=${r.nbEnAttente}, '
+            'mois=${r.moisEcrits.join(",")}'
+            '${r.moisEchoues.isEmpty ? "" : ", ÉCHECS=${r.moisEchoues.join(",")}"}'
+            '${r.succes ? "" : " (échec partiel ou total, absorbé)"}');
+      }
+    } catch (e) {
+      // Isolation stricte : une erreur L0 ne remonte JAMAIS au chargement du
+      // programme. Le programme reste chargé, la capture est simplement perdue.
+      if (kDebugMode) {
+        debugPrint('[ZoneTurf] ⚠️ capture L0 échouée (absorbée, programme '
+            'non affecté) : $e');
+      }
     }
   }
 
@@ -1013,6 +1144,9 @@ class ZoneTurfService {
   static void viderCachePourResetComplet() {
     _cache.clear();
     _cacheTime.clear();
+    // ★ L1 : invalide toute capture L0 EN VOL (chargement réseau en cours au
+    // moment du reset). Le compteur n'est jamais décrémenté.
+    _generationReset++;
     if (kDebugMode) {
       debugPrint('[ZoneTurf] 🧹 Cache statique vidé (reset complet)');
     }
