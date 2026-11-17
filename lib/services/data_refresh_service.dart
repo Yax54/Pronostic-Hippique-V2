@@ -1189,7 +1189,10 @@ class DataRefreshService extends ChangeNotifier {
         //   d'idempotence et ne reçoit pas `courseKey` : il ne peut pas se
         //   protéger lui-même. Le conditionnement est donc fait ICI.
         if (resultatEnregistre) {
-          _mettreAJourEloApresArrivee(p.courseKey, arrivee);
+          // ★ A7 (3.2) : l'appel est ATTENDU. Sans conséquence sur le métier
+          // (voir la note de `_mettreAJourEloApresArrivee`), et c'est ce qui
+          // rend l'issue de la persistance ELO observable.
+          await _mettreAJourEloApresArrivee(p.courseKey, arrivee);
         } else if (kDebugMode) {
           debugPrint('[DataRefresh] ⏭️ ELO non mis à jour pour '
               'R${numR}C$numC : arrivée déjà traitée (ou consignée en archive '
@@ -1214,8 +1217,23 @@ class DataRefreshService extends ChangeNotifier {
     }
   }
 
-  /// ★ v9.0 : Met à jour les scores ELO après une arrivée officielle
-  void _mettreAJourEloApresArrivee(String courseKey, List<int> arrivee) {
+  // ── Mise à jour ELO après une arrivée officielle ────────────────────
+  //
+  // ★ A7 (3.2) : le `.ignore()` est SUPPRIMÉ. Il rendait invisible l'issue
+  //   de la SEULE écriture ELO de production. L'appel est désormais attendu
+  //   et son issue est journalisée.
+  //
+  //   POURQUOI ATTENDRE ICI NE CHANGE RIEN AU MÉTIER (mesuré) :
+  //   cette méthode n'est appelée QUE depuis `_recupererResultatsBatch`
+  //   (l.1192), elle-même lancée exclusivement par `_recupererResultatsAuto`
+  //   (l.1106) via `_enMicrotacheSiNonObsolete`, donc dans une microtâche que
+  //   PERSONNE n'attend (`_doRefresh` l.702 ne l'attend pas). Aucun écran,
+  //   aucune notification, aucun `refresh()` ne peut être ralenti.
+  //
+  //   Aucun rejeu n'est déclenché, quelle que soit l'issue. Les décisions
+  //   métier (enregistrement, notification, comptage) sont INCHANGÉES.
+  Future<void> _mettreAJourEloApresArrivee(
+      String courseKey, List<int> arrivee) async {
     final match = RegExp(r'^R(\d+)C(\d+)_').firstMatch(courseKey);
     if (match == null) return;
     final numR = int.tryParse(match.group(1) ?? '') ?? 0;
@@ -1233,17 +1251,33 @@ class DataRefreshService extends ChangeNotifier {
           .firstOrNull;
       if (course != null) {
         partants   = course.partants;
-        typeCourse = course.type; // ★ v9.92 : récupérer le type pour ELO par discipline
+        typeCourse = course.type; // ★ v9.92 : type pour ELO par discipline
         break;
       }
     }
-    if (partants == null || partants.isEmpty) return;
+    if (partants == null || partants.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏭️ ELO non recalculé pour '
+            'R${numR}C$numC : partants indisponibles');
+      }
+      return;
+    }
 
-    EloService.instance.mettreAJourApresArrivee(
+    final EtatPersistanceElo etat =
+        await EloService.instance.mettreAJourApresArrivee(
       arrivee:    arrivee,
       partants:   partants,
       discipline: typeCourse, // ★ v9.92
-    ).ignore();
+    );
+
+    // ★ A7 (3.2) : l'issue est SIGNALÉE, jamais ignorée. Aucun rejeu n'est
+    // tenté sur `refusee`/`echouee` : la persistance n'est pas confirmée,
+    // elle n'est pas prouvée absente non plus, et rejouer écraserait une
+    // valeur peut-être déjà écrite.
+    if (etat != EtatPersistanceElo.persistee) {
+      debugPrint('[DataRefresh] ⚠️ ELO R${numR}C$numC : ratings NON '
+          'CONFIRMÉS (${etat.name}) — aucun rejeu tenté');
+    }
   }
 
   /// Récupère l'arrivée officielle d'une course depuis les rapports PMU.

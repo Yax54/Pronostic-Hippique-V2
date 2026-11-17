@@ -1455,6 +1455,13 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
               '🔔 ${result.nbAlertes} alertes restaurées.\n\n'
               '📅 Backup du : ${result.dateBackupLisible}\n\n'
               '✅ Vos données sont disponibles immédiatement.'
+              // ★ A7 (3.2) — C5 : le volet ELO a son PROPRE verdict.
+              // Deux informations distinctes, jamais fusionnées :
+              //   1. la restauration générale a réussi (✅ ci-dessus) ;
+              //   2. l'écriture ELO n'est peut-être pas confirmée (⚠️ ici).
+              // Un échec ELO ne rend PAS la restauration générale en échec,
+              // et ⚠️ ne signifie JAMAIS « disque resté inchangé ».
+              '${result.avertissementElo != null ? '\n\n⚠️ ELO : ${result.avertissementElo}' : ''}'
             : '❌ ${result.erreur}',
           style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
         ),

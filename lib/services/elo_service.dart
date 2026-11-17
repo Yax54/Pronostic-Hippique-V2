@@ -16,6 +16,46 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
 
+/// ★ A7 (3.2) — RÉSULTAT D'UNE TENTATIVE DE PERSISTANCE ELO.
+///
+/// Ce type existe parce qu'un `Future<void>` ne permet pas de distinguer une
+/// écriture CONFIRMÉE d'une écriture REFUSÉE, d'une écriture en ERREUR, ou
+/// d'un appel qui n'a rien eu à écrire. Aujourd'hui, l'appelant reçoit la fin
+/// de la future et ne peut rien en déduire — c'est le défaut que 3.2 corrige.
+///
+/// ⚠️ CE QUE CES ÉTATS NE DISENT **PAS** — À LIRE AVANT TOUT USAGE
+/// ────────────────────────────────────────────────────────────────
+/// `refusee` et `echouee` signifient **« persistance NON CONFIRMÉE »**,
+/// JAMAIS « ratings persistés inchangés ». Le stockage peut avoir écrit puis
+/// répondu `false`, ou avoir levé après une écriture partielle. Aucun code ne
+/// doit déduire de ces états que le disque est resté intact.
+///
+/// Corollaire : ces états ne constituent PAS une autorisation de rejouer
+/// l'opération. 3.2 n'implémente aucun rejeu. La RAM a été modifiée dans tous
+/// les cas où l'état n'est pas [nonTentee] / [abandonneeParReset] : la
+/// sauvegarde SUIVANTE resérialisera `_ratings` en entier et persistera donc
+/// la course dont l'écriture avait échoué. C'est un rattrapage de fait, non
+/// une garantie — le journal d'intention de 3.3 est ce qui le rendra explicite.
+enum EtatPersistanceElo {
+  /// `setString` a répondu `true` sur `elo_ratings_v2`.
+  /// C'est la SEULE valeur qui constitue une confirmation d'écriture.
+  persistee,
+
+  /// `setString` a répondu `false`. Persistance NON CONFIRMÉE.
+  refusee,
+
+  /// Une exception est survenue pendant l'écriture. Persistance NON CONFIRMÉE.
+  echouee,
+
+  /// Rien n'a été tenté : arrivée vide, ou moins de deux partants.
+  /// Ce n'est PAS un échec — aucun écriture n'était justifiée.
+  nonTentee,
+
+  /// Refusée par la barrière de reset (contrôle 1 ou 2 de `_sauvegarder`).
+  /// Ce n'est PAS un échec — l'écriture a été invalidée volontairement.
+  abandonneeParReset,
+}
+
 class EloService {
   static final EloService _instance = EloService._();
   static EloService get instance => _instance;
@@ -85,6 +125,46 @@ class EloService {
   int _nbRefusParGeneration = 0;
   int get nbRefusParGeneration => _nbRefusParGeneration;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.2) — COMPTEURS D'OBSERVABILITÉ DE LA PERSISTANCE.
+  //
+  //  ⚠️ CES COMPTEURS S'AJOUTENT, ILS NE REMPLACENT RIEN. Les quatre
+  //  compteurs historiques ci-dessus gardent leur valeur, leur point
+  //  d'incrément et leur sémantique : `v29`/`v29b` les mesurent par DELTA
+  //  avant/après, donc leur ajouter des voisins n'a aucun effet sur eux.
+  //
+  //  Un compteur ne s'incrémente QUE sur l'issue qu'il nomme :
+  //    • nbPersistees       ← `setString(true)` ;
+  //    • nbRefuseesStockage ← `setString(false)` ;
+  //    • nbEchouees         ← exception pendant l'écriture des ratings ;
+  //    • nbEchecsTs         ← `setInt(false)` ou exception sur `_ts` SEUL.
+  //  Un échec de `_ts` N'INCRÉMENTE PAS `nbEchecs` : le rating est persisté.
+  // ──────────────────────────────────────────────────────────────────────────
+  int _nbPersistees = 0;
+  int _nbRefuseesStockage = 0;
+  int _nbEchouees = 0;
+  int _nbEchecsTs = 0;
+
+  /// Écritures de `elo_ratings_v2` CONFIRMÉES par `setString → true`.
+  int get nbPersistees => _nbPersistees;
+
+  /// Écritures de `elo_ratings_v2` REFUSÉES par `setString → false`.
+  /// Persistance NON CONFIRMÉE (voir [EtatPersistanceElo]).
+  int get nbRefuseesStockage => _nbRefuseesStockage;
+
+  /// Écritures de `elo_ratings_v2` ayant LEVÉ une exception.
+  /// Persistance NON CONFIRMÉE (voir [EtatPersistanceElo]).
+  int get nbEchouees => _nbEchouees;
+
+  /// Défauts SECONDAIRES sur `elo_ratings_v2_ts`, indépendants du rating.
+  /// `elo_ratings_v2_ts` n'est PAS une preuve d'application ELO.
+  int get nbEchecsTs => _nbEchecsTs;
+
+  /// Dernière exception observée pendant une écriture, ou `null`.
+  /// Conservée pour le diagnostic : 3.2 n'ouvre AUCUN rejeu à partir d'elle.
+  Object? _derniereErreurEcriture;
+  Object? get derniereErreurEcriture => _derniereErreurEcriture;
+
   static Future<void> init() async => _instance._charger();
 
   Future<void> _charger() async {
@@ -136,7 +216,14 @@ class EloService {
         await prefs.setBool('elo_orphelins_purges_v1', true);
         if (keysOrphelins.isNotEmpty) {
           debugPrint('[EloService] 🧹 Purge orphelins : ${keysOrphelins.length} entrées "NOM|" supprimées');
-          await _sauvegarder(); // persister immédiatement
+          // ★ A7 (3.2) : le résultat est CONNU et journalisé, jamais ignoré.
+          // Aucune exception ne peut s'en échapper (option A validée) : le
+          // chemin de chargement reste donc inchangé sur le plan du contrôle.
+          final etatPurge = await _sauvegarder(); // persister immédiatement
+          if (etatPurge != EtatPersistanceElo.persistee) {
+            debugPrint('[EloService] ⚠️ Purge orphelins non confirmée sur le '
+                'disque : ${etatPurge.name}');
+          }
         }
       }
     } catch (e) {
@@ -147,36 +234,39 @@ class EloService {
 
   /// ★ B5c-RDR-05 — Enveloppe l'écriture disque dans la barrière de reset.
   ///
-  /// Comportement EXTERNE inchangé : retourne `Future<void>`, n'échoue jamais
-  /// bruyamment (les erreurs sont journalisées, comme avant), et écrit
-  /// exactement les deux mêmes clés dans le même ordre.
+  /// Deux contrôles historiques INCHANGÉS (`_resetEnCours`, puis génération),
+  /// mêmes compteurs, mêmes points d'incrément. Ce qui change en 3.2 : les
+  /// sorties ne sont plus muettes, elles rendent une valeur explicite.
   ///
-  /// Ce qui change : l'écriture peut être REFUSÉE (et devient alors un no-op
-  /// silencieux) si un reset complet est en cours ou est intervenu.
-  ///
-  /// Cette protection s'applique AUSSI quand `_sauvegarder()` est appelée
-  /// depuis `_charger()` (l.107) — demandé explicitement par D-M2.
-  Future<void> _sauvegarder() async {
+  /// ★ SÉMANTIQUE DU RETOUR (3.2) : [EtatPersistanceElo.refusee] et
+  /// [EtatPersistanceElo.echouee] signifient PERSISTANCE NON CONFIRMÉE,
+  /// JAMAIS « disque inchangé ». Aucun rejeu ne doit en être déduit.
+  Future<EtatPersistanceElo> _sauvegarder() async {
     if (_resetEnCours) {
       _nbRefusParReset++;
-      return; // Contrôle 1
+      return EtatPersistanceElo.abandonneeParReset; // Contrôle 1
     }
     final generation = _generationCache;
     SharedPreferences prefs;
     try {
       prefs = await SharedPreferences.getInstance();
     } catch (e) {
-      debugPrint('[EloService] ⚠️ Erreur sauvegarde : $e');
-      return;
+      // ★ 3.2 : n'était qu'un `debugPrint` + `return` muet. L'échec est
+      // désormais COMPTÉ et CONSERVÉ — plus jamais silencieux.
+      _nbEchouees++;
+      _derniereErreurEcriture = e;
+      debugPrint('[EloService] ⚠️ Sauvegarde impossible '
+          '(SharedPreferences indisponible) : $e');
+      return EtatPersistanceElo.echouee;
     }
     if (_resetEnCours || generation != _generationCache) {
       // Contrôle 2 — distinct du contrôle 1 : une génération peut avoir
       // changé alors qu'aucun reset n'est plus EN COURS (il est terminé).
       _nbRefusParGeneration++;
-      return;
+      return EtatPersistanceElo.abandonneeParReset;
     }
     // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` (invariant P1) ↓↓↓
-    final Future<void> f = _executerSauvegarde(prefs);
+    final Future<EtatPersistanceElo> f = _executerSauvegarde(prefs);
     _ecrituresEnCours.add(f);
     f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
     return f;
@@ -185,19 +275,73 @@ class EloService {
   /// Corps de l'écriture, isolé pour que [_sauvegarder] obtienne la future
   /// AVANT le premier `await` — c'est la condition du registre sans trou.
   ///
-  /// Strictement identique à l'ancien corps : mêmes deux écritures, même
-  /// `try/catch` silencieux, même journalisation.
-  Future<void> _executerSauvegarde(SharedPreferences prefs) async {
+  /// ★ A7 (3.2) — DEUX changements, et deux seulement :
+  ///   • les retours `bool` de `setString`/`setInt` ne sont plus jetés ;
+  ///   • l'exception n'est plus avalée : journalisée, comptée, convertie.
+  ///
+  /// ⚠️ NOMBRE D'ÉCRITURES — ÉNONCÉ EXACT (corrigé en 3.2 / lot 1, cf. C2).
+  /// Au cas NOMINAL, le comportement est identique à avant 3.2 : deux
+  /// écritures, `_prefsKey` puis `_prefsKeyTs`, dans cet ordre exact.
+  ///
+  /// En CAS D'ÉCHEC de `setString`, il DIFFÈRE, et il faut le savoir :
+  /// avant 3.2 les deux `await` vivaient dans UN SEUL `try`, donc une
+  /// exception sur `setString` sautait `setInt` (0 écriture `_ts`) ; depuis
+  /// 3.2 `_prefsKeyTs` est écrite dans un `try` SÉPARÉ, donc elle est
+  /// TENTÉE (1 écriture `_ts`) même quand les ratings ont échoué. C'est
+  /// voulu : c'est ce qui rend l'échec secondaire observable et comptable
+  /// séparément, sans jamais altérer le résultat principal.
+  ///
+  /// ⚠️ `_prefsKeyTs` N'EST PAS une preuve d'application ELO. Son échec
+  /// n'altère donc JAMAIS le résultat principal : si `setString` a confirmé
+  /// le rating, le résultat reste [EtatPersistanceElo.persistee] et le défaut
+  /// secondaire est seulement compté dans [nbEchecsTs].
+  Future<EtatPersistanceElo> _executerSauvegarde(
+      SharedPreferences prefs) async {
+    EtatPersistanceElo etat;
     try {
       final data  = <String, dynamic>{};
       _ratings.forEach((k, v) => data[k] = v.toJson());
-      await prefs.setString(_prefsKey, jsonEncode(data));
-      await prefs.setInt(_prefsKeyTs, DateTime.now().millisecondsSinceEpoch);
-    } catch (e) {
-      debugPrint('[EloService] ⚠️ Erreur sauvegarde : $e');
+      // ★ 3.2 : le booléen était JETÉ, il ne l'est plus.
+      final bool okRatings =
+          await prefs.setString(_prefsKey, jsonEncode(data));
+      if (okRatings) {
+        _nbPersistees++;
+        etat = EtatPersistanceElo.persistee;
+      } else {
+        _nbRefuseesStockage++;
+        etat = EtatPersistanceElo.refusee;
+        debugPrint('[EloService] ⚠️ Sauvegarde REFUSÉE par le stockage sur '
+            '`$_prefsKey` — persistance NON CONFIRMÉE (le disque n\'est PAS '
+            'prouvé inchangé)');
+      }
+    } catch (e, st) {
+      // ★ 3.2 : exception JOURNALISÉE, COMPTÉE, CONSERVÉE — jamais avalée.
+      _nbEchouees++;
+      _derniereErreurEcriture = e;
+      etat = EtatPersistanceElo.echouee;
+      debugPrint('[EloService] ⚠️ Exception pendant la sauvegarde de '
+          '`$_prefsKey` — persistance NON CONFIRMÉE : $e\n$st');
     }
-  }
 
+    // ── Horodatage SECONDAIRE, hors du mécanisme de preuve ────────────────
+    // Écrit dans TOUS les cas, exactement comme avant. Son issue ne modifie
+    // jamais `etat` : elle est seulement rendue observable.
+    try {
+      final bool okTs = await prefs.setInt(
+          _prefsKeyTs, DateTime.now().millisecondsSinceEpoch);
+      if (!okTs) {
+        _nbEchecsTs++;
+        debugPrint('[EloService] ⚠️ Horodatage REFUSÉ sur `$_prefsKeyTs` '
+            '(défaut SECONDAIRE — le rating n\'est PAS concerné)');
+      }
+    } catch (e) {
+      _nbEchecsTs++;
+      debugPrint('[EloService] ⚠️ Exception sur `$_prefsKeyTs` '
+          '(défaut SECONDAIRE — le rating n\'est PAS concerné) : $e');
+    }
+
+    return etat;
+  }
   // ── Normalisation ─────────────────────────────────────────────────
   String _cleNom(String nom) =>
       nom.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
@@ -236,20 +380,26 @@ class EloService {
       getScore(nomCheval, discipline: discipline).rating;
 
   // ── Mettre à jour les ELO après une arrivée ── ★ v9.92 : + discipline
-  Future<void> mettreAJourApresArrivee({
+  //
+  // ★ A7 (3.2) : retourne l'ISSUE de la persistance. Les calculs, formules,
+  //   K-factors et les deux sorties anticipées sont STRICTEMENT inchangés ;
+  //   seules leurs valeurs de retour deviennent explicites.
+  Future<EtatPersistanceElo> mettreAJourApresArrivee({
     required List<int>       arrivee,
     required List<ZtPartant> partants,
     String discipline = '',  // ★ v9.92 : type de course passé par l'appelant
   }) async {
     if (!_charge) await _charger();
-    if (arrivee.isEmpty || partants.isEmpty) return;
+    if (arrivee.isEmpty || partants.isEmpty) {
+      return EtatPersistanceElo.nonTentee; // rien à écrire : pas un échec
+    }
 
     final Map<int, ZtPartant> mapPartants = {
       for (final p in partants)
         if (int.tryParse(p.numero) != null) int.parse(p.numero): p
     };
     final n = arrivee.length;
-    if (n < 2) return;
+    if (n < 2) return EtatPersistanceElo.nonTentee;
 
     final Map<String, double> deltas = {};
 
@@ -301,8 +451,11 @@ class EloService {
       );
     });
 
-    await _sauvegarder();
-    debugPrint('[EloService] ✅ ${deltas.length} ELO mis à jour (discipline: $discipline)');
+    final EtatPersistanceElo etat = await _sauvegarder();
+    debugPrint('[EloService] ${etat == EtatPersistanceElo.persistee ? "✅" : "⚠️"} '
+        '${deltas.length} ELO mis à jour (discipline: $discipline) — '
+        'persistance: ${etat.name}');
+    return etat;
   }
 
   // ── Enrichir les partants avec leur ELO ── ★ v9.92 : + discipline
@@ -330,13 +483,17 @@ class EloService {
     return data;
   }
 
-  Future<void> importerDepuisBackup(Map<String, dynamic> data) async {
+  Future<EtatPersistanceElo> importerDepuisBackup(
+      Map<String, dynamic> data) async {
     _ratings.clear();
     data.forEach((key, val) {
       try { _ratings[key] = EloScore.fromJson(val as Map<String, dynamic>); } catch (_) {}
     });
-    await _sauvegarder();
-    debugPrint('[EloService] ✅ Import backup : ${_ratings.length} ratings restaurés');
+    final etat = await _sauvegarder();
+    debugPrint('[EloService] ${etat == EtatPersistanceElo.persistee ? "✅" : "⚠️"} '
+        'Import backup : ${_ratings.length} ratings restaurés — '
+        'persistance: ${etat.name}');
+    return etat;
   }
 
   /// ★ v10.82 — D3 : chargement SYNCHRONE depuis une Map JSON, sans
@@ -360,10 +517,11 @@ class EloService {
     debugPrint('[EloService/isolate] ✅ ${_ratings.length} ratings restaurés');
   }
 
-  Future<void> reinitialiser() async {
+  Future<EtatPersistanceElo> reinitialiser() async {
     _ratings.clear();
-    await _sauvegarder();
-    debugPrint('[EloService] 🔄 ELO réinitialisés');
+    final etat = await _sauvegarder();
+    debugPrint('[EloService] 🔄 ELO réinitialisés — persistance: ${etat.name}');
+    return etat;
   }
 
   /// ★ B5-RDR-05 — Vide l'état RAM SANS écrire sur le disque.
@@ -396,7 +554,7 @@ class EloService {
   //  ★ B5c-RDR-05 — ENCADREMENT DU RESET COMPLET
   //
   //  Appelé EXCLUSIVEMENT par `BackupService.reinitialiserComplet()`, autour
-  //  de la boucle des 107 suppressions, à l'intérieur des barrières
+  //  de la boucle des 108 suppressions, à l'intérieur des barrières
   //  d'`AlertService` et d'`IaMemoryService`.
   //
   //  Sémantique : identique à celle des autres services. On ne calcule RIEN,

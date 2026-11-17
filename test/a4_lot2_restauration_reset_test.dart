@@ -14,7 +14,7 @@
 //  ── T7 — RÉINITIALISATION ───────────────────────────────────────────────
 //  Le périmètre est identifié AVANT d'être testé, en lisant le code :
 //    • `BackupService.reinitialiserComplet()`  (backup_service.dart:1496)
-//        efface les 107 clés fixes + les `cache_reunions_*` dynamiques,
+//        efface les 108 clés fixes + les `cache_reunions_*` dynamiques,
 //        vide la RAM des services et remet poids/seuils/calibration
 //        aux valeurs d'usine. Les 15 clés `_keysIA` disparaissent.
 //        L'ARCHIVE HISTORIQUE et les ARRIVÉES OFFICIELLES ne figurent dans
@@ -223,12 +223,16 @@ const List<String> _clesELO = <String>[
   'elo_ratings_v1',
   'cote_tracker_mouvements_v1',
   'cote_mouvements_live_v1',
+  // ★ A7 (3.1) : sixième clé du groupe. Sans elle, la copie cesserait d'être
+  //   « à l'identique » et la nouvelle clé ne serait vérifiée par AUCUN test
+  //   de reset — alors qu'elle appartient au même périmètre que les ratings.
+  'elo_registre_v3',
 ];
 
-/// Les 107 clés de `_toutesLesCles` (backup_service.dart:389), recopiées
-/// groupe par groupe à l'identique : IA 15 + ELO 5 + configIA 34 + paris 1
+/// Les 108 clés de `_toutesLesCles` (backup_service.dart:402), recopiées
+/// groupe par groupe à l'identique : IA 15 + ELO 6 + configIA 34 + paris 1
 /// + alertes 12 + profil 5 + widget 23 + laboIA 1 + auditCache 1
-/// + grosParis 9 + notifications 1 = 107.
+/// + grosParis 9 + notifications 1 = 108.
 const List<String> _clesToutes = <String>[
   // _keysIA (15)
   'ia_pronostics_v2',
@@ -246,12 +250,13 @@ const List<String> _clesToutes = <String>[
   'ia_premium_historique_v1',
   'ia_premium_du_jour_v1',
   'premium_widgets_selection_jour_v1',
-  // _keysELO (5)
+  // _keysELO (6)
   'elo_ratings_v2',
   'elo_ratings_v2_ts',
   'elo_ratings_v1',
   'cote_tracker_mouvements_v1',
   'cote_mouvements_live_v1',
+  'elo_registre_v3',
   // _keysConfigIA (34)
   'fusion_poids_confiance',
   'fusion_poids_gain',
@@ -1413,7 +1418,7 @@ void main() {
   });
 
   // ═════════════════════════════════════════════════════════════════════════
-  //  T7-B — `reinitialiserComplet()` : LE PÉRIMÈTRE RÉEL DES 107 CLÉS
+  //  T7-B — `reinitialiserComplet()` : LE PÉRIMÈTRE RÉEL DES 108 CLÉS
   //
   //  Lu dans le code (backup_service.dart:1496) : quatre barrières imbriquées
   //  (AlertService 1549 → IaMemoryService 1550 → EloService 1575 →
@@ -1422,12 +1427,12 @@ void main() {
   //  dynamique `cache_reunions_*` (1617-1624) et une `StateError` listant les
   //  survivantes (1627-1633).
   //
-  //  Les 107 clés sont recopiées à l'identique dans `_clesToutes` ci-dessous.
+  //  Les 108 clés sont recopiées à l'identique dans `_clesToutes` ci-dessous.
   //  Chacune reçoit une valeur NON TRIVIALE de son type réel, et sa présence
   //  est VÉRIFIÉE AVANT le reset : « absente avant » ne peut jamais passer
   //  pour « correctement supprimée après ».
   // ═════════════════════════════════════════════════════════════════════════
-  test('A4-T7-B — reinitialiserComplet() : 107 clés, RAM d\'usine, archive '
+  test('A4-T7-B — reinitialiserComplet() : 108 clés, RAM d\'usine, archive '
       'et arrivées préservées', () async {
     final jour = _jourRef;
     _installerStore();
@@ -1465,6 +1470,21 @@ void main() {
         jsonEncode(<String, dynamic>{'R1C1': 4.65}));
     await prefs.setString('cote_mouvements_live_v1',
         jsonEncode(<String, dynamic>{'R1C1': 4.10}));
+
+    // ★ A7 (3.1) — TÉMOIN DE NON-VACUITÉ DU REGISTRE.
+    // Sans ce semis, la nouvelle clé serait ABSENTE avant le reset : le
+    // contrôle « les N autres clés doivent toutes être présentes AVANT »
+    // échouerait, et surtout la suppression ne serait pas démontrée (une
+    // clé absente ne prouve rien). Contenu NON VIDE et réellement typé :
+    // c'est une chaîne JSON, comme l'écrira l'étape 3.3.
+    await prefs.setString(
+        'elo_registre_v3',
+        jsonEncode(<String, dynamic>{
+          'version': 3,
+          'operations': <String, dynamic>{
+            'R7C7_${_ddmmyyyy(jour)}': <String, dynamic>{'etat': 'temoin'},
+          },
+        }));
 
     // ── Clés DYNAMIQUES `cache_reunions_*` (balayage R01-a) ──────────────
     final cleCacheJour = 'cache_reunions_${_ddmmyyyy(jour)}';
@@ -1527,7 +1547,7 @@ void main() {
     // `ia_pronostics_v2` et `ia_pronostics_v2_gz` sont MUTUELLEMENT EXCLUSIFS :
     // `_save()` n'en écrit qu'UN seul (le gzip au-delà de 20 pronostics).
     // Les exiger tous deux serait un faux témoin. On mesure donc
-    // « exactement un des deux formats », puis les 105 autres clés une à une.
+    // « exactement un des deux formats », puis les 106 autres clés une à une.
     final formatsPresents = clesFormat.where(store.contient).toList();
     expect(formatsPresents.length, 1,
         reason: 'T7-B témoin : `_save()` ne laisse qu\'UN seul format de '
@@ -1608,7 +1628,7 @@ void main() {
     // ── ACTION : la vraie API publique ───────────────────────────────────
     await BackupService.instance.reinitialiserComplet();
 
-    // ── ① Les 107 clés fixes ont TOUTES disparu du disque ────────────────
+    // ── ① Les 108 clés fixes ont TOUTES disparu du disque ────────────────
     final survivantes = _clesToutes.where(store.contient).toList();
     expect(survivantes, isEmpty,
         reason: 'T7-B : les ${_clesToutes.length} clés de `_toutesLesCles` '

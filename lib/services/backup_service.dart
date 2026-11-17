@@ -184,6 +184,19 @@ class BackupService {
                             //   ressuscitent au prochain lancement.
     'cote_tracker_mouvements_v1', // ★ v9.97 : Mouvements de cote en temps réel
     'cote_mouvements_live_v1',    // ★ v9.97 : Sync Flutter→Kotlin Worker (alertes cote)
+    // ★ A7 (3.1) : registre d'application ELO — clé SÉPARÉE de
+    //   `elo_ratings_v2`, qui garde son format plat. Le registre est un
+    //   TÉMOIN d'application : il ne duplique AUCUN rating et ne doit
+    //   JAMAIS servir de source pour reconstruire `elo_ratings_v2`.
+    //
+    //   POURQUOI ICI, ET PAS AILLEURS : les ratings et leur témoin doivent
+    //   appartenir au MÊME périmètre. Mesuré : sans cette ligne, un reset
+    //   complet efface `elo_ratings_v2` mais LAISSE le registre sur le
+    //   disque — le registre témoignerait alors de courses dont les ratings
+    //   n'existent plus, c'est-à-dire l'état « appliqué » sans la donnée.
+    //   Le contrat de reset est donc : les deux disparaissent ensemble.
+    'elo_registre_v3',            // ★ A7 : témoin d'application ELO (jamais
+                                  //   une source de reconstruction)
   ];
 
   // 🎯 Config fusion BestBet — reglages de l'algorithme de selection
@@ -392,6 +405,8 @@ class BackupService {
     ..._keysELO,        // ★ B5 : les 5 cles ELO/Cote etaient OMISES — elles
                         //   survivaient a un reset « complet » alors qu'elles
                         //   sont bel et bien sauvegardees dans le backup.
+                        //   ★ A7 (3.1) : le groupe compte desormais 6 cles,
+                        //   `elo_registre_v3` ayant rejoint le perimetre.
     ..._keysParis,
     ..._keysAlertes,
     ..._keysProfil,
@@ -1059,13 +1074,72 @@ class BackupService {
 
       // ── 🏇 ELO SERVICE ★ v8.0 ────────────────────────────────────────────
       // Restaurer les ratings ELO depuis le backup si présents
+      //
+      // ★ A7 (3.2) — CE BLOC NE JETAIT RIEN MOINS QUE L'ISSUE DE L'ÉCRITURE.
+      //   `importerDepuisBackup()` rend un `EtatPersistanceElo` depuis 3.2 ;
+      //   il était consommé par un `await` muet, et le tampon « ELO restaure »
+      //   s'imprimait même quand `setString` avait répondu `false`.
+      //
+      //   ⚠️ CE QUI N'EST **PAS** FAIT ICI, VOLONTAIREMENT :
+      //   • `succes` n'est JAMAIS dégradé — un échec du volet ELO n'est pas un
+      //     échec de la restauration : les autres groupes sont restaurés ;
+      //   • `total` / `nbClesRestaurees` ne reçoivent RIEN — l'ELO n'écrit pas
+      //     via `_restaurerGroupe`, il compte séparément depuis toujours ;
+      //   • aucune exception ne s'échappe : le `catch` reste en place pour le
+      //     seul cas encore atteignable, une charge `elo_service` malformée
+      //     (le cast ci-dessous lève alors AVANT l'appel).
+      int nbEloRestaures = 0;
+      String? avertissementElo;
       if (data.containsKey('elo_service')) {
         try {
-          await EloService.instance.importerDepuisBackup(
-              data['elo_service'] as Map<String, dynamic>);
-          if (kDebugMode) debugPrint('[Backup] ELO restaure');
+          final EtatPersistanceElo etatElo =
+              await EloService.instance.importerDepuisBackup(
+                  data['elo_service'] as Map<String, dynamic>);
+          // Ratings réellement détenus en RAM après l'import. Ne prouve
+          // AUCUNE persistance disque — voir la doc du champ.
+          nbEloRestaures = EloService.instance.nbChevauxSuivis;
+          switch (etatElo) {
+            case EtatPersistanceElo.persistee:
+              if (kDebugMode) {
+                debugPrint('[Backup] ELO restaure — '
+                    '$nbEloRestaures ratings en RAM, persistance CONFIRMEE');
+              }
+            case EtatPersistanceElo.refusee:
+            case EtatPersistanceElo.echouee:
+              // Persistance NON CONFIRMÉE. On ne dit surtout pas que le
+              // disque est resté intact : il peut avoir écrit puis répondu
+              // `false`, ou avoir levé après une écriture partielle.
+              avertissementElo =
+                  'Ratings ELO chargés en mémoire ($nbEloRestaures), mais '
+                  'leur écriture disque n\'est PAS confirmée '
+                  '(${etatElo.name}). L\'état du stockage ELO n\'est pas '
+                  'connu et n\'est pas prouvé inchangé.';
+              debugPrint('[Backup] ⚠️ ELO persistance NON confirmée : '
+                  '${etatElo.name}');
+            case EtatPersistanceElo.abandonneeParReset:
+              avertissementElo =
+                  'Restauration ELO ABANDONNÉE : un reset complet est en '
+                  'cours ou est intervenu. Aucune écriture ELO n\'a été '
+                  'tentée ; les ratings lus ne sont pas persistés.';
+              debugPrint('[Backup] ⚠️ ELO abandonné par un reset concurrent');
+            case EtatPersistanceElo.nonTentee:
+              // Inatteignable depuis ce site : `importerDepuisBackup()`
+              // termine toujours par `_sauvegarder()`, qui ne rend que
+              // `persistee` / `refusee` / `echouee` / `abandonneeParReset`.
+              // Branche exigée par l'exhaustivité du `switch`, et signalée
+              // si l'invariant venait à changer sans être vu.
+              avertissementElo =
+                  'Restauration ELO non tentée (état inattendu : '
+                  '${etatElo.name}). Aucune persistance n\'est confirmée.';
+              debugPrint('[Backup] ⚠️ ELO état inattendu : ${etatElo.name}');
+          }
         } catch (e) {
-          if (kDebugMode) debugPrint('[Backup] ELO restauration partielle : $e');
+          // Seul cas atteignable : le cast de `data['elo_service']` a levé.
+          // On le SIGNALE au lieu de le noyer dans un `debugPrint`.
+          avertissementElo =
+              'Donnée ELO illisible dans la sauvegarde : $e. '
+              'Les ratings ELO n\'ont pas été restaurés.';
+          debugPrint('[Backup] ⚠️ ELO restauration impossible : $e');
         }
       }
 
@@ -1307,6 +1381,8 @@ class BackupService {
         nbProfil           : nbProfil,
         dateBackup         : dateBackup.isNotEmpty ? DateTime.tryParse(dateBackup) : null,
         version            : backupVer,
+        nbEloRestaures     : nbEloRestaures,
+        avertissementElo   : avertissementElo,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Parsing JSON : $e');
@@ -1522,7 +1598,7 @@ class BackupService {
     //  l.4280). Appelé après la boucle, son vidage RAM serait trop tardif et
     //  ses écritures suspendues réécriraient les clés effacées.
     //
-    //  La boucle des 107 clés reste UNIQUE : elle est passée en callback à la
+    //  La boucle des 108 clés reste UNIQUE : elle est passée en callback à la
     //  barrière INTERNE, qui s'exécute elle-même dans la barrière EXTERNE.
     //  Les deux barrières sont donc actives pendant tout l'effacement.
     //
@@ -1539,7 +1615,7 @@ class BackupService {
     //       s'annonçait réussi avec des clés encore présentes.
     //
     //  On collecte les échecs au lieu de lever immédiatement : la boucle reste
-    //  UNIQUE et parcourt les 107 clés, ce qui donne un diagnostic COMPLET
+    //  UNIQUE et parcourt les 108 clés, ce qui donne un diagnostic COMPLET
     //  (quelles clés ont survécu) plutôt qu'un arrêt à la première. La liste
     //  des clés n'est pas modifiée et l'ordre de parcours est inchangé.
     //
@@ -1590,7 +1666,7 @@ class BackupService {
             //  clés réellement présentes est de les LIRE sur le stockage.
             //
             //  POURQUOI APRÈS LA BOUCLE FIXE : l'ordre existant n'est pas
-            //  modifié, et le balayage voit un stockage déjà nettoyé des 107
+            //  modifié, et le balayage voit un stockage déjà nettoyé des 108
             //  clés connues — il ne peut donc pas retomber sur l'une d'elles.
             //
             //  PORTÉE : `getKeys()` rend les clés SANS le préfixe natif
@@ -1690,7 +1766,7 @@ class BackupService {
     //   `_prefs` par un recalcul complet. Pas de résurrection disque possible.
     IaUserPrefsService.instance.viderMemoirePourResetComplet();
     // ★ B5c-RDR-01-b — même défaut, mesuré cette fois : le disque est effacé
-    //   (107 clés fixes + balayage dynamique R01-a), mais DEUX caches RAM
+    //   (108 clés fixes + balayage dynamique R01-a), mais DEUX caches RAM
     //   conservaient l'état d'AVANT le reset et le réservaient à l'UI.
     //
     //   • DataRefreshService : `_reunions` gardait les réunions
@@ -1809,6 +1885,34 @@ class ImportResult {
   final String    version;
   final String?   erreur;
 
+  // ── ★ A7 (3.2) — VOLET ELO ────────────────────────────────────────────────
+  // Avant 3.2, la restauration ELO etait un `await` MUET : l'etat rendu par
+  // `EloService.importerDepuisBackup()` etait JETE, et le tampon « ELO
+  // restaure » s'imprimait INCONDITIONNELLEMENT — y compris quand le stockage
+  // avait repondu `false`. Ces deux champs sont la seule trace lisible de ce
+  // qui s'est reellement passe. Ils ne modifient NI `succes`, NI
+  // `nbClesRestaurees`, NI aucun autre groupe de restauration.
+
+  /// Nombre de ratings ELO **charges en memoire (RAM)** depuis la sauvegarde.
+  ///
+  /// ⚠️ Ce nombre ne prouve AUCUNE persistance physique : il compte ce que
+  /// [EloService] detient en RAM apres l'import, pas ce qui est ecrit sur le
+  /// disque. Vaut 0 si la sauvegarde ne contenait pas de volet ELO.
+  final int     nbEloRestaures;
+
+  /// Avertissement sur le resultat REEL du volet ELO.
+  /// `null` = persistance CONFIRMEE, ou aucun volet ELO dans la sauvegarde.
+  ///
+  /// Non nul dans deux familles de cas, qu'il ne faut jamais confondre :
+  ///  - persistance **NON CONFIRMEE** (`setString` a repondu `false`, ou a
+  ///    leve une exception) — l'etat du stockage n'est alors PAS conclu, et
+  ///    il n'est surtout PAS prouve inchange ;
+  ///  - ecriture **ABANDONNEE** par un reset complet concurrent — aucune
+  ///    ecriture n'a ete tentee.
+  ///
+  /// Ce champ ne doit JAMAIS etre lu comme « rien n'a change sur le disque ».
+  final String?   avertissementElo;
+
   ImportResult({
     required this.succes,
     this.nbClesRestaurees = 0,
@@ -1823,6 +1927,8 @@ class ImportResult {
     this.dateBackup,
     this.version = '?',
     this.erreur,
+    this.nbEloRestaures   = 0,
+    this.avertissementElo,
   });
 
   String get dateBackupLisible {
