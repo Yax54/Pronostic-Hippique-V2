@@ -1164,7 +1164,13 @@ class DataRefreshService extends ChangeNotifier {
           return;
         }
 
-        await IaMemoryService.instance.enregistrerResultat(
+        // ★ A7 — OPTION A : on CAPTURE le booléen. Il signifie exactement
+        //   « résultat nouveau accepté par IaMemoryService » : `true` ssi la
+        //   course est passée de non résolue à résolue PAR CET APPEL.
+        //   `false` couvre : génération/reset, résultat déjà connu, et
+        //   consignation en archive seule.
+        final bool resultatEnregistre =
+            await IaMemoryService.instance.enregistrerResultat(
           courseKey:    p.courseKey,
           arriveeReelle: arrivee,
           // Génération d'`IaMemoryService`, capturée à l'ENGAGEMENT du cycle :
@@ -1175,7 +1181,20 @@ class DataRefreshService extends ChangeNotifier {
         );
 
         // ★ v9.0 : Mettre à jour l'ELO après chaque arrivée officielle
-        _mettreAJourEloApresArrivee(p.courseKey, arrivee);
+        // ★ A7 — OPTION A : UNIQUEMENT si le résultat est NOUVEAU.
+        //   Avant cette correction, l'appel était INCONDITIONNEL : une arrivée
+        //   déjà connue (rejouée d'un cycle à l'autre, ou résolue entre-temps
+        //   par un autre chemin) ré-appliquait le delta ELO à chaque passage.
+        //   `EloService.mettreAJourApresArrivee()` n'a aucune garde
+        //   d'idempotence et ne reçoit pas `courseKey` : il ne peut pas se
+        //   protéger lui-même. Le conditionnement est donc fait ICI.
+        if (resultatEnregistre) {
+          _mettreAJourEloApresArrivee(p.courseKey, arrivee);
+        } else if (kDebugMode) {
+          debugPrint('[DataRefresh] ⏭️ ELO non mis à jour pour '
+              'R${numR}C$numC : arrivée déjà traitée (ou consignée en archive '
+              'seule) — voir IaMemoryService.enregistrerResultat()');
+        }
 
         nbRecuperes++;
         debugPrint('[DataRefresh] ✅ Résultat R${numR}C$numC : '

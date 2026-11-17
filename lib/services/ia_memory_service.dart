@@ -3269,7 +3269,32 @@ class IaMemoryService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> enregistrerResultat({
+  /// ★ A7 — OPTION A : enregistre un résultat officiel.
+  ///
+  /// RETOUR : `true` UNIQUEMENT si cette course est passée de « non résolue »
+  /// à « résolue » PAR CET APPEL, c'est-à-dire si la mutation
+  /// `_pronostics[idx] = IaPronostic(...)` a effectivement eu lieu.
+  ///
+  /// `false` dans TOUS les autres cas :
+  ///   • refus sur génération / reset (aucune écriture) ;
+  ///   • traitement annulé par un reset survenu pendant `_load()` ;
+  ///   • consignation en ARCHIVE SEULE (course évincée) : aucune réinjection,
+  ///     donc aucun apprentissage, donc aucune mise à jour ELO ;
+  ///   • résultat DÉJÀ connu (`p.resultatsReels == true`).
+  ///
+  /// ⚠️ PÉRIMÈTRE DE LA GARANTIE — le booléen signifie exactement
+  ///    « résultat nouveau accepté par IaMemoryService ». Il ne garantit
+  ///    AUCUNEMENT la persistance effective de l'ELO par l'appelant : l'ELO
+  ///    est écrit par `EloService`, dont la sauvegarde peut échouer
+  ///    silencieusement (limite R-d), et son appel reste non attendu côté
+  ///    DataRefreshService (limite R-c).
+  ///
+  /// ⚠️ AUCUNE règle métier n'est modifiée par ce retour : ni les calculs,
+  ///    ni les écritures, ni `_apprendreParGradient`, ni
+  ///    `_apprendreParDiscipline`, ni `_mettreAJourCalibration`.
+  ///    La signature `Future<void>` → `Future<bool>` reste compatible avec
+  ///    les appelants qui ignorent la valeur (`await` sans affectation).
+  Future<bool> enregistrerResultat({
     required String courseKey,
     required List<int> arriveeReelle,
     Map<String, double>? cotesPmuParNumero, // ★ v10.31
@@ -3313,7 +3338,7 @@ class IaMemoryService extends ChangeNotifier {
             '(génération $generationAuDemarrage→$_generationCache, '
             'resetEnCours=$_resetEnCours)');
       }
-      return;
+      return false; // ★ A7 : rien n'a été enregistré
     }
     await _load();
 
@@ -3329,11 +3354,15 @@ class IaMemoryService extends ChangeNotifier {
         arriveeReelle:     arriveeReelle,
         cotesPmuParNumero: cotesPmuParNumero,
       );
-      return;
+      // ★ A7 — OPTION A, ARBITRAGE §3 (validé) : une consignation
+      //   ARCHIVE SEULE ne doit déclencher AUCUNE nouvelle mise à jour ELO.
+      //   `false` conserve exactement le comportement actuel du chemin
+      //   DataRefreshService, qui n'alimentait pas l'ELO depuis l'archive.
+      return false;
     }
 
     final p = _pronostics[idx];
-    if (p.resultatsReels) return;
+    if (p.resultatsReels) return false; // ★ A7 : résultat DÉJÀ connu
 
     final topIA      = p.topNIA;
     final arriveeStr = arriveeReelle.map((n) => n.toString()).toList();
@@ -3399,7 +3428,7 @@ class IaMemoryService extends ChangeNotifier {
         debugPrint('[IaMem] ⏭️ enregistrerResultat $courseKey : reset survenu '
             'pendant `_load()` — résultat, sauvegarde et apprentissage annulés');
       }
-      return;
+      return false; // ★ A7 : traitement ANNULÉ, rien n'a été enregistré
     }
 
     _pronostics[idx] = IaPronostic(
@@ -3444,6 +3473,13 @@ class IaMemoryService extends ChangeNotifier {
     // pronostics nouvellement résolus). Appeler ici causait un
     // double-comptage pour tous les types de paris (×2 dans historiqueComplet).
     notifyListeners();
+
+    // ★ A7 — OPTION A : SEUL point de retour `true`. Il est atteint
+    //   exclusivement après la mutation effective de `_pronostics[idx]`, la
+    //   sauvegarde et les trois apprentissages. Aucune sortie anticipée ne
+    //   peut passer par ici : les quatre autres retours sont plus haut et
+    //   valent `false`.
+    return true;
   }
 
   /// ★ A4-2 — Consigne un résultat officiel pour une course ABSENTE de la
