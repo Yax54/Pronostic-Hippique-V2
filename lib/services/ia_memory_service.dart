@@ -4637,7 +4637,23 @@ class IaMemoryService extends ChangeNotifier {
           if (!dejaPresent) {
             debugPrint('[PRECISION_PATCH] Réinjection historiqueComplet : '
                 'date=$dateStrRef | type=$type | nb=${pronosType.length}');
-            await _mettreAJourPrecisionIA(pronosType, _dateAnalyseReelle);
+            // ★ A4-T3 — PROTECTION 2 : RÉINJECTION SANS APPRENTISSAGE.
+            //
+            // DÉFAUT MESURÉ (avant correction) : ce chemin s'exécute alors
+            // qu'AUCUN nouveau résultat n'a été obtenu (`aTraiter` est vide).
+            // Il appelait `_mettreAJourPrecisionIA` en mode apprentissage, qui
+            // réécrivait quatre paramètres :
+            //   • `_poids` intégralement normalisé (l.5755) — mesuré :
+            //     forme 0.2711 → 0.21921832884097037 sur les 19 poids ;
+            //   • `_seuils.ajusterSeuil` (l.5807) — mesuré : sg 83.5 → 82.45 ;
+            //   • `_poids.poidsIndices` (l.5858) — mesuré : 0.4321 → 0.4301539 ;
+            //   • `precisionIA` des courses résolues (l.5881).
+            //
+            // `apprendre: false` conserve TOUT le travail statistique de la
+            // méthode (historiqueComplet, compteurs, stats par label, `_save()`)
+            // et n'interdit que les mutations de paramètres d'apprentissage.
+            await _mettreAJourPrecisionIA(pronosType, _dateAnalyseReelle,
+                apprendre: false);
           }
         }
         // Passer directement à l'apprentissage
@@ -4975,7 +4991,29 @@ class IaMemoryService extends ChangeNotifier {
         }
       }
 
-      await _mettreAJourCalibration();
+      // ═══════════════════════════════════════════════════════════════════════
+      //  ★ A4-T3 — PROTECTION 1 : CALIBRATION SOUS CONDITION DE NOUVEAU RÉSULTAT.
+      //
+      //  DÉFAUT MESURÉ (avant correction) : cet appel était HORS du
+      //  `if (nbNouveauxResultats > 0)` ci-dessus. À zéro nouveau résultat, il
+      //  réécrivait pourtant deux paramètres d'apprentissage :
+      //    • `_poids.calibrationScore` (l.4160) — une simple répétition
+      //      d'analyse écrasait la valeur APPRISE par la valeur neutre 50.0
+      //      (mesuré : 68.3125 → 50.0) ;
+      //    • `_poids.correlations` (l.4227, via l.4167) — réécriture intégrale
+      //      du dictionnaire de corrélations (mesuré : 171 paires réécrites
+      //      dès 20 résultats, la garde l.4180 `avecScores.length < 20` étant
+      //      franchie).
+      //
+      //  La condition ajoutée est EXACTEMENT celle qui garde déjà le gradient
+      //  et l'apprentissage par discipline (l.4947). Aucune formule, aucun
+      //  taux d'apprentissage, aucun seuil n'est modifié : on conditionne
+      //  l'APPEL, jamais son contenu. Sur un nouveau résultat, le comportement
+      //  est strictement identique à avant.
+      // ═══════════════════════════════════════════════════════════════════════
+      if (nbNouveauxResultats > 0) {
+        await _mettreAJourCalibration();
+      }
 
       // ★ Fix v9.6 : fusionner pronostics IA du jour + paris manuels
       final statsIa = pronosticsJour
@@ -5624,8 +5662,18 @@ class IaMemoryService extends ChangeNotifier {
 
   /// Met à jour la précision par type de pari et ajuste les seuils.
   /// Appelée par analyseJourneeComplete APRÈS le gradient standard.
+  ///
+  /// ★ A4-T3 — `apprendre` sépare les MUTATIONS DE PARAMÈTRES D'APPRENTISSAGE
+  /// des OPÉRATIONS STATISTIQUES. Quand `apprendre` vaut `false` (réinjection
+  /// historique à zéro nouveau résultat), la méthode continue d'alimenter
+  /// `historiqueComplet`, les compteurs permanents, les stats par label et la
+  /// sauvegarde, mais ne touche plus : aux 19 poids, à `poidsIndices`, aux
+  /// seuils de confiance, ni au recalcul de `precisionIA` dépendant des poids.
+  /// La valeur par défaut `true` préserve à l'identique le comportement des
+  /// appels liés à un véritable nouveau résultat (l.5006).
   Future<void> _mettreAJourPrecisionIA(
-      List<IaPronostic> pronosticsAvecResultats, DateTime date) async {
+      List<IaPronostic> pronosticsAvecResultats, DateTime date,
+      {bool apprendre = true}) async {
     if (pronosticsAvecResultats.isEmpty) return;
 
     // ── Étape 1 : mettre à jour la précision par type de pari ──────────────
@@ -5737,22 +5785,28 @@ class IaMemoryService extends ChangeNotifier {
 
     // ★ v9.0 : Ajustement gradient basé sur les stats labels
     // Si un label "⚡ Coup préparé" a un bon taux top3 → renforcer le critère divergence
-    for (final stats in _statsLabels.values) {
-      if (!stats.estFiable) continue;
-      final critere = StatsParLabel.criterePourLabel(stats.label);
-      if (critere == null) continue;
-      // Gradient doux : si performance du label > 40% → légère augmentation du poids
-      final perf = stats.scorePerformanceLabel;
-      final delta = (perf - 40.0) / 1000.0; // très doux, max ±0.05
-      switch (critere) {
-        case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.01, 0.10); break;
-        case 'terrain':     _poids.terrain     = (_poids.terrain     + delta).clamp(0.01, 0.10); break;
-        case 'progression': _poids.progression = (_poids.progression + delta).clamp(0.01, 0.08); break;
-        case 'poidsRel':    _poids.poidsRel    = (_poids.poidsRel    + delta).clamp(0.01, 0.07); break;
+    //
+    // ★ A4-T3 — MUTATION DE PARAMÈTRES : sous `apprendre`. L'enregistrement des
+    // stats label ci-dessus (l.5723-5736) reste INCONDITIONNEL : c'est une
+    // donnée statistique, pas un paramètre d'apprentissage.
+    if (apprendre) {
+      for (final stats in _statsLabels.values) {
+        if (!stats.estFiable) continue;
+        final critere = StatsParLabel.criterePourLabel(stats.label);
+        if (critere == null) continue;
+        // Gradient doux : si performance du label > 40% → légère augmentation du poids
+        final perf = stats.scorePerformanceLabel;
+        final delta = (perf - 40.0) / 1000.0; // très doux, max ±0.05
+        switch (critere) {
+          case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.01, 0.10); break;
+          case 'terrain':     _poids.terrain     = (_poids.terrain     + delta).clamp(0.01, 0.10); break;
+          case 'progression': _poids.progression = (_poids.progression + delta).clamp(0.01, 0.08); break;
+          case 'poidsRel':    _poids.poidsRel    = (_poids.poidsRel    + delta).clamp(0.01, 0.07); break;
+        }
       }
-    }
-    if (_statsLabels.values.any((s) => s.estFiable && StatsParLabel.criterePourLabel(s.label) != null)) {
-      _poids.normaliser();
+      if (_statsLabels.values.any((s) => s.estFiable && StatsParLabel.criterePourLabel(s.label) != null)) {
+        _poids.normaliser();
+      }
     }
 
     // ── Étape 2 : ajuster les seuils de confiance selon la précision ────────
@@ -5804,7 +5858,12 @@ class IaMemoryService extends ChangeNotifier {
       }
 
       final delta = (seuilCibleTaux - taux) * lr;
-      _seuils.ajusterSeuil(type, delta);
+      // ★ A4-T3 — MUTATION DE PARAMÈTRES : sous `apprendre`. Le calcul de
+      // `taux`, de `seuilCibleTaux` et de `delta` reste inchangé ; seule
+      // l'écriture du seuil est conditionnée.
+      if (apprendre) {
+        _seuils.ajusterSeuil(type, delta);
+      }
 
       if (kDebugMode) {
         debugPrint('[SeuilsIA] $type : taux=${taux.toStringAsFixed(1)}% '
@@ -5828,7 +5887,13 @@ class IaMemoryService extends ChangeNotifier {
     //  delta = fraction de courses où l'indice était prédictif (0.0 à 1.0)
     //  Le PoidsIndices est mis à jour avec ces 3 fractions.
 
-    if (nbTotal >= 3) { // assez de données pour mettre à jour les poids
+    // ★ A4-T3 — MUTATIONS DE PARAMÈTRES : sous `apprendre`. Ce bloc écrit
+    // `_poids.poidsIndices` (l.5917) puis recalcule `precisionIA` de TOUTES les
+    // courses résolues avec les nouveaux indices (l.5945). Les deux dépendent
+    // des paramètres d'apprentissage et sont donc neutralisés ensemble quand
+    // `apprendre == false`. Le calcul des trois deltas reste inchangé : il
+    // n'écrit rien.
+    if (apprendre && nbTotal >= 3) { // assez de données pour mettre à jour les poids
       int nbBonCriteres = 0;
       int nbBonConfiance = 0;
       int nbBonReussite = 0;
