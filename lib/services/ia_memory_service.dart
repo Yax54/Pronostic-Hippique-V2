@@ -2998,6 +2998,64 @@ class IaMemoryService extends ChangeNotifier {
       // Anti-doublon
       if (_pronostics.any((p) => p.courseKey == courseKey)) continue;
 
+      // ★ A3 (lot batch) — LA DATE VIENT DE LA COURSE, JAMAIS D'UNE SENTINELLE.
+      //
+      //  `enregistrerPronostic()` applique déjà A3 : `_dateReelleDeLaCourse()`
+      //  → `null` ⇒ refus (aucun calcul, aucune insertion, aucune écriture).
+      //  Le batch, lui, écrivait `course.heureDateTime`, qui vaut
+      //  `DateTime(2000, 1, 1, h, m)` quand `dateStr` est absent
+      //  (zt_models.dart:841). La purge à 90 jours de `_save()`
+      //  (`_purgerVieuxPronostics()`, l.2681) détruisait alors la fiche DANS
+      //  LE MÊME CYCLE, avant l'écriture : perte totale et silencieuse, même
+      //  quand la `courseKey` portait une date exploitable.
+      //
+      //  On réutilise donc la FONCTION EXISTANTE `_dateReelleDeLaCourse()` —
+      //  aucun second mécanisme de résolution n'est introduit. Le refus est
+      //  LOCAL : seule la fiche concernée est écartée, les autres courses du
+      //  même lot sont enregistrées normalement.
+      //
+      //  ⚠️ Aucune règle IA n'est touchée : ni `_poids`, ni `_seuils`, ni le
+      //     gradient, ni le TOP 3, ni l'ELO.
+      final dateReelle = _dateReelleDeLaCourse(courseKey, course);
+      if (dateReelle == null) {
+        if (kDebugMode) {
+          debugPrint('[IaMemory][A-3] batch : pronostic REFUSÉ — date de '
+              'course indéterminable : $courseKey '
+              '(dateStr="${course.dateStr}") — aucune date inventée');
+        }
+        continue; // aucun calcul, aucune insertion, aucune écriture
+      }
+
+      // ★ A3 (heure) — LE JOUR VIENT DE LA SOURCE FIABLE, L'HEURE DE LA COURSE.
+      //
+      //  `course.heureDateTime` (zt_models.dart:827-846) est l'accesseur
+      //  canonique du modèle : il lit `course.heure`, au format 'HH:mm'
+      //  zéro-paddé produit par `zone_turf_service.dart:177-178`.
+      //
+      //  MESURÉ (hors production, test jetable supprimé depuis) :
+      //    heure='14:15' dateStr=''         → 2000-01-01 14:15 → h=14 m=15
+      //    heure='09:05' dateStr=''         → 2000-01-01 09:05 → h=9  m=5
+      //    heure='14:15' dateStr='17112026' → 2026-11-17 14:15 → h=14 m=15
+      //    heure=''      dateStr=''         → 2000-01-01 00:00 → h=0  m=0
+      //    heure='?'     dateStr=''         → 2000-01-01 00:00 → h=0  m=0
+      //  ⇒ La sentinelle 2000-01-01 n'affecte QUE la date, JAMAIS h / m.
+      //
+      //  On ne retient donc de `heureDateTime` que **h et m**, et le JOUR est
+      //  pris EXCLUSIVEMENT sur `dateReelle` (clé ou `dateStr` concordants).
+      //  Aucune sentinelle n'est écrite, aucune date de remplacement n'est
+      //  inventée, et `_dateReelleDeLaCourse()` n'est pas modifiée.
+      //
+      //  Heure absente (`''`, `'?'`) ou illisible ⇒ `heureDateTime` vaut
+      //  minuit : on retrouve `dateReelle` tel quel. Aucune heure inventée.
+      final heureCourse = course.heureDateTime;
+      final datePronostic = DateTime(
+        dateReelle.year,
+        dateReelle.month,
+        dateReelle.day,
+        heureCourse.hour,
+        heureCourse.minute,
+      );
+
       final scores = <String, double>{};
       for (final p in partantsClasses) {
         scores[p.numero] = p.scoreIA;
@@ -3040,7 +3098,7 @@ class IaMemoryService extends ChangeNotifier {
         nomCourse: course.nom.isNotEmpty ? course.nom : 'Course ${course.numCourse}',
         hippodrome: hippoB,
         discipline: course.type,
-        datePronostic: course.heureDateTime,
+        datePronostic: datePronostic, // ★ A3 : date de COURSE, jamais 2000-01-01
         scoresIA: scores,
         scoresCriteres: scoresCriteres,
         varianceScores: variance,
