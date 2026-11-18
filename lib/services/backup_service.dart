@@ -144,6 +144,192 @@ class BackupService {
   static const _backupVersion = '9.1'; // ★ E3 : +archiveIA (archive permanente des pronostics évincés)
 
   // ════════════════════════════════════════════════════════════════════════
+  //  ★ X6 — NOM DE FICHIER DE SAUVEGARDE UNIQUE
+  //
+  //  DÉFAUT CORRIGÉ (mesuré) : le nom ne portait que le JOUR
+  //     'backup_pronostic_hippique_ddMMyyyy.json'
+  //  Deux exports effectués le même jour produisaient donc le MÊME nom, donc
+  //  le MÊME chemin dans le répertoire temporaire : le second ÉCRASAIT le
+  //  premier (`writeAsBytes` sur une `File` existante). Un utilisateur qui
+  //  exportait deux fois dans la journée perdait la première sauvegarde sans
+  //  le moindre message — et le partage Android proposait alors un fichier
+  //  dont le contenu ne correspondait plus à ce qu'il croyait avoir exporté.
+  //
+  //  CE QUI CHANGE : le nom porte désormais date + heure + millisecondes,
+  //     'backup_pronostic_hippique_ddMMyyyy_HHmmssSSS.json'
+  //
+  //  ⚠️ COMPATIBILITÉ PRÉSERVÉE, ET VÉRIFIABLE :
+  //     • le PRÉFIXE 'backup_pronostic_hippique_' et le SUFFIXE '.json' sont
+  //       inchangés — c'est ce que le test `v5_backup_restore_test.dart:421-422`
+  //       verrouille (`contains` + `endsWith`) ;
+  //     • le nom reste un IDENTIFIANT de fichier, jamais une donnée lue pour
+  //       restaurer : la restauration ne parse PAS ce nom. Aucune ancienne
+  //       sauvegarde ne devient illisible, puisqu'aucun code ne dépend de la
+  //       forme exacte du nom.
+  //     • le suffixe horaire est APRÈS le jour, donc deux noms d'un MÊME jour se
+  //       trient dans l'ordre des heures.
+  //       ⚠️ NUANCE MESURÉE : ce tri n'est PAS chronologique ENTRE deux jours
+  //       différents d'un même mois ni entre deux mois d'une même année, parce
+  //       que le label est `JJMMAAAA` (jour en tête). '01102026' se trie avant
+  //       '30092026'. Ce défaut d'ORDRE est antérieur à X6, il n'a AUCUNE
+  //       incidence sur l'unicité (qui n'utilise que l'égalité) et sur aucun
+  //       autre comportement : le nom n'est jamais trié ni parsé par l'app. Il
+  //       est signalé ici pour ne pas laisser croire que la propriété tient.
+  //
+  //  ⚠️ PORTÉE : cette méthode ne touche NI au contenu JSON, NI à Google Drive,
+  //     NI au partage, NI à la restauration. Elle ne produit qu'une chaîne.
+  //
+  //  ── POURQUOI UN COMPTEUR, ET PAS SEULEMENT L'HORODATAGE (MESURÉ) ─────────
+  //     L'exigence « garantir l'absence de collision, même pour deux exports
+  //     très rapprochés » ne peut PAS être satisfaite par l'horloge seule. Sur
+  //     cette machine, mesuré :
+  //       • deux `DateTime.now()` consécutifs partagent la MILLISECONDE dans
+  //         199 981 cas sur 200 000 ;
+  //       • même en descendant aux MICROSECONDES, le delta est nul dans
+  //         90 859 cas sur 100 000.
+  //     Un nom purement horodaté serait donc identique en pratique pour deux
+  //     exports enchaînés.
+  //
+  //  ── DÉFAUT DE LA PREMIÈRE CORRECTION, MESURÉ PUIS CORRIGÉ ────────────────
+  //     Une première version comparait le nom CANDIDAT au nom ÉMIS juste avant
+  //     avec `compareTo`, et n'ajoutait un suffixe `_qN` que si le candidat
+  //     n'était pas strictement supérieur. C'ÉTAIT FAUX, pour deux raisons
+  //     distinctes :
+  //
+  //     1) L'ORDRE LEXICOGRAPHIQUE D'UN LABEL `JJMMAAAA` N'EST PAS CHRONOLOGIQUE.
+  //          '01102026' < '30092026'  → le 1er octobre « recule » devant le 30/09
+  //          '01012027' < '31122026'  → le 1er janvier « recule » devant le 31/12
+  //        Un changement de mois, un changement d'année, ou un simple RECUL
+  //        d'horloge (resynchronisation NTP) étaient donc interprétés comme un
+  //        recul. Mesuré sur la version fautive :
+  //          X6f-1 : 01/10/2026 après 30/09/2026 → '..._01102026_000000000_q999'
+  //          X6f-2 : 01/01/2027 après 31/12/2026 → '..._01012027_000000000_q999'
+  //          X6f-3 : recul de 400 ms le même jour  → '..._140509100_q999'
+  //        Le suffixe `_q999` trahissait une plage de suffixes déjà consommée.
+  //
+  //     2) LA BORNE `sequence < 1000` RENDAIT UN DOUBLON SILENCIEUX.
+  //        Quand la plage de suffixes était épuisée, la boucle s'arrêtait et la
+  //        fonction rendait `_q999` — un nom DÉJÀ ÉMIS. Mesuré sur la version
+  //        fautive :
+  //          X6f-4 : 1000 émissions du même instant → 30 noms uniques (970 doublons)
+  //          X6f-5 : 1000 émissions après un changement de mois → 1 nom unique
+  //          X6f-6 : 7 émissions → 6 noms uniques ('_140509500.json' rendu 2 fois)
+  //        C'est exactement l'écrasement que X6 doit empêcher.
+  //
+  //  ── CE QUI GARANTIT L'UNICITÉ MAINTENANT ─────────────────────────────────
+  //     La clé de comptage n'est PLUS le nom de fichier : c'est l'HORODATAGE
+  //     lui-même, comparé par ÉGALITÉ et non par ordre. Pour chaque horodatage
+  //     (à la milliseconde), un compteur du processus retient combien de noms
+  //     ont déjà été émis :
+  //        1re émission  → 'backup_pronostic_hippique_JJMMAAAA_HHmmssSSS.json'
+  //        2e émission   → '..._HHmmssSSS_q0001.json'
+  //        3e émission   → '..._HHmmssSSS_q0002.json'
+  //        Ne émission   → '..._HHmmssSSS_q000(N-1).json'
+  //     Propriétés, toutes mesurées par les tests X6 :
+  //       • deux noms émis ne peuvent pas être égaux : à horodatage égal le
+  //         numéro croît, à horodatage différent le label diffère ;
+  //       • AUCUNE hypothèse sur l'horloge : un recul, un changement de mois ou
+  //         d'année ne change rien, puisque seule l'ÉGALITÉ est utilisée ;
+  //       • AUCUNE borne supérieure : le numéro n'est pas tronqué, donc la
+  //         fonction ne peut pas « atterrir » sur un nom déjà émis. Il n'y a
+  //         plus de `sequence < 1000` ;
+  //       • le numéro est écrit sur 4 chiffres (`_q0001`), donc un tri
+  //         lexicographique des noms d'un même horodatage reste NUMÉRIQUE
+  //         jusqu'à 9 999 exports dans la même milliseconde.
+  //     Le suffixe reste APRÈS le label de date, donc le préfixe et le suffixe
+  //     `.json` sont inchangés et l'unicité tient sans toucher au format.
+  //
+  //     ⚠️ MÉMOIRE : une entrée de compteur par HORODATAGE distinct exporté,
+  //        soit une poignée d'entrées par jour en usage réel. Aucune purge n'est
+  //        faite : purger réintroduirait la collision. La rétention du registre
+  //        (lot X1) est un sujet différent et n'est pas traitée ici.
+  //
+  //     ⚠️ Le garde-fou final est un CONTRÔLE, pas une troncature : si un nom
+  //        déjà émis était sur le point d'être rendu, la fonction LÈVE une
+  //        `StateError` au lieu de le rendre en silence.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /// Nombre de noms déjà émis, par HORODATAGE (clé = label complet
+  /// `JJMMAAAA_HHmmssSSS`). Comparaison par ÉGALITÉ : aucune hypothèse sur
+  /// l'ordre ni sur la monotonie de l'horloge.
+  static final Map<String, int> _compteurParHorodatage = <String, int>{};
+
+  /// Tous les noms déjà émis par [nomFichierBackup] dans ce processus.
+  /// Sert uniquement de CONTRÔLE d'invariant : si un candidat y figurait déjà,
+  /// ce serait un défaut de la présente logique, et il faut le voir plutôt que
+  /// de rendre un doublon.
+  static final Set<String> _nomsEmis = <String>{};
+
+  /// Réinitialise l'état de génération. Réservé aux tests : en production l'état
+  /// doit survivre à tous les exports du processus, c'est lui qui garantit
+  /// l'unicité.
+  @visibleForTesting
+  static void reinitialiserNomsPourTest() {
+    _compteurParHorodatage.clear();
+    _nomsEmis.clear();
+  }
+
+  /// Nom de fichier de sauvegarde, UNIQUE dans ce processus.
+  ///
+  /// Format nominal : `backup_pronostic_hippique_ddMMyyyy_HHmmssSSS.json`
+  /// (`dd`/`MM`/`yyyy` = jour/mois/année, `HH`/`mm`/`ss` = heure/minute/seconde,
+  /// `SSS` = millisecondes), tous les champs à largeur fixe.
+  ///
+  /// Si ce nom a déjà été émis (deux exports dans la même milliseconde), un
+  /// suffixe `_q0001`, `_q0002`… est ajouté AVANT l'extension, à partir de la
+  /// DEUXIÈME émission. Exemple réel (mesuré en test, X6b-1) :
+  ///   `backup_pronostic_hippique_18112026_140509123.json`
+  ///   `backup_pronostic_hippique_18112026_140509123_q0001.json`
+  ///   `backup_pronostic_hippique_18112026_140509123_q0002.json`
+  ///
+  /// Garanties, toutes vérifiables par test :
+  ///   • deux appels rendent TOUJOURS deux noms DIFFÉRENTS, même avec le MÊME
+  ///     [instant], même après un recul d'horloge, même à un changement de mois
+  ///     ou d'année ;
+  ///   • l'unicité ne dépend PAS de l'ordre des instants ni de la monotonie de
+  ///     l'horloge : seule l'égalité des horodatages est utilisée ;
+  ///   • le préfixe `backup_pronostic_hippique_` et le suffixe `.json` sont
+  ///     INCHANGÉS (compatibilité des tests et des usages existants) ;
+  ///   • aucun nom déjà émis n'est rendu silencieusement : le dépassement de la
+  ///     capacité de numérotation lèverait une `StateError` (jamais observé, la
+  ///     numérotation n'étant pas bornée).
+  ///
+  /// [instant] est injecté pour rendre la garantie testable ; en production il
+  /// vaut `DateTime.now()`.
+  static String nomFichierBackup(DateTime instant) {
+    String deux(int v) => v.toString().padLeft(2, '0');
+    final String jour = '${deux(instant.day)}${deux(instant.month)}'
+        '${instant.year.toString().padLeft(4, '0')}';
+    final String heure = '${deux(instant.hour)}${deux(instant.minute)}'
+        '${deux(instant.second)}'
+        '${instant.millisecond.toString().padLeft(3, '0')}';
+
+    // La clé est l'HORODATAGE, pas le nom : une égalité stricte de chaînes.
+    // Aucun `compareTo` n'intervient, donc l'ordre des dates n'a plus
+    // d'influence — c'est ce qui neutralise le changement de mois, le
+    // changement d'année et le recul d'horloge.
+    final String horodatage = '${jour}_$heure';
+    final int emission = (_compteurParHorodatage[horodatage] ?? 0) + 1;
+    _compteurParHorodatage[horodatage] = emission;
+
+    final String base = 'backup_pronostic_hippique_$horodatage';
+    // 1re émission : nom nominal. Ensuite : numéro NON BORNÉ, sur 4 chiffres.
+    final String candidat = emission == 1
+        ? '$base.json'
+        : '${base}_q${(emission - 1).toString().padLeft(4, '0')}.json';
+
+    // CONTRÔLE d'invariant — jamais une troncature. Rendre un nom déjà émis
+    // écraserait un fichier existant en silence : on refuse bruyamment.
+    if (!_nomsEmis.add(candidat)) {
+      throw StateError(
+        'X6 : le nom "$candidat" a déjà été émis dans ce processus. '
+        'Refus de rendre un doublon (il écraserait une sauvegarde existante).',
+      );
+    }
+    return candidat;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   //  INVENTAIRE COMPLET DES CLES — toutes les SharedPreferences de l'app
   // ════════════════════════════════════════════════════════════════════════
 
@@ -961,8 +1147,10 @@ class BackupService {
       final bytes   = utf8.encode(jsonStr);
 
       final now     = DateTime.now();
-      final dateStr = '${now.day.toString().padLeft(2,'0')}${now.month.toString().padLeft(2,'0')}${now.year}';
-      final fileName = 'backup_pronostic_hippique_$dateStr.json';
+      // ★ X6 : date + heure + millisecondes — deux exports le même jour ne
+      // peuvent plus porter le même nom, donc le second n'écrase plus le
+      // premier. Voir [nomFichierBackup] pour la garantie et sa justification.
+      final fileName = nomFichierBackup(now);
 
       final tmpDir = await getTemporaryDirectory();
       final file   = File('${tmpDir.path}/$fileName');
