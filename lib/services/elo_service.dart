@@ -684,6 +684,106 @@ class IntentionEntreeElo {
   });
 }
 
+/// ★ A7 (3.3-C9) — CLÉS DU FORMAT D'EXPORT `elo_v2`.
+///
+/// Privées à la bibliothèque : elles ne font pas partie de l'API publique du
+/// service. Les tests emploient les littéraux, ce qui les rend indépendants
+/// d'un éventuel renommage — et donc capables de détecter un renommage.
+const String _kCleMarqueurFormat = '_elo_format';
+const String _kCleMarqueurRegistre = '_elo_registre';
+const String _kCleMarqueurTs = '_elo_ts';
+
+/// Valeur du marqueur de format. Un export ancien (sans ce marqueur) reste
+/// lisible : c'est le lecteur qui doit traiter l'absence, pas l'écrivain.
+const String _kFormatEloV2 = 'elo_v2';
+
+/// ★ A7 (3.3-C9) — STATUT D'UN EXPORT ELO ENRICHI.
+///
+/// Quatre valeurs SEULEMENT, et une seule autorise un groupe exportable
+/// complet. Ce type existe parce que `exporterPourBackup()` rend une
+/// `Map<String, dynamic>` : une map n'a AUCUN emplacement pour dire « je n'ai
+/// pas pu lire le registre » ou « le registre est divergent ». Sans ce type,
+/// le troisième cas produirait une sauvegarde d'apparence normale, ce qui est
+/// précisément ce qu'il faut interdire.
+///
+/// ⚠️ `refusee` et `indisponible` ne sont PAS la même chose :
+///   • `refuse`         → on a PU regarder, et ce qu'on a vu est inutilisable
+///                        (corrompu, incompatible, divergent). Le refus est
+///                        un FAIT mesuré, pas une incertitude.
+///   • `diagnosticImpossible` → on n'a PAS pu regarder (stockage indisponible,
+///                        `reload()` en échec, registre d'un type inattendu).
+///                        Aucune conclusion n'est tirée, aucune donnée ELO
+///                        n'est exportée, PAS MÊME L'HORODATAGE.
+enum StatutExportElo {
+  /// Registre PRÉSENT, interprétable et cohérent avec les ratings du disque.
+  /// Seul statut qui autorise `_elo_registre` dans le groupe exporté.
+  complet,
+
+  /// Le registre est RÉELLEMENT ABSENT et le diagnostic a pu être établi.
+  /// On exporte les ratings sans registre — on n'en invente aucun.
+  sansRegistre,
+
+  /// Le registre existe mais est INUTILISABLE. Aucun groupe exportable.
+  /// Cause exacte portée par [ResultatExportElo.motif].
+  refuse,
+
+  /// Le diagnostic n'a PAS pu être établi. Aucun groupe exportable,
+  /// et aucun horodatage isolé.
+  diagnosticImpossible,
+}
+
+/// ★ A7 (3.3-C9) — RÉSULTAT COMPLET DE `exporterPourBackupEnrichi()`.
+///
+/// Porte TROIS informations qu'il ne faut jamais confondre :
+///   • [statut]       — ce qui a pu être établi ;
+///   • [motif]        — POURQUOI, quand le statut est un refus ou une
+///                      impossibilité. `null` ssi le statut est `complet` ou
+///                      `sansRegistre` ;
+///   • [groupe]       — les données exportables, et RIEN d'autre. VIDE dès
+///                      que le statut n'autorise pas d'export.
+///
+/// Invariant vérifié par les tests : `groupe` est vide si et seulement si le
+/// statut n'est ni `complet` ni `sansRegistre`.
+class ResultatExportElo {
+  /// Statut de l'export. Voir [StatutExportElo].
+  final StatutExportElo statut;
+
+  /// Motif explicite du refus ou de l'impossibilité. `null` quand l'export
+  /// est autorisé.
+  final String? motif;
+
+  /// Groupe exportable, au format enrichi À PLAT :
+  ///   • clés historiques `NOM|DISCIPLINE` → `EloScore.toJson()` ;
+  ///   • `_elo_format` (toujours, si le groupe est non vide) ;
+  ///   • `_elo_registre` (UNIQUEMENT si `statut == complet`) ;
+  ///   • `_elo_ts` (si disponible).
+  ///
+  /// ⚠️ AUCUN sous-objet `ratings`. Mesuré au tour précédent : un sous-objet
+  ///    fait perdre les deux ratings réels et crée un cheval fantôme.
+  final Map<String, dynamic> groupe;
+
+  const ResultatExportElo({
+    required this.statut,
+    required this.motif,
+    required this.groupe,
+  });
+
+  /// Vrai ssi un groupe exportable a été produit. Seule base licite pour
+  /// écrire `elo_service` dans la sauvegarde.
+  bool get exportable =>
+      statut == StatutExportElo.complet ||
+      statut == StatutExportElo.sansRegistre;
+
+  /// Vrai ssi le registre accompagne effectivement le groupe.
+  bool get registreExporte => groupe.containsKey(_kCleMarqueurRegistre);
+
+  @override
+  String toString() => 'ResultatExportElo(statut: ${statut.name}, '
+      'motif: ${motif ?? "-"}, '
+      'clefs: ${groupe.length}, '
+      'registreExporte: $registreExporte)';
+}
+
 class EloService {
   static final EloService _instance = EloService._();
   static EloService get instance => _instance;
@@ -2338,6 +2438,306 @@ class EloService {
     final data = <String, dynamic>{};
     _ratings.forEach((k, v) => data[k] = v.toJson());
     return data;
+  }
+
+  /// ★ A7 (3.3-C9) — EXPORT ENRICHI, ADDITIF.
+  ///
+  /// [exporterPourBackup] reste **strictement inchangée**. Raison mesurée :
+  /// 12 assertions de test lisent `exporterPourBackup().length` comme un
+  /// NOMBRE DE CHEVAUX et deux mesurent `isEmpty` (v18_b5 l.160/188/216/263/272,
+  /// v5 l.441/465/1036/1578, a7_ambiguite l.245/311/602). Toute métadonnée
+  /// ajoutée dans sa map les casserait.
+  ///
+  /// ── LE PROBLÈME DES DEUX SOURCES ─────────────────────────────────────────
+  /// `_etablirDiagnosticPreImport` décrit les ratings **DU DISQUE**
+  /// ([DiagnosticPreImportElo.empreintePersistee]), tandis que
+  /// `exporterPourBackup()` sérialise `_ratings` **EN RAM**. Assembler les deux
+  /// produirait un groupe dont l'empreinte déclarée ne décrit pas les ratings
+  /// exportés — exactement le défaut `divergent` que ce lot doit rendre visible.
+  ///
+  /// **Décision : la source du groupe est le DISQUE**, relu une seule fois.
+  ///   • Aucune fonction du modèle de registre ne rend des ratings (verrou
+  ///     T-S6) : on ne peut pas reconstruire les ratings depuis le registre.
+  ///   • La RAM ne sert donc qu'à MESURER un écart, jamais à exporter.
+  ///   • L'instantané disque est ensuite CONFRONTÉ au diagnostic : nombre ET
+  ///     empreinte doivent coïncider, sinon le disque a bougé entre les deux
+  ///     lectures et l'export est refusé.
+  ///
+  /// ⚠️ SI LA RAM DIVERGE DU DISQUE, L'EXPORT EST REFUSÉ. Une RAM en retard
+  ///    signifie une écriture en vol ou un `_charger()` non exécuté : aucune
+  ///    des deux sources ne peut alors prétendre décrire l'état réel.
+  ///
+  /// ── CE QUI N'EST JAMAIS FAIT ─────────────────────────────────────────────
+  ///   • aucun registre inventé, réparé, réinterprété ni réencodé : la chaîne
+  ///     exportée est la chaîne **PERSISTÉE, verbatim** ;
+  ///   • aucune empreinte recalculée : celle du registre est un champ ;
+  ///   • aucun horodatage isolé quand le diagnostic a échoué ;
+  ///   • aucune conversion d'un refus en sauvegarde d'apparence complète.
+  ///
+  /// Aucune formule ELO, aucun rating, aucun critère n'est touché : cette
+  /// méthode LIT et SÉRIALISE.
+  Future<ResultatExportElo> exporterPourBackupEnrichi() async {
+    // ── 1. Autorité : le diagnostic existant, LECTURE SEULE. ──────────────
+    final DiagnosticPreImportElo diagnostic =
+        await _etablirDiagnosticPreImport();
+
+    if (!diagnostic.etabli) {
+      // Aucun groupe ET aucun horodatage : on ne sait rien, on n'exporte rien.
+      return ResultatExportElo(
+        statut: StatutExportElo.diagnosticImpossible,
+        motif: diagnostic.etablissementImpossible ??
+            'diagnostic non établi, motif non renseigné',
+        groupe: const <String, dynamic>{},
+      );
+    }
+
+    // ── 2. Le REFUS, avant toute sérialisation. ───────────────────────────
+    //  Registre corrompu, incompatible ou divergent → on ne peut pas affirmer
+    //  que l'empreinte déclarée décrit les ratings exportés. Aucun groupe.
+    final DiagnosticCoherenceElo coherence = diagnostic.coherence!;
+    switch (coherence) {
+      case DiagnosticCoherenceElo.corrompu:
+      case DiagnosticCoherenceElo.schemaIncompatible:
+      case DiagnosticCoherenceElo.divergent:
+        return ResultatExportElo(
+          statut: StatutExportElo.refuse,
+          motif: 'registre ${coherence.name} — empreinte déclarée par le '
+              'registre : ${diagnostic.empreinteRegistre ?? "illisible"}, '
+              'empreinte des ratings persistés : ${diagnostic.empreintePersistee}. '
+              'Aucune réparation automatique, export refusé',
+          groupe: const <String, dynamic>{},
+        );
+      case DiagnosticCoherenceElo.registreAbsent:
+      case DiagnosticCoherenceElo.coherent:
+        break; // seuls états autorisant un export
+    }
+
+    // ── 3. Parité RAM / disque, AVANT toute lecture supplémentaire. ───────
+    if (!diagnostic.ramIdentiqueAuDisque) {
+      final String nature = diagnostic.nombreRam == 0 &&
+              diagnostic.nombrePersistee > 0
+          ? 'mémoire non chargée (RAM vide, disque non vide)'
+          : 'RAM et disque différents';
+      return ResultatExportElo(
+        statut: StatutExportElo.refuse,
+        motif: '$nature — RAM ${diagnostic.nombreRam} ratings '
+            '(${diagnostic.empreinteRam}), disque '
+            '${diagnostic.nombrePersistee} ratings '
+            '(${diagnostic.empreintePersistee}). Aucune source unique '
+            'décrivable : export refusé',
+        groupe: const <String, dynamic>{},
+      );
+    }
+
+    // ── 4. Instantané du disque : SEULE source des ratings exportés. ──────
+    final ({
+      Map<String, EloScore>? ratings,
+      String? registreBrut,
+      int? ts,
+      String? motif
+    }) instantane = await _lireInstantaneDisque();
+
+    if (instantane.motif != null || instantane.ratings == null) {
+      return ResultatExportElo(
+        statut: StatutExportElo.diagnosticImpossible,
+        motif: instantane.motif ?? 'instantané disque indisponible',
+        groupe: const <String, dynamic>{},
+      );
+    }
+    final Map<String, EloScore> persistes = instantane.ratings!;
+
+    // ── 5. Contiguïté diagnostic ↔ instantané. ────────────────────────────
+    //  Le disque peut avoir changé entre les deux lectures. On le DÉTECTE au
+    //  lieu de l'ignorer : sans cette comparaison, le groupe exporté pourrait
+    //  ne plus être celui dont l'empreinte a servi au diagnostic.
+    final String empreinteInstantane = empreinte64Ratings(persistes);
+    if (persistes.length != diagnostic.nombrePersistee ||
+        empreinteInstantane != diagnostic.empreintePersistee) {
+      return ResultatExportElo(
+        statut: StatutExportElo.refuse,
+        motif: 'le disque a changé entre le diagnostic et la lecture — '
+            'diagnostic ${diagnostic.nombrePersistee} ratings '
+            '(${diagnostic.empreintePersistee}), instantané '
+            '${persistes.length} ratings ($empreinteInstantane). '
+            'Source non cohérente, export refusé',
+        groupe: const <String, dynamic>{},
+      );
+    }
+
+    // ── 6. Groupe À PLAT, sans sous-objet `ratings`. ──────────────────────
+    //  Les ratings exportés sont EXACTEMENT ceux dont l'empreinte vient d'être
+    //  confrontée au diagnostic : la correspondance est structurelle, pas
+    //  déclarative.
+    final Map<String, dynamic> groupe = <String, dynamic>{};
+    persistes.forEach((k, v) => groupe[k] = v.toJson());
+    groupe[_kCleMarqueurFormat] = _kFormatEloV2;
+
+    // ── 7. Registre : VERBATIM, et seulement si cohérent. ─────────────────
+    if (coherence == DiagnosticCoherenceElo.coherent) {
+      final String? brut = instantane.registreBrut;
+
+      if (brut == null) {
+        // Cohérent sans registre est contradictoire : on refuse plutôt que de
+        // produire un `complet` sans registre, ou un `sansRegistre` mensonger.
+        return ResultatExportElo(
+          statut: StatutExportElo.refuse,
+          motif: 'registre déclaré cohérent mais absent de la lecture '
+              'verbatim — contradiction, export refusé',
+          groupe: const <String, dynamic>{},
+        );
+      }
+
+      //  Le registre relu doit être CELUI que le diagnostic a jugé. Sans cette
+      //  vérification, une écriture intercalée pourrait faire exporter un
+      //  registre que le diagnostic n'a jamais vu.
+      final RegistreEloV3 relu;
+      try {
+        relu = RegistreEloV3.decoder(brut);
+      } catch (e) {
+        return ResultatExportElo(
+          statut: StatutExportElo.refuse,
+          motif: 'registre devenu illisible entre le diagnostic et la '
+              'lecture verbatim ($e) — export refusé',
+          groupe: const <String, dynamic>{},
+        );
+      }
+      if (relu.empreinteRatings != diagnostic.empreinteRegistre) {
+        return ResultatExportElo(
+          statut: StatutExportElo.refuse,
+          motif: 'registre différent de celui diagnostiqué — déclaré '
+              '${diagnostic.empreinteRegistre}, relu '
+              '${relu.empreinteRatings}. Export refusé',
+          groupe: const <String, dynamic>{},
+        );
+      }
+
+      // ⚠️ CHAÎNE PERSISTÉE, COPIÉE TELLE QUELLE. Pas de `registre.encoder()` :
+      //    réencoder un objet décodé n'est pas garanti identique à l'octet
+      //    près à la chaîne d'origine.
+      groupe[_kCleMarqueurRegistre] = brut;
+    }
+    //  `registreAbsent` : `_elo_registre` n'est PAS écrit. On n'invente aucun
+    //  registre, on n'en fabrique pas un vierge — ce serait une preuve
+    //  historique rétroactive. Même décision que
+    //  `MotifNonEcritureTemoin.registreAbsent` (l.339-343).
+
+    // ── 8. Horodatage : optionnel, jamais bloquant, jamais isolé. ─────────
+    final int? ts = instantane.ts;
+    if (ts != null) groupe[_kCleMarqueurTs] = ts;
+
+    return ResultatExportElo(
+      statut: coherence == DiagnosticCoherenceElo.coherent
+          ? StatutExportElo.complet
+          : StatutExportElo.sansRegistre,
+      motif: null,
+      groupe: groupe,
+    );
+  }
+
+  /// Lit en UNE passe l'instantané du disque utile à l'export enrichi :
+  /// ratings persistés, registre **brut** (jamais réencodé), horodatage.
+  ///
+  /// Le décodage des ratings reproduit VOLONTAIREMENT celui de
+  /// [_etablirDiagnosticPreImport] (même tolérance, même convention) : c'est ce
+  /// qui permet à l'appelant de comparer l'empreinte obtenue ici à celle du
+  /// diagnostic. Toute divergence de ce décodage deviendrait donc DÉTECTABLE
+  /// par la comparaison de l'étape 5, au lieu d'être silencieuse.
+  ///
+  /// Rend `motif` non nul si l'instantané n'a pas pu être établi — jamais une
+  /// lecture partielle présentée comme complète.
+  Future<({
+    Map<String, EloScore>? ratings,
+    String? registreBrut,
+    int? ts,
+    String? motif
+  })> _lireInstantaneDisque() async {
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      return (
+        ratings: null,
+        registreBrut: null,
+        ts: null,
+        motif: 'SharedPreferences indisponible : $e',
+      );
+    }
+
+    try {
+      await prefs.reload();
+    } catch (e) {
+      return (
+        ratings: null,
+        registreBrut: null,
+        ts: null,
+        motif: 'reload() impossible — cache non actualisé : $e',
+      );
+    }
+
+    // ── Ratings persistés ─────────────────────────────────────────────────
+    final Map<String, EloScore> persistes = <String, EloScore>{};
+    final Object? brut = prefs.get(_prefsKey);
+    if (brut != null) {
+      if (brut is! String) {
+        return (
+          ratings: null,
+          registreBrut: null,
+          ts: null,
+          motif: '`$_prefsKey` n\'est pas une chaîne '
+              '(reçu ${brut.runtimeType})',
+        );
+      }
+      if (brut.isNotEmpty) {
+        try {
+          final Object? decode = jsonDecode(brut);
+          if (decode is! Map<String, dynamic>) {
+            return (
+              ratings: null,
+              registreBrut: null,
+              ts: null,
+              motif: '`$_prefsKey` : objet JSON attendu '
+                  '(reçu ${decode.runtimeType})',
+            );
+          }
+          decode.forEach((key, val) {
+            try {
+              persistes[key] = EloScore.fromJson(val as Map<String, dynamic>);
+            } catch (_) {}
+          });
+        } on FormatException catch (e) {
+          return (
+            ratings: null,
+            registreBrut: null,
+            ts: null,
+            motif: '`$_prefsKey` : JSON illisible ($e)',
+          );
+        }
+      }
+    }
+
+    // ── Registre BRUT — `get` et non `getString` : un type inattendu doit
+    //    produire un motif explicite plutôt qu'une `TypeError` en profondeur.
+    final Object? registreBrut = prefs.get(kCleRegistreElo);
+    if (registreBrut != null && registreBrut is! String) {
+      return (
+        ratings: null,
+        registreBrut: null,
+        ts: null,
+        motif: '`$kCleRegistreElo` n\'est pas une chaîne '
+            '(reçu ${registreBrut.runtimeType})',
+      );
+    }
+
+    // ── Horodatage : secondaire. Un type inattendu vaut ABSENCE, jamais 0.
+    final Object? tsBrut = prefs.get(_prefsKeyTs);
+    final int? ts = tsBrut is int ? tsBrut : null;
+
+    return (
+      ratings: persistes,
+      registreBrut: registreBrut as String?,
+      ts: ts,
+      motif: null,
+    );
   }
 
   /// ★ A7 (3.3-B2-d1) — ÉTABLIT L'ÉTAT ELO **AVANT** TOUTE MUTATION D'IMPORT.

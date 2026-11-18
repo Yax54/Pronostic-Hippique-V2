@@ -1291,9 +1291,71 @@ class ProfilePhotoOption extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 //  Section Sauvegarde & Restauration
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//  A7 (3.3-C12) — POINT D'INJECTION DES OPÉRATIONS DE SAUVEGARDE
+//
+//  ⚠️ POURQUOI CETTE CLASSE EXISTE
+//    `BackupService` n'est PAS substituable : son constructeur est privé
+//    (`BackupService._();`, backup_service.dart l.140) et il n'expose qu'un
+//    singleton `instance`. Aucun test ne peut donc lui fournir des opérations
+//    simulées sans modifier le service — ce que le mandat interdit.
+//
+//  ⚠️ CE QUE CETTE CLASSE NE FAIT PAS
+//    Elle ne contient AUCUNE logique : ce sont quatre références de fonction
+//    dont les signatures reproduisent À L'IDENTIQUE les méthodes publiques du
+//    service. Aucun algorithme ELO, aucune règle métier, aucune donnée.
+//    Le comportement de production est inchangé : `reelles()` renvoie
+//    exactement les mêmes appels qu'avant.
+//
+//  ⚠️ PORTÉE VOLONTAIREMENT LIMITÉE
+//    Quatre opérations, et seulement celles qu'utilise cette section. Les
+//    autres accès au service (`obtenirInfos`, `lireGmail`, `sauvegarderGmail`,
+//    `supprimerGmail`) restent des appels directs : ils ne sont pas concernés
+//    par l'affichage des avertissements de sauvegarde.
+// ══════════════════════════════════════════════════════════════════════════════
+class OperationsSauvegarde {
+  /// Reproduit `BackupService.partagerBackupAvecResultat()` (l.1064).
+  final Future<ExportResult> Function() partagerAvecResultat;
+
+  /// Reproduit `BackupService.telechargerSurTelephone()` (l.1105).
+  final Future<ExportResult> Function() telecharger;
+
+  /// Reproduit `BackupService.sauvegarderSurDrive()` (l.1102).
+  final Future<bool> Function() sauvegarderDrive;
+
+  /// Reproduit `BackupService.importerDepuisFichier()` (l.1151).
+  final Future<ImportResult> Function() importerFichier;
+
+  const OperationsSauvegarde({
+    required this.partagerAvecResultat,
+    required this.telecharger,
+    required this.sauvegarderDrive,
+    required this.importerFichier,
+  });
+
+  /// ★ SEUL endroit de ce fichier où les méthodes du service sont référencées
+  ///   pour les quatre opérations ci-dessus. Comportement de production
+  ///   strictement identique à celui d'avant l'injection.
+  factory OperationsSauvegarde.reelles() => OperationsSauvegarde(
+        partagerAvecResultat: () =>
+            BackupService.instance.partagerBackupAvecResultat(),
+        telecharger: () => BackupService.instance.telechargerSurTelephone(),
+        sauvegarderDrive: () => BackupService.instance.sauvegarderSurDrive(),
+        importerFichier: () => BackupService.instance.importerDepuisFichier(),
+      );
+}
+
 class ProfileBackupSection extends StatefulWidget {
   final PmuProvider provider;
-  const ProfileBackupSection({required this.provider});
+
+  /// A7 (3.3-C12) — opérations de sauvegarde utilisées par cette section.
+  ///
+  /// `null` (défaut, production) → `OperationsSauvegarde.reelles()`.
+  /// L'appel existant `ProfileBackupSection(provider: provider)` reste donc
+  /// valide et garde exactement le comportement d'avant.
+  final OperationsSauvegarde? operations;
+
+  const ProfileBackupSection({required this.provider, this.operations});
   @override
   State<ProfileBackupSection> createState() => ProfileBackupSectionState();
 }
@@ -1303,9 +1365,13 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
   BackupInfo? _info;
   String?     _gmail;
 
+  /// A7 (3.3-C12) — résolu UNE SEULE FOIS au montage.
+  late final OperationsSauvegarde _ops;
+
   @override
   void initState() {
     super.initState();
+    _ops = widget.operations ?? OperationsSauvegarde.reelles();
     _chargerInfos();
   }
 
@@ -1316,40 +1382,199 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
   }
 
   // ── Exporter (partage) ─────────────────────────────────────────────────────
+  //
+  // ★ A7 (3.3-C12) — UNE SEULE COLLECTE.
+  //
+  //   AVANT : `exporterDonnees()` (1re collecte) puis `partagerBackup()`
+  //   (2e collecte INTERNE). Le nom de fichier étant horodaté au JOUR, la 2e
+  //   collecte réécrivait le MÊME chemin : les avertissements du 1er résultat
+  //   ne décrivaient plus le fichier réellement présenté au partage. Mesuré
+  //   en C12 : fichier final `elo_service=false` alors que le 1er résultat
+  //   annonçait `complet=true`.
+  //
+  //   APRÈS : `partagerBackupAvecResultat()` fait la collecte ET le partage du
+  //   MÊME fichier. Le résultat rendu est celui de cette collecte unique, donc
+  //   ses avertissements décrivent exactement le fichier proposé.
   Future<void> _exporter() async {
     setState(() => _chargement = true);
-    final result = await BackupService.instance.exporterDonnees();
+    final result = await _ops.partagerAvecResultat();
     setState(() => _chargement = false);
     if (!mounted) return;
+
+    // 1. Échec de CRÉATION du fichier (ou échec global de collecte).
     if (!result.succes) {
       _snack('❌ Erreur export : ${result.erreur}', Colors.red);
       return;
     }
-    // Partage via menu natif Android (Gmail / Drive / WhatsApp…)
-    await BackupService.instance.partagerBackup();
-    _snack('✅ Fichier ${result.fileName} prêt à être partagé !', const Color(0xFF4CAF7D));
+
+    // 2. Succès AVEC avertissements : jamais de ✅ vert.
+    //    ⚠️ On ne dit PAS « partagé » : le menu natif a été sollicité, la
+    //    réception par un destinataire n'est prouvée par rien.
+    if (result.avertissements.isNotEmpty) {
+      await _showDialogAvertissements(result, copie: false);
+      return;
+    }
+
+    // 3. Succès SANS avertissement : confirmation normale.
+    _snack('✅ Sauvegarde complète prête à être partagée : ${result.fileName}',
+        const Color(0xFF4CAF7D));
   }
 
   // ── Télécharger directement sur le téléphone ────────────────────────────────
+  //
+  // ★ A7 (3.3-C12) — les avertissements de CET export sont désormais affichés.
+  //   `telechargerSurTelephone()` les repropageait déjà depuis C11
+  //   (backup_service.dart l.1050) ; personne ne les lisait.
   Future<void> _telecharger() async {
     setState(() => _chargement = true);
-    final result = await BackupService.instance.telechargerSurTelephone();
+    final result = await _ops.telecharger();
     setState(() => _chargement = false);
     if (!mounted) return;
+
     if (!result.succes) {
       _snack('❌ Erreur téléchargement : ${result.erreur}', Colors.red);
       return;
     }
+
+    // Succès AVEC avertissements : jamais de confirmation normale.
+    if (result.avertissements.isNotEmpty) {
+      await _showDialogAvertissements(result, copie: true);
+      return;
+    }
+
     _snack(
       '📥 Sauvegardé dans Téléchargements : ${result.fileName}',
       const Color(0xFF42A5F5),
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  A7 (3.3-C12) — AFFICHAGE DES AVERTISSEMENTS D'UNE SAUVEGARDE
+  //
+  //  ⚠️ POURQUOI UN DIALOGUE ET NON `_snack`
+  //    `_snack` dure TROIS SECONDES et n'accepte pas d'`action`. Un
+  //    avertissement qui s'efface tout seul sur une sauvegarde partielle est
+  //    un avertissement MANQUÉ : l'utilisateur peut ne pas le voir, et ne
+  //    découvrira le manque qu'au moment de restaurer. Le dialogue exige donc
+  //    une acquittement explicite (`barrierDismissible: false`).
+  //
+  //  ⚠️ CE QUE LE DIALOGUE N'AFFIRME PAS
+  //    Ni « partagé », ni « reçu ». Il dit : le fichier a été CRÉÉ, et voici
+  //    ce qui peut manquer. `SharePlus.share` ne prouve aucune réception.
+  // ══════════════════════════════════════════════════════════════════════════
+  /// ★ A7 (3.3-C12) — TEXTE D'INTRODUCTION DU DIALOGUE, dérivé de l'ÉTAT RÉEL.
+  ///
+  /// Trois cas distincts, et AUCUN ne promet un envoi ni une réception :
+  ///   • téléchargement (`copie`)            → fichier créé sur l'appareil ;
+  ///   • partage ouvert                      → fichier créé + menu ouvert ;
+  ///   • partage NON ouvert (échec d'ouverture) → fichier créé, menu NON ouvert.
+  ///
+  /// ⚠️ `result.avertissements` contient dans les trois cas des messages
+  ///    DIFFÉRENTS ; ce préambule doit rester cohérent avec eux, sans
+  ///   les répéter.
+  String _messageEntete(ExportResult result, bool copie) {
+    if (copie) {
+      return 'Le fichier a été créé sur cet appareil, mais certaines '
+          'données ou garanties peuvent manquer :';
+    }
+    if (result.partageOuvert == false) {
+      return 'Le fichier a été créé sur cet appareil, mais le menu de '
+          'partage n\'a pas pu s\'ouvrir. Certaines données ou garanties '
+          'peuvent également manquer :';
+    }
+    return 'Le fichier a été créé et le menu de partage a été ouvert, mais '
+        'certaines données ou garanties peuvent manquer :';
+  }
+
+  Future<void> _showDialogAvertissements(ExportResult result,
+      {required bool copie}) async {
+    // Le dialogue peut être ouvert depuis une méthode `async` : on vérifie
+    // que le contexte est encore monté avant de l'utiliser.
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false, // pas de disparition accidentelle
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0A1628),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.warning_amber, color: Color(0xFFFFB74D), size: 24),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Sauvegarde avec avertissements',
+              style: TextStyle(color: Colors.white, fontSize: 17),
+            ),
+          ),
+        ]),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                // ★ A7 (3.3-C12) — LE MESSAGE DÉPEND DE L'ÉTAT RÉEL.
+                //
+                // ⚠️ CONTRADICTION CORRIGÉE : la version précédente affirmait
+                //    « le menu de partage a été ouvert » à partir de
+                //    `copie == false` seul. Or `copie == false` signifie
+                //    seulement « parcours de partage », PAS « ouverture
+                //    réussie » : quand `_ouvrirPartage` lève, le menu n'a
+                //    jamais été ouvert. On consulte donc `partageOuvert`.
+                _messageEntete(result, copie),
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 13, height: 1.5),
+              ),
+              const SizedBox(height: 12),
+              // ── AFFICHAGE INTÉGRAL : aucun avertissement tronqué ni résumé ──
+              for (final a in result.avertissements)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• ',
+                          style: TextStyle(
+                              color: Color(0xFFFFB74D), fontSize: 13)),
+                      Expanded(
+                        child: Text(
+                          a,
+                          style: const TextStyle(
+                              color: Color(0xFFFFB74D),
+                              fontSize: 12.5,
+                              height: 1.45),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (result.fileName != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Fichier : ${result.fileName}',
+                  style: const TextStyle(
+                      color: Color(0xFF78909C), fontSize: 11.5),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('J\'ai compris',
+                style: TextStyle(color: Color(0xFF4CAF7D))),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Google Drive ────────────────────────────────────────────────────────────
   Future<void> _sauvegarderDrive() async {
     setState(() => _chargement = true);
-    final ok = await BackupService.instance.sauvegarderSurDrive();
+    final ok = await _ops.sauvegarderDrive();
     setState(() => _chargement = false);
     if (!mounted) return;
     if (!ok) _snack('❌ Impossible d\'ouvrir le partage', Colors.red);
@@ -1388,7 +1613,7 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
     if (confirm != true || !mounted) return;
 
     setState(() => _chargement = true);
-    final result = await BackupService.instance.importerDepuisFichier();
+    final result = await _ops.importerFichier();
     setState(() => _chargement = false);
 
     // ── CRITIQUE : recharger le provider immédiatement après restauration ──

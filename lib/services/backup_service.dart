@@ -445,8 +445,23 @@ class BackupService {
   //  COLLECTE — lit TOUTES les donnees de l'app
   // ════════════════════════════════════════════════════════════════════════
 
-  Future<Map<String, dynamic>> _collecterDonnees() async {
+  Future<({Map<String, dynamic> data, List<String> avertissements})>
+      _collecterDonnees() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // ★ A7 (3.3-C11) — CANAL D'AVERTISSEMENTS DE LA COLLECTE.
+    //
+    // ⚠️ POURQUOI UN ENREGISTREMENT ET NON UNE CLÉ DANS `data`
+    //   Une clé `_avertissements` serait écrite DANS le fichier sauvegardé :
+    //   elle polluerait le format et serait relue par les versions futures.
+    //   Une liste locale ne sort de la méthode que par le type de retour.
+    //
+    // ⚠️ CE CANAL N'EST PAS UTILISÉ PAR TOUS LES GROUPES, ET C'EST VOULU.
+    //   Les quatre groupes GRO / REP / ARC / ARR gardent leur `catch` muet
+    //   historique (règle « local préservé » à la restauration). Les y verser
+    //   dans ce lot changerait le comportement d'export de groupes qui ne sont
+    //   pas dans le périmètre autorisé de C11.
+    final avertissements = <String>[];
 
     final data = <String, dynamic>{
       'version'    : _backupVersion,
@@ -643,13 +658,69 @@ class BackupService {
       if (kDebugMode) debugPrint('[Backup] ARR export partiel : $e');
     }
 
-    // ── 🏇 ELO SERVICE ★ v8.0 ──────────────────────────────────────────────
-    // Les ratings ELO sont gérés par EloService (pas des SharedPreferences
-    // classiques) — on les exporte/importe via la méthode dédiée du service.
-    final eloData = EloService.instance.exporterPourBackup();
-    if (eloData.isNotEmpty) {
-      data['elo_service'] = eloData;
-      if (kDebugMode) debugPrint('[Backup] ELO -> ${eloData.length} chevaux');
+    // ── 🏇 ELO SERVICE ★ A7 (3.3-C11) ──────────────────────────────────────
+    // `exporterPourBackupEnrichi()` rend un STATUT en plus des données. C'est
+    // ce qui permet de distinguer trois situations que l'ancien code
+    // confondait toutes en une seule : « pas de données ELO ».
+    //
+    //   • `complet`              → registre présent, interprétable et cohérent.
+    //   • `sansRegistre`         → absence RÉELLE du registre, diagnostic établi.
+    //                              Ratings exportés, registre JAMAIS inventé.
+    //   • `refuse`               → registre corrompu / incompatible / divergent,
+    //                              ou RAM divergente du disque.
+    //   • `diagnosticImpossible` → état ELO illisible.
+    //
+    // ⚠️ DÉCISION DE SÉCURITÉ — `refuse` ET `diagnosticImpossible` N'ÉCRIVENT
+    //    AUCUN groupe, pas même un groupe vide.
+    //      Écrire `'elo_service': {}` reviendrait, à la restauration, à
+    //      ÉCRASER les ratings d'un appareil par une écurie vide. L'absence
+    //      de clé est traitée par l'importeur comme « pas de volet ELO »
+    //      (règle « local préservé »), donc l'absence est PLUS SÛRE qu'un
+    //      groupe vide. Le refus n'est pas masqué : il est SIGNALÉ.
+    //
+    // ⚠️ EXCEPTION INATTENDUE — COMPORTEMENT HISTORIQUE CONSERVÉ.
+    //    Avant C11, `exporterPourBackup()` n'était dans AUCUN `try` : une
+    //    exception faisait échouer TOUT l'export. Ce lot ne la transforme
+    //    pas en simple avertissement : sans `try` autour, elle remonte à
+    //    `exporterDonnees()`, qui rend `succes: false`. C'est l'arbitrage
+    //    « échec global » retenu.
+    final ResultatExportElo eloEnrichi =
+        await EloService.instance.exporterPourBackupEnrichi();
+
+    switch (eloEnrichi.statut) {
+      case StatutExportElo.complet:
+        data['elo_service'] = eloEnrichi.groupe;
+        if (kDebugMode) {
+          debugPrint('[Backup] ELO -> ${eloEnrichi.groupe.length} clefs '
+              '(complet, registre inclus)');
+        }
+      case StatutExportElo.sansRegistre:
+        data['elo_service'] = eloEnrichi.groupe;
+        if (kDebugMode) {
+          debugPrint('[Backup] ELO -> ${eloEnrichi.groupe.length} clefs '
+              '(sansRegistre)');
+        }
+        avertissements.add(
+            'ELO : ratings sauvegardés SANS le registre d\'historique '
+            '(registre absent sur cet appareil). Aucune protection '
+            'anti-double-application n\'est revendiquée par cette sauvegarde.');
+      case StatutExportElo.refuse:
+        avertissements.add(
+            'ELO NON SAUVEGARDÉ : ${eloEnrichi.motif ?? "motif non renseigné"}. '
+            'Les ratings ELO ne figurent PAS dans cette sauvegarde.');
+        if (kDebugMode) {
+          debugPrint('[Backup] ⚠️ ELO REFUSÉ — aucune clé `elo_service` écrite : '
+              '${eloEnrichi.motif}');
+        }
+      case StatutExportElo.diagnosticImpossible:
+        avertissements.add(
+            'ELO NON SAUVEGARDÉ : état ELO illisible '
+            '(${eloEnrichi.motif ?? "motif non renseigné"}). '
+            'Les ratings ELO ne figurent PAS dans cette sauvegarde.');
+        if (kDebugMode) {
+          debugPrint('[Backup] ⚠️ ELO INDISPONIBLE — aucune clé `elo_service` '
+              'écrite : ${eloEnrichi.motif}');
+        }
     }
 
     // ── 📡 CoteTracker ★ v9.97 ─────────────────────────────────────────────
@@ -663,7 +734,7 @@ class BackupService {
       }
     }
 
-    return data;
+    return (data: data, avertissements: avertissements);
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -882,7 +953,10 @@ class BackupService {
 
   Future<ExportResult> exporterDonnees() async {
     try {
-      final data    = await _collecterDonnees();
+      // ★ A7 (3.3-C11) : `_collecterDonnees()` rend desormais les donnees ET
+      // les avertissements de collecte. Le corps de l'export est INCHANGE.
+      final collecte = await _collecterDonnees();
+      final data    = collecte.data;
       final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
       final bytes   = utf8.encode(jsonStr);
 
@@ -895,36 +969,132 @@ class BackupService {
       await file.writeAsBytes(bytes);
 
       if (kDebugMode) {
-        debugPrint('[Backup] Export OK -> ${file.path} (${(bytes.length / 1024).toStringAsFixed(1)} Ko)');
+        debugPrint('[Backup] Export OK -> ${file.path} (${(bytes.length / 1024).toStringAsFixed(1)} Ko)'
+            '${collecte.avertissements.isEmpty ? "" : " | ${collecte.avertissements.length} avertissement(s)"}');
       }
-      return ExportResult(succes: true, filePath: file.path, fileName: fileName, tailleOctets: bytes.length);
+      return ExportResult(
+        succes: true,
+        filePath: file.path,
+        fileName: fileName,
+        tailleOctets: bytes.length,
+        avertissements: collecte.avertissements,
+      );
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Export ERREUR : $e');
       return ExportResult(succes: false, erreur: e.toString());
     }
   }
 
+  /// Ouvre le menu de partage natif pour un fichier DÉJÀ produit.
+  ///
+  /// ★ A7 (3.3-C12) — EXTRACTION MINIMALE, comportement IDENTIQUE à l'ancien
+  /// corps en ligne de [partagerBackup] : mêmes `ShareParams`, même ordre,
+  /// même `dateStr` calculée au moment de l'appel.
+  ///
+  /// ⚠️ CETTE MÉTHODE NE COLLECTE RIEN. Elle reçoit le résultat d'un export
+  ///    déjà effectué, précisément pour que l'appelant sache QUEL fichier est
+  ///    proposé au partage. C'est ce qui interdit qu'un avertissement décrive
+  ///    une autre collecte que le fichier réellement présenté.
+  ///
+  /// Lève si l'ouverture échoue : c'est à l'appelant de décider si cet échec
+  /// est une erreur globale ou un simple avertissement.
+  Future<void> _ouvrirPartage(ExportResult result) async {
+    final now     = DateTime.now();
+    final dateStr = '${now.day.toString().padLeft(2,'0')}/${now.month.toString().padLeft(2,'0')}/${now.year}';
+
+    await SharePlus.instance.share(
+      ShareParams(
+        files  : [XFile(result.filePath!, mimeType: 'application/json')],
+        text   : 'Sauvegarde Pronostic Hippique du $dateStr\n'
+                 'Contient : IA (19 critères + ELO + terrain + progression + mémoire + PoidsIndices) + Paris + Alertes + Profil + Widget v2.0',
+        subject: 'Sauvegarde Pronostic Hippique $dateStr',
+      ),
+    );
+  }
+
   /// Partage le fichier backup via le menu natif Android
+  ///
+  /// Conservée STRICTEMENT pour ses appelants historiques :
+  /// `sauvegarderSurDrive()` (l.1013) et tout code lisant un `bool`. Elle
+  /// effectue sa PROPRE collecte et **jette** les avertissements — c'est
+  /// pourquoi les écrans qui veulent les afficher doivent utiliser
+  /// [partagerBackupAvecResultat].
   Future<bool> partagerBackup() async {
     try {
       final result = await exporterDonnees();
       if (!result.succes) return false;
 
-      final now     = DateTime.now();
-      final dateStr = '${now.day.toString().padLeft(2,'0')}/${now.month.toString().padLeft(2,'0')}/${now.year}';
-
-      await SharePlus.instance.share(
-        ShareParams(
-          files  : [XFile(result.filePath!, mimeType: 'application/json')],
-          text   : 'Sauvegarde Pronostic Hippique du $dateStr\n'
-                   'Contient : IA (19 critères + ELO + terrain + progression + mémoire + PoidsIndices) + Paris + Alertes + Profil + Widget v2.0',
-          subject: 'Sauvegarde Pronostic Hippique $dateStr',
-        ),
-      );
+      await _ouvrirPartage(result);
       return true;
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Partage ERREUR : $e');
       return false;
+    }
+  }
+
+  /// ★ A7 (3.3-C12) — PARTAGE QUI REND LE RÉSULTAT DE **SA** COLLECTE.
+  ///
+  /// ── LE DÉFAUT QUE CETTE MÉTHODE SUPPRIME ────────────────────────────────
+  /// `_exporter()` appelait `exporterDonnees()` **puis** `partagerBackup()`,
+  /// qui refaisait une seconde collecte. Le nom de fichier étant horodaté au
+  /// JOUR, la seconde collecte réécrivait le MÊME chemin : le fichier présenté
+  /// au partage n'était pas celui que le premier résultat décrivait. Mesuré
+  /// en C12 : `[X6-3] MEME CHEMIN reutilise=true | contenu identique a la 1re
+  /// collecte=false`, et `[X6-4] r1 annonçait complet=true MAIS fichier reel
+  /// elo_service=false`.
+  ///
+  /// ── CE QUE CETTE MÉTHODE GARANTIT ───────────────────────────────────────
+  ///   • **un seul** appel à [exporterDonnees] — jamais deux ;
+  ///   • le [ExportResult] retourné est CELUI de cet appel unique : ses
+  ///     `avertissements` décrivent exactement le fichier passé au partage ;
+  ///   • le même fichier (`result.filePath`) sert à ouvrir le menu natif.
+  ///
+  /// ── DISTINCTION DES DEUX ÉCHECS ────────────────────────────────────────
+  ///   • échec de CRÉATION du fichier → `succes == false` (rendu par
+  ///     [exporterDonnees] lui-même), `erreur` renseignée ;
+  ///   • échec d'OUVERTURE du partage   → `succes == true` (le fichier EXISTE
+  ///     bel et bien) **plus un avertissement dédié**. On ne dégrade pas en
+  ///     `succes == false` : le fichier est réellement sur le disque, et
+  ///     l'effacer du compte rendrait la sauvegarde indisponible au prochain
+  ///     essai. On ne le transforme pas non plus en succès muet.
+  ///
+  /// ⚠️ AUCUNE PRÉTENTION D'ENVOI. `SharePlus.share` rend la main quand le
+  ///    menu natif a été SOLLICITÉ — pas quand le destinataire a reçu quoi que
+  ///    ce soit. Ni cette méthode ni l'interface n'affirment une réception.
+  Future<ExportResult> partagerBackupAvecResultat() async {
+    // ⚠️ UN SEUL APPEL. C'est l'invariant central du lot.
+    final ExportResult result = await exporterDonnees();
+    if (!result.succes) return result;   // échec de CRÉATION : rendu tel quel
+
+    try {
+      await _ouvrirPartage(result);
+      // Le fichier présenté est celui que `result` décrit : ses avertissements
+      // sont donc, par construction, ceux du fichier réellement proposé.
+      return ExportResult(
+        succes: true,
+        filePath: result.filePath,
+        fileName: result.fileName,
+        tailleOctets: result.tailleOctets,
+        avertissements: result.avertissements,
+        partageOuvert: true,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Backup] Partage ERREUR (fichier créé) : $e');
+      return ExportResult(
+        succes: true,
+        filePath: result.filePath,
+        fileName: result.fileName,
+        tailleOctets: result.tailleOctets,
+        // ⚠️ ÉCHEC D'OUVERTURE, PAS UN ÉCHEC DE SAUVEGARDE. Le fichier existe.
+        partageOuvert: false,
+        avertissements: <String>[
+          ...result.avertissements,
+          'Le fichier de sauvegarde a bien été créé '
+          '(${result.fileName}), mais le menu de partage n\'a pas pu '
+          's\'ouvrir ($e). Aucun envoi n\'est confirmé : le fichier reste '
+          'disponible sur cet appareil.',
+        ],
+      );
     }
   }
 
@@ -962,6 +1132,11 @@ class BackupService {
         filePath: destFile.path,
         fileName: result.fileName,
         tailleOctets: result.tailleOctets,
+        // ★ A7 (3.3-C11) — PROPAGATION EXPLICITE.
+        //   Ce chemin produit un ExportResult NEUF : sans cette ligne, les
+        //   avertissements de `exporterDonnees()` seraient PERDUS, et le
+        //   fichier copie serait annonce complet alors qu'il ne l'est pas.
+        avertissements: result.avertissements,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Telechargement ERREUR : $e');
@@ -1853,13 +2028,61 @@ class ExportResult {
   final int     tailleOctets;
   final String? erreur;
 
+  /// ★ A7 (3.3-C11) — AVERTISSEMENTS NON BLOQUANTS.
+  ///
+  /// Un export peut RÉUSSIR tout en étant INCOMPLET : un groupe a pu être
+  /// omis par refus explicite (registre ELO divergent, lecture impossible).
+  /// Sans ce champ, `succes == true` était le SEUL signal, et il ne dit
+  /// qu'une chose : « le fichier a été écrit ».
+  ///
+  /// ⚠️ CE CHAMP N'EST **PAS** UN CANAL D'ERREUR.
+  ///   • `erreur` reste réservé à l'ÉCHEC TOTAL (`succes == false`) ;
+  ///   • `avertissements` accompagne un `succes == true` et signale ce qui
+  ///     manque dans le fichier produit.
+  ///   Les confondre afficherait une erreur rouge sur une sauvegarde réussie.
+  ///
+  /// Liste VIDE par défaut : tout appelant historique obtient `[]` sans
+  /// changer une ligne. Aucun constructeur existant n'est cassé.
+  final List<String> avertissements;
+
+  /// ★ A7 (3.3-C12) — ÉTAT DE L'OUVERTURE DU MENU DE PARTAGE.
+  ///
+  /// ⚠️ POURQUOI CE CHAMP EXISTE
+  ///   Une sauvegarde partielle (avertissement ELO) et un échec d'OUVERTURE du
+  ///   menu de partage produisent tous deux des `avertissements`. Sans un
+  ///   marqueur distinct, l'interface ne peut pas savoir si elle peut dire
+  ///   « le menu de partage a été ouvert » — et elle l'affirmait à tort.
+  ///   Distinguer les deux par le TEXTE de l'avertissement serait fragile :
+  ///   un changement de formulation casserait silencieusement l'affichage.
+  ///
+  /// Valeurs :
+  ///   • `null`  → sans objet : le parcours n'ouvre pas de menu de partage
+  ///               (téléchargement sur l'appareil, export seul) ;
+  ///   • `true`  → le menu natif a été SOLLICITÉ sans lever ;
+  ///   • `false` → l'ouverture du menu a LEVÉ. Le fichier existe néanmoins.
+  ///
+  /// ⚠️ `true` ne prouve AUCUN envoi : `SharePlus.share` rend la main quand le
+  ///    menu a été sollicité, pas quand un destinataire a reçu le fichier.
+  ///
+  /// Défaut `null` : aucun appelant historique n'est affecté.
+  final bool? partageOuvert;
+
   ExportResult({
     required this.succes,
     this.filePath,
     this.fileName,
     this.tailleOctets = 0,
     this.erreur,
+    this.avertissements = const <String>[],
+    this.partageOuvert,
   });
+
+  /// Vrai si le fichier a été écrit ET qu'aucun groupe n'a été omis.
+  ///
+  /// Distinct de [succes] : `succes` décrit l'écriture du fichier,
+  /// [complet] décrit son CONTENU. Un export partiel est `succes == true`
+  /// et `complet == false`.
+  bool get complet => succes && avertissements.isEmpty;
 
   String get tailleLisible {
     if (tailleOctets < 1024)            return '$tailleOctets o';
