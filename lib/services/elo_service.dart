@@ -377,6 +377,51 @@ enum MotifNonEcritureTemoin {
 
   /// L'écriture a LEVÉ une exception.
   echoueeParException,
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-C12 / A7-39) — MOTIFS DU REFUS ANTICIPÉ D'UN REGISTRE ENRICHI.
+  //
+  //  Ces trois valeurs n'existent QUE pour la branche d'import d'une
+  //  sauvegarde PORTANT un registre (`_elo_registre`). Elles sont produites
+  //  AVANT toute mutation des ratings : c'est ce qui les distingue de
+  //  `ratingsNonPersistes`, qui suppose la mutation déjà faite.
+  //
+  //  ⚠️ PORTÉE EXACTE — AUCUNE DE CES VALEURS N'EST UNE ISSUE D'ÉCRITURE.
+  //     Elles décrivent un NON-ÉCRIT DÉLIBÉRÉ dans lequel aucune écriture
+  //     n'a été TENTÉE, ni sur `elo_ratings_v2`, ni sur `elo_registre_v3`.
+  //     Les confondre avec `refuseeParStockage` ferait lire « le stockage a
+  //     refusé » là où, en réalité, il n'a jamais été sollicité.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Le registre transporté par la sauvegarde n'est pas une chaîne : son type
+  /// est inattendu. Même exigence que
+  /// [DiagnosticPreImportElo.etablissementImpossible] : un type inattendu rend
+  /// le diagnostic NON ÉTABLI, il ne se devine jamais.
+  registreEnrichiNonTextuel,
+
+  /// Le registre transporté par la sauvegarde est ILLISIBLE, ou d'un `schema`
+  /// / d'une `version` que le code courant ne sait pas interpréter.
+  ///
+  /// ⚠️ Ni réparé, ni réinterprété, ni remplacé par un registre neuf : le
+  ///    contrat du modèle l'interdit explicitement.
+  registreEnrichiIllisible,
+
+  /// Le registre transporté est lisible et interprétable, mais son empreinte
+  /// ne décrit PAS les ratings de la même sauvegarde.
+  ///
+  /// Sauvegarde auto-incohérente : aucune valeur de référence n'existe, donc
+  /// aucun recalage n'est possible — et il est interdit.
+  registreEnrichiIncoherent,
+
+  /// La RELECTURE du stockage n'a pas confirmé que les ratings persistés sont
+  /// bien ceux qui viennent d'être importés.
+  ///
+  /// ⚠️ Ce motif n'est PAS redondant avec [ratingsNonPersistes] : celui-ci
+  ///    couvre `setString` qui a répondu `false` ou qui a levé. Ici, `setString`
+  ///    a répondu `true` — mais un booléen n'est pas une preuve de CONTENU.
+  ///    La relecture est donc la seule preuve admise avant d'écrire dans le
+  ///    registre une empreinte qui prétend décrire le disque.
+  relectureNonConfirmee,
 }
 
 /// ★ A7 (3.3-B2-d2) — RÉSULTAT COMPLET D'UN IMPORT, SANS CHANGER SON RETOUR.
@@ -1146,6 +1191,128 @@ class EloService {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-C12 / A7-39) — REFUS ANTICIPÉ D'UN REGISTRE ENRICHI.
+  //
+  //  OBJET : décider, AVANT toute mutation des ratings, si le registre
+  //  transporté par une sauvegarde peut être RESTITUÉ. C'est la seule fonction
+  //  qui autorise la restitution : toute autre branche refuse.
+  //
+  //  ⚠️ POURQUOI AVANT LA MUTATION, ET PAS APRÈS.
+  //  Un refus découvert APRÈS `_sauvegarder()` laisserait l'appareil avec des
+  //  ratings importés et un registre périmé, donc `divergent` : plus aucune
+  //  application ELO possible, sans réparation automatique (interdite). Une
+  //  sauvegarde MANIFESTEMENT invalide ne doit pas produire cet état. La
+  //  décision est donc prise hors ligne, sur des données locales, sans aucun
+  //  accès disque et sans aucune mutation.
+  //
+  //  ⚠️ FONCTION PURE. Elle ne lit ni n'écrit `SharedPreferences`, ne touche
+  //  pas `_ratings`, ne touche à aucun compteur. Le seul effet de bord admis
+  //  est le décodage tolérant des ratings DANS UNE MAP LOCALE, dont le résultat
+  //  est rendu à l'appelant pour être réutilisé — jamais recalculé.
+  //
+  //  ⚠️ LISTE BLANCHE. Aucun cas par défaut n'autorise :
+  //    • marqueur absent            ⇒ chemin HISTORIQUE, pas de restitution ;
+  //    • marqueur non textuel       ⇒ `registreEnrichiNonTextuel` ;
+  //    • décodage qui lève          ⇒ `registreEnrichiIllisible` ;
+  //    • `!interpretable`           ⇒ `registreEnrichiIllisible` ;
+  //    • empreinte ≠ ratings        ⇒ `registreEnrichiIncoherent` ;
+  //    • tout le reste              ⇒ restitution AUTORISÉE.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Verdict du refus anticipé. Voir [motif] : `null` signifie « restitution
+  /// autorisée », et c'est le SEUL cas qui l'autorise.
+  static ({
+    MotifNonEcritureTemoin? motif,
+    Map<String, EloScore>? candidats,
+    String? registreBrut,
+    RegistreEloV3? registre,
+  }) _analyserRegistreEnrichi(Map<String, dynamic> data) {
+    ({MotifNonEcritureTemoin? motif, Map<String, EloScore>? candidats,
+        String? registreBrut, RegistreEloV3? registre}) refus(
+      MotifNonEcritureTemoin motif) =>
+        (
+          motif: motif,
+          candidats: null,
+          registreBrut: null,
+          registre: null,
+        );
+
+    // ── 0. Marqueur ABSENT : ce n'est PAS un refus, c'est le chemin
+    //       historique. Rendons un quadruplet vide et un motif NUL : les
+    //       appelants distinguent les deux cas par `data.containsKey`.
+    final Object? marqueurBrut = data[_kCleMarqueurRegistre];
+    if (marqueurBrut == null) {
+      return (
+        motif: null,
+        candidats: null,
+        registreBrut: null,
+        registre: null,
+      );
+    }
+
+    // ── 1. Type du marqueur : un registre est TOUJOURS une chaîne.
+    if (marqueurBrut is! String) {
+      return refus(MotifNonEcritureTemoin.registreEnrichiNonTextuel);
+    }
+
+    // ── 2. Empreinte des ratings de la SAUVEGARDE, calculée sans muter la RAM.
+    //       Le filtre `_elo_` est INDISPENSABLE : sans lui, on dépendrait du
+    //       fait accidentel qu'un `String`/`int` soit rejeté par
+    //       `as Map<String, dynamic>`. Cette coïncidence est réelle mais ne
+    //       doit pas porter une décision de sécurité.
+    //       Décodage TOLÉRANT, identique à `_charger` et à la mutation : une
+    //       entrée illisible est ignorée, partout de la même façon. C'est ce
+    //       qui rend l'empreinte d'ici comparable à celle de la RAM après
+    //       mutation, et donc la barrière F3' possible.
+    final Map<String, EloScore> candidats = <String, EloScore>{};
+    data.forEach((key, val) {
+      if (key.startsWith('_elo_')) return;
+      try {
+        candidats[key] = EloScore.fromJson(val as Map<String, dynamic>);
+      } catch (_) {}
+    });
+    final String empreinteCandidats = empreinte64Ratings(candidats);
+
+    // ── 3. Décodage STRICT du registre. Une `FormatException` est un refus,
+    //       jamais un repli.
+    final RegistreEloV3 registre;
+    try {
+      registre = RegistreEloV3.decoder(marqueurBrut);
+    } on FormatException {
+      return refus(MotifNonEcritureTemoin.registreEnrichiIllisible);
+    } catch (_) {
+      // `jsonDecode` peut lever autre chose qu'une `FormatException` sur une
+      // entrée pathologique : même décision, jamais un succès.
+      return refus(MotifNonEcritureTemoin.registreEnrichiIllisible);
+    }
+
+    // ── 4. Interprétable : `schema` ET `version` doivent être connus.
+    //       Un registre d'un schéma futur n'est ni réparé, ni réinterprété.
+    if (!registre.interpretable) {
+      return refus(MotifNonEcritureTemoin.registreEnrichiIllisible);
+    }
+
+    // ── 5. L'empreinte déclarée doit décrire LES RATINGS DE CETTE SAUVEGARDE.
+    //       C'est la seule preuve disponible, et elle est INTERNE au fichier :
+    //       elle ne dépend d'aucun état de l'appareil cible.
+    if (registre.empreinteRatings != empreinteCandidats) {
+      return refus(MotifNonEcritureTemoin.registreEnrichiIncoherent);
+    }
+
+    // ── 6. Restitution AUTORISÉE. La chaîne brute est rendue VERBATIM : elle
+    //       sera écrite telle quelle, sans réencodage, donc `entrees`,
+    //       `horloge`, `schema`, `version` et `origine` sont préservés à
+    //       l'octet. Aucune entrée n'est ajoutée : un import ne doit pas
+    //       inventer d'historique.
+    return (
+      motif: null,
+      candidats: candidats,
+      registreBrut: marqueurBrut,
+      registre: registre,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  A7 / B2-e — CHARGEMENT ET AMORÇAGE DU REGISTRE
   // ==========================================================================
   //  RÔLE : obtenir un registre UTILISABLE pour décider et journaliser, ou
@@ -1612,6 +1779,362 @@ class EloService {
     // `appliquee` reste le terme principal : sous reset, il vaut `false`, donc
     // la finalisation est refusée même si l'écriture a été « acquittée ».
     return appliquee && ecriture.confirmee;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-C12 / A7-39) — PORTIER DE LA RESTITUTION VERBATIM.
+  //
+  //  ⚠️ POURQUOI CE PORTIER N'EST PAS `_doitEcrireTemoin`.
+  //  `_doitEcrireTemoin` régit l'APPEND d'une entrée de témoin sur un registre
+  //  DÉJÀ PRÉSENT : son étape 3 refuse `registreAbsent`. Or restaurer une
+  //  sauvegarde enrichie sur un appareil VIERGE est précisément le cas où le
+  //  registre DE L'APPAREIL est absent — le registre à écrire venant de la
+  //  SAUVEGARDE, pas de l'appareil. Réutiliser `_doitEcrireTemoin` rendrait la
+  //  restauration impossible sur un appareil neuf. Les deux fonctions répondent
+  //  à deux questions différentes, et chacune a SA liste blanche.
+  //
+  //  LISTE BLANCHE — cinq refus, puis autorisation. Aucun cas par défaut.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Rend `null` si le registre de la sauvegarde peut être réécrit VERBATIM.
+  ///
+  /// FONCTION PURE : aucun accès disque, aucune mutation. L'empreinte relue lui
+  /// est FOURNIE — c'est [_empreinteRelueDepuisDisque] qui porte la preuve.
+  static MotifNonEcritureTemoin? _doitRestituerRegistre({
+    required EtatPersistanceElo etatRatings,
+    required String? empreinteRelue,
+    required String empreinteApresMutation,
+    required String? empreinteRegistre,
+  }) {
+    // 1. Écrire un registre avant de savoir que les ratings sont persistés
+    //    reviendrait à attester d'un fait non advenu.
+    if (etatRatings != EtatPersistanceElo.persistee) {
+      return MotifNonEcritureTemoin.ratingsNonPersistes;
+    }
+
+    // 2. `null` = relecture non menée à son terme. Ce n'est PAS « disque vide ».
+    if (empreinteRelue == null) {
+      return MotifNonEcritureTemoin.relectureNonConfirmee;
+    }
+
+    // 3. Sans empreinte déclarée par le registre, il n'y a rien à confronter.
+    if (empreinteRegistre == null) {
+      return MotifNonEcritureTemoin.registreEnrichiIllisible;
+    }
+
+    // 4. F3' — la RAM APRÈS MUTATION doit être ce que le disque vient de rendre.
+    //    Couvre tout écart entre le décodage du prédicat et celui de la
+    //    mutation : si les deux divergeaient, cette égalité tomberait.
+    if (empreinteRelue != empreinteApresMutation) {
+      return MotifNonEcritureTemoin.registreEnrichiIncoherent;
+    }
+
+    // 5. La RAM persistée doit être EXACTEMENT ce que le registre déclare. Sans
+    //    cela, écrire ce registre créerait un `divergent` immédiat.
+    if (empreinteApresMutation != empreinteRegistre) {
+      return MotifNonEcritureTemoin.registreEnrichiIncoherent;
+    }
+
+    return null; // restitution autorisée
+  }
+
+  /// CHEMIN ENRICHI — réécrit VERBATIM le registre transporté par la
+  /// sauvegarde, sous les contrôles de [_doitRestituerRegistre].
+  ///
+  /// ── CE QUI EST ÉCRIT, ET CE QUI NE L'EST PAS ───────────────────────────
+  ///   • la CHAÎNE de la sauvegarde, telle quelle (`registreBrut`) : aucune
+  ///     entrée `importBackup` n'est ajoutée, `horloge` n'est pas avancée,
+  ///     `origine` n'est pas réécrite, `schema`/`version` sont préservés ;
+  ///   • donc AUCUNE allocation d'identifiant : le risque
+  ///     `allocationImpossible` sur un `horloge` hérité très grand disparaît de
+  ///     ce chemin — effet direct du verbatim, ce n'est pas une facilité ;
+  ///   • l'ANCIEN registre de l'appareil n'est jamais supprimé au préalable :
+  ///     une suppression ouvrirait `registreAbsent`, donc
+  ///     `autoriseApplication == true`, c'est-à-dire la double application que
+  ///     le registre doit précisément empêcher. Il est écrasé, jamais effacé.
+  ///
+  /// ── ORDRE DES ATTESTATIONS ─────────────────────────────────────────────
+  ///   1. ratings persistés (`etat == persistee`) ;
+  ///   2. relecture disque effective (`reload()` puis décodage) ;
+  ///   3. F3' : RAM après mutation == empreinte RELUE ;
+  ///   4. RAM après mutation == empreinte DÉCLARÉE par le registre.
+  /// Un seul de ces contrôles qui tombe ⇒ aucun registre écrit, et un motif
+  /// exact. Aucune valeur de repli, aucune réparation.
+  /// ── PROTECTION CONSTATÉE (A7-39, correction finale) ─────────────────────
+  /// Le champ [protectionApres] n'est PAS une intention : il porte le verdict
+  /// du MODÈLE (`protegeContreDoubleApplication`) recalculé sur le disque
+  /// RELU APRÈS l'écriture du registre. Il vaut `null` dès qu'aucune
+  /// constatation n'est possible — refus, écriture non confirmée, diagnostic
+  /// post-écriture non établi. `null` n'est jamais converti en protection.
+  Future<({
+    IssueEcritureElo? issue,
+    OrigineRegistreElo? origine,
+    MotifNonEcritureTemoin? motif,
+    bool? protectionApres,
+  })> _restaurerRegistreSauvegarde({
+    required String registreBrut,
+    required RegistreEloV3 registre,
+    required int generation,
+    required String empreinteApresMutation,
+    required EtatPersistanceElo etatRatings,
+  }) async {
+    // La relecture n'est tentée que si les ratings sont persistés : le portier
+    // rend `ratingsNonPersistes` sans avoir besoin du disque, et un `GETALL`
+    // inutile serait du bruit dans les journaux des tests de concurrence.
+    String? empreinteRelue;
+    if (etatRatings == EtatPersistanceElo.persistee) {
+      empreinteRelue = await _empreinteRelueDepuisDisque();
+    }
+
+    final MotifNonEcritureTemoin? refus = _doitRestituerRegistre(
+      etatRatings: etatRatings,
+      empreinteRelue: empreinteRelue,
+      empreinteApresMutation: empreinteApresMutation,
+      empreinteRegistre: registre.empreinteRatings,
+    );
+    if (refus != null) {
+      debugPrint('[EloService] ⚠️ Restitution du registre REFUSÉE '
+          '(${refus.name}) — registre de l\'appareil PRÉSERVÉ, aucune '
+          'réparation automatique');
+      return (issue: null, origine: null, motif: refus, protectionApres: null);
+    }
+
+    final ({
+      IssueEcritureElo? issue,
+      MotifNonEcritureTemoin? motif,
+    }) ecriture = await _ecrireRegistreVerbatim(
+      registreBrut: registreBrut,
+      generation: generation,
+    );
+    if (ecriture.motif != null) {
+      return (
+        issue: ecriture.issue,
+        origine: null,
+        motif: ecriture.motif,
+        protectionApres: null,
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ A7-39 — CONSTATATION DE LA PROTECTION APRÈS RESTAURATION.
+    //
+    //  La question posée n'est plus « ai-je voulu écrire un témoin ? » mais
+    //  « le registre RÉELLEMENT EN PLACE protège-t-il ? ». La réponse ne peut
+    //  venir que du disque relu APRÈS l'écriture, passée à la fonction de
+    //  diagnostic du registre — jamais d'une valeur supposée.
+    //
+    //  POURQUOI CE SECOND PASSAGE EST NÉCESSAIRE. La relecture de
+    //  `_doitRestituerRegistre` (étape 2) porte sur les RATINGS ; elle prouve
+    //  que le disque rend bien l'empreinte attendue, mais elle ne dit RIEN de la
+    //  chaîne du registre telle qu'elle a été écrite. Seule une relecture
+    //  postérieure à `_ecrireRegistreVerbatim` peut l'établir : c'est cette
+    //  chaîne-là que le modèle doit juger.
+    //
+    //  ⚠️ AUCUNE VALEUR PAR DÉFAUT. Si `reload()` lève, si la clé est absente
+    //     ou d'un type inattendu, `_etablirDiagnosticApresRegistre` rend `null`
+    //     et la protection reste INCONNUE — donc non revendiquée. Un `false`
+    //     inventé serait aussi faux qu'un `true` inventé : les deux
+    //     masqueraient l'absence de preuve.
+    //
+    //  ⚠️ COÛT : une lecture supplémentaire (`getInstance` + `reload`). Elle
+    //     n'est consentie QUE sur ce chemin, après une écriture CONFIRMÉE. Les
+    //     chemins de refus, d'échec d'écriture et le chemin historique
+    //     n'en paient aucune.
+    // ══════════════════════════════════════════════════════════════════════
+    final bool? protectionApres = await _protectionConstateeApresEcriture();
+
+    // L'origine revendiquée est celle du registre RÉELLEMENT écrit. Elle peut
+    // être `courante` : A-2 l'autorise ICI, et seulement ici, parce que le
+    // registre restauré est celui de la sauvegarde et qu'il décrit exactement
+    // les ratings restaurés — F3, la relecture disque et F3' l'ont prouvé.
+    debugPrint('[EloService] ✅ Registre RESTAURÉ VERBATIM '
+        '(origine=${registre.origine.name}, ${registre.entrees.length} entrées '
+        'héritées telles quelles, aucune entrée ajoutée) — protection '
+        'constatée après écriture : ${protectionApres ?? "NON ÉTABLIE"}');
+    return (
+      issue: ecriture.issue,
+      origine: registre.origine,
+      motif: null,
+      protectionApres: protectionApres,
+    );
+  }
+
+  /// ★ A7-39 — Protection RÉELLEMENT constatée sur le registre en place.
+  ///
+  /// Relit le registre depuis le store (après `reload()`, comme toute lecture
+  /// prouvante de ce service) et le soumet à `diagnostiquerRegistre`, la
+  /// fonction PURE du modèle. Rend `null` — jamais `false` — si la constatation
+  /// n'aboutit pas.
+  ///
+  /// ⚠️ `nombreRatings` vient de `_ratings` : sur ce chemin, `_sauvegarder` a
+  ///    répondu `persistee` et la relecture des ratings a été confirmée avant
+  ///    l'écriture du registre. Le cardinal en RAM est donc celui du disque,
+  ///    et c'est lui qui distingue `registreAbsent`/`courante` de
+  ///    `registreAbsent`/`historiqueInconnu`.
+  ///
+  /// ⚠️ Le registre relu est celui qui vient d'être écrit : un `divergent` ici
+  ///    signifierait que l'écriture n'a pas produit ce qu'on annonce, et la
+  ///    protection serait alors légitimement refusée par le modèle.
+  Future<bool?> _protectionConstateeApresEcriture() async {
+    final ({
+      String? jsonRegistre,
+      String empreinteDisque,
+      int nombreRatings,
+    })? disque = await _lireEtatEloProuve();
+    if (disque == null) return null;
+
+    final ResultatDiagnosticElo diagnostic = diagnostiquerRegistre(
+      jsonRegistre: disque.jsonRegistre,
+      empreinteDisque: disque.empreinteDisque,
+      nombreRatings: disque.nombreRatings,
+    );
+    return diagnostic.protegeContreDoubleApplication;
+  }
+
+  /// ★ A7-39 — Lecture PROUVANTE de l'état ELO sur disque.
+  ///
+  /// `getInstance()` + `reload()` (le cache de `SharedPreferences` ne reflète
+  /// pas le store sans lui), puis décodage TOLÉRANT identique à `_charger`,
+  /// au diagnostic pré-import et à la relecture des ratings : une entrée
+  /// illisible est ignorée, sans quoi l'empreinte ne serait comparable à rien.
+  ///
+  /// Rend `null` sur le moindre doute — store indisponible, `reload()` en
+  /// échec, ratings non textuels ou JSON illisible, registre d'un type
+  /// inattendu. Aucune valeur de repli, aucun `catch` muet qui transformerait
+  /// une panne en constat.
+  Future<({
+    String? jsonRegistre,
+    String empreinteDisque,
+    int nombreRatings,
+  })?> _lireEtatEloProuve() async {
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      debugPrint('[EloService] ⚠️ Constatation de protection impossible '
+          '(SharedPreferences indisponible) : $e');
+      return null;
+    }
+
+    try {
+      await prefs.reload();
+    } catch (e) {
+      debugPrint('[EloService] ⚠️ Constatation de protection impossible '
+          '(reload() en échec — cache non actualisé) : $e');
+      return null;
+    }
+
+    // ── Ratings réellement persistés ───────────────────────────────────────
+    final Map<String, EloScore> persistes = <String, EloScore>{};
+    final Object? brutRatings = prefs.get(_prefsKey);
+    if (brutRatings != null) {
+      if (brutRatings is! String) {
+        debugPrint('[EloService] ⚠️ Constatation de protection impossible : '
+            '`$_prefsKey` n\'est pas une chaîne '
+            '(reçu ${brutRatings.runtimeType})');
+        return null;
+      }
+      if (brutRatings.isNotEmpty) {
+        try {
+          final Object? decode = jsonDecode(brutRatings);
+          if (decode is! Map<String, dynamic>) {
+            debugPrint('[EloService] ⚠️ Constatation de protection impossible : '
+                '`$_prefsKey` n\'est pas un objet JSON');
+            return null;
+          }
+          decode.forEach((cle, valeur) {
+            try {
+              persistes[cle] = EloScore.fromJson(valeur as Map<String, dynamic>);
+            } catch (_) {}
+          });
+        } on FormatException catch (e) {
+          debugPrint('[EloService] ⚠️ Constatation de protection impossible : '
+              '`$_prefsKey` illisible ($e)');
+          return null;
+        }
+      }
+    }
+
+    // ── Registre réellement présent ────────────────────────────────────────
+    final Object? brutRegistre = prefs.get(kCleRegistreElo);
+    if (brutRegistre != null && brutRegistre is! String) {
+      debugPrint('[EloService] ⚠️ Constatation de protection impossible : '
+          '`$kCleRegistreElo` n\'est pas une chaîne '
+          '(reçu ${brutRegistre.runtimeType})');
+      return null;
+    }
+
+    return (
+      jsonRegistre: brutRegistre as String?,
+      empreinteDisque: empreinte64Ratings(persistes),
+      nombreRatings: persistes.length,
+    );
+  }
+
+  /// CHEMIN HISTORIQUE — inchangé depuis B2-d2 : ajoute une entrée
+  /// `horsCourse` de motif `importBackup` et force `historiqueInconnu`.
+  ///
+  /// ⚠️ N'est appelée QUE si la sauvegarde ne portait AUCUN registre
+  ///    (`analyse.registreBrut == null`). C'est le contrat A-2 : une sauvegarde
+  ///    ancienne ne permet pas de prétendre que l'historique est mémorisé.
+  Future<({
+    IssueEcritureElo? issue,
+    OrigineRegistreElo? origine,
+    MotifNonEcritureTemoin? motif,
+    bool? protectionApres,
+  })> _restaurerTemoinHistorique({
+    required DiagnosticPreImportElo diagnostic,
+    required EtatPersistanceElo etatRatings,
+    required String empreinteApresMutation,
+    required String? empreinteAvantDisque,
+    required int nombreAvantDisque,
+    required int nombreApres,
+    required int generation,
+  }) async {
+    // `_doitEcrireTemoin` a rendu `null` : diagnostic établi + cohérent +
+    // ratings persistés + changement d'empreinte. Les deux valeurs ci-dessous
+    // sont donc NON NULLES par construction — on le VÉRIFIE plutôt que de le
+    // supposer.
+    final RegistreEloV3? registreAvant = diagnostic.resultat?.registre;
+    if (registreAvant == null || empreinteAvantDisque == null) {
+      // Inatteignable si `_doitEcrireTemoin` est correct. On refuse
+      // explicitement au lieu de forcer : une incohérence interne ne doit
+      // jamais devenir une écriture.
+      return (
+        issue: null,
+        origine: null,
+        motif: MotifNonEcritureTemoin.diagnosticNonEtabli,
+        protectionApres: null,
+      );
+    }
+
+    final ({
+      IssueEcritureElo? issue,
+      MotifNonEcritureTemoin? motif,
+    }) ecriture = await _ecrireTemoinImport(
+      registreAvant: registreAvant,
+      empreinteAvant: empreinteAvantDisque,
+      empreinteApres: empreinteApresMutation,
+      nombreAvant: nombreAvantDisque,
+      nombreApres: nombreApres,
+      generation: generation,
+    );
+    return (
+      issue: ecriture.issue,
+      origine: ecriture.issue == IssueEcritureElo.persistee
+          ? OrigineRegistreElo.historiqueInconnu
+          : null,
+      motif: ecriture.motif,
+      // ⚠️ CHEMIN HISTORIQUE : AUCUNE constatation de protection n'est faite
+      //    ici, et le contrat B2-d2 est préservé À L'IDENTIQUE. Le témoin écrit
+      //    force `historiqueInconnu`, pour lequel
+      //    `protegeContreDoubleApplication` vaut `false` PAR CONSTRUCTION : il
+      //    n'y a rien à relire pour le découvrir. `null` signifie donc
+      //    exactement « non constaté sur ce chemin », et la formule d'appel
+      //    retombe sur son calcul d'origine — comportement inchangé, verrouillé
+      //    par les tests A7 existants (dont `a7_33b2d2`, l.716).
+      protectionApres: null,
+    );
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -3012,6 +3535,190 @@ class EloService {
     return (issue: issue, motif: null);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-C12 / A7-39) — RESTITUTION VERBATIM DU REGISTRE SAUVEGARDÉ.
+  //
+  //  OBJET : écrire dans `elo_registre_v3` la chaîne EXACTE reçue de la
+  //  sauvegarde, après avoir prouvé que les ratings persistés sont bien ceux
+  //  que cette chaîne décrit.
+  //
+  //  ── CE QUI EST ÉCRIT, ET RIEN DE PLUS ────────────────────────────────────
+  //   • la chaîne du backup, TELLE QUELLE. Aucun `copyWith`, aucun
+  //     `encoder()`, aucun recalcul d'horloge, aucune entrée ajoutée.
+  //   • Conséquence assumée et vérifiable : `entrees`, `horloge`, `schema`,
+  //     `version` et `origine` sont préservés À L'OCTET. Un import ne laisse
+  //     AUCUNE trace dans le journal : il ne fabrique pas d'historique.
+  //
+  //  ── POURQUOI VERBATIM, ET PAS `copyWith(empreinteRatings: …)` ───────────
+  //   `copyWith` reconstruirait un objet ; `encoder()` n'est pas garanti
+  //   identique à l'octet près à la chaîne d'origine (le modèle le dit
+  //   explicitement, l. « réencoder un objet décodé n'est pas garanti
+  //   identique »). Or l'empreinte des ratings de la sauvegarde est DÉJÀ
+  //   égale à celle de la RAM après mutation : le refus anticipé l'a prouvé
+  //   hors ligne, et la barrière F3' le re-vérifie juste avant d'appeler ici.
+  //   Il n'y a donc RIEN à recaler. Recoder serait au mieux inutile, au pire
+  //   destructeur.
+  //
+  //  ── SUIVI DE L'ÉCRITURE ─────────────────────────────────────────────────
+  //   La future est inscrite dans [_ecrituresPersistantesEnCours] UNIQUEMENT.
+  //   [_ecrituresEnCours] garde sa signification historique : `nbEcrituresEnCours`
+  //   ne bouge pas. Le drain du reset attend les DEUX ensembles, donc il
+  //   attendra aussi cette écriture — ce qui interdit de recréer
+  //   `elo_registre_v3` après son effacement.
+  //
+  //  ⚠️ AUCUN `await` ENTRE LE CONTRÔLE DE GÉNÉRATION ET L'INSCRIPTION
+  //     (invariant P1). Sans cette contiguïté, un reset pourrait s'intercaler
+  //     et l'écriture ne serait pas drainée.
+  //
+  //  Rend l'issue de l'écriture, ou le motif du refus. `issue == persistee` et
+  //  `motif == null` SONT LE SEUL couple qui autorise à revendiquer une
+  //  protection — et même alors, seul l'appelant sait si elle est démontrée.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<({IssueEcritureElo? issue, MotifNonEcritureTemoin? motif})>
+      _ecrireRegistreVerbatim({
+    required String registreBrut,
+    required int generation,
+  }) async {
+    // ── Contrôle de génération IMMÉDIATEMENT avant toute attente. ──────────
+    if (_estPerimeeParReset(generation)) {
+      return (issue: null, motif: MotifNonEcritureTemoin.abandonneParReset);
+    }
+
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      return (issue: null, motif: MotifNonEcritureTemoin.echoueeParException);
+    }
+
+    // Second contrôle : `getInstance()` est une attente.
+    if (_estPerimeeParReset(generation)) {
+      return (issue: null, motif: MotifNonEcritureTemoin.abandonneParReset);
+    }
+
+    // ── Écriture, avec inscription IMMÉDIATE (aucun `await` intermédiaire). ─
+    IssueEcritureElo issue;
+    final Future<bool> future = prefs.setString(kCleRegistreElo, registreBrut);
+    // ↓↓↓ Aucun `await` entre le contrôle ci-dessus et cette inscription. ↓↓↓
+    _ecrituresPersistantesEnCours.add(future);
+    future.whenComplete(() {
+      _ecrituresPersistantesEnCours.remove(future);
+    }).ignore();
+
+    try {
+      final bool ok = await future;
+      if (ok) {
+        issue = IssueEcritureElo.persistee;
+      } else {
+        issue = IssueEcritureElo.refusee;
+        debugPrint('[EloService] ⚠️ Registre VERBATIM REFUSÉ par le stockage '
+            'sur `$kCleRegistreElo` — persistance NON CONFIRMÉE (le registre '
+            'existant n\'est PAS prouvé inchangé), aucune réparation');
+      }
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      issue = IssueEcritureElo.echouee;
+      debugPrint('[EloService] ⚠️ Registre VERBATIM : écriture NON confirmée '
+          '(exception sur `$kCleRegistreElo`) : $e');
+    }
+
+    if (issue == IssueEcritureElo.refusee) {
+      return (issue: issue, motif: MotifNonEcritureTemoin.refuseeParStockage);
+    }
+    if (issue == IssueEcritureElo.echouee) {
+      return (issue: issue, motif: MotifNonEcritureTemoin.echoueeParException);
+    }
+    return (issue: issue, motif: null);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-C12 / A7-39) — RELECTURE PROUVANTE AVANT ÉCRITURE DU REGISTRE.
+  //
+  //  OBJET : établir que ce qui est SUR LE DISQUE est bien ce qui vient d'être
+  //  importé, AVANT d'écrire un registre qui prétendra le décrire.
+  //
+  //  ⚠️ POURQUOI CE N'EST PAS REDONDANT AVEC `etat == persistee`.
+  //  `persistee` signifie « `setString` a répondu `true` ». Ce n'est PAS une
+  //  preuve de CONTENU : le contrat d'[EtatPersistanceElo] est explicite —
+  //  `refusee` et `echouee` valent « persistance NON CONFIRMÉE », JAMAIS
+  //  « disque inchangé ». Réciproquement, un `true` prouve que le store a
+  //  accepté, pas que la valeur relue est celle qu'on croit. Écrire dans le
+  //  registre une empreinte déduite d'un booléen serait revendiquer une
+  //  protection non démontrée.
+  //
+  //  La relecture passe par `reload()` : `getString` seul lirait le CACHE de
+  //  `SharedPreferences`, qui a été alimenté AVANT l'appel au store
+  //  (`shared_preferences_legacy.dart` `_setValue`). Sans `reload()`, la
+  //  vérification serait circulaire et ne prouverait rien.
+  //
+  //  ⚠️ MÊME DÉCODAGE TOLÉRANT QUE PARTOUT (`_charger`, diagnostic, mutation).
+  //     Une entrée illisible est ignorée. Ce n'est pas une indulgence : c'est
+  //     la condition pour que l'empreinte d'ici soit comparable à celle de la
+  //     RAM. Un décodage plus strict rendrait la comparaison structurellement
+  //     impossible.
+  //
+  //  Rend l'empreinte relue, ou `null` si la relecture n'a pas pu être menée
+  //  à son terme — jamais une valeur de repli.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<String?> _empreinteRelueDepuisDisque() async {
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      debugPrint('[EloService] ⚠️ Relecture ELO impossible '
+          '(SharedPreferences indisponible) : $e');
+      return null;
+    }
+
+    try {
+      await prefs.reload();
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      debugPrint('[EloService] ⚠️ Relecture ELO impossible '
+          '(reload() en échec — cache non actualisé) : $e');
+      return null;
+    }
+
+    final Object? brut = prefs.get(_prefsKey);
+    if (brut == null) {
+      // `null` = la clé a disparu. Ce n'est PAS « zéro rating » : c'est un
+      // état non prouvé, et il ne doit jamais devenir une empreinte.
+      debugPrint('[EloService] ⚠️ Relecture ELO : `$_prefsKey` ABSENTE après '
+          'écriture — contenu non prouvé');
+      return null;
+    }
+    if (brut is! String) {
+      debugPrint('[EloService] ⚠️ Relecture ELO : `$_prefsKey` n\'est pas une '
+          'chaîne (reçu ${brut.runtimeType}) — contenu non prouvé');
+      return null;
+    }
+
+    final Map<String, EloScore> relus = <String, EloScore>{};
+    if (brut.isNotEmpty) {
+      try {
+        final Object? decode = jsonDecode(brut);
+        if (decode is! Map<String, dynamic>) {
+          debugPrint('[EloService] ⚠️ Relecture ELO : objet JSON attendu '
+              '(reçu ${decode.runtimeType}) — contenu non prouvé');
+          return null;
+        }
+        decode.forEach((key, val) {
+          try {
+            relus[key] = EloScore.fromJson(val as Map<String, dynamic>);
+          } catch (_) {}
+        });
+      } on FormatException catch (e) {
+        debugPrint('[EloService] ⚠️ Relecture ELO : JSON illisible ($e) — '
+            'contenu non prouvé');
+        return null;
+      }
+    }
+
+    return empreinte64Ratings(relus);
+  }
+
   /// ★ A7 (3.3-B1) : opération ENFILÉE. Un import ne peut donc plus
   /// `_ratings.clear()` au milieu d'une application ELO en cours — c'est la
   /// décision D11 option A (« une application ELO en cours termine avant
@@ -3085,6 +3792,62 @@ class EloService {
     // croire qu'un diagnostic exploitable a été produit pour cette opération.
     _dernierDiagnosticPreImport = diagnostic;
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ A7 (3.3-C12 / A7-39) — REFUS ANTICIPÉ D'UN REGISTRE ENRICHI.
+    //
+    //  DÉCISION PRISE ICI, AVANT TOUTE MUTATION, ET SANS AUCUN `await` :
+    //  il n'y a, entre le contrôle G #2 ci-dessus et ce point, que des
+    //  instructions synchrones. L'invariant de contiguïté de B1 est préservé.
+    //
+    //  ⚠️ POURQUOI AVANT, ET PAS APRÈS LA PERSISTANCE.
+    //  Une sauvegarde MANIFESTEMENT invalide (registre illisible, incompatible,
+    //  ou ne décrivant pas ses propres ratings) ne doit pas modifier les
+    //  ratings puis laisser l'appareil `divergent` — état dont la seule sortie
+    //  serait un reset complet explicite. Refuser AVANT rend l'opération
+    //  entièrement inoffensive : la RAM n'est pas touchée, aucune écriture
+    //  n'est tentée, ni sur `elo_ratings_v2` ni sur `elo_registre_v3`.
+    //
+    //  ⚠️ CE REFUS NE S'APPLIQUE QU'AUX SAUVEGARDES PORTANT `_elo_registre`.
+    //  Le chemin HISTORIQUE (marqueur absent) est intégralement préservé : le
+    //  prédicat rend `motif == null` et `registreBrut == null`, et la suite
+    //  du corps est celle d'avant ce lot, instruction pour instruction.
+    // ══════════════════════════════════════════════════════════════════════
+    final bool porteeEnrichie = data.containsKey(_kCleMarqueurRegistre);
+    final ({
+      MotifNonEcritureTemoin? motif,
+      Map<String, EloScore>? candidats,
+      String? registreBrut,
+      RegistreEloV3? registre,
+    }) analyse = porteeEnrichie
+        ? _analyserRegistreEnrichi(data)
+        : (
+            motif: null,
+            candidats: null,
+            registreBrut: null,
+            registre: null,
+          );
+
+    if (analyse.motif != null) {
+      // ── REFUS ANTICIPÉ : aucune mutation, aucune écriture, aucun compteur
+      //    de persistance touché. Le résultat est PUBLIÉ pour que l'appelant
+      //    puisse expliquer exactement ce qui s'est passé — sans jamais
+      //    revendiquer une protection.
+      _dernierResultatImport = ResultatImportElo(
+        etatRatings: EtatPersistanceElo.nonTentee,
+        issueTemoin: null,
+        motifNonEcriture: analyse.motif,
+        coherenceAvant: diagnostic.coherence,
+        empreinteAvant: diagnostic.empreintePersistee,
+        empreinteApres: null,
+        origineAppliquee: null,
+        protegeApres: false,
+      );
+      debugPrint('[EloService] ⛔ Registre enrichi REFUSÉ AVANT MUTATION '
+          '(${analyse.motif!.name}) — ratings INTACTS, aucune écriture tentée, '
+          'aucune réparation automatique');
+      return EtatPersistanceElo.nonTentee;
+    }
+
     // ── MUTATION RAM — contiguë au contrôle G #2, aucun `await` inséré. ────
     //  Les images « avant » proviennent du DIAGNOSTIC (donc du disque), plus
     //  bas ; elles ne sont donc PAS relevées ici. Relever l'empreinte de la
@@ -3137,58 +3900,148 @@ class EloService {
       empreinteApres: empreinteApresMutation,
     );
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ A7-39 — DEUX CHEMINS DE RESTITUTION, SÉPARÉS ET EXCLUSIFS.
+    //
+    //  Le choix se fait sur `analyse.registreBrut`, c'est-à-dire sur la présence
+    //  d'un registre VALIDE dans la sauvegarde — décidée AVANT la mutation par
+    //  `_analyserRegistreEnrichi`. Aucun `try`/`catch`, aucun état par défaut :
+    //  il est donc toujours possible de dire lequel des deux a été pris.
+    //
+    //  ⚠️ POURQUOI LE CHEMIN ENRICHI NE PASSE PAS PAR `_doitEcrireTemoin`.
+    //    Ce dernier exige `coherence == coherent` côté APPAREIL (il refuse
+    //    `registreAbsent`) : il régit l'APPEND d'un témoin sur un registre déjà
+    //    présent. Restaurer une sauvegarde enrichie sur un appareil vierge est
+    //    un autre problème — le registre à écrire vient de la SAUVEGARDE. Les
+    //    contrôles du chemin enrichi sont donc ceux exigés par A7-39 :
+    //    persistance confirmée, relecture effective, F3', concordance avec le
+    //    registre transporté.
+    // ══════════════════════════════════════════════════════════════════════
     IssueEcritureElo? issueTemoin;
-    MotifNonEcritureTemoin? motif = refus;
+    MotifNonEcritureTemoin? motif;
     OrigineRegistreElo? origineAppliquee;
 
-    if (refus == null) {
-      // `_doitEcrireTemoin` a rendu `null` : diagnostic établi + cohérent +
-      // ratings persistés + changement d'empreinte. Les trois valeurs
-      // ci-dessous sont donc NON NULLES par construction — et on le vérifie
-      // plutôt que de le supposer.
-      final RegistreEloV3? registreAvant = diagnostic.resultat?.registre;
-      if (registreAvant == null || empreinteAvantDisque == null) {
-        // Inatteignable si `_doitEcrireTemoin` est correct. On refuse
-        // explicitement au lieu de forcer : une incohérence interne ne doit
-        // jamais devenir une écriture.
-        motif = MotifNonEcritureTemoin.diagnosticNonEtabli;
-      } else {
-        final ecriture = await _ecrireTemoinImport(
-          registreAvant: registreAvant,
-          empreinteAvant: empreinteAvantDisque,
-          empreinteApres: empreinteApresMutation,
-          nombreAvant: nombreAvantDisque,
+    // Protection RÉELLEMENT constatée après écriture, `null` si non constatée.
+    // Seul le chemin enrichi la renseigne : le chemin historique n'a rien à
+    // relire (son témoin force `historiqueInconnu`, donc `false` par
+    // construction) et conserve donc son calcul d'origine, à l'identique.
+    bool? protectionConstatee;
+
+    if (analyse.registreBrut != null) {
+      final ({
+        IssueEcritureElo? issue,
+        OrigineRegistreElo? origine,
+        MotifNonEcritureTemoin? motif,
+        bool? protectionApres,
+      }) restitution = await _restaurerRegistreSauvegarde(
+        registreBrut: analyse.registreBrut!,
+        registre: analyse.registre!,
+        generation: generation,
+        empreinteApresMutation: empreinteApresMutation,
+        etatRatings: etat,
+      );
+      issueTemoin = restitution.issue;
+      motif = restitution.motif;
+      origineAppliquee = restitution.origine;
+      protectionConstatee = restitution.protectionApres;
+    } else {
+      // ── CHEMIN HISTORIQUE — contrat A-2, inchangé depuis B2-d2. ─────────
+      motif = refus;
+      if (refus == null) {
+        final ({
+          IssueEcritureElo? issue,
+          OrigineRegistreElo? origine,
+          MotifNonEcritureTemoin? motif,
+          bool? protectionApres,
+        }) temoin = await _restaurerTemoinHistorique(
+          diagnostic: diagnostic,
+          etatRatings: etat,
+          empreinteApresMutation: empreinteApresMutation,
+          empreinteAvantDisque: empreinteAvantDisque,
+          nombreAvantDisque: nombreAvantDisque,
           nombreApres: nombreApres,
           generation: generation,
         );
-        issueTemoin = ecriture.issue;
-        motif = ecriture.motif;
-        if (issueTemoin == IssueEcritureElo.persistee) {
-          origineAppliquee = OrigineRegistreElo.historiqueInconnu;
-        }
+        issueTemoin = temoin.issue;
+        motif = temoin.motif;
+        origineAppliquee = temoin.origine;
       }
     }
 
     // Publication du résultat COMPLET, sans changer le retour de la méthode.
     //
-    // ⚠️ `protegeApres` — CALCULÉ, JAMAIS RECOPIÉ.
-    //    Correction B2-d2 : reprendre la valeur du diagnostic pré-import était
-    //    faux dans deux cas :
-    //      • ratings NON persistés (`refusee`/`echouee` = persistance NON
-    //        CONFIRMÉE, donc disque NON PROUVÉ inchangé) : la protection
-    //        antérieure ne peut plus être revendiquée, car rien ne prouve que
-    //        le registre décrit encore le disque ;
-    //      • témoin écrit : le registre porte alors `historiqueInconnu`, donc
-    //        `protegeContreDoubleApplication` vaut `false` PAR CONSTRUCTION.
-    //    La protection n'est conservée QUE si elle est PROUVÉE : ratings
-    //    persistés, ET empreinte du disque inchangée (donc registre toujours
-    //    cohérent avec ce qu'il déclare), ET protection présente avant l'import.
+    // ══════════════════════════════════════════════════════════════════════
+    //  ⚠️ `protegeApres` — CORRIGÉ EN A7-39 (correction finale autorisée).
+    //
+    //  CE QUE MESURAIENT LES TESTS M1/M9/M10 AVANT CORRECTION :
+    //    la valeur était calculée par la formule B2-d2, qui lit
+    //    `diagnostic.protegeContreDoubleApplication`, c'est-à-dire le verdict
+    //    portant sur le registre de l'APPAREIL AVANT import. Deux résultats
+    //    faux en découlaient, tous deux mesurés :
+    //      • appareil VIERGE + sauvegarde enrichie : `coherenceAvant ==
+    //        registreAbsent` donc protection rendue `false`, ALORS QUE le
+    //        registre restauré est cohérent, d'origine `courante`, et protège
+    //        effectivement → `false` mensonger (M1, M10) ;
+    //      • appareil déjà cohérent, mêmes ratings : aucun témoin tenté,
+    //        `issueTemoin == null`, formule satisfaite → `true` alors
+    //        qu'AUCUNE protection n'a été créée et que rien n'a été écrit (M9).
+    //    La formule mesurait donc une INTENTION D'ÉCRIRE UN TÉMOIN, pas l'état
+    //    de protection après l'opération.
+    //
+    //  CE QUI CHANGE, ET RIEN DE PLUS :
+    //    • CHEMIN ENRICHI : `protectionConstatee` porte le verdict du MODÈLE,
+    //      recalculé par `diagnostiquerRegistre` sur la chaîne de registre
+    //      RÉELLEMENT RELUE après `_ecrireRegistreVerbatim`. C'est la réponse à
+    //      la seule question qui compte : le registre EN PLACE protège-t-il ?
+    //    • `null` (constatation impossible : relecture en échec, clé absente,
+    //      type inattendu) ⇒ `false`. Une preuve manquante ne devient JAMAIS
+    //      une protection annoncée.
+    //    • CHEMIN HISTORIQUE : `protectionConstatee` reste `null`, et la
+    //      formule B2-d2 d'origine s'applique SANS AUCUNE MODIFICATION —
+    //      contrat préservé à l'identique (verrouillé par `a7_33b2d2`, l.716).
+    //
+    //  ⚠️ AUCUN `true` ARTIFICIEL : la valeur vient d'un diagnostic, jamais
+    //     d'une constante. Aucun calcul ELO, coefficient, poids, seuil, TOP3 ni
+    //     apprentissage n'est concerné : c'est un indicateur d'import.
+    // ══════════════════════════════════════════════════════════════════════
     final bool empreintesIdentiques = empreinteAvantDisque != null &&
         empreinteAvantDisque == empreinteApresMutation;
     final bool protectionPreservee = etat == EtatPersistanceElo.persistee &&
         empreintesIdentiques &&
         issueTemoin != IssueEcritureElo.persistee &&
         (diagnostic.protegeContreDoubleApplication ?? false);
+
+    //  Le choix entre les deux mesures suit le CHEMIN RÉELLEMENT PRIS.
+    //
+    //  ⚠️ A7-39 (dernière vérification) — `??` ÉTAIT FAUTIF ICI, ET LE DÉFAUT A
+    //     ÉTÉ MESURÉ AVANT CORRECTION. Écrire
+    //         protegeApresPublie = protectionConstatee ?? protectionPreservee
+    //     faisait retomber TOUT retour `null` du chemin ENRICHI sur la formule
+    //     B2-d2, laquelle lit encore `diagnostic.protegeContreDoubleApplication`
+    //     — c'est-à-dire le verdict de l'APPAREIL AVANT import. Deux façons
+    //     d'obtenir `null` sur le chemin enrichi :
+    //       • la constatation post-écriture échoue (relecture finale en échec,
+    //         clé absente, type inattendu) ;
+    //       • l'écriture du registre n'a pas eu lieu (refus, abandon par reset),
+    //         donc il n'y a rien à relire.
+    //     Dans ces deux cas, un appareil PROPRIÉTAIRE d'un registre cohérent et
+    //     protégé, importé sans changement d'empreinte, satisfaisait
+    //     `protectionPreservee` (`etat == persistee`, empreintes identiques,
+    //     `issueTemoin == null`) : une protection était donc REVENDIQUÉE sans
+    //     la moindre constatation post-import. C'était exactement la fausse
+    //     sécurité que ce lot doit interdire.
+    //
+    //  ── RÈGLE POSÉE ──────────────────────────────────────────────────────────
+    //     • CHEMIN ENRICHI : la valeur est `protectionConstatee`, et `null`
+    //       devient `false`. Aucune revendication sans constatation.
+    //     • CHEMIN HISTORIQUE : formule B2-d2 d'origine, STRICTEMENT inchangée
+    //       (le témoin forcé `historiqueInconnu` rend la protection nulle par
+    //       construction ; ce comportement est verrouillé par les tests A7).
+    //     Le discriminant est `analyse.registreBrut`, la même condition que
+    //     celle qui a choisi la branche de restitution — jamais une heuristique.
+    final bool protegeApresPublie = analyse.registreBrut != null
+        ? (protectionConstatee ?? false)
+        : protectionPreservee;
 
     _dernierResultatImport = ResultatImportElo(
       etatRatings: etat,
@@ -3198,21 +4051,27 @@ class EloService {
       empreinteAvant: diagnostic.empreintePersistee,
       empreinteApres: empreinteApresMutation,
       origineAppliquee: origineAppliquee,
-      protegeApres: protectionPreservee,
+      protegeApres: protegeApresPublie,
     );
 
     if (motif != null) {
       if (issueTemoin == null) {
-        debugPrint('[EloService] ⚠️ Témoin ELO NON TENTÉ (${motif.name}) — '
+        debugPrint('[EloService] ⚠️ Registre NON ÉCRIT (${motif.name}) — '
             'registre existant PRÉSERVÉ, aucune réparation automatique');
       } else {
-        debugPrint('[EloService] ⚠️ Témoin ELO TENTÉ puis NON CONFIRMÉ '
+        debugPrint('[EloService] ⚠️ Registre TENTÉ puis NON CONFIRMÉ '
             '(issue=${issueTemoin.name}, motif=${motif.name}) — AUCUNE '
             'réparation automatique, aucune restitution de l\'ancienne valeur');
       }
     } else {
-      debugPrint('[EloService] ✅ Témoin ELO écrit : origine=historiqueInconnu '
-          '— AUCUNE protection anti-double-application revendiquée');
+      // Le libellé suit le CHEMIN RÉELLEMENT PRIS : annoncer
+      // `historiqueInconnu` sur une restitution verbatim serait un mensonge.
+      final bool cheminEnrichi = analyse.registreBrut != null;
+      debugPrint('[EloService] ✅ Registre écrit '
+          '(origine=${origineAppliquee?.name}) — protection '
+          'anti-double-application APRÈS import : '
+          '${protegeApresPublie == true ? "constatée" : "non constatée"}'
+          '${cheminEnrichi ? "" : " (chemin historique : formule d origine)"}');
     }
 
     return etat;

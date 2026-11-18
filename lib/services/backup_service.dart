@@ -1298,15 +1298,32 @@ class BackupService {
                   'tentée ; les ratings lus ne sont pas persistés.';
               debugPrint('[Backup] ⚠️ ELO abandonné par un reset concurrent');
             case EtatPersistanceElo.nonTentee:
-              // Inatteignable depuis ce site : `importerDepuisBackup()`
-              // termine toujours par `_sauvegarder()`, qui ne rend que
-              // `persistee` / `refusee` / `echouee` / `abandonneeParReset`.
-              // Branche exigée par l'exhaustivité du `switch`, et signalée
-              // si l'invariant venait à changer sans être vu.
+              // ★ A7-39 — CETTE BRANCHE EST ATTEIGNABLE, ET ELLE EST MÊME LE
+              //   CAS NOMINAL D'UN REFUS ANTICIPÉ.
+              //
+              //   `importerDepuisBackup()` rend `nonTentee` lorsqu'une
+              //   sauvegarde ENRICHIE porte un registre illisible,
+              //   incompatible ou incohérent : la décision est prise AVANT
+              //   toute mutation, donc avant `_sauvegarder()`. Les ratings de
+              //   l'appareil sont restés INTACTS et aucune écriture n'a été
+              //   tentée.
+              //
+              //   ⚠️ `nbEloRestaures` EST REMIS À ZÉRO ICI, VOLONTAIREMENT.
+              //      Il a été renseigné plus haut par `nbChevauxSuivis`, qui
+              //      compte les ratings DÉJÀ PRÉSENTS en RAM. Les présenter
+              //      comme « restaurés » serait un mensonge : rien n'a été
+              //      restauré, l'appareil garde son état antérieur. Ce n'est
+              //      pas un échec non plus — c'est un refus délibéré, et le
+              //      message le dit.
+              nbEloRestaures = 0;
               avertissementElo =
-                  'Restauration ELO non tentée (état inattendu : '
-                  '${etatElo.name}). Aucune persistance n\'est confirmée.';
-              debugPrint('[Backup] ⚠️ ELO état inattendu : ${etatElo.name}');
+                  'Restauration ELO non tentée : le registre ELO contenu dans '
+                  'la sauvegarde est inutilisable (illisible, incompatible ou '
+                  'incohérent avec ses propres ratings). Aucun rating n\'a été '
+                  'modifié et aucune écriture n\'a été tentée ; les données ELO '
+                  'de l\'appareil sont restées telles quelles.';
+              debugPrint('[Backup] ⛔ Refus anticipé du registre ELO — '
+                  'ratings intacts, aucune écriture tentée');
           }
         } catch (e) {
           // Seul cas atteignable : le cast de `data['elo_service']` a levé.

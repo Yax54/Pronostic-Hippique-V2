@@ -23,8 +23,14 @@
 //
 //  CE QUE CE LOT NE PROUVE **PAS**
 //  ───────────────────────────────
-//  • **L'aller-retour ELO n'est PAS opérationnel** : `_importerDepuisBackup()`
-//    n'est pas raccordé au format enrichi. Ce fichier n'affirme rien là-dessus.
+//  • **Historique de l'aller-retour ELO** : ce lot-ci (3.3-C11) ne l'éprouve
+//    pas — l'import enrichi a été raccordé PLUS TARD, par le lot A7-39, et il
+//    est prouvé par `test/a7_39_restauration_registre_test.dart` (14 cas :
+//    M1 appareil vierge, M2 ancien registre cohérent, M3 registre divergent,
+//    M4a–M4d refus anticipés, M5a persistance refusée, M5b relecture non
+//    confirmée, M6 reset concurrent, M7–M8 chemins historiques, M9–M10
+//    comportement mesuré de `protegeApres`). Ce fichier-ci n'affirme donc rien
+//    sur l'import, et ne doit pas être lu comme une preuve de non-raccordement.
 //  • **La visibilité utilisateur reste INCOMPLÈTE** : `profile_profil_tab.dart`
 //    n'est pas modifié par ce lot. `_exporter()` affiche encore un « ✅ »
 //    inconditionnel. Aucun test ici ne prétend le contraire.
