@@ -45,6 +45,20 @@ const String kCleTs = 'elo_ratings_v2_ts';
 const String kDisc = 'Trot Attelé';
 const String kDiscNorm = 'TROT_ATTELE';
 
+/// ★ A7 (3.3-B2-e) — IDENTITÉ DE COURSE DES APPELS DE CE FICHIER.
+///
+/// Depuis B2-e (§6), une application ELO sans identité exploitable est REFUSÉE
+/// (`identiteNonExploitable`) : ces tests vérifiaient la PERSISTANCE des
+/// ratings (`refusee`, `echouee`, `persistee`, `abandonneeParReset`) et ne
+/// pouvaient plus l'atteindre. La clé fournie est donc une identité RÉELLE,
+/// cohérente, calendairement valide et ANCRÉE DANS LE PASSÉ (B2-e refuse une
+/// date postérieure au lendemain).
+///
+/// Elle est IDENTIQUE pour tous les tests de ce fichier : chacun repart d'un
+/// `setUp` neuf (`_monter`), donc aucune course n'est rejouée d'un test à
+/// l'autre — sauf dans T8, qui N'EXÉCUTE qu'un seul appel.
+const String kCleCourse = 'R1C1_01112026';
+
 String _cle(String nom) => '${nom.toUpperCase()}|$kDiscNorm';
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -196,6 +210,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     final rating1 = EloService.instance.getRating('CHEVAL_1', discipline: kDisc);
@@ -237,6 +252,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     final rating1 = EloService.instance.getRating('CHEVAL_1', discipline: kDisc);
@@ -279,6 +295,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     // ignore: avoid_print
@@ -310,6 +327,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     // ignore: avoid_print
@@ -339,11 +357,13 @@ void main() {
       arrivee: const <int>[],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse,
     );
     final etatUn = await EloService.instance.mettreAJourApresArrivee(
       arrivee: const <int>[1],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse,
     );
 
     // ignore: avoid_print
@@ -412,6 +432,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     // ignore: avoid_print
@@ -453,6 +474,7 @@ void main() {
       arrivee: <int>[1, 2],
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDisc,
+      courseKey: kCleCourse, // ★ B2-e : identité exigée pour journaliser
     );
 
     liberation.complete();

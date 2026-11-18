@@ -187,6 +187,18 @@ const String _disc = 'Trot Attelé'; // → normalisé TROT_ATTELE
 const String _discNorm = 'TROT_ATTELE';
 const String _cleElo = 'elo_ratings_v2';
 
+/// ★ A7 (3.3-B2-e) — IDENTITÉS DE COURSE DES APPLICATIONS DE CE FICHIER.
+///
+/// Le contrat B2-e exige une identité exploitable pour TOUTE application ELO :
+/// un appel sans `courseKey` rend `identiteNonExploitable` et ne mute rien.
+/// Les tests C-RD-1/2/3 caractérisent la DIVERGENCE RAM/DISQUE (R-d) — un
+/// calcul qui a lieu, une écriture qui échoue. Sans identité, ils ne
+/// mesureraient plus qu'un refus d'identité et perdraient leur objet.
+/// Une clé par course LOGIQUEMENT DIFFÉRENTE, date ancrée dans le PASSÉ.
+const String _cleCourse1 = 'R1C1_01112026';
+const String _cleCourse2 = 'R2C2_02112026';
+const String _cleCourse3 = 'R3C3_03112026';
+
 String _cle(String nom) => '${nom.toUpperCase()}|$_discNorm';
 
 ZtPartant _partant(int num, {String? nom, double rating = 1500.0, int nbCourses = 20}) {
@@ -684,6 +696,7 @@ void main() {
         arrivee: const <int>[1, 2],
         partants: [_partant(1), _partant(2)],
         discipline: _disc,
+        courseKey: _cleCourse1, // ★ B2-e : identité exigée
       );
 
       final ratingRam  = _rating('CHEVAL_1');
@@ -741,6 +754,7 @@ void main() {
           arrivee: const <int>[1, 2],
           partants: [_partant(1), _partant(2)],
           discipline: _disc,
+          courseKey: _cleCourse2, // ★ B2-e : identité exigée
         );
       } catch (e) {
         exceptionRemontee = e;
@@ -791,7 +805,9 @@ void main() {
         arrivee: const <int>[1, 2],
         partants: [_partant(1), _partant(2)],
         discipline: _disc,
+        courseKey: _cleCourse3, // ★ B2-e : identité exigée
       );
+
       final ratingAvantRedemarrage = _rating('CHEVAL_1');
       expect(ratingAvantRedemarrage, greaterThan(1500.0));
 

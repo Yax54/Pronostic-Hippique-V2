@@ -10,11 +10,39 @@
 //    la clé disciplinée.
 // ═══════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
+// ★ A7 (3.3-B2-b) : validation de la date portée par une `courseKey`.
+//   `date_utils.dart` n'a AUCUN import (mesuré) : aucune dépendance circulaire.
+import '../utils/date_utils.dart' show dateDepuisCourseKey;
+// ★ A7 (3.3-B2-d1) : lecture du diagnostic pré-import.
+//   `elo_empreinte.dart` n'importe que `dart:typed_data` et `zt_models.dart`
+//   (verrou T-S5) ; `elo_registre_v3.dart` n'importe que `dart:convert`
+//   (verrou T-S4). Aucune de ces deux bibliothèques n'importe un service :
+//   aucun cycle n'est créé par ces deux ajouts.
+import '../utils/elo_empreinte.dart' show empreinte64Ratings;
+// ★ A7 (3.3-B2-d2) : le registre est désormais ÉCRIT — mais seulement pour y
+//   AJOUTER une entrée `horsCourse`. Aucune fonction de ce modèle ne rend des
+//   ratings (verrou T-S6) : le registre reste un TÉMOIN, jamais une source.
+import '../models/elo_registre_v3.dart'
+    show
+        ChevalJournalise,
+        DiagnosticCoherenceElo,
+        EntreeRegistreElo,
+        EtapeEntreeRegistre,
+        ImageRatingElo,
+        IssueEcritureElo,
+        MotifHorsCourse,
+        OrigineRegistreElo,
+        RegistreEloV3,
+        ResultatDiagnosticElo,
+        TypeEntreeRegistre,
+        diagnostiquerRegistre,
+        kCleRegistreElo;
 
 /// ★ A7 (3.2) — RÉSULTAT D'UNE TENTATIVE DE PERSISTANCE ELO.
 ///
@@ -54,6 +82,606 @@ enum EtatPersistanceElo {
   /// Refusée par la barrière de reset (contrôle 1 ou 2 de `_sauvegarder`).
   /// Ce n'est PAS un échec — l'écriture a été invalidée volontairement.
   abandonneeParReset,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ★ A7 (3.3-B2-b) — IDENTITÉ DE COURSE VALIDÉE, PRÉPARÉE POUR LE REGISTRE.
+//
+//  OBJET : transformer une `courseKey` en une identité EXPLOITABLE par le futur
+//  journal ELO (`numR`, `numC`, `date` ISO, discipline normalisée), ou REFUSER
+//  toute identité partielle. Le lot PRÉPARE et PROUVE la validation ; il ne
+//  journalise rien.
+//
+//  ⚠️ CE QUE CE TYPE NE FAIT PAS — À LIRE AVANT TOUTE INTERPRÉTATION
+//  ─────────────────────────────────────────────────────────────────
+//   • il n'accède PAS à `elo_registre_v3` : ni lecture, ni écriture, ni
+//     suppression, ni migration. Il n'ajoute AUCUNE clé SharedPreferences ;
+//   • il ne décide PAS de la signification définitive de `EntreeRegistreElo.cle`
+//     — cette question reste réservée à B2-d. Aucun getter composite de type
+//     « clé de journal » n'est donc exposé ici : seulement les CONSTITUANTS ;
+//   • il n'invente JAMAIS un constituant. Si `numR`, `numC` ou la date manque,
+//     [tenter] rend `null`. Aucune valeur par défaut, aucun `R0C0`, aucune
+//     date de remplacement (règle D-B2-1 : pas de clé fictive).
+//
+//  RÈGLES DE VALIDATION — MESURÉES, PAS SUPPOSÉES
+//  ──────────────────────────────────────────────
+//   • `numR` et `numC` doivent être STRICTEMENT POSITIFS. Sont donc refusés
+//     `R0C0_…`, `R0C5_…`, `R5C0_…` et `R00C5_…` (même valeur 0) ;
+//   • la date doit être une date CALENDAIRE RÉELLE. La validation est DÉLÉGUÉE
+//     à `dateDepuisCourseKey` (`lib/utils/date_utils.dart`), qui accepte les
+//     DEUX formats déjà présents dans les données (`JJMMAAAA` et ISO) et
+//     refuse `31022026`, `29022025`, `32012026`. Aucune borne d'ANNÉE n'est
+//     ajoutée : ce serait une règle inventée, et `date_utils.dart` la refuse
+//     explicitement pour la même raison ;
+//   • la discipline est normalisée par [EloService.normaliserDiscipline] —
+//     EXACTEMENT la fonction qui produit la clé ELO, donc sans divergence
+//     possible entre l'identité préparée et les ratings réellement mis à jour.
+//
+//  ⚠️ `null` N'EST PAS UN ÉCHEC D'EXÉCUTION. C'est le résultat attendu quand
+//  l'appelant ne fournit pas de `courseKey` (cas de TOUS les appels existants,
+//  qui n'en passent pas) ou quand la clé n'est pas exploitable. Le comportement
+//  ELO reste identique dans tous les cas : ce lot ne conditionne aucune
+//  écriture à la présence d'une identité.
+// ═══════════════════════════════════════════════════════════════════════════
+class IdentiteCourseElo {
+  const IdentiteCourseElo._({
+    required this.courseKey,
+    required this.numR,
+    required this.numC,
+    required this.date,
+    required this.discipline,
+  });
+
+  /// `courseKey` d'origine, `trim()` appliqué, JAMAIS réécrite. Conservée
+  /// telle quelle pour que l'identité reste traçable jusqu'à sa source.
+  final String courseKey;
+
+  /// Numéro de réunion, STRICTEMENT positif.
+  final int numR;
+
+  /// Numéro de course, STRICTEMENT positif.
+  final int numC;
+
+  /// Date ISO `AAAA-MM-JJ`, telle que rendue par `dateDepuisCourseKey`.
+  /// Jamais recalculée, jamais reformatée à partir d'une autre source.
+  final String date;
+
+  /// Discipline canonique (`TROT_ATTELE`, `TROT_MONTE`, `OBSTACLE_*`, `PLAT`,
+  /// ou `INCONNU` si le libellé n'est pas reconnu). `INCONNU` est une valeur
+  /// RÉELLE de la normalisation de production, pas une invention de ce lot.
+  final String discipline;
+
+  /// `R{numR}C{numC}_{JJMMAAAA}[_suffixe]` — même motif que
+  /// `date_utils.dart` l.85-86.
+  static final RegExp _reDdMmYyyy =
+      RegExp(r'^R(\d+)C(\d+)_(\d{2})(\d{2})(\d{4})(?:_.*)?$');
+
+  /// `R{numR}C{numC}_{AAAA-MM-JJ}[_suffixe]` — même motif que
+  /// `date_utils.dart` l.90-91.
+  static final RegExp _reIso =
+      RegExp(r'^R(\d+)C(\d+)_(\d{4})-(\d{2})-(\d{2})(?:_.*)?$');
+
+  /// Tente de construire une identité EXPLOITABLE. Rend `null` — jamais une
+  /// identité partielle — dès qu'un constituant manque ou est invalide.
+  ///
+  /// [courseKey] peut être `null` : c'est le cas nominal des appels existants,
+  /// et le résultat est alors `null` sans aucune autre conséquence.
+  static IdentiteCourseElo? tenter({
+    String? courseKey,
+    String discipline = '',
+  }) {
+    if (courseKey == null) return null;
+    final cle = courseKey.trim();
+    if (cle.isEmpty) return null;
+
+    // 1. La DATE est validée par l'helper déjà éprouvé : les DEUX formats sont
+    //    acceptés et une date impossible rend `null`. Aucune date inventée.
+    final String? date = dateDepuisCourseKey(cle);
+    if (date == null) return null;
+
+    // 2. `numR`/`numC` proviennent de la MÊME lecture de clé que la date, avec
+    //    les motifs identiques à ceux de l'helper : aucune divergence possible
+    //    entre la date acceptée et les numéros acceptés.
+    final Match? m = _reDdMmYyyy.firstMatch(cle) ?? _reIso.firstMatch(cle);
+    if (m == null) return null;
+
+    // `tryParse` et non `parse` : un groupe de chiffres démesuré rend `null`
+    // au lieu de lever — refuser est le comportement voulu.
+    final int? numR = int.tryParse(m.group(1)!);
+    final int? numC = int.tryParse(m.group(2)!);
+    if (numR == null || numC == null) return null;
+    if (numR <= 0 || numC <= 0) return null;
+
+    return IdentiteCourseElo._(
+      courseKey: cle,
+      numR: numR,
+      numC: numC,
+      date: date,
+      discipline: EloService.normaliserDiscipline(discipline),
+    );
+  }
+
+  @override
+  String toString() => 'IdentiteCourseElo(numR: $numR, numC: $numC, '
+      'date: $date, discipline: $discipline)';
+}
+
+/// ★ A7 (3.3-B2-d1) — DIAGNOSTIC DE L'ÉTAT ELO **AVANT** UN IMPORT.
+///
+/// OBJET : établir, avant toute mutation provoquée par
+/// [EloService.importerDepuisBackup], si les ratings RÉELLEMENT PERSISTÉS sont
+/// cohérents avec ce que le registre `elo_registre_v3` déclare. Ce type ne fait
+/// que PORTER le résultat : il ne décide rien.
+///
+/// ⚠️ POURQUOI CE TYPE EXISTE — LA RAISON EST DATÉE, PAS ESTHÉTIQUE.
+///    La cohérence d'un registre est un fait HISTORIQUE : elle compare
+///    l'empreinte que le registre déclare à l'empreinte des ratings qu'il
+///    prétend décrire. Après `_sauvegarder()`, le disque porte l'empreinte
+///    APRÈS import ; un registre auparavant cohérent serait alors vu
+///    `divergent` par construction, et la branche de réancrage deviendrait
+///    inatteignable. Le diagnostic doit donc être calculé AVANT la mutation,
+///    avec l'empreinte d'AVANT.
+///
+/// ⚠️ CE QUE CE TYPE NE FAIT PAS — À LIRE AVANT TOUTE INTERPRÉTATION.
+///    • il n'ÉCRIT rien : ni `elo_registre_v3`, ni aucune autre clé ;
+///    • il ne SUPPRIME rien, ne migre rien, n'invalide rien ;
+///    • il n'AUTORISE ni ne BLOQUE aucune opération : [autoriseApplication] et
+///      [protegeContreDoubleApplication] sont EXPOSÉS pour l'observation
+///      seule. Aucun chemin de production ne les consulte dans ce lot ;
+///    • il n'ajoute AUCUNE clé SharedPreferences (le compte de
+///      `_toutesLesCles` reste 108) ;
+///    • il ne reconstruit JAMAIS de ratings depuis le registre (verrou T-S6) ;
+///    • il ne touche NI les formules ELO, NI les coefficients K, NI les
+///      mécanismes d'apprentissage, NI les critères A–Q.
+///
+/// ⚠️ `null` NE SIGNIFIE PAS « RIEN À SIGNALER ». Il signifie « le diagnostic
+///    n'a pas pu être établi », et [etablissementImpossible] en donne alors la
+///    raison EXACTE. Confondre les deux ferait passer une ignorance pour une
+///    absence de problème.
+class DiagnosticPreImportElo {
+  /// Empreinte des ratings LUS SUR LE DISQUE avant mutation, `null` si la
+  /// lecture a échoué (voir [etablissementImpossible]).
+  final String? empreintePersistee;
+
+  /// Nombre de ratings LUS SUR LE DISQUE avant mutation.
+  final int nombrePersistee;
+
+  /// Empreinte des ratings EN MÉMOIRE au moment du diagnostic.
+  ///
+  /// Conservée pour rendre observable la distinction « RAM identique au
+  /// disque » / « RAM différente du disque ». Elle n'entre dans AUCUNE
+  /// décision : le diagnostic porte sur le disque, pas sur la RAM.
+  final String empreinteRam;
+
+  /// Nombre de ratings EN MÉMOIRE au moment du diagnostic.
+  final int nombreRam;
+
+  /// Verdict rendu par `diagnostiquerRegistre`, `null` si non établi.
+  final ResultatDiagnosticElo? resultat;
+
+  /// Raison de l'échec d'établissement, `null` quand [resultat] est présent.
+  final String? etablissementImpossible;
+
+  const DiagnosticPreImportElo({
+    required this.empreintePersistee,
+    required this.nombrePersistee,
+    required this.empreinteRam,
+    required this.nombreRam,
+    required this.resultat,
+    required this.etablissementImpossible,
+  });
+
+  /// Vrai si le diagnostic a pu être établi.
+  bool get etabli => resultat != null;
+
+  /// Vrai si la RAM reflète exactement le disque.
+  ///
+  /// ⚠️ FAUX NE SIGNIFIE PAS « ERREUR ». Un import peut légitimement être
+  ///    demandé sur une RAM non chargée (l'import n'a pas de garde `_charge`,
+  ///    limite conservée de B1). Dans ce cas c'est le DISQUE qui fait foi.
+  bool get ramIdentiqueAuDisque =>
+      etabli &&
+      nombreRam == nombrePersistee &&
+      empreinteRam == empreintePersistee;
+
+  /// Cohérence déclarée, `null` si non établie.
+  ///
+  /// `null` ici ne doit JAMAIS être interprété comme `coherent`.
+  DiagnosticCoherenceElo? get coherence => resultat?.coherence;
+
+  /// Origine déclarée par le registre, `null` si non établie.
+  OrigineRegistreElo? get origine => resultat?.origine;
+
+  /// Empreinte DÉCLARÉE par le registre, `null` si le registre est absent,
+  /// illisible ou si le diagnostic n'a pas pu être établi.
+  ///
+  /// ⚠️ `null` ne signifie donc PAS « empreinte vide » : une empreinte vide est
+  ///    une valeur (`16ed60fcfaed47f4`), pas une absence.
+  String? get empreinteRegistre => resultat?.empreinteRegistre;
+
+  /// Valeur d'`autoriseApplication` du modèle, `null` si non établie.
+  ///
+  /// ⚠️ EXPOSÉ POUR L'OBSERVATION SEULE. Ce lot ne s'en sert pas pour
+  ///    autoriser ou bloquer quoi que ce soit.
+  bool? get autoriseApplication => resultat?.autoriseApplication;
+
+  /// Valeur de `protegeContreDoubleApplication` du modèle, `null` si non
+  /// établie. `false` est la valeur ATTENDUE en mode `historiqueInconnu`.
+  bool? get protegeContreDoubleApplication =>
+      resultat?.protegeContreDoubleApplication;
+
+  @override
+  String toString() {
+    if (!etabli) {
+      return 'DiagnosticPreImportElo(NON ÉTABLI: $etablissementImpossible, '
+          'nombrePersistee: $nombrePersistee, nombreRam: $nombreRam)';
+    }
+    return 'DiagnosticPreImportElo(coherence: ${coherence!.name}, '
+        'origine: ${origine!.name}, '
+        'empreintePersistee: $empreintePersistee, '
+        'empreinteRam: $empreinteRam, '
+        'nombrePersistee: $nombrePersistee, nombreRam: $nombreRam, '
+        'ramIdentiqueAuDisque: $ramIdentiqueAuDisque, '
+        'autoriseApplication: $autoriseApplication, '
+        'protege: $protegeContreDoubleApplication)';
+  }
+}
+
+/// ★ A7 (3.3-B2-d2) — MOTIF EXACT POUR LEQUEL LE TÉMOIN N'A PAS ÉTÉ ÉCRIT.
+///
+/// Chaque valeur correspond à UNE branche mesurée de la décision. Aucun autre
+/// code n'est possible : c'est ce qui rend le non-écrit AUDITABLE au lieu
+/// d'être un silence.
+enum MotifNonEcritureTemoin {
+  /// Le registre est ABSENT : son absence est déjà honnête (le modèle rend
+  /// `registreAbsent`), et écrire créerait une preuve historique rétroactive
+  /// que rien ne justifie. Décision D5 retenue : on n'écrit pas.
+  registreAbsent,
+
+  /// Le registre était DÉJÀ DIVERGENT avant l'import. Sa cause est inconnue :
+  /// un réancrage automatique effacerait une information, c'est interdit.
+  dejaDivergent,
+
+  /// Le registre est ILLISIBLE. Le contrat du modèle impose de ne le ni
+  /// supprimer, ni réparer, ni réinterpréter.
+  corrompu,
+
+  /// Le registre est d'un SCHÉMA ou d'une VERSION inconnus. Même raison.
+  schemaIncompatible,
+
+  /// Le diagnostic pré-import n'a pas pu être établi. `null` n'autorise rien.
+  diagnosticNonEtabli,
+
+  /// Les ratings n'ont PAS été persistés — donc aucune opération n'a eu lieu,
+  /// et attester d'une empreinte serait attester d'un fait inconnu.
+  ratingsNonPersistes,
+
+  /// L'import n'a pas changé les ratings : aucune écriture inutile.
+  aucunChangement,
+
+  /// L'allocation d'un `id` ou d'une `horloge` a échoué (collision,
+  /// débordement, registre incohérent). On n'écrit pas : mieux vaut aucun
+  /// témoin qu'un identifiant faux.
+  allocationImpossible,
+
+  /// Le contrôle de génération a refusé l'écriture : un reset est intervenu
+  /// après la persistance des ratings. Écrire recréerait la clé effacée.
+  abandonneParReset,
+
+  /// La sérialisation du registre a levé (`jsonEncode` sur `NaN`/`Infinity`,
+  /// mesuré et documenté par le modèle lui-même).
+  serialisationImpossible,
+
+  /// Le stockage a REFUSÉ l'écriture (`setString` a rendu `false`).
+  refuseeParStockage,
+
+  /// L'écriture a LEVÉ une exception.
+  echoueeParException,
+}
+
+/// ★ A7 (3.3-B2-d2) — RÉSULTAT COMPLET D'UN IMPORT, SANS CHANGER SON RETOUR.
+///
+/// ⚠️ POURQUOI CE TYPE EXISTE AU LIEU D'UN RETOUR ENRICHI.
+///    `importerDepuisBackup` rend `Future<EtatPersistanceElo>`, et
+///    `backup_service.dart` (l.1107-1145) en fait un `switch` EXHAUSTIF sur
+///    les 5 valeurs de l'enum. Changer le retour OU ajouter une valeur
+///    casserait la compilation d'un fichier que ce lot n'a pas le droit de
+///    modifier. Le résultat complet est donc publié À CÔTÉ, exactement comme
+///    [EloService.dernierDiagnosticPreImport] l'est depuis B2-d1.
+///
+/// ⚠️ CE QUE [operationSecurisee] NE DIT **JAMAIS**.
+///    Elle ne revendique AUCUNE protection contre une double application. En
+///    mode `historiqueInconnu`, [protegeContreDoubleApplication] vaut `false`
+///    PAR CONSTRUCTION, et une réussite des deux persistances ne change rien à
+///    cela : le témoin constate l'opération, il ne prémunit pas contre une
+///    réapplication historique, qui reste INDÉTECTABLE.
+class ResultatImportElo {
+  /// État rendu par `_sauvegarder()` pour les RATINGS. Toujours renseigné.
+  final EtatPersistanceElo etatRatings;
+
+  /// Issue de l'écriture du TÉMOIN, `null` si elle n'a PAS été TENTÉE.
+  final IssueEcritureElo? issueTemoin;
+
+  /// Motif EXACT de l'absence de témoin persisté.
+  ///
+  /// ⚠️ DEUX FAMILLES, DISCTINCTES ET COMPLÉMENTAIRES — les confondre ferait
+  ///    lire une tentative échouée comme un refus délibéré :
+  ///    • [issueTemoin] `null` ⇒ le témoin n'a jamais été tenté, et
+  ///      [motifNonEcriture] porte la RAISON de ce non-écrit (liste blanche
+  ///      de `_doitEcrireTemoin`, allocation impossible, sérialisation, reset) ;
+  ///    • [issueTemoin] non `null` et non `persistee` ⇒ le témoin A ÉTÉ tenté
+  ///      et a échoué, et [motifNonEcriture] vaut alors
+  ///      [MotifNonEcritureTemoin.refuseeParStockage] ou
+  ///      [MotifNonEcritureTemoin.echoueeParException].
+  ///    `null` n'est donc rendu QUE lorsque [issueTemoin] vaut `persistee`.
+  final MotifNonEcritureTemoin? motifNonEcriture;
+
+  /// Cohérence constatée AVANT l'import, `null` si le diagnostic n'était pas
+  /// établi.
+  final DiagnosticCoherenceElo? coherenceAvant;
+
+  /// Empreinte des ratings AVANT l'import (disque), si établie.
+  final String? empreinteAvant;
+
+  /// Empreinte des ratings APRÈS l'import (RAM venant d'être persistée), si
+  /// l'import a été mené à son terme.
+  final String? empreinteApres;
+
+  /// Origine appliquée au registre par le réancrage, `null` si aucun
+  /// réancrage n'a eu lieu.
+  final OrigineRegistreElo? origineAppliquee;
+
+  /// Valeur de `protegeContreDoubleApplication` APRÈS l'opération. `false`
+  /// est la valeur ATTENDUE et HONNÊTE en `historiqueInconnu`.
+  final bool protegeApres;
+
+  const ResultatImportElo({
+    required this.etatRatings,
+    required this.issueTemoin,
+    required this.motifNonEcriture,
+    required this.coherenceAvant,
+    required this.empreinteAvant,
+    required this.empreinteApres,
+    required this.origineAppliquee,
+    required this.protegeApres,
+  });
+
+  /// Vrai si les ratings ET le témoin ont été persistés.
+  ///
+  /// ⚠️ NE PAS lire cette valeur comme « protégé ». Voir la documentation de
+  ///    la classe : elle ne dit rien de la protection anti-double-application.
+  bool get operationSecurisee =>
+      etatRatings == EtatPersistanceElo.persistee &&
+      issueTemoin == IssueEcritureElo.persistee;
+
+  /// Vrai si les ratings sont persistés mais que le témoin ne l'est pas.
+  /// C'est l'état « à moitié sécurisé », qui ne doit JAMAIS être présenté
+  /// comme un succès complet.
+  bool get ratingsSeulsPersistes =>
+      etatRatings == EtatPersistanceElo.persistee &&
+      issueTemoin != IssueEcritureElo.persistee;
+
+  @override
+  String toString() => 'ResultatImportElo(etatRatings: ${etatRatings.name}, '
+      'issueTemoin: ${issueTemoin?.name ?? "NON TENTÉ"}, '
+      'motifNonEcriture: ${motifNonEcriture?.name ?? "-"}, '
+      'coherenceAvant: ${coherenceAvant?.name ?? "-"}, '
+      'origineAppliquee: ${origineAppliquee?.name ?? "-"}, '
+      'protegeApres: $protegeApres, '
+      'operationSecurisee: $operationSecurisee)';
+}
+
+/// ★ A7 (3.3-B2-d2) — ALLOCATION DÉTERMINISTE DES IDENTIFIANTS DU REGISTRE.
+///
+/// ⚠️ POURQUOI CE TYPE EXISTE.
+///    Le modèle ne fournit AUCUN allocateur (mesuré : 0 occurrence de
+///    `prochainId` / `maxId` / `allouer`), et `EntreeRegistreElo.id` est un
+///    `int` NON NULLABLE sans contrainte d'unicité vérifiée à la
+///    désérialisation. L'allocation doit donc être décidée ICI, et nulle part
+///    ailleurs, pour rester vérifiable.
+///
+/// ⚠️ RÈGLES RETENUES, ET LEUR JUSTIFICATION MESURÉE.
+///    • `id` : `max(id) + 1`, ou `0` si la liste est vide. `entreePourCle`
+///      (modèle l.540) compare `entree.id > trouvee.id` pour élire la PLUS
+///      RÉCENTE : une suite strictement croissante est donc la seule qui
+///      préserve cette sémantique. Aucun identifiant existant n'est réutilisé.
+///    • `horloge` : `horloge + 1`, une unité par entrée ajoutée. `vierge()`
+///      part de `0` (modèle l.500), donc la progression reste stricte.
+///
+/// ⚠️ REFUS PLUTÔT QUE DEVINETTE. Si l'allocation ne peut pas être prouvée
+///    sûre (débordement, identifiants incohérents, collision), l'objet rend
+///    `null` et AUCUNE écriture n'a lieu. Un témoin absent est préférable à un
+///    témoin portant un identifiant faux.
+class AllocationEntreeElo {
+  final int id;
+  final int horloge;
+
+  const AllocationEntreeElo._(this.id, this.horloge);
+
+  /// Alloue le prochain couple `(id, horloge)` pour [registre], ou `null`.
+  ///
+  /// Ne lève pas : un registre incohérent est un REFUS, pas une exception.
+  static AllocationEntreeElo? pour(RegistreEloV3 registre) {
+    final int horloge = registre.horloge;
+    // `horloge + 1` doit rester un entier positif représentable. En Dart, un
+    // `int` est un entier 64 bits sur la VM et un double sûr jusqu'à 2^53 sur
+    // le Web : on refuse la valeur qui ne serait plus exactement représentable
+    // sur les deux plateformes.
+    if (horloge < 0 || horloge >= kHorlogeMaxElo) return null;
+
+    if (registre.entrees.isEmpty) {
+      return AllocationEntreeElo._(0, horloge + 1);
+    }
+
+    int maxId = -1;
+    for (final entree in registre.entrees) {
+      if (entree.id < 0) return null; // identifiant négatif : registre suspect
+      if (entree.id > maxId) maxId = entree.id;
+    }
+    if (maxId >= kIdMaxElo) return null;
+
+    return AllocationEntreeElo._(maxId + 1, horloge + 1);
+  }
+
+  @override
+  String toString() => 'AllocationEntreeElo(id: $id, horloge: $horloge)';
+}
+
+/// Borne haute de sécurité pour `horloge`. `2^53` est la limite au-delà de
+/// laquelle un `int` cesse d'être exactement représentable en JavaScript.
+const int kHorlogeMaxElo = 9007199254740992; // 2^53
+
+/// Borne haute de sécurité pour `id`, pour la même raison.
+const int kIdMaxElo = 9007199254740992; // 2^53
+
+/// ★ A7 (3.3-B2-e) — MOTIF NOMMÉ D'UN REFUS D'APPLICATION ELO.
+///
+/// ⚠️ POURQUOI UN TYPE NOUVEAU, ET PAS UNE EXTENSION DE `EtatPersistanceElo`.
+///    `EtatPersistanceElo` possède un `switch` EXHAUSTIF dans
+///    `backup_service.dart` (l.1101-1145), fichier gelé. Ajouter une valeur OU
+///    changer le type de retour de `mettreAJourApresArrivee` casserait la
+///    compilation d'un fichier interdit. Le motif de refus est donc publié par
+///    un OBSERVABLE SÉPARÉ, exactement comme `dernierResultatImport` en B2-d2.
+///
+/// ⚠️ TOUS CES MOTIFS SIGNIFIENT « AUCUNE MUTATION ELO ». Un refus n'écrit
+///    jamais de ratings : il rend l'opération non tentée, jamais à moitié faite.
+enum MotifRefusApplicationElo {
+  /// Aucun `courseKey` fourni, ou clé inexploitable (motif, date, numéros).
+  /// Aucune identité ⇒ aucune journalisation possible ⇒ aucune application.
+  identiteNonExploitable,
+
+  /// Le registre persisté n'a pas pu être lu ou décodé. Ce n'est PAS une
+  /// absence : une erreur de lecture n'autorise jamais un amorçage.
+  registreIllisible,
+
+  /// Le registre existant est `divergent`, `corrompu` ou `schemaIncompatible`.
+  /// Refus SANS réparation, SANS remplacement, SANS migration (§4, §11).
+  registreNonCoherent,
+
+  /// Un registre `course` existe déjà pour cette clé, à l'état `appliquee`
+  /// OU incertain (`intention`, `nonConfirmee`). Les trois états bloquent.
+  courseDejaJournalisee,
+
+  /// La date de la course est postérieure à la date de référence disponible.
+  /// ⚠️ Garde d'ANTÉRIORITÉ, JAMAIS une preuve de non-réapplication (§3, §7).
+  datePosterieure,
+
+  /// L'écriture de l'entrée `intention` a échoué ou levé. Aucune mutation.
+  intentionNonPersistee,
+
+  /// L'allocation d'un `(id, horloge)` sûr a été refusée (débordement,
+  /// identifiants suspects). Refus plutôt que devinette.
+  allocationImpossible,
+
+  /// L'amorçage du registre (cas A ou B) n'a pas pu être persisté.
+  /// Sans registre persisté, aucune journalisation n'est possible ⇒ refus.
+  amorcageNonPersiste,
+
+  /// La sérialisation du registre a levé (ex. `NaN`/`Infinity` dans une image).
+  serialisationImpossible,
+}
+
+/// ★ A7 (3.3-B2-e) — RÉSULTAT COMPOSITE D'UNE APPLICATION ELO APRÈS ARRIVÉE.
+///
+/// Le type de retour public de `mettreAJourApresArrivee` reste
+/// `EtatPersistanceElo` (contrat inchangé). Ce type porte les faits que
+/// l'enum ne peut pas exprimer : le motif d'un refus, l'état du registre, et
+/// si une entrée `course` a été durablement journalisée.
+class ResultatApplicationElo {
+  /// Issue de la persistance des ratings (inchangée par B2-e).
+  final EtatPersistanceElo etatRatings;
+
+  /// Motif du refus, ou `null` si l'opération a été tentée.
+  final MotifRefusApplicationElo? motifRefus;
+
+  /// Cohérence du registre AVANT décision. `null` si le diagnostic n'a pas
+  /// pu être établi (lecture en échec) — ce cas est un refus, pas un silence.
+  final DiagnosticCoherenceElo? coherenceAvant;
+
+  /// Origine du registre au moment de la décision. INDICATEUR D'AFFICHAGE
+  /// SEULEMENT : conformément à l'option 1 arbitrée, `historiqueInconnu` ne
+  /// constitue JAMAIS à lui seul un motif de refus.
+  final OrigineRegistreElo? origineAvant;
+
+  /// `true` ssi un registre a été créé par cette opération (cas A ou B).
+  final bool amorcageEffectue;
+
+  /// Étape finale de l'entrée `course` écrite, ou `null` si aucune écriture.
+  final EtapeEntreeRegistre? etapeEntree;
+
+  /// Identifiant de l'entrée `course` écrite, ou `null`.
+  final int? idEntree;
+
+  /// `true` ssi l'entrée `course` de cette opération a été persistée ET
+  /// finalisée en `appliquee`. Seul état qui rend la protection effective.
+  final bool journalisationConfirmee;
+
+  const ResultatApplicationElo({
+    required this.etatRatings,
+    required this.motifRefus,
+    required this.coherenceAvant,
+    required this.origineAvant,
+    required this.amorcageEffectue,
+    required this.etapeEntree,
+    required this.idEntree,
+    required this.journalisationConfirmee,
+  });
+
+  /// Vrai ssi aucune mutation ELO n'a eu lieu.
+  bool get refusee => motifRefus != null;
+
+  /// Vrai ssi les ratings ont été persistés, que la journalisation soit
+  /// confirmée ou non.
+  bool get ratingsPersistes => etatRatings == EtatPersistanceElo.persistee;
+
+  /// ⚠️ Vrai ssi l'opération est COMPLÈTEMENT protégée : ratings persistés ET
+  /// entrée finalisée. Un `true` ici est la seule base licite pour affirmer
+  /// qu'une réapplication sera refusée.
+  bool get protectionEffective => ratingsPersistes && journalisationConfirmee;
+
+  @override
+  String toString() => 'ResultatApplicationElo(etatRatings: ${etatRatings.name}, '
+      'motifRefus: ${motifRefus?.name ?? "-"}, '
+      'coherenceAvant: ${coherenceAvant?.name ?? "-"}, '
+      'origineAvant: ${origineAvant?.name ?? "-"}, '
+      'amorcage: $amorcageEffectue, '
+      'etapeEntree: ${etapeEntree?.name ?? "-"}, '
+      'idEntree: ${idEntree?.toString() ?? "-"}, '
+      'journalisationConfirmee: $journalisationConfirmee)';
+}
+
+/// ★ A7 (3.3-B2-e) — INTENTION D'APPLICATION PRÉPARÉE, AVANT TOUTE MUTATION.
+///
+/// Porte les trois faits nécessaires aux phases B et D :
+///  • [id] — identifiant de l'entrée, alloué UNE SEULE FOIS ;
+///  • [registreAvecIntention] — registre à persister en phase B (étape
+///    `intention`, sans `issue` ni `tsFinal`) ;
+///  • [empreinteApres] — la PROMESSE d'empreinte, calculée sans toucher les
+///    ratings, qui sera relue et vérifiée après la mutation.
+///
+/// ⚠️ [chevaux] et [empreinteAvant] sont conservés pour construire l'entrée
+///    finale en phase D sans recalculer quoi que ce soit : la finalisation doit
+///    compléter la MÊME entrée, pas en construire une autre.
+class IntentionEntreeElo {
+  final int id;
+  final RegistreEloV3 registreAvecIntention;
+  final String empreinteAvant;
+  final String empreinteApres;
+  final List<ChevalJournalise> chevaux;
+  final IdentiteCourseElo identite;
+  final int horloge;
+  final int tsIntention;
+
+  const IntentionEntreeElo({
+    required this.id,
+    required this.registreAvecIntention,
+    required this.empreinteAvant,
+    required this.empreinteApres,
+    required this.chevaux,
+    required this.identite,
+    required this.horloge,
+    required this.tsIntention,
+  });
 }
 
 class EloService {
@@ -111,11 +739,94 @@ class EloService {
   int _generationCache = 0;
   final Set<Future<void>> _ecrituresEnCours = <Future<void>>{};
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-e / A-2) — JETON DE NAISSANCE PENDANT UN RESET.
+  //
+  //  DÉFAUT MESURÉ (arbitrage A-2) : `executerResetComplet` incrémente
+  //  `_generationCache` AVANT de drainer. Une opération NÉE PENDANT le reset
+  //  capture donc la génération DÉJÀ incrémentée : `generation ==
+  //  _generationCache` est vrai pour toujours, et le contrôle de génération est
+  //  INERTE pour elle. Sa seule protection restante était `_resetEnCours` ;
+  //  si elle est retenue dans une attente de `SharedPreferences.getInstance()`
+  //  qui se résout APRÈS la réouverture de la barrière, cette protection est
+  //  retombée. Mesuré (B2e-9b) : elle écrivait alors `elo_ratings_v2`,
+  //  `elo_ratings_v2_ts` ET `elo_registre_v3` après l'effacement, et rendait
+  //  `persistee`. Résurrection post-barrière complète.
+  //
+  //  POURQUOI UN JETON, ET NON UN CONTRÔLE SUPPLÉMENTAIRE.
+  //  Un contrôle posé après un `await` peut lui-même devenir obsolète pendant
+  //  l'attente suivante. Le seul fait INVARIANT est celui de la NAISSANCE :
+  //  l'opération a-t-elle commencé alors qu'un reset courait ? Cette
+  //  information est capturée SYNCHRONEMENT, une seule fois, dans
+  //  `_executerEnFile`, et voyage ensuite avec l'opération : elle ne peut plus
+  //  devenir obsolète, puisqu'elle ne dépend plus d'un état mutable.
+  //
+  //  ENCODAGE — le jeton est NÉGATIF, et porte l'identité du reset :
+  //    jeton = -(generationDuReset + 1)  ⇒  generationDuReset = -jeton - 1
+  //  Une génération « normale » est toujours ≥ 0 : les deux espaces sont donc
+  //  disjoints, et un jeton ne peut jamais être confondu avec une génération.
+  //  Porter l'identité du reset (et non un simple booléen « pendant un reset »)
+  //  couvre le cas de DEUX resets successifs : une opération née pendant R1 et
+  //  reprise pendant R2 reste périmée, car `_generationCache` a encore changé.
+  //
+  //  ⚠️ CE QUE CE JETON NE CHANGE PAS : une opération née pendant le reset et
+  //     qui court ENTIÈREMENT à l'intérieur de ce reset reste autorisée à
+  //     avancer, puis est refusée par le CONTRÔLE 1 de `_sauvegarder`
+  //     (`abandonneeParReset`, `nbRefusParReset` +1). C'est le contrat T8 /
+  //     V29-I / V29-H, mesuré par delta EXACT : il est intégralement préservé.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Encode le jeton d'une opération née pendant le reset de génération
+  /// [generationReset]. Toujours négatif, donc jamais confondu avec une
+  /// génération réelle (≥ 0).
+  static int _jetonNaissancePendantReset(int generationReset) =>
+      -(generationReset + 1);
+
   /// Nombre de vidages effectués (observable par les tests).
   int get generationCache => _generationCache;
 
   /// Écritures encore en vol (observable par les tests).
   int get nbEcrituresEnCours => _ecrituresEnCours.length;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-a) — SUIVI DE TOUTES LES ÉCRITURES PERSISTANTES.
+  //
+  //  OBJET : permettre au reset d'attendre TOUTE écriture persistante, sans
+  //  toucher au compteur historique [nbEcrituresEnCours].
+  //
+  //  ⚠️ POURQUOI UN SECOND ENSEMBLE, ET NON UN ENSEMBLE ÉLARGI.
+  //  [_ecrituresEnCours] est mesuré par DELTA EXACT dans des tests validés :
+  //    • `a7_32_observabilite_persistance_test.dart:428`     → 0 ;
+  //    • `a7_32b_restauration_elo_contrat_test.dart:424`     → 0 ;
+  //    • `a7_32c_concurrence_ts_test.dart:261` et `:292`     → 1 ;
+  //    • `a7_33b1_file_fifo_elo_test.dart:654`               → 1.
+  //  Y inscrire une écriture supplémentaire (registre ELO) changerait ces
+  //  valeurs. Le second ensemble rend le drain plus large SANS modifier
+  //  l'observable historique : c'est exactement l'objet de B2-a.
+  //
+  //  ÉTAT ACTUEL (B2-a) : les deux ensembles reçoivent EXACTEMENT les mêmes
+  //  futures, car la seule écriture persistante existante est celle de
+  //  `_sauvegarder()`. Aucun accès à `elo_registre_v3` n'est introduit :
+  //  le registre n'est ni lu, ni écrit, ni supprimé, ni migré par ce lot.
+  //
+  //  INVARIANT : toute future inscrite ici en est RETIRÉE à sa complétion,
+  //  succès OU échec (`whenComplete`), afin que le drain ne puisse pas
+  //  boucler sur un ensemble qui ne se vide jamais.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// TOUTES les écritures persistantes en vol (ratings aujourd'hui, registre
+  /// ELO dans un lot ultérieur). Sert UNIQUEMENT au drain du reset.
+  ///
+  /// Distinct de [_ecrituresEnCours], qui reste le témoin historique exposé
+  /// par [nbEcrituresEnCours] et n'est jamais élargi.
+  final Set<Future<void>> _ecrituresPersistantesEnCours = <Future<void>>{};
+
+  /// Écritures persistantes encore en vol, tous types confondus.
+  ///
+  /// Compteur NOUVEAU et purement additif : aucun test existant ne le lit
+  /// (mesuré : `grep nbEcrituresEnCours` ne rend que l'ancien nom).
+  int get nbEcrituresPersistantesEnCours =>
+      _ecrituresPersistantesEnCours.length;
 
   /// Refus par le CONTRÔLE 1 — écriture née pendant l'effacement.
   int _nbRefusParReset = 0;
@@ -164,6 +875,706 @@ class EloService {
   /// Conservée pour le diagnostic : 3.2 n'ouvre AUCUN rejeu à partir d'elle.
   Object? _derniereErreurEcriture;
   Object? get derniereErreurEcriture => _derniereErreurEcriture;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-b) — IDENTITÉ DE COURSE DE LA DERNIÈRE APPLICATION.
+  //
+  //  OBJET : rendre OBSERVABLE, sans aucun effet de bord, ce que la validation
+  //  d'identité a produit pour la dernière opération ELO exécutée. C'est ce qui
+  //  permet de PROUVER que les constituants sont préparés — sans écrire quoi
+  //  que ce soit et sans toucher aux ratings.
+  //
+  //  ⚠️ CE CHAMP N'EST PAS UN JOURNAL. Il ne survit pas au processus, n'est pas
+  //  persisté, n'est lu par AUCUNE logique de production : il n'existe que
+  //  pour l'observation. Le futur registre lira l'identité à la SOURCE (le
+  //  paramètre `courseKey`), jamais ce champ.
+  //
+  //  ⚠️ SA VALEUR EST `null` PAR DÉFAUT, ET C'EST LE CAS NOMINAL : tous les
+  //  appels existants ne passent pas de `courseKey`, donc aucune identité n'est
+  //  produite (D-B2-1 : pas de clé fictive). `null` ne conditionne RIEN : les
+  //  ratings sont mis à jour exactement comme avant ce lot.
+  //
+  //  ⚠️ RÉINITIALISATION : le champ est remis à `null` au DÉBUT de chaque
+  //  opération ELO, avant toute attente. Sans cela, une opération sans
+  //  `courseKey` laisserait observer l'identité de l'opération PRÉCÉDENTE, et
+  //  un test pourrait croire qu'une identité a été produite là où il n'y en a
+  //  pas. Il n'est PAS touché par `executerResetComplet` : ce lot ne modifie
+  //  pas le reset.
+  // ══════════════════════════════════════════════════════════════════════════
+  IdentiteCourseElo? _derniereIdentiteCourse;
+
+  /// Identité de course de la DERNIÈRE opération ELO, ou `null`.
+  ///
+  /// `null` signifie « aucune identité exploitable n'a été fournie » — jamais
+  /// « identité perdue ». Aucun code de production ne doit décider d'une
+  /// écriture à partir de ce getter (voir la documentation du champ).
+  IdentiteCourseElo? get derniereIdentiteCourse => _derniereIdentiteCourse;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-d1) — DIAGNOSTIC PRÉ-IMPORT DE L'ÉTAT ELO.
+  //
+  //  OBJET : rendre OBSERVABLE l'état ELO établi AVANT la mutation d'un import,
+  //  et le figer pour que les tests puissent le vérifier après coup.
+  //
+  //  ⚠️ CE CHAMP N'EST PAS UN JOURNAL. Il ne survit pas au processus, n'est
+  //  persisté nulle part, et AUCUNE logique de production ne le consulte dans
+  //  ce lot : il n'autorise et ne bloque exactement RIEN.
+  //
+  //  ⚠️ SA VALEUR EST `null` TANT QU'AUCUN IMPORT N'A ÉTÉ TENTÉ, et elle est
+  //  remise à `null` au DÉBUT de chaque import, AVANT toute attente. Sans cette
+  //  remise, un import qui s'abandonne laisserait observer le diagnostic de
+  //  l'import PRÉCÉDENT — un test pourrait alors croire qu'un diagnostic a été
+  //  établi là où il ne l'a pas été.
+  //
+  //  ⚠️ `null` APRÈS UN IMPORT SIGNIFIE « non établi », JAMAIS « aucune
+  //  anomalie » : le motif exact est porté par [etablissementImpossible] du
+  //  dernier diagnostic effectivement produit.
+  //
+  //  ⚠️ IL N'EST PAS TOUCHÉ PAR `executerResetComplet` : ce lot ne modifie pas
+  //  le reset. Un reset n'écrit donc rien ici, et son drain n'attend rien de
+  //  ce champ puisqu'il ne produit aucune écriture.
+  // ══════════════════════════════════════════════════════════════════════════
+  DiagnosticPreImportElo? _dernierDiagnosticPreImport;
+
+  /// Diagnostic de l'état ELO établi AVANT le DERNIER import tenté, ou `null`.
+  ///
+  /// Lecture seule. Voir la documentation de [DiagnosticPreImportElo] : ce
+  /// getter n'existe que pour l'observation et la vérification, jamais pour
+  /// décider d'une écriture, d'un blocage ou d'une autorisation.
+  DiagnosticPreImportElo? get dernierDiagnosticPreImport =>
+      _dernierDiagnosticPreImport;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-d2) — RÉSULTAT COMPLET DU DERNIER IMPORT.
+  //
+  //  ⚠️ AMBIGUÏTÉ DOCUMENTÉE (réserve R3 de la consigne).
+  //  `null` signifie « aucun import n'a encore été tenté, ou le dernier import
+  //  s'est abandonné avant de produire un résultat ». Il ne signifie JAMAIS
+  //  « import réussi ». AUCUNE décision de production ne doit lire ce getter
+  //  comme une preuve de succès : [ResultatImportElo.operationSecurisee] est
+  //  le seul indicateur de double persistance, et il ne vaut que pour un
+  //  résultat effectivement produit.
+  // ══════════════════════════════════════════════════════════════════════════
+  ResultatImportElo? _dernierResultatImport;
+
+  /// Résultat complet du DERNIER import mené à son terme, ou `null`.
+  ///
+  /// Lecture seule. Voir l'avertissement ci-dessus : `null` n'est pas un
+  /// succès. Ne conditionne aucune écriture — le point de contrôle unique est
+  /// [_doitEcrireTemoin].
+  ResultatImportElo? get dernierResultatImport => _dernierResultatImport;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-e) — OBSERVABLE DE L'APPLICATION ELO APRÈS ARRIVÉE.
+  //
+  //  Même raison d'être que `dernierResultatImport` : le type de retour public
+  //  de `mettreAJourApresArrivee` reste `EtatPersistanceElo` — `backup_service`
+  //  en fait un `switch` exhaustif (l.1101-1145) et il est gelé. Les faits que
+  //  l'enum ne peut pas porter (motif de refus, origine, journalisation) sont
+  //  donc publiés ici.
+  //
+  //  ⚠️ `null` N'EST PAS UN SUCCÈS. Il signifie « aucune opération arrivée à
+  //     son terme », y compris un abandon par reset.
+  // ══════════════════════════════════════════════════════════════════════════
+  ResultatApplicationElo? _dernierResultatMiseAJour;
+
+  /// Résultat complet de la DERNIÈRE application ELO après arrivée, ou `null`.
+  ///
+  /// Lecture seule. Ne conditionne aucune écriture : le point de décision reste
+  /// [_chargerOuAmorcerRegistre] puis [_doitEcrireTemoin] pour l'import.
+  ResultatApplicationElo? get dernierResultatMiseAJour =>
+      _dernierResultatMiseAJour;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B2-d2) — POINT DE CONTRÔLE UNIQUE DE L'ÉCRITURE DU TÉMOIN.
+  //
+  //  RÈGLE DE SÉCURITÉ, ÉNONCÉE ICI UNE FOIS ET NULLE PART AILLEURS :
+  //  le témoin n'est écrit QUE si, et seulement si, ce point rend `null`
+  //  (aucun motif de refus). Toute autre branche du service doit passer par
+  //  lui — jamais par un `if (diagnostic.etabli)` dispersé.
+  //
+  //  ⚠️ `null`, `etabli == false` et tout diagnostic non établi sont traités
+  //  comme des REFUS, jamais comme des autorisations. C'est l'inverse exact du
+  //  piège consistant à laisser un `false` par défaut autoriser une écriture.
+  //
+  //  ⚠️ LISTE BLANCHE, PAS LISTE NOIRE. Seule la cohérence `coherent` autorise.
+  //  `registreAbsent`, `dejaDivergent`, `corrompu`, `schemaIncompatible` et
+  //  `diagnosticNonEtabli` sont refusés — la liste noire serait une invitation
+  //  à oublier un futur cas.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Rend `null` si le témoin PEUT être écrit, ou le motif EXACT du refus.
+  ///
+  /// FONCTION PURE : aucun accès disque, aucune mutation.
+  static MotifNonEcritureTemoin? _doitEcrireTemoin({
+    required DiagnosticPreImportElo diagnostic,
+    required EtatPersistanceElo etatRatings,
+    required String? empreinteAvant,
+    required String? empreinteApres,
+  }) {
+    // 1. Le diagnostic doit être ÉTABLI. Un `null` n'autorise rien.
+    if (!diagnostic.etabli) {
+      return MotifNonEcritureTemoin.diagnosticNonEtabli;
+    }
+
+    // 2. Les ratings doivent avoir été PERSISTÉS. Avant cela, l'import n'a pas
+    //    eu lieu : attester d'une empreinte serait attester d'un fait inconnu.
+    if (etatRatings != EtatPersistanceElo.persistee) {
+      return MotifNonEcritureTemoin.ratingsNonPersistes;
+    }
+
+    // 3. Le registre doit avoir été COHÉRENT avant l'import. Liste blanche.
+    switch (diagnostic.coherence!) {
+      case DiagnosticCoherenceElo.coherent:
+        break; // seul cas autorisé
+      case DiagnosticCoherenceElo.registreAbsent:
+        return MotifNonEcritureTemoin.registreAbsent;
+      case DiagnosticCoherenceElo.divergent:
+        return MotifNonEcritureTemoin.dejaDivergent;
+      case DiagnosticCoherenceElo.corrompu:
+        return MotifNonEcritureTemoin.corrompu;
+      case DiagnosticCoherenceElo.schemaIncompatible:
+        return MotifNonEcritureTemoin.schemaIncompatible;
+    }
+
+    // 4. Aucune écriture artificielle si rien n'a changé.
+    if (empreinteAvant != null && empreinteAvant == empreinteApres) {
+      return MotifNonEcritureTemoin.aucunChangement;
+    }
+
+    return null; // autorisé
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  A7 / B2-e — CHARGEMENT ET AMORÇAGE DU REGISTRE
+  // ==========================================================================
+  //  RÔLE : obtenir un registre UTILISABLE pour décider et journaliser, ou
+  //  expliquer pourquoi il est impossible d'en obtenir un.
+  //
+  //  RÈGLE CENTRALE (option 1 arbitrée) :
+  //   • registre ABSENT + aucun rating  ⇒ amorcer `origine: courante` ;
+  //   • registre ABSENT + ratings      ⇒ amorcer `origine: historiqueInconnu`,
+  //     sans inventer une seule entrée et sans toucher aux ratings ;
+  //   • registre COHÉRENT (quelle que soit son origine) ⇒ utilisable ;
+  //   • registre DIVERGENT / CORROMPU / INCOMPATIBLE ⇒ refus, jamais remplacé ;
+  //   • LECTURE EN ERREUR ⇒ refus. Une erreur de lecture n'est JAMAIS une
+  //     absence légitime (§6, condition impérative).
+  //
+  //  ⚠️ `historiqueInconnu` n'est PAS un motif de refus. C'est un indicateur :
+  //     le registre journalise les opérations NOUVELLES, et ne prétend rien
+  //     sur les applications antérieures à l'amorçage. Cette limite est
+  //     assumée au §1 de l'arbitrage, et ne doit jamais être présentée comme
+  //     une garantie rétroactive.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<({RegistreEloV3? registre, MotifRefusApplicationElo? refus,
+          bool amorcage})> _chargerOuAmorcerRegistre({
+    required int generation,
+    int? jeton,
+  }) async {
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      return (registre: null, refus: MotifRefusApplicationElo.registreIllisible,
+              amorcage: false);
+    }
+
+    // `reload()` : la lecture doit porter sur le STORE, pas sur le cache. Le
+    // registre peut avoir été écrit par une opération antérieure et n'être
+    // visible qu'après rechargement — `getString` seul lirait `_preferenceCache`.
+    try {
+      await prefs.reload();
+    } catch (_) {
+      return (registre: null, refus: MotifRefusApplicationElo.registreIllisible,
+              amorcage: false);
+    }
+
+    final Object? brut = prefs.get(kCleRegistreElo);
+    if (brut != null && brut is! String) {
+      // Type inattendu : ni absence, ni corruption du JSON — un refus explicite.
+      return (registre: null, refus: MotifRefusApplicationElo.registreIllisible,
+              amorcage: false);
+    }
+
+    final String? jsonRegistre = brut as String?;
+
+    // ── Registre ABSENT : seul cas où un amorçage est autorisé. ─────────────
+    if (jsonRegistre == null) {
+      final String empreinte = empreinte64Ratings(_ratings);
+      final RegistreEloV3 neuf = _ratings.isEmpty
+          // Cas A — tout premier usage : aucun historique à protéger.
+          ? RegistreEloV3.vierge(empreinteRatings: empreinte)
+          // Cas B — des ratings existent sans registre. `vierge()` pose
+          // `courante` ; on corrige en `historiqueInconnu` : nous ne
+          // connaissons AUCUNE des applications antérieures. Aucune entrée
+          // historique n'est inventée, aucun rating n'est modifié.
+          : RegistreEloV3.vierge(empreinteRatings: empreinte)
+              .copyWith(origine: OrigineRegistreElo.historiqueInconnu);
+
+      // ★ A-1 : on ne teste PLUS un `null` ambigu, mais le fait mesuré — la
+      //   persistance de l'amorçage a-t-elle été CONFIRMÉE ?
+      final ({bool confirmee, MotifRefusApplicationElo? refus}) amorcage =
+          await _persisterRegistre(
+        registre: neuf,
+        generation: generation,
+        jetonNaissance: jeton,
+      );
+      if (amorcage.refus != null) {
+        return (registre: null,
+                refus: MotifRefusApplicationElo.amorcageNonPersiste,
+                amorcage: false);
+      }
+      // ⚠️ A-1 — `confirmee == false` sans refus signifie : écriture SAUTÉE par
+      //    un reset en cours. Le registre Neuf existe alors en MÉMOIRE mais il
+      //    n'a AUCUNE existence durable : l'amorçage n'est PAS annoncé. Le
+      //    registre est tout de même rendu pour que les contrôles suivants
+      //    (doublon, antériorité) puissent s'exercer — c'est exactement ce que
+      //    faisait le `return null` précédent — mais `amorcage` reste FALSE.
+      return (registre: neuf, refus: null, amorcage: amorcage.confirmee);
+    }
+
+    // ── Registre PRÉSENT : décodage puis diagnostic. Jamais d'amorçage. ─────
+    final RegistreEloV3 registre;
+    try {
+      registre = RegistreEloV3.decoder(jsonRegistre);
+    } on FormatException {
+      // Ni remplacement, ni réinitialisation, ni migration (§4, §11).
+      return (registre: null, refus: MotifRefusApplicationElo.registreNonCoherent,
+              amorcage: false);
+    }
+
+    if (!registre.interpretable) {
+      return (registre: null, refus: MotifRefusApplicationElo.registreNonCoherent,
+              amorcage: false);
+    }
+
+    final ResultatDiagnosticElo diagnostic = diagnostiquerRegistre(
+      jsonRegistre: jsonRegistre,
+      empreinteDisque: empreinte64Ratings(_ratings),
+      nombreRatings: _ratings.length,
+    );
+
+    // Liste blanche : SEUL `coherent` autorise. `divergent` est refusé sans
+    // réparation ; `corrompu`/`schemaIncompatible` le sont déjà plus haut.
+    if (diagnostic.coherence != DiagnosticCoherenceElo.coherent) {
+      return (registre: null, refus: MotifRefusApplicationElo.registreNonCoherent,
+              amorcage: false);
+    }
+
+    return (registre: registre, refus: null, amorcage: false);
+  }
+
+  /// Persiste [registre] sous `kCleRegistreElo`, en respectant P1.
+  ///
+  /// ⚠️ AUCUN `await` ENTRE LE CONTRÔLE DE GÉNÉRATION ET L'INSCRIPTION DANS
+  ///    `_ecrituresPersistantesEnCours`. Sans cette contiguïté, un reset
+  ///    pourrait s'intercaler dans la fenêtre et la future ne serait pas
+  ///    drainée — l'écriture ressusciterait `elo_registre_v3` après effacement
+  ///    (défaut V29-A).
+  ///
+  /// Rend un couple EXPLICITE `(confirmee, refus)` — jamais un simple `null`.
+  ///
+  /// ★ A-1 : `null` signifiait à la fois « le stockage a CONFIRMÉ » et
+  ///   « l'écriture a été SAUTÉE pendant un reset ». L'appelant d'amorçage
+  ///   interprétait ce `null` comme un succès et publiait `amorcageEffectue:
+  ///   true` alors qu'aucune écriture n'avait eu lieu. Les deux faits sont
+  ///   désormais DISTINGUÉS : `confirmee` est le SEUL critère d'un amorçage
+  ///   réel, et un refus reste un refus.
+  Future<({bool confirmee, MotifRefusApplicationElo? refus})>
+      _persisterRegistre({
+    required RegistreEloV3 registre,
+    required int generation,
+    int? jetonNaissance,
+  }) async {
+    final String brut;
+    try {
+      brut = registre.encoder();
+    } catch (_) {
+      return (confirmee: false, refus: MotifRefusApplicationElo.serialisationImpossible);
+    }
+
+    // Contrôle G avant toute attente.
+    if (_estPerimeeParReset(generation)) {
+      return (confirmee: false, refus: MotifRefusApplicationElo.intentionNonPersistee);
+    }
+
+    // ★ A2 — opération ENGAGÉE pendant un reset DÉJÀ ACHEVÉ : le jeton est
+    //   immuable, ce contrôle ne peut pas être rendu obsolète par une attente.
+    if (jetonNaissance != null) {
+      final MotifRefusApplicationElo? refusJeton =
+          _motifRefusEcriturePersistante(jetonNaissance);
+      if (refusJeton != null) return (confirmee: false, refus: refusJeton);
+    }
+
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      return (confirmee: false, refus: MotifRefusApplicationElo.intentionNonPersistee);
+    }
+
+    // Contrôle G après `getInstance()` : c'est une attente.
+    if (_estPerimeeParReset(generation)) {
+      return (confirmee: false, refus: MotifRefusApplicationElo.intentionNonPersistee);
+    }
+
+    // ★ A2 — re-vérification après l'attente, sur le jeton immuable.
+    if (jetonNaissance != null) {
+      final MotifRefusApplicationElo? refusJeton =
+          _motifRefusEcriturePersistante(jetonNaissance);
+      if (refusJeton != null) return (confirmee: false, refus: refusJeton);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ★ A7 (3.3-B2-e) — CORRECTIF DU DÉFAUT DE RÉSURRECTION DU REGISTRE ELO.
+    //
+    //  DÉFAUT MESURÉ : une opération NÉE PENDANT un reset capture la génération
+    //  DÉJÀ incrémentée par ce reset (`executerResetComplet` incrémente AVANT
+    //  de drainer). Le contrôle de génération ci-dessus la laisse donc passer, et
+    //  son `setString` s'exécutait APRÈS le `remove` du reset : la clé
+    //  `elo_registre_v3` était RECRÉÉE. Preuve : 3 écritures du registre
+    //  observées pendant un reset, clé survivante.
+    //
+    //  POURQUOI CE N'EST PAS UN GARDE `_resetEnCours` QUI REFUSE.
+    //  Un refus, ici, remonterait en `intentionNonPersistee` et l'opération
+    //  rendrait `nonTentee` SANS atteindre `_sauvegarder()`. Mesuré : cela casse
+    //  T8 (`a7_32`), V29-I et V29-H, qui exigent `abandonneeParReset`, la RAM
+    //  mutée et `nbRefusParReset` incrémenté EXACTEMENT une fois. Ces contrats
+    //  sont validés et ne doivent pas changer.
+    //
+    //  SOLUTION RETENUE : l'écriture physique est SAUTÉE, mais l'appel est
+    //  acquitté. Justification, et elle est stricte :
+    //    • le reset est EN COURS et va effacer le registre : il n'existe aucune
+    //      version de registre à écrire qui puisse être durable. Écrire serait
+    //      non seulement inutile, mais nuisible (résurrection) ;
+    //    • l'état final de l'opération reste décidé AILLEURS, par les contrôles
+    //      existants : `_sauvegarder()` rend `abandonneeParReset` (contrôle 1) et
+    //      incrémente `nbRefusParReset`. Aucun contrat observable ne bouge ;
+    //    • ce n'est PAS une réparation automatique et PAS une fausse preuve :
+    //      on ne prétend pas que le registre est persisté, on constate qu'il
+    //      n'a pas à l'être. `_finaliserEntreeCourse` refuse symétriquement.
+    //
+    //  ORDONNANCEMENT COUVERT — les DEUX sens sont traités :
+    //    (a) écriture ENGAGÉE avant le reset : sa future est déjà inscrite dans
+    //        `_ecrituresPersistantesEnCours`, donc le drain l'attend AVANT
+    //        d'effacer. Le reset garde la priorité ;
+    //    (b) écriture NÉE pendant le reset : on n'écrit pas du tout.
+    //  Le contrôle est placé APRÈS le dernier `await` (`getInstance()`), donc il
+    //  ne peut pas devenir obsolète pendant une attente, et il est CONTIGU à
+    //  l'inscription dans `_ecrituresPersistantesEnCours` (invariant P1 : aucun
+    //  `await` ne les sépare).
+    // ══════════════════════════════════════════════════════════════════════════
+    // ★ A-1 — LE SAUT D'ÉCRITURE N'EST PLUS UN `null` AMBIGU.
+    //   Le retour est désormais un couple explicite `(confirmee, refus)`. Le
+    //   saut rend `confirmee: false` : aucun appelant ne peut plus le lire
+    //   comme une persistance. L'issue de l'OPÉRATION reste décidée ailleurs,
+    //   par le contrôle 1 de `_sauvegarder()` — les contrats T8 / V29-I / V29-H
+    //   sont donc préservés à l'identique.
+    if (_resetEnCours) {
+      debugPrint('[EloService] ⏭️ écriture du registre SAUTÉE (reset en cours) '
+          '— la clé ne sera pas recréée après effacement');
+      return (confirmee: false, refus: null);
+    }
+
+    final Future<bool> future = prefs.setString(kCleRegistreElo, brut);
+    // ↓↓↓ Aucun `await` entre le contrôle ci-dessus et cette inscription. ↓↓↓
+    _ecrituresPersistantesEnCours.add(future);
+    future.whenComplete(() {
+      _ecrituresPersistantesEnCours.remove(future);
+    }).ignore();
+
+    try {
+      final bool ok = await future;
+      return ok
+          ? (confirmee: true, refus: null)
+          : (confirmee: false,
+             refus: MotifRefusApplicationElo.intentionNonPersistee);
+    } catch (_) {
+      return (confirmee: false,
+              refus: MotifRefusApplicationElo.intentionNonPersistee);
+    }
+  }
+
+  /// ★ A7 (3.3-B2-e) — REFUS D'APPLICATION, SANS AUCUNE MUTATION.
+  ///
+  /// Point unique : tout refus d'application passe par ici, ce qui garantit
+  /// qu'aucun chemin ne peut publier un motif sans laisser `_ratings` intact
+  /// ET sans publier l'observable correspondant.
+  ///
+  /// Rend `EtatPersistanceElo.nonTentee` — la valeur existante qui signifie
+  /// exactement « rien n'a été tenté ». Aucune valeur d'enum n'est ajoutée
+  /// (`backup_service.dart` l.1101-1145 en fait un `switch` exhaustif).
+  EtatPersistanceElo _refuserApplication(
+    MotifRefusApplicationElo motif, {
+    DiagnosticCoherenceElo? coherence,
+    OrigineRegistreElo? origine,
+    bool amorcage = false,
+  }) {
+    _dernierResultatMiseAJour = ResultatApplicationElo(
+      etatRatings: EtatPersistanceElo.nonTentee,
+      motifRefus: motif,
+      coherenceAvant: coherence,
+      origineAvant: origine,
+      amorcageEffectue: amorcage,
+      etapeEntree: null,
+      idEntree: null,
+      journalisationConfirmee: false,
+    );
+    debugPrint('[EloService] ⏭️ application ELO refusée (${motif.name}) — '
+        'aucune mutation des ratings');
+    return EtatPersistanceElo.nonTentee;
+  }
+
+  /// ★ A7 (3.3-B2-e) — CONSTRUIT L'INTENTION SANS MUTER LES RATINGS.
+  ///
+  /// Rend `null` si l'allocation `(id, horloge)` n'est pas prouvable sûre —
+  /// refus plutôt que devinette, comme [AllocationEntreeElo.pour].
+  ///
+  /// ⚠️ FONCTION PURE À L'ÉGARD DE `_ratings` : elle lit et calcule, elle
+  ///    n'affecte rien. C'est ce qui permet d'écrire l'intention AVANT la
+  ///    mutation tout en annonçant une empreinte « après » exacte.
+  IntentionEntreeElo? _construireIntentionCourse({
+    required IdentiteCourseElo identite,
+    required RegistreEloV3 registre,
+    required Map<String, double> deltas,
+    required List<ZtPartant> partants,
+    required String discipline,
+    required String empreinteAvant,
+  }) {
+    final AllocationEntreeElo? allocation = AllocationEntreeElo.pour(registre);
+    if (allocation == null) return null;
+
+    // ── Images et empreinte « après », calculées SANS toucher `_ratings`. ──
+    // Les formules de transformation sont RECOPIÉES À L'IDENTIQUE de la boucle
+    // de mutation (mêmes clamp, mêmes constantes). Toute divergence rendrait la
+    // promesse fausse : les deux doivent rester alignées ligne à ligne.
+    final Map<String, EloScore> projection =
+        Map<String, EloScore>.of(_ratings);
+    final List<ChevalJournalise> chevaux = <ChevalJournalise>[];
+
+    deltas.forEach((cle, delta) {
+      final nomDisc = cle.split('|');
+      final nomNorm = nomDisc[0];
+
+      String nomOriginal;
+      try {
+        nomOriginal = partants
+            .firstWhere((p) => _cleNom(p.nom) == nomNorm)
+            .nom;
+      } catch (_) {
+        nomOriginal = nomNorm; // le nom n'entre PAS dans l'empreinte
+      }
+
+      final EloScore? ancien = _ratings[cle];
+      final double ancienR = ancien?.rating ?? _eloDefaut;
+      final double nouveau = (ancienR + delta).clamp(_eloMin, _eloMax);
+      final double varMois =
+          ((ancien?.variationMois ?? 0.0) + delta).clamp(-300.0, 300.0);
+
+      projection[cle] = EloScore(
+        nomCheval:     nomOriginal,
+        rating:        nouveau,
+        nbCourses:     (ancien?.nbCourses ?? 0) + 1,
+        variationMois: varMois,
+      );
+
+      chevaux.add(ChevalJournalise(
+        cle: cle,
+        nom: nomOriginal,
+        // `avant == null` signifie : la clé était ABSENTE de `_ratings`.
+        avant: ancien == null
+            ? null
+            : ImageRatingElo(
+                rating:        ancien.rating,
+                nbCourses:     ancien.nbCourses,
+                variationMois: ancien.variationMois,
+              ),
+        apres: ImageRatingElo(
+          rating:        nouveau,
+          nbCourses:     (ancien?.nbCourses ?? 0) + 1,
+          variationMois: varMois,
+        ),
+      ));
+    });
+
+    final String empreinteApres = empreinte64Ratings(projection);
+    final int tsIntention = DateTime.now().millisecondsSinceEpoch;
+
+    // ── Entrée d'INTENTION : `issue == null` et `tsFinal == null` (invariant
+    //    du modèle, `elo_registre_v3.dart` l.379-388). ──────────────────────
+    final EntreeRegistreElo entree = EntreeRegistreElo(
+      id: allocation.id,
+      type: TypeEntreeRegistre.course,
+      cle: identite.courseKey,
+      numR: identite.numR,
+      numC: identite.numC,
+      date: identite.date,
+      discipline: identite.discipline,
+      etape: EtapeEntreeRegistre.intention,
+      issue: null,
+      tsIntention: tsIntention,
+      tsFinal: null,
+      empreinteAvant: empreinteAvant,
+      // ⚠️ L'empreinte du registre reste CELLE DU DISQUE tant que la mutation
+      //    n'a pas eu lieu : annoncer `empreinteApres` ici rendrait le registre
+      //    divergent vis-à-vis des ratings réellement persistés (§9).
+      empreinteApres: empreinteApres,
+      chevaux: chevaux,
+    );
+
+    // Le registre d'intention conserve l'empreinte des RATINGS PERSISTÉS
+    // (= `empreinteAvant`, puisque rien n'a encore changé), et non la promesse.
+    final RegistreEloV3 registreIntention = registre.copyWith(
+      horloge: allocation.horloge,
+      entrees: <EntreeRegistreElo>[...registre.entrees, entree],
+    );
+
+    return IntentionEntreeElo(
+      id: allocation.id,
+      registreAvecIntention: registreIntention,
+      empreinteAvant: empreinteAvant,
+      empreinteApres: empreinteApres,
+      chevaux: chevaux,
+      identite: identite,
+      horloge: allocation.horloge,
+      tsIntention: tsIntention,
+    );
+  }
+
+  /// ★ A7 (3.3-B2-e) — PHASE D : COMPLÈTE LA MÊME ENTRÉE.
+  ///
+  /// `appliquee` si et seulement si les ratings sont persistés ET que le
+  /// registre final est persisté. Sinon `nonConfirmee`, avec `issue` ∈
+  /// {refusee, echouee} — état TERMINAL incertain, jamais convertible.
+  ///
+  /// Rend `true` ssi le registre final a été persisté en `appliquee`.
+  ///
+  /// ⚠️ EN CAS D'ÉCHEC, L'INTENTION N'EST PAS SUPPRIMÉE et aucune réécriture
+  ///    n'est tentée : le registre reste sur l'état `intention`, donc l'entrée
+  ///    reste incertaine, donc la course reste bloquée. C'est le comportement
+  ///    voulu — un état incertain est PRÉFÉRABLE à une fausse preuve.
+  Future<bool> _finaliserEntreeCourse({
+    required IntentionEntreeElo prep,
+    required EtatPersistanceElo etatRatings,
+    required int generation,
+    int? jetonNaissance,
+  }) async {
+    if (_estPerimeeParReset(generation)) return false;
+
+    final bool appliquee = etatRatings == EtatPersistanceElo.persistee;
+    final int tsFinal = DateTime.now().millisecondsSinceEpoch;
+
+    final EntreeRegistreElo finale = EntreeRegistreElo(
+      id: prep.id,
+      type: TypeEntreeRegistre.course,
+      cle: prep.identite.courseKey,
+      numR: prep.identite.numR,
+      numC: prep.identite.numC,
+      date: prep.identite.date,
+      discipline: prep.identite.discipline,
+      etape: appliquee
+          ? EtapeEntreeRegistre.appliquee
+          : EtapeEntreeRegistre.nonConfirmee,
+      // `appliquee` exige `persistee` ; `nonConfirmee` exige refusee|echouee.
+      issue: appliquee
+          ? IssueEcritureElo.persistee
+          : (etatRatings == EtatPersistanceElo.refusee
+              ? IssueEcritureElo.refusee
+              : IssueEcritureElo.echouee),
+      tsIntention: prep.tsIntention,
+      tsFinal: appliquee ? tsFinal : null,
+      empreinteAvant: prep.empreinteAvant,
+      empreinteApres: prep.empreinteApres,
+      chevaux: prep.chevaux,
+    );
+
+    // Remplacement de l'entrée par son `id`, sans réallocation.
+    final List<EntreeRegistreElo> entrees =
+        prep.registreAvecIntention.entrees.map((e) {
+      return e.id == prep.id ? finale : e;
+    }).toList(growable: false);
+
+    // ⚠️ L'empreinte déclarée du registre suit l'état RÉEL des ratings :
+    //    `empreinteApres` seulement si la mutation a été persistée.
+    final RegistreEloV3 registreFinal =
+        prep.registreAvecIntention.copyWith(
+      empreinteRatings:
+          appliquee ? prep.empreinteApres : prep.empreinteAvant,
+      entrees: entrees,
+    );
+
+    final ({bool confirmee, MotifRefusApplicationElo? refus}) ecriture =
+        await _persisterRegistre(
+      registre: registreFinal,
+      generation: generation,
+      jetonNaissance: jetonNaissance,
+    );
+    // `appliquee` reste le terme principal : sous reset, il vaut `false`, donc
+    // la finalisation est refusée même si l'écriture a été « acquittée ».
+    return appliquee && ecriture.confirmee;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B1) — FILE FIFO STRICTE DES OPÉRATIONS CRITIQUES.
+  //
+  //  OBJET : sérialiser les opérations qui MUTENT `_ratings` puis persistent,
+  //  afin qu'un import ne puisse pas écraser la RAM au milieu d'une
+  //  application ELO (et réciproquement). C'est la décision D11, option A :
+  //  une application ELO en cours TERMINE avant qu'un import puisse commencer.
+  //
+  //  ⚠️ CE QUE CETTE FILE N'EST PAS — À LIRE AVANT TOUTE EXTENSION :
+  //   • ce n'est PAS le registre transactionnel de 3.3-B2/C. Aucune intention,
+  //     aucun acquittement, aucun journal n'est écrit. `elo_registre_v3` n'est
+  //     ni lu ni écrit par ce mécanisme ;
+  //   • elle ne touche NI les formules ELO, NI les coefficients K, NI
+  //     `facteurDistance`, NI aucun mécanisme d'apprentissage : elle n'enveloppe
+  //     que la section « mutation RAM + persistance », jamais les calculs ;
+  //   • elle n'ajoute AUCUNE clé SharedPreferences (le compte de
+  //     `_toutesLesCles` reste 108) ;
+  //   • elle ne change pas le format de `elo_ratings_v2`.
+  //
+  //  ⚠️ `executerResetComplet` N'ENTRE JAMAIS DANS CETTE FILE.
+  //  Le reset draine `_ecrituresEnCours` (l.594-602) en attendant des futures
+  //  que la file pourrait retenir ⇒ attente circulaire garantie. Le reset
+  //  reste donc HORS file, et son drain n'attend jamais la file.
+  //
+  //  ⚠️ `_sauvegarder()` N'EST JAMAIS ENFILÉE ELLE-MÊME. Elle est appelée
+  //  DEPUIS l'intérieur d'une opération enfilée ; l'enfiler créerait
+  //  l'attente circulaire « l'opération attend la file, la file attend
+  //  l'opération ». La file enveloppe l'OPÉRATION, pas la primitive d'écriture.
+  //
+  //  ORDRE : strictement FIFO, y compris en cas d'échec (la queue est
+  //  relâchée dans tous les cas). DÉMARRAGE SYNCHRONE quand la file est vide :
+  //  le cas non concurrent — celui de tous les tests historiques — n'observe
+  //  donc AUCUN décalage de microtâche par rapport à avant 3.3-B1.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Queue de la file. `null` = file vide = aucune opération en cours ni
+  /// en attente. Une opération qui entre alors démarre IMMÉDIATEMENT.
+  Future<void>? _queueFile;
+
+  /// Nombre de maillons vivants (opération en cours + opérations en attente).
+  /// C'est le SEUL critère de vacuité : `_fileProfondeur == 0` ⟺ file vide.
+  int _fileProfondeur = 0;
+
+  /// Nombre d'opérations actuellement en attente dans la file (hors celle qui
+  /// s'exécute). Observable par les tests, comme le registre d'écritures.
+  int _nbOperationsFileEnAttente = 0;
+  int get nbOperationsFileEnAttente => _nbOperationsFileEnAttente;
+
+  /// Opérations enfilées qui ont été exécutées jusqu'au bout (succès ou échec).
+  /// Compteur NOUVEAU, purement additif : aucun compteur existant n'est touché.
+  int _nbOperationsFileExecutees = 0;
+  int get nbOperationsFileExecutees => _nbOperationsFileExecutees;
+
+  /// Opérations ABANDONNÉES par le CONTRÔLE G (génération périmée), donc
+  /// rejetées AVANT toute mutation RAM.
+  /// Compteur NOUVEAU, distinct de [nbRefusParReset] et de
+  /// [nbRefusParGeneration] : ces deux-là sont mesurés par delta EXACT dans
+  /// des tests validés (T8 attend `nbRefusParReset == avant + 1`) et ne
+  /// doivent donc jamais recevoir d'incrément supplémentaire.
+  int _nbAbandonsFileParGeneration = 0;
+  int get nbAbandonsFileParGeneration => _nbAbandonsFileParGeneration;
 
   static Future<void> init() async => _instance._charger();
 
@@ -232,19 +1643,192 @@ class EloService {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ A7 (3.3-B1) — MÉCANISME DE LA FILE FIFO STRICTE.
+  //
+  //  [operation] reçoit la génération capturée à l'ENTRÉE de la file et doit
+  //  la vérifier elle-même (contrôle G) AVANT toute mutation RAM, puis après
+  //  chacune de ses attentes pertinentes. La file ne fait pas ce contrôle à la
+  //  place de l'opération : elle ne sait pas où se trouve la mutation.
+  // ──────────────────────────────────────────────────────────────────────────
+  Future<EtatPersistanceElo> _executerEnFile(
+      Future<EtatPersistanceElo> Function(int generation) operation) {
+    // ── 1. CAPTURE SYNCHRONE — aucun `await` en amont dans cette méthode. ──
+    // C'est l'unique garantie qu'une opération née avant un reset soit vue
+    // comme périmée, même si le reset démarre avant qu'elle n'ait pu courir.
+    //
+    // ★ A2 — LE JETON ENCODE LA NAISSANCE. Si un reset court DÉJÀ au moment de
+    //   cette capture, la valeur est NÉGATIVE et identifie CE reset ; sinon
+    //   c'est la génération courante (≥ 0). Une opération née pendant un reset
+    //   ne peut donc plus jamais être confondue avec une opération valide pour
+    //   la génération en cours : c'est un fait IMMUABLE, qui ne dépend d'aucun
+    //   état mutable et ne peut donc pas devenir obsolète pendant une attente.
+    final int generation = _resetEnCours
+        ? _jetonNaissancePendantReset(_generationCache)
+        : _generationCache;
+
+    // ── 2. VACUITÉ LUE SUR LA PROFONDEUR, JAMAIS SUR LA QUEUE. ─────────────
+    // `_queueFile` n'est jamais remis à `null` : le remettre depuis le
+    // `finally` d'une opération exposerait une course avec l'affectation de la
+    // queue du maillon suivant. La profondeur est l'unique critère :
+    // `_fileProfondeur == 0` ⟺ file vide ⟹ démarrage synchrone.
+    final Future<void>? queuePrecedente =
+        _fileProfondeur == 0 ? null : _queueFile;
+    final Completer<EtatPersistanceElo> resultat =
+        Completer<EtatPersistanceElo>();
+
+    _fileProfondeur++;
+
+    Future<void> corps() async {
+      // ── 3. Attente STRICTE du maillon précédent, si la file est occupée. ──
+      // `queuePrecedente` ne peut jamais échouer (la queue est enveloppée dans
+      // un `then` neutralisant l'erreur). Aucune attente circulaire n'est
+      // possible : on n'attend QUE le maillon précédent, jamais la file
+      // entière ni `executerResetComplet`.
+      if (queuePrecedente != null) {
+        _nbOperationsFileEnAttente++;
+        await queuePrecedente;
+        _nbOperationsFileEnAttente--;
+      }
+      try {
+        final EtatPersistanceElo etat = await operation(generation);
+        _nbOperationsFileExecutees++;
+        if (!resultat.isCompleted) resultat.complete(etat);
+      } catch (e, st) {
+        // ── 4. UNE ERREUR NE BLOQUE JAMAIS LA FILE. ──
+        // Elle est rendue à l'appelant TELLE QUELLE (jamais convertie en
+        // succès, jamais transformée en état de persistance), et le `finally`
+        // ci-dessous relâche la place : le maillon suivant s'exécutera.
+        if (!resultat.isCompleted) resultat.completeError(e, st);
+      } finally {
+        // ── 5. RELÂCHEMENT INCONDITIONNEL. ──
+        _fileProfondeur--;
+      }
+    }
+
+    // Démarrage SYNCHRONE quand la file est vide : `corps()` exécute son début
+    // immédiatement, puis l'opération elle-même jusqu'à sa première attente —
+    // exactement comme avant 3.3-B1. Aucun décalage de microtâche n'est donc
+    // introduit pour le cas non concurrent, qui est celui de tous les tests
+    // historiques.
+    final Future<void> maillon = corps();
+    // La queue est rendue NON-ÉCHOUANTE : un échec est déjà porté par
+    // `resultat`, il ne doit pas se propager dans la chaîne et bloquer les
+    // maillons suivants.
+    _queueFile = maillon.then<void>((_) {}, onError: (Object _) {});
+
+    return resultat.future;
+  }
+
+  /// ★ A7 (3.3-B1) — CONTRÔLE G : l'opération est-elle devenue périmée ?
+  ///
+  /// Distinct des contrôles 1 et 2 de [_sauvegarder] :
+  ///   • le contrôle 1 (`_resetEnCours`) refuse une ÉCRITURE née pendant
+  ///     l'effacement, APRÈS la mutation RAM — comportement exigé par V29-I
+  ///     et T8, qui attendent que la RAM soit peuplée et que
+  ///     `nbRefusParReset` soit incrémenté ;
+  ///   • le contrôle 2 (génération) refuse une écriture née avant le reset ;
+  ///   • le contrôle G, lui, refuse l'OPÉRATION ENTIÈRE avant qu'elle ne touche
+  ///     `_ratings` — c'est ce qui empêche une opération EN ATTENTE de
+  ///     ressusciter des ratings après un reset.
+  ///
+  /// Il N'INCINCRÉMENTE NI [nbRefusParReset] NI [nbRefusParGeneration] : ces
+  /// compteurs sont mesurés par delta EXACT dans des tests validés.
+  bool _estPerimeeParReset(int generation) {
+    // ★ A2 — SÉPARATION DES DEUX CONTRÔLES (arbitrage PRIORITÉ 1).
+    //   Un JETON NÉGATIF n'est PAS une génération historique : il ne doit donc
+    //   JAMAIS être déclaré « périmé » par ce contrôle. Sans cette garde, une
+    //   opération née pendant le reset s'abandonnait AVANT le point de
+    //   non-retour, ce qui cassait T8 / V29-I / V29-H (mesuré : 3 échecs).
+    //   Pour un jeton, la seule décision est prise par
+    //   [_neePendantResetAcheve], et pendant le reset par le contrôle 1 de
+    //   [_sauvegarder] — comportement historique intégralement préservé.
+    if (_neePendantReset(generation)) return false;
+    return generation != _generationCache;
+  }
+
+  /// Signale l'abandon d'une opération par le contrôle G et rend l'état.
+  EtatPersistanceElo _abandonnerParGenerationFile(String methode) {
+    _nbAbandonsFileParGeneration++;
+    debugPrint('[EloService] ⚠️ $methode : opération ABANDONNÉE par le '
+        'contrôle de génération (reset intervenu) — aucune mutation RAM, '
+        'aucune écriture tentée');
+    return EtatPersistanceElo.abandonneeParReset;
+  }
+
   /// ★ B5c-RDR-05 — Enveloppe l'écriture disque dans la barrière de reset.
   ///
   /// Deux contrôles historiques INCHANGÉS (`_resetEnCours`, puis génération),
+  /// ★ A2 (B2-e) — l'opération a-t-elle été ENGAGÉE pendant un reset ?
+  ///
+  /// Vrai si [generation] est un jeton négatif, c'est-à-dire si l'opération a
+  /// été capturée par `_executerEnFile` alors qu'un reset courait. Cette
+  /// propriété est IMMUABLE : elle ne dépend d'aucun état mutable, donc elle ne
+  /// peut pas devenir obsolète pendant une attente — contrairement à un
+  /// contrôle posé sur `_resetEnCours`.
+  bool _neePendantReset(int generation) => generation < 0;
+
+  /// Rend [generation] comme jeton de naissance, ou `null` si l'opération n'est
+  /// PAS née pendant un reset (aucun contrôle supplémentaire n'est alors
+  /// nécessaire : les contrôles historiques suffisent et restent inchangés).
+  int? _jetonNaissance(int generation) =>
+      _neePendantReset(generation) ? generation : null;
+
+  /// ★ A2 (B2-e) — opération ENGAGÉE pendant un reset, et ce reset est-il
+  /// ACHEVÉ (barrière rouverte) ?
+  ///
+  /// Couvre exactement la fenêtre mesurée par B2e-9 : le reset est allé au bout
+  /// (`_generationCache` a dépassé la génération du jeton) et plus aucune
+  /// barrière ne bloque l'écriture. La seule issue licite est alors l'ABANDON
+  /// AVANT toute écriture : la génération a été effacée, rien de ce que
+  /// l'opération porte ne peut être durable.
+  bool _neePendantResetAcheve(int generation) {
+    // ⚠️ MESURE QUI CORRIGE UNE PREMIÈRE TENTATIVE FAUSSE : comparer
+    //    `_generationCache > generationDuJeton` ne détecte RIEN, parce que la
+    //    génération capturée pendant un reset EST DÉJÀ celle de ce reset
+    //    (`executerResetComplet` incrémente avant de drainer). Le seul fait
+    //    observable à la reprise est donc : « je suis née sous barrière, et
+    //    plus aucune barrière n'est fermée MAINTENANT ».
+    //    Si un SECOND reset court à la reprise, le jeton vaut `true` : on
+    //    laisse alors avancer, et c'est le contrôle 1 de `_sauvegarder` qui
+    //    refuse — aucune écriture n'est possible sous barrière.
+    return _neePendantReset(generation) && !_resetEnCours;
+  }
+
+  /// ★ A2 (B2-e) — contrôle d'entrée COMMUN aux deux primitive d'écriture
+  /// persistante (`_persisterRegistre`, `_ecrireTemoinImport`).
+  ///
+  /// Rend le motif de refus à opposer à l'appelant, ou `null` si l'écriture
+  /// peut se poursuivre. Placé APRÈS la dernière attente, il est de toute façon
+  /// doublé par le jeton de naissance, qui lui est immuable.
+  MotifRefusApplicationElo? _motifRefusEcriturePersistante(int generation) {
+    if (_neePendantResetAcheve(generation)) {
+      debugPrint('[EloService] ⛔ écriture persistante REFUSÉE : opération née '
+          'pendant un reset ACHEVÉ (jeton=$generation, '
+          'génération=$_generationCache) — aucune écriture tentée');
+      return MotifRefusApplicationElo.intentionNonPersistee;
+    }
+    return null;
+  }
+
   /// mêmes compteurs, mêmes points d'incrément. Ce qui change en 3.2 : les
   /// sorties ne sont plus muettes, elles rendent une valeur explicite.
   ///
   /// ★ SÉMANTIQUE DU RETOUR (3.2) : [EtatPersistanceElo.refusee] et
   /// [EtatPersistanceElo.echouee] signifient PERSISTANCE NON CONFIRMÉE,
   /// JAMAIS « disque inchangé ». Aucun rejeu ne doit en être déduit.
-  Future<EtatPersistanceElo> _sauvegarder() async {
+  Future<EtatPersistanceElo> _sauvegarder([int? jetonNaissance]) async {
     if (_resetEnCours) {
       _nbRefusParReset++;
       return EtatPersistanceElo.abandonneeParReset; // Contrôle 1
+    }
+    // ★ A2 — contrôle 1-bis : opération ENGAGÉE pendant un reset ACHEVÉ.
+    //   Placé AVANT l'attente de `getInstance()`, mais il ne peut PAS devenir
+    //    obsolète : le jeton est immuable. Un second contrôle existe après
+    //    l'attente, pour couvrir un reset qui démarrerait entre-temps.
+    if (jetonNaissance != null && _neePendantResetAcheve(jetonNaissance)) {
+      _nbRefusParGeneration++;
+      return EtatPersistanceElo.abandonneeParReset;
     }
     final generation = _generationCache;
     SharedPreferences prefs;
@@ -259,6 +1843,11 @@ class EloService {
           '(SharedPreferences indisponible) : $e');
       return EtatPersistanceElo.echouee;
     }
+    // ★ A2 — re-vérification APRÈS l'attente, sur le jeton immuable.
+    if (jetonNaissance != null && _neePendantResetAcheve(jetonNaissance)) {
+      _nbRefusParGeneration++;
+      return EtatPersistanceElo.abandonneeParReset;
+    }
     if (_resetEnCours || generation != _generationCache) {
       // Contrôle 2 — distinct du contrôle 1 : une génération peut avoir
       // changé alors qu'aucun reset n'est plus EN COURS (il est terminé).
@@ -268,7 +1857,16 @@ class EloService {
     // ↓↓↓ AUCUN `await` de ce point jusqu'au `add` (invariant P1) ↓↓↓
     final Future<EtatPersistanceElo> f = _executerSauvegarde(prefs);
     _ecrituresEnCours.add(f);
-    f.whenComplete(() => _ecrituresEnCours.remove(f)).ignore();
+    // ★ A7 (3.3-B2-a) : la MÊME future rejoint le suivi des écritures
+    //   persistantes, qui pilote le drain. Les deux ensembles restent
+    //   DISTINCTS (voir la documentation du champ) mais reçoivent ici la même
+    //   future : aucune écriture n'est perdue, aucune n'est comptée deux fois
+    //   dans un même ensemble.
+    _ecrituresPersistantesEnCours.add(f);
+    f.whenComplete(() {
+      _ecrituresEnCours.remove(f);
+      _ecrituresPersistantesEnCours.remove(f);
+    }).ignore();
     return f;
   }
 
@@ -384,12 +1982,92 @@ class EloService {
   // ★ A7 (3.2) : retourne l'ISSUE de la persistance. Les calculs, formules,
   //   K-factors et les deux sorties anticipées sont STRICTEMENT inchangés ;
   //   seules leurs valeurs de retour deviennent explicites.
+  //
+  // ★ A7 (3.3-B1) : l'opération est désormais ENFILÉE. La signature publique
+  //   est IDENTIQUE (`Future<EtatPersistanceElo>`) — les appelants ne changent
+  //   pas. La file enveloppe l'opération ENTIÈRE : chargement éventuel,
+  //   mutation RAM et persistance. Aucune formule n'est déplacée ni modifiée :
+  //   le corps est seulement reçu avec la génération capturée à l'entrée.
+  //
+  // ★ A7 (3.3-B2-b) : + `courseKey`, OPTIONNEL et NOMMÉ.
+  //   Les appels existants ne changent PAS d'une ligne : le paramètre a une
+  //   valeur par défaut (`null`) et aucun appel positionnel n'existe (mesuré :
+  //   l'unique appel de production, `data_refresh_service.dart:1267`, passe
+  //   trois arguments NOMMÉS). `data_refresh_service.dart` n'est donc PAS
+  //   modifié par ce lot — c'est l'objet du lot distinct B2-e.
   Future<EtatPersistanceElo> mettreAJourApresArrivee({
     required List<int>       arrivee,
     required List<ZtPartant> partants,
     String discipline = '',  // ★ v9.92 : type de course passé par l'appelant
+    String? courseKey,       // ★ B2-b : identité de course, optionnelle
+  }) {
+    return _executerEnFile((int generation) => _mettreAJourApresArrivee(
+          arrivee:    arrivee,
+          partants:   partants,
+          discipline: discipline,
+          courseKey:  courseKey,
+          generation: generation,
+        ));
+  }
+
+  /// Corps de [mettreAJourApresArrivee], exécuté DANS la file.
+  ///
+  /// [generation] est la valeur de `_generationCache` capturée SYNCHRONEMENT à
+  /// l'entrée de la file, avant toute microtâche. Elle est vérifiée :
+  ///   • AVANT `_charger()`, pour qu'une opération restée en attente pendant un
+  ///     reset soit abandonnée sans même relire le disque ;
+  ///   • APRÈS `_charger()`, qui est la SEULE attente séparant l'entrée de la
+  ///     mutation RAM — c'est le contrôle qui interdit une résurrection.
+  ///
+  /// [courseKey] est FACULTATIVE. Elle est validée en [IdentiteCourseElo] dès
+  /// l'entrée, AVANT toute attente, mais son résultat n'est publié dans
+  /// [derniereIdentiteCourse] qu'AU POINT DE NON-RETOUR (juste avant la
+  /// mutation RAM) : une opération abandonnée ou sans effet ne laisse aucune
+  /// identité observable. Elle ne conditionne AUCUNE écriture : les ratings
+  /// sont mis à jour et persistés exactement comme avant B2-b, que l'identité
+  /// soit exploitable ou non.
+  Future<EtatPersistanceElo> _mettreAJourApresArrivee({
+    required List<int>       arrivee,
+    required List<ZtPartant> partants,
+    required String          discipline,
+    required String?         courseKey,
+    required int             generation,
   }) async {
+    // ★ A2 — jeton de NAISSANCE (négatif si l'opération est née pendant un
+    // reset). Il est propagé à TOUTES les primitives d'écriture persistante,
+    // qui refusent alors d'écrire si ce reset est déjà terminé.
+    final int? jeton = _jetonNaissance(generation);
+    // ── B2-b : identité de course, VALIDÉE dès l'entrée, sans effet de bord. ──
+    // `IdentiteCourseElo.tenter` ne lève pas, ne lit rien sur le disque et ne
+    // touche à AUCUN rating : elle rend `null` si la clé n'est pas exploitable.
+    //
+    // Le résultat est gardé en LOCAL, et non affecté au champ observable : une
+    // opération qui va être ABANDONNÉE (contrôle G, listes vides, arrivée trop
+    // courte) ne doit laisser derrière elle AUCUNE identité que la suite
+    // pourrait prendre pour un journal exploitable. L'affectation se fait donc
+    // au point de non-retour, juste avant la mutation RAM (voir plus bas).
+    //
+    // Le champ est remis à `null` ICI, avant toute attente : une opération sans
+    // `courseKey` ne doit jamais laisser observer l'identité de la PRÉCÉDENTE.
+    _derniereIdentiteCourse = null;
+    _dernierResultatMiseAJour = null;
+    final IdentiteCourseElo? identite = IdentiteCourseElo.tenter(
+      courseKey:  courseKey,
+      discipline: discipline,
+    );
+
+    // ── Contrôle G n°1 : opération périmée AVANT toute lecture disque. ──────
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('mettreAJourApresArrivee');
+    }
+
     if (!_charge) await _charger();
+
+    // ── Contrôle G n°2 : après `_charger()`, avant toute autre attente. ─────
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('mettreAJourApresArrivee');
+    }
+
     if (arrivee.isEmpty || partants.isEmpty) {
       return EtatPersistanceElo.nonTentee; // rien à écrire : pas un échec
     }
@@ -399,8 +2077,80 @@ class EloService {
         if (int.tryParse(p.numero) != null) int.parse(p.numero): p
     };
     final n = arrivee.length;
+    // « Arrivée trop courte » n'est pas un refus : c'est « rien à faire ». Ce
+    // cas conserve donc exactement sa sémantique B2-b (`nonTentee`, sans motif).
     if (n < 2) return EtatPersistanceElo.nonTentee;
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  A7 / B2-e — ÉTAPE A : IDENTITÉ, REGISTRE, COHÉRENCE, DOUBLON, ANTÉRIORITÉ
+    //
+    //  Placée APRÈS les retours « rien à faire » : ces cas ne mutent rien et ne
+    //  sont pas des échecs — les transformer en refus changerait une sémantique
+    //  validée depuis B2-b.
+    //
+    //  ⚠️ TOUT REFUS ICI LAISSE `_ratings` INTACT : il est rendu AVANT le
+    //     moindre calcul de delta, donc avant toute mutation.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // A.1 — Identité exploitable. Sans elle, aucune journalisation possible,
+    // donc aucune application : une identité absente n'est JAMAIS « neutre ».
+    if (identite == null) {
+      return _refuserApplication(MotifRefusApplicationElo.identiteNonExploitable);
+    }
+
+    // A.2 — Chargement, diagnostic et amorçage éventuel (2 attentes internes).
+    final ({RegistreEloV3? registre, MotifRefusApplicationElo? refus,
+            bool amorcage}) chargement =
+        await _chargerOuAmorcerRegistre(generation: generation, jeton: jeton);
+
+    // A.3 — Contrôle G après les attentes de chargement/amorçage.
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('mettreAJourApresArrivee');
+    }
+
+    if (chargement.refus != null) return _refuserApplication(chargement.refus!);
+
+    final RegistreEloV3 registre = chargement.registre!;
+
+    // A.4 — Doublon. `entreePourCle` ne retient que `type == course`, et les
+    // TROIS étapes bloquent (`bloqueNouvelleSoumission` rend toujours `true`) :
+    // `appliquee` (déjà comptée), `intention` et `nonConfirmee` (preuve
+    // manquante). Aucune dérogation, aucune tentative de réparation.
+    if (registre.entreePourCle(identite.courseKey) != null) {
+      return _refuserApplication(
+        MotifRefusApplicationElo.courseDejaJournalisee,
+        coherence: DiagnosticCoherenceElo.coherent,
+        origine: registre.origine,
+        amorcage: chargement.amorcage,
+      );
+    }
+
+    // A.5 — Garde d'ANTÉRIORITÉ (jamais une preuve de non-réapplication).
+    //  Une date de course POSTÉRIEURE au lendemain de « maintenant » ne peut pas
+    //  être une arrivée officielle déjà disputée. La borne est le LENDEMAIN et
+    //  non l'instant, pour tolérer un fuseau en avance d'un jour entier : on
+    //  refuse le franchement impossible, on n'invente aucune preuve temporelle.
+    //  Une date non parsable n'entraîne pas de refus ici : la validité
+    //  calendaire a déjà été exigée par `IdentiteCourseElo.tenter`.
+    final DateTime? dateCourse = DateTime.tryParse(identite.date);
+    if (dateCourse != null) {
+      final DateTime maintenant = DateTime.now();
+      final DateTime borne =
+          DateTime(maintenant.year, maintenant.month, maintenant.day + 1);
+      if (dateCourse.isAfter(borne)) {
+        return _refuserApplication(
+          MotifRefusApplicationElo.datePosterieure,
+          coherence: DiagnosticCoherenceElo.coherent,
+          origine: registre.origine,
+          amorcage: chargement.amorcage,
+        );
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  CALCUL DES DELTAS — FORMULES STRICTEMENT INCHANGÉES DEPUIS B2-b.
+    //  Aucune ligne de cette boucle n'est modifiée par B2-e.
+    // ══════════════════════════════════════════════════════════════════════════
     final Map<String, double> deltas = {};
 
     for (int i = 0; i < n; i++) {
@@ -430,6 +2180,75 @@ class EloService {
       }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ÉTAPE B — INTENTION PERSISTÉE AVANT TOUTE MUTATION
+    //
+    //  Le calcul ci-dessus est SYNCHRONE et n'a touché AUCUN rating : `_ratings`
+    //  est encore exactement l'état qui vient d'être fingerprinté. C'est
+    //  indispensable — l'empreinte « avant » doit coïncider avec celle du
+    //  disque, sinon le registre naîtrait incohérent et se refuserait lui-même.
+    //
+    //  L'image « après » ne peut pas être LUE : elle n'existe pas encore. Elle
+    //  est CALCULÉE sans toucher `_ratings`, et cette promesse est exacte :
+    //    • `nbCourses` ne dépend que de l'ancienne image ;
+    //    • `rating` et `variationMois` n'influencent que leur propre champ, donc
+    //      les deux deltas se calculent indépendamment ;
+    //    • l'empreinte ne dépend ni du nom du cheval, ni de l'ordre des clés
+    //      (`canoniqueRatings` trie les clés — `elo_empreinte.dart` l.119).
+    //
+    //  ⚠️ SI L'INTENTION N'EST PAS CONFIRMÉE : aucune mutation, aucun appel à
+    //     `_sauvegarder()`, aucune entrée `appliquee`.
+    // ══════════════════════════════════════════════════════════════════════════
+    final String empreinteAvant = empreinte64Ratings(_ratings);
+
+    final IntentionEntreeElo? prep = _construireIntentionCourse(
+      identite: identite,
+      registre: registre,
+      deltas: deltas,
+      partants: partants,
+      discipline: discipline,
+      empreinteAvant: empreinteAvant,
+    );
+    if (prep == null) {
+      return _refuserApplication(
+        MotifRefusApplicationElo.allocationImpossible,
+        coherence: DiagnosticCoherenceElo.coherent,
+        origine: registre.origine,
+        amorcage: chargement.amorcage,
+      );
+    }
+
+    final ({bool confirmee, MotifRefusApplicationElo? refus}) ecritureIntention =
+        await _persisterRegistre(
+      registre: prep.registreAvecIntention,
+      generation: generation,
+      jetonNaissance: jeton,
+    );
+
+    // Contrôle G après l'attente de persistance de l'intention.
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('mettreAJourApresArrivee');
+    }
+
+    if (ecritureIntention.refus != null) {
+      return _refuserApplication(
+        MotifRefusApplicationElo.intentionNonPersistee,
+        coherence: DiagnosticCoherenceElo.coherent,
+        origine: registre.origine,
+        amorcage: chargement.amorcage,
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ÉTAPE C — MUTATION RAM PUIS SAUVEGARDE DES RATINGS (mécanisme INCHANGÉ)
+    //
+    //  ↓↓↓ AUCUNE attente entre le contrôle G ci-dessus et la mutation RAM ↓↓↓
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // ★ B2-b : c'est ICI, au point de non-retour — après tous les contrôles et
+    //   tous les retours anticipés, juste avant la mutation — que l'identité
+    //   devient observable.
+    _derniereIdentiteCourse = identite;
     deltas.forEach((cle, delta) {
       // Extraire le nom depuis la clé "NOM|DISC"
       final nomDisc  = cle.split('|');
@@ -451,10 +2270,48 @@ class EloService {
       );
     });
 
-    final EtatPersistanceElo etat = await _sauvegarder();
+    // ── Contrôle G n°3 : après la mutation, avant la persistance. ───────────
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('mettreAJourApresArrivee');
+    }
+
+    final EtatPersistanceElo etat = await _sauvegarder(jeton);
     debugPrint('[EloService] ${etat == EtatPersistanceElo.persistee ? "✅" : "⚠️"} '
         '${deltas.length} ELO mis à jour (discipline: $discipline) — '
         'persistance: ${etat.name}');
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ÉTAPE D — FINALISATION DE LA MÊME ENTRÉE
+    //
+    //  Sauvegarde confirmée ⇒ `appliquee` (seul état terminal nominal).
+    //  Toute autre issue ⇒ `nonConfirmee` : ni preuve d'écriture, ni preuve
+    //  d'absence. L'entrée reste INCERTAINE, donc BLOQUANTE — c'est ce qui
+    //  interdit une seconde application automatique après une interruption
+    //  entre mutation et finalisation.
+    //
+    //  ⚠️ AUCUNE SECONDE OPÉRATION : c'est la MÊME entrée (`id`) qui est
+    //     complétée. `id` et `horloge` ne sont PAS réalloués.
+    // ══════════════════════════════════════════════════════════════════════════
+    final bool journalisationConfirmee = await _finaliserEntreeCourse(
+      prep: prep,
+      etatRatings: etat,
+      generation: generation,
+      jetonNaissance: jeton,
+    );
+
+    _dernierResultatMiseAJour = ResultatApplicationElo(
+      etatRatings: etat,
+      motifRefus: null,
+      coherenceAvant: DiagnosticCoherenceElo.coherent,
+      origineAvant: registre.origine,
+      amorcageEffectue: chargement.amorcage,
+      etapeEntree: journalisationConfirmee
+          ? EtapeEntreeRegistre.appliquee
+          : EtapeEntreeRegistre.nonConfirmee,
+      idEntree: prep.id,
+      journalisationConfirmee: journalisationConfirmee,
+    );
+
     return etat;
   }
 
@@ -483,16 +2340,481 @@ class EloService {
     return data;
   }
 
+  /// ★ A7 (3.3-B2-d1) — ÉTABLIT L'ÉTAT ELO **AVANT** TOUTE MUTATION D'IMPORT.
+  ///
+  /// Rend le diagnostic, ou un diagnostic NON ÉTABLI dont
+  /// [DiagnosticPreImportElo.etablissementImpossible] porte la raison exacte.
+  /// **N'ÉCRIT RIEN**, ne supprime rien, ne migre rien, n'invalide rien.
+  ///
+  /// ── POURQUOI LE DISQUE FAIT FOI, ET NON `_ratings` ───────────────────────
+  ///   `_importerDepuisBackup` n'a pas de garde `_charge` (limite conservée de
+  ///   B1) : la RAM peut être VIDE ou dater d'un autre état. Diagnostiquer
+  ///   contre `_ratings` reviendrait donc à comparer le registre à une mémoire
+  ///   qui n'a jamais prétendu décrire le disque. On relit donc la clé
+  ///   `elo_ratings_v2` et on la décode pour calculer l'empreinte RÉELLEMENT
+  ///   PERSISTÉE.
+  ///
+  /// ── POURQUOI UNE RElecture EST NÉCESSAIRE ────────────────────────────────
+  ///   `SharedPreferences.getString` lit le **cache** `_preferenceCache`
+  ///   (mesuré : `shared_preferences_legacy.dart` l.130), pas le store. Une
+  ///   instance déjà obtenue peut donc porter un cache antérieur. Pour une
+  ///   observation stricte, `reload()` vide et recharge ce cache depuis le
+  ///   store (l.227-231) : c'est une LECTURE, elle n'écrit rien.
+  ///
+  /// ── ORDRE DES ATTENTES ET CONTRÔLES DE GÉNÉRATION ────────────────────────
+  ///   Deux attentes sont introduites : `getInstance()` puis `reload()`. Le
+  ///   contrôle de génération est refait APRÈS CHACUNE. `reload()` est refait
+  ///   sans condition, y compris quand l'appelant vient d'obtenir `prefs` : un
+  ///   cache non actualisé produirait un diagnostic faux, et un diagnostic faux
+  ///   vaut moins qu'aucun diagnostic.
+  ///
+  /// ⚠️ LIMITE MESURÉE, À NE PAS MASQUER : `reload()` peut lever. L'exception
+  ///    est alors CONSERVÉE dans [DiagnosticPreImportElo.etablissementImpossible]
+  ///    et le diagnostic est rendu NON ÉTABLI. Elle n'est ni avalée
+  ///    silencieusement, ni convertie en « cohérent ».
+  Future<DiagnosticPreImportElo> _etablirDiagnosticPreImport() async {
+    // Empreinte de la RAM, calculée AVANT toute attente : elle décrit l'état
+    // au moment de l'appel, pas un état obtenu après un `await`.
+    final String empreinteRam = empreinte64Ratings(_ratings);
+    final int nombreRam = _ratings.length;
+
+    DiagnosticPreImportElo nonEtabli(String motif) => DiagnosticPreImportElo(
+          empreintePersistee: null,
+          nombrePersistee: 0,
+          empreinteRam: empreinteRam,
+          nombreRam: nombreRam,
+          resultat: null,
+          etablissementImpossible: motif,
+        );
+
+    // ── Attente 1 : obtention des préférences ──────────────────────────────
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      return nonEtabli('SharedPreferences indisponible : $e');
+    }
+
+    // ── Attente 2 : rechargement du cache depuis le store (LECTURE seule) ──
+    try {
+      await prefs.reload();
+    } catch (e) {
+      return nonEtabli('reload() impossible — cache non actualisé : $e');
+    }
+
+    // ── Lecture des ratings RÉELLEMENT PERSISTÉS ───────────────────────────
+    // Même décodage tolérant que celui déjà employé par `_charger` et
+    // `_importerDepuisBackup` : une entrée illisible est ignorée, comme
+    // partout ailleurs dans ce service. Le but est de reproduire l'empreinte
+    // que produirait le chargement réel, pas d'auditer le JSON.
+    final Map<String, EloScore> persistes = <String, EloScore>{};
+    final Object? brut = prefs.get(_prefsKey);
+    if (brut != null) {
+      if (brut is! String) {
+        return nonEtabli('`$_prefsKey` n\'est pas une chaîne '
+            '(reçu ${brut.runtimeType})');
+      }
+      if (brut.isNotEmpty) {
+        try {
+          final Object? decode = jsonDecode(brut);
+          if (decode is! Map<String, dynamic>) {
+            return nonEtabli('`$_prefsKey` : objet JSON attendu '
+                '(reçu ${decode.runtimeType})');
+          }
+          decode.forEach((key, val) {
+            try {
+              persistes[key] = EloScore.fromJson(val as Map<String, dynamic>);
+            } catch (_) {}
+          });
+        } on FormatException catch (e) {
+          return nonEtabli('`$_prefsKey` : JSON illisible ($e)');
+        }
+      }
+    }
+
+    final String empreintePersistee = empreinte64Ratings(persistes);
+    final int nombrePersistee = persistes.length;
+
+    // ── Lecture du registre — LECTURE SEULE ────────────────────────────────
+    // `get` et non `getString` : un type inattendu doit produire un diagnostic
+    // NON ÉTABLI explicite plutôt qu'une `TypeError` au fond du service.
+    final Object? registreBrut = prefs.get(kCleRegistreElo);
+    if (registreBrut != null && registreBrut is! String) {
+      return nonEtabli('`$kCleRegistreElo` n\'est pas une chaîne '
+          '(reçu ${registreBrut.runtimeType})');
+    }
+
+    // `diagnostiquerRegistre` est PURE : aucun accès disque, aucune mutation.
+    final ResultatDiagnosticElo resultat = diagnostiquerRegistre(
+      jsonRegistre: registreBrut as String?,
+      empreinteDisque: empreintePersistee,
+      nombreRatings: nombrePersistee,
+    );
+
+    return DiagnosticPreImportElo(
+      empreintePersistee: empreintePersistee,
+      nombrePersistee: nombrePersistee,
+      empreinteRam: empreinteRam,
+      nombreRam: nombreRam,
+      resultat: resultat,
+      etablissementImpossible: null,
+    );
+  }
+
+  /// ★ A7 (3.3-B2-d2) — ÉCRITURE DU TÉMOIN, APPEND-ONLY, SOUS CONTRÔLE.
+  ///
+  /// N'est appelée QUE si [_doitEcrireTemoin] a rendu `null`.
+  ///
+  /// ── CE QUI EST ÉCRIT ─────────────────────────────────────────────────────
+  ///   • une entrée `horsCourse` de motif `importBackup`, `etape: appliquee`,
+  ///     `issue: persistee` (l'écriture des ratings a réellement été confirmée
+  ///     avant d'arriver ici) ;
+  ///   • `chevaux` VIDE — invariant du modèle pour `horsCourse` (l.443-448) :
+  ///     un import peut porter des centaines de chevaux, l'image par cheval est
+  ///     réservée à la porte d'application.
+  ///   • `entrees: [...anciennes, neuve]` — APPEND-ONLY. Aucun filtre, aucune
+  ///     compaction : les entrées incertaines survivent intactes.
+  ///   • `origine: historiqueInconnu` — JAMAIS `courante`. L'import ne permet
+  ///     pas de prétendre que l'historique complet est mémorisé.
+  ///
+  /// ── SUIVI DE L'ÉCRITURE ──────────────────────────────────────────────────
+  ///   La future est inscrite dans [_ecrituresPersistantesEnCours] UNIQUEMENT.
+  ///   [_ecrituresEnCours] garde sa signification historique B2-a : elle ne
+  ///   compte que les écritures de `_sauvegarder()`, donc `nbEcrituresEnCours`
+  ///   ne bouge pas. Le drain du reset attend les DEUX ensembles, il attendra
+  ///   donc aussi le témoin — ce qui interdit de recréer `elo_registre_v3`
+  ///   après son effacement (transposition de V29-A).
+  ///
+  ///   ⚠️ AUCUN `await` ENTRE LE CONTRÔLE DE GÉNÉRATION ET L'INSCRIPTION.
+  ///   Sans cette contiguïté, un reset pourrait s'intercaler dans la fenêtre et
+  ///   la future ne serait pas drainée.
+  ///
+  /// Rend l'issue de l'écriture, ou le motif du refus.
+  Future<({IssueEcritureElo? issue, MotifNonEcritureTemoin? motif})>
+      _ecrireTemoinImport({
+    required RegistreEloV3 registreAvant,
+    required String empreinteAvant,
+    required String empreinteApres,
+    required int nombreAvant,
+    required int nombreApres,
+    required int generation,
+  }) async {
+    // ── Allocation : refus plutôt que devinette. ──────────────────────────
+    final AllocationEntreeElo? allocation =
+        AllocationEntreeElo.pour(registreAvant);
+    if (allocation == null) {
+      return (
+        issue: null,
+        motif: MotifNonEcritureTemoin.allocationImpossible,
+      );
+    }
+
+    final EntreeRegistreElo neuve = EntreeRegistreElo(
+      id: allocation.id,
+      type: TypeEntreeRegistre.horsCourse,
+      motif: MotifHorsCourse.importBackup,
+      nbChevauxAvant: nombreAvant,
+      nbChevauxApres: nombreApres,
+      etape: EtapeEntreeRegistre.appliquee,
+      issue: IssueEcritureElo.persistee,
+      tsIntention: DateTime.now().millisecondsSinceEpoch,
+      tsFinal: DateTime.now().millisecondsSinceEpoch,
+      empreinteAvant: empreinteAvant,
+      empreinteApres: empreinteApres,
+      chevaux: const <ChevalJournalise>[],
+    );
+
+    final RegistreEloV3 neuf = registreAvant.copyWith(
+      horloge: allocation.horloge,
+      empreinteRatings: empreinteApres,
+      origine: OrigineRegistreElo.historiqueInconnu,
+      entrees: <EntreeRegistreElo>[...registreAvant.entrees, neuve],
+    );
+
+    // ── Sérialisation : peut lever (`jsonEncode` sur NaN/Infinity). ───────
+    final String brut;
+    try {
+      brut = neuf.encoder();
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      debugPrint('[EloService] ⚠️ Témoin ELO : sérialisation impossible '
+          '(registre NON écrit) : $e');
+      return (
+        issue: null,
+        motif: MotifNonEcritureTemoin.serialisationImpossible,
+      );
+    }
+
+    // ── Contrôle de génération IMMÉDIATEMENT avant l'écriture. ────────────
+    if (_estPerimeeParReset(generation)) {
+      return (
+        issue: null,
+        motif: MotifNonEcritureTemoin.abandonneParReset,
+      );
+    }
+
+    // ── Obtention des préférences — ATTENTE, donc contrôle de génération
+    //    APRÈS elle (voir juste plus bas). ────────────────────────────────
+    SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      return (issue: null, motif: MotifNonEcritureTemoin.echoueeParException);
+    }
+
+    // Second contrôle : `getInstance()` est une attente.
+    if (_estPerimeeParReset(generation)) {
+      return (issue: null, motif: MotifNonEcritureTemoin.abandonneParReset);
+    }
+
+    // ── Écriture, avec inscription IMMÉDIATE (aucun `await` intermédiaire). ─
+    //  ★ Correction B2-d2 (mesurée) : le booléen rendu par `setString` n'est
+    //    plus converti en exception. Avant cette correction, un REFUS EXPLICITE
+    //    du stockage (`false`) était transformé en `StateError`, donc en
+    //    `IssueEcritureElo.echouee`, et `MotifNonEcritureTemoin.refuseeParStockage`
+    //    n'était JAMAIS produit — un cas de documentation fausse, détecté en
+    //    confrontant l'enum aux branches réelles. Le refus et l'exception sont
+    //    désormais DISTINGUÉS, comme le fait déjà `_executerSauvegarde`.
+    IssueEcritureElo issue;
+    final Future<bool> future = prefs.setString(kCleRegistreElo, brut);
+    // ↓↓↓ Aucun `await` entre le contrôle ci-dessus et cette inscription. ↓↓↓
+    _ecrituresPersistantesEnCours.add(future);
+    future.whenComplete(() {
+      _ecrituresPersistantesEnCours.remove(future);
+    }).ignore();
+
+    try {
+      final bool ok = await future;
+      if (ok) {
+        issue = IssueEcritureElo.persistee;
+      } else {
+        issue = IssueEcritureElo.refusee;
+        debugPrint('[EloService] ⚠️ Témoin ELO REFUSÉ par le stockage sur '
+            '`$kCleRegistreElo` — persistance NON CONFIRMÉE (le registre '
+            'existant n\'est PAS prouvé inchangé), aucune réparation');
+      }
+    } catch (e) {
+      _derniereErreurEcriture = e;
+      issue = IssueEcritureElo.echouee;
+      debugPrint('[EloService] ⚠️ Témoin ELO : écriture NON confirmée '
+          '(registre existant PRÉSERVÉ, aucune réparation) : $e');
+    }
+
+    // Le motif accompagne TOUJOURS une issue non confirmée : un refus ou une
+    // exception ne doit jamais être rendu comme un simple « pas de motif ».
+    if (issue == IssueEcritureElo.refusee) {
+      return (issue: issue, motif: MotifNonEcritureTemoin.refuseeParStockage);
+    }
+    if (issue == IssueEcritureElo.echouee) {
+      return (issue: issue, motif: MotifNonEcritureTemoin.echoueeParException);
+    }
+    return (issue: issue, motif: null);
+  }
+
+  /// ★ A7 (3.3-B1) : opération ENFILÉE. Un import ne peut donc plus
+  /// `_ratings.clear()` au milieu d'une application ELO en cours — c'est la
+  /// décision D11 option A (« une application ELO en cours termine avant
+  /// qu'un import puisse commencer »), rendue vraie par la file et non plus
+  /// par le calendrier.
+  ///
+  /// ⚠️ LIMITE CONSERVÉE (hors périmètre B1, annoncée) : cette méthode n'a
+  /// TOUJOURS PAS de garde `_charge` — elle n'appelle pas `_charger()` et ne
+  /// dépend donc pas de l'état de chargement. La file ne change rien à ce
+  /// point, qui n'a pas été demandé.
   Future<EtatPersistanceElo> importerDepuisBackup(
-      Map<String, dynamic> data) async {
+      Map<String, dynamic> data) {
+    return _executerEnFile(
+        (int generation) => _importerDepuisBackup(data, generation));
+  }
+
+  /// Corps de [importerDepuisBackup], exécuté DANS la file.
+  ///
+  /// La mutation RAM (l. `clear()` puis `forEach`) est SYNCHRONE et contiguë,
+  /// séparée du contrôle G par aucune attente. Une opération restée en attente
+  /// pendant un reset est donc abandonnée AVANT de vider la RAM : c'est ce qui
+  /// interdit la résurrection des ratings (test B1-4 / B1-5).
+  ///
+  /// ★ A7 (3.3-B2-d1) : l'état ELO est désormais ÉTABLI avant la mutation, et
+  ///   rendu observable par [dernierDiagnosticPreImport]. Le diagnostic
+  ///   n'autorise et ne bloque RIEN : le comportement de l'import est
+  ///   exactement celui de B1, aux deux contrôles de génération près.
+  ///
+  /// ⚠️ TROIS CONTRÔLES DE GÉNÉRATION, ET POURQUOI.
+  ///   Le diagnostic introduit DEUX attentes (`getInstance`, `reload`) avant la
+  ///   mutation. Un reset peut démarrer pendant l'une d'elles :
+  ///     • Contrôle G #1 — à l'entrée, comme en B1 (aucune attente en amont) ;
+  ///     • Contrôle G #2 — après les deux attentes du diagnostic, AVANT la
+  ///       mutation. Il remplace et généralise la garantie de B1 : celle-ci ne
+  ///       couvrait qu'une opération restée en attente DANS LA FILE, pas une
+  ///       attente interne au corps ;
+  ///     • Contrôles 1 & 2 de `_sauvegarder` — inchangés, ils couvrent
+  ///       l'attente de la persistance elle-même.
+  ///   Un contrôle négatif prouve qu'aucun reset n'a commencé, car
+  ///   `_generationCache++` est incrémenté SYNCHRONEMENT au début du reset.
+  ///
+  /// ⚠️ AUCUN `await` N'EST INSÉRÉ ENTRE LE CONTRÔLE G #2 ET LE `clear()` :
+  ///   l'invariant de contiguïté de B1 est préservé à l'identique.
+  Future<EtatPersistanceElo> _importerDepuisBackup(
+      Map<String, dynamic> data, int generation) async {
+    // ── Remise à `null` des observables AVANT toute attente. ───────────────
+    // Un abandon ne doit laisser ni un diagnostic ni un résultat périmés.
+    _dernierDiagnosticPreImport = null;
+    _dernierResultatImport = null;
+
+    // ── Contrôle G #1 : opération périmée → aucune mutation RAM. ───────────
+    // ★ A2 : pour un JETON (opération née pendant un reset), `_estPerimeeParReset`
+    //   est volontairement inerte ; c'est [_neePendantResetAcheve] qui décide.
+    if (_neePendantResetAcheve(generation)) {
+      return _abandonnerParGenerationFile('importerDepuisBackup');
+    }
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('importerDepuisBackup');
+    }
+
+    // ── Diagnostic PRÉ-IMPORT (lecture seule, deux attentes internes) ──────
+    final DiagnosticPreImportElo diagnostic =
+        await _etablirDiagnosticPreImport();
+
+    // ── Contrôle G #2 : après les attentes du diagnostic, AVANT mutation. ──
+    if (_estPerimeeParReset(generation)) {
+      return _abandonnerParGenerationFile('importerDepuisBackup');
+    }
+
+    // Publication CONDITIONNELLE : un abandon par reset ne doit pas laisser
+    // croire qu'un diagnostic exploitable a été produit pour cette opération.
+    _dernierDiagnosticPreImport = diagnostic;
+
+    // ── MUTATION RAM — contiguë au contrôle G #2, aucun `await` inséré. ────
+    //  Les images « avant » proviennent du DIAGNOSTIC (donc du disque), plus
+    //  bas ; elles ne sont donc PAS relevées ici. Relever l'empreinte de la
+    //  RAM remplacée serait relever un état qui n'a jamais décrit le disque.
     _ratings.clear();
     data.forEach((key, val) {
       try { _ratings[key] = EloScore.fromJson(val as Map<String, dynamic>); } catch (_) {}
     });
-    final etat = await _sauvegarder();
+    final etat = await _sauvegarder(_jetonNaissance(generation));
+
     debugPrint('[EloService] ${etat == EtatPersistanceElo.persistee ? "✅" : "⚠️"} '
         'Import backup : ${_ratings.length} ratings restaurés — '
         'persistance: ${etat.name}');
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ A7 (3.3-B2-d2) — TÉMOIN DU REGISTRE, APRÈS persistance des ratings.
+    //
+    //  L'ORDRE EST STRUCTURANT : ratings puis témoin, jamais l'inverse. Le
+    //  registre CONSTATE ce qui a eu lieu ; il ne doit pas précéder le fait
+    //  qu'il atteste. Un échec du témoin laisse alors le registre à l'ancienne
+    //  empreinte, donc `divergent` au prochain diagnostic : fail-closed et
+    //  honnête, jamais une fausse protection.
+    // ══════════════════════════════════════════════════════════════════════
+    final String empreinteApresMutation = empreinte64Ratings(_ratings);
+    final int nombreApres = _ratings.length;
+
+    // ⚠️ L'IMAGE « AVANT » DU TÉMOIN EST CELLE DU DISQUE, PAS CELLE DE LA RAM.
+    //    Correction B2-d2 : la première version utilisait l'empreinte de la RAM
+    //    remplacée. C'était FAUX dans deux cas mesurables :
+    //      • une RAM vide (import demandé avant tout `_charger`) aurait inscrit
+    //        l'empreinte de la map VIDE, alors que le disque portait des ratings
+    //        réels que le témoin prétendait décrire ;
+    //      • la chaîne vérifiable du registre exige que `empreinteAvant` de la
+    //        nouvelle entrée soit EXACTEMENT l'empreinte que le registre
+    //        déclarait déjà — c'est-à-dire `empreintePersistee`. Une valeur
+    //        issue de la RAM romprait cette chaîne sans le dire.
+    //    ⚠️ AUCUNE ASSERTION NON NULLE ICI : un diagnostic non établi laisse
+    //       `empreintePersistee` à `null`, et `_doitEcrireTemoin` refuse alors
+    //       AVANT toute utilisation. Placer un `!` créerait un plantage
+    //       exactement sur le chemin qui doit rester sûr.
+    final String? empreinteAvantDisque =
+        diagnostic.etabli ? diagnostic.empreintePersistee : null;
+    final int nombreAvantDisque =
+        diagnostic.etabli ? diagnostic.nombrePersistee : 0;
+
+    final MotifNonEcritureTemoin? refus = _doitEcrireTemoin(
+      diagnostic: diagnostic,
+      etatRatings: etat,
+      empreinteAvant: empreinteAvantDisque,
+      empreinteApres: empreinteApresMutation,
+    );
+
+    IssueEcritureElo? issueTemoin;
+    MotifNonEcritureTemoin? motif = refus;
+    OrigineRegistreElo? origineAppliquee;
+
+    if (refus == null) {
+      // `_doitEcrireTemoin` a rendu `null` : diagnostic établi + cohérent +
+      // ratings persistés + changement d'empreinte. Les trois valeurs
+      // ci-dessous sont donc NON NULLES par construction — et on le vérifie
+      // plutôt que de le supposer.
+      final RegistreEloV3? registreAvant = diagnostic.resultat?.registre;
+      if (registreAvant == null || empreinteAvantDisque == null) {
+        // Inatteignable si `_doitEcrireTemoin` est correct. On refuse
+        // explicitement au lieu de forcer : une incohérence interne ne doit
+        // jamais devenir une écriture.
+        motif = MotifNonEcritureTemoin.diagnosticNonEtabli;
+      } else {
+        final ecriture = await _ecrireTemoinImport(
+          registreAvant: registreAvant,
+          empreinteAvant: empreinteAvantDisque,
+          empreinteApres: empreinteApresMutation,
+          nombreAvant: nombreAvantDisque,
+          nombreApres: nombreApres,
+          generation: generation,
+        );
+        issueTemoin = ecriture.issue;
+        motif = ecriture.motif;
+        if (issueTemoin == IssueEcritureElo.persistee) {
+          origineAppliquee = OrigineRegistreElo.historiqueInconnu;
+        }
+      }
+    }
+
+    // Publication du résultat COMPLET, sans changer le retour de la méthode.
+    //
+    // ⚠️ `protegeApres` — CALCULÉ, JAMAIS RECOPIÉ.
+    //    Correction B2-d2 : reprendre la valeur du diagnostic pré-import était
+    //    faux dans deux cas :
+    //      • ratings NON persistés (`refusee`/`echouee` = persistance NON
+    //        CONFIRMÉE, donc disque NON PROUVÉ inchangé) : la protection
+    //        antérieure ne peut plus être revendiquée, car rien ne prouve que
+    //        le registre décrit encore le disque ;
+    //      • témoin écrit : le registre porte alors `historiqueInconnu`, donc
+    //        `protegeContreDoubleApplication` vaut `false` PAR CONSTRUCTION.
+    //    La protection n'est conservée QUE si elle est PROUVÉE : ratings
+    //    persistés, ET empreinte du disque inchangée (donc registre toujours
+    //    cohérent avec ce qu'il déclare), ET protection présente avant l'import.
+    final bool empreintesIdentiques = empreinteAvantDisque != null &&
+        empreinteAvantDisque == empreinteApresMutation;
+    final bool protectionPreservee = etat == EtatPersistanceElo.persistee &&
+        empreintesIdentiques &&
+        issueTemoin != IssueEcritureElo.persistee &&
+        (diagnostic.protegeContreDoubleApplication ?? false);
+
+    _dernierResultatImport = ResultatImportElo(
+      etatRatings: etat,
+      issueTemoin: issueTemoin,
+      motifNonEcriture: motif,
+      coherenceAvant: diagnostic.coherence,
+      empreinteAvant: diagnostic.empreintePersistee,
+      empreinteApres: empreinteApresMutation,
+      origineAppliquee: origineAppliquee,
+      protegeApres: protectionPreservee,
+    );
+
+    if (motif != null) {
+      if (issueTemoin == null) {
+        debugPrint('[EloService] ⚠️ Témoin ELO NON TENTÉ (${motif.name}) — '
+            'registre existant PRÉSERVÉ, aucune réparation automatique');
+      } else {
+        debugPrint('[EloService] ⚠️ Témoin ELO TENTÉ puis NON CONFIRMÉ '
+            '(issue=${issueTemoin.name}, motif=${motif.name}) — AUCUNE '
+            'réparation automatique, aucune restitution de l\'ancienne valeur');
+      }
+    } else {
+      debugPrint('[EloService] ✅ Témoin ELO écrit : origine=historiqueInconnu '
+          '— AUCUNE protection anti-double-application revendiquée');
+    }
+
     return etat;
   }
 
@@ -517,6 +2839,25 @@ class EloService {
     debugPrint('[EloService/isolate] ✅ ${_ratings.length} ratings restaurés');
   }
 
+  /// ★ A7 (3.3-B1) — `reinitialiser()` reste HORS de la file FIFO, VOLONTAIREMENT.
+  ///
+  /// ⚠️ LIMITE DE CONCURRENCE ASSUMÉE ET DOCUMENTÉE (validée avec l'audit B1,
+  /// non résolue par ce lot) :
+  ///   • cette méthode vide `_ratings` (l. suivante) PUIS sauvegarde, sans
+  ///     passer par [_executerEnFile]. Un `importerDepuisBackup` ou un
+  ///     `mettreAJourApresArrivee` concurrent peut donc encore s'entrelacer
+  ///     avec elle ;
+  ///   • le `clear()` étant SYNCHRONE et le `_sauvegarder()` qui suit étant
+  ///     soumis aux contrôles 1 et 2, le pire cas est une persistance NON
+  ///     CONFIRMÉE — jamais une résurrection après un reset, ce cas-là étant
+  ///     couvert par `executerResetComplet` ;
+  ///   • elle n'a AUCUN appelant en production (mesuré : `grep` sur `lib/`,
+  ///     0 occurrence) : 35 usages de test, dont un non attendu
+  ///     (`test/v12_d2h8_lifecycle_test.dart:126`, en `setUp`). L'enfiler
+  ///     rendrait son `clear()` asynchrone et décalerait ce `setUp`, avec un
+  ///     risque de régression sur un test validé pour un gain nul en production.
+  /// ⇒ NE PAS considérer cette limite comme définitivement résolue : elle
+  ///   relève d'un lot ultérieur, si un appelant de production apparaît.
   Future<EtatPersistanceElo> reinitialiser() async {
     _ratings.clear();
     final etat = await _sauvegarder();
@@ -591,8 +2932,27 @@ class EloService {
       //    Sans ce drain, une écriture déjà au-delà des deux contrôles
       //    achèverait son `setString` APRÈS l'effacement et recréerait la clé
       //    (scénario V29-A, mesuré).
-      while (_ecrituresEnCours.isNotEmpty) {
-        final enVol = List<Future<void>>.from(_ecrituresEnCours);
+      //
+      //    ★ A7 (3.3-B2-a) : le drain couvre désormais DEUX ensembles.
+      //    [_ecrituresEnCours] est le témoin HISTORIQUE, inchangé et toujours
+      //    exposé par `nbEcrituresEnCours`. [_ecrituresPersistantesEnCours]
+      //    reçoit TOUTE écriture persistante, y compris celles que le lot
+      //    B2-d ajoutera pour le registre ELO. Attendre les deux est ce qui
+      //    empêchera un acquittement de recréer `elo_registre_v3` après son
+      //    effacement — sans jamais changer la valeur du compteur historique.
+      //
+      //    CONVERGENCE : le drain est sous barrière (`_resetEnCours = true`
+      //    et génération incrémentée, l.839-840, AVANT cette boucle). Toute
+      //    opération nouvelle est donc vue comme périmée et s'abandonne AVANT
+      //    d'écrire quoi que ce soit : aucun ensemble ne peut recevoir une
+      //    nouvelle future pendant le drain. Il ne peut donc pas boucler
+      //    indéfiniment.
+      while (_ecrituresEnCours.isNotEmpty ||
+          _ecrituresPersistantesEnCours.isNotEmpty) {
+        final enVol = <Future<void>>{
+          ..._ecrituresEnCours,
+          ..._ecrituresPersistantesEnCours,
+        };
         try {
           await Future.wait(enVol);
         } catch (_) {

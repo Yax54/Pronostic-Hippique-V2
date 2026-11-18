@@ -234,6 +234,21 @@ ZtPartant _partant(int num) => ZtPartant(
 
 const String kDiscipline = 'Trot Attelé';
 const String kEloKey = 'elo_ratings_v2';
+
+/// ★ A7 (3.3-B2-e) — IDENTITÉ DE COURSE DES APPELS DE CE FICHIER.
+///
+/// Depuis B2-e (§6), une application ELO sans identité exploitable est REFUSÉE
+/// (`identiteNonExploitable`). Ces tests mesurent la PERSISTANCE et la
+/// PROTECTION DE RESET (`persistee`, `refusee`, `abandonneeParReset`, drain,
+/// non-résurrection) : sans identité, ils n'atteignaient plus le code testé.
+/// La clé est RÉELLE, calendairement valide et ANCRÉE DANS LE PASSÉ.
+///
+/// ⚠️ IDENTIQUE pour tous les appels d'un même test : aucun scénario de ce
+///    fichier ne représente DEUX courses distinctes, et plusieurs tests
+///    enchaînent volontairement des appels sur LA MÊME course (cumul, rejeu).
+///    Chaque test dispose d'un store neuf (setUp), donc aucune collision
+///    entre tests n'est possible.
+const String kCleCourseV29 = 'R1C1_01112026';
 const String kEloTsKey = 'elo_ratings_v2_ts';
 const String kEloV1Key = 'elo_ratings_v1';
 const String kPurgeKey = 'elo_orphelins_purges_v1';
@@ -452,6 +467,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     await maj;
     await _laisserProgresser(4);
@@ -520,6 +536,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     final nbAvant = elo.nbChevauxSuivis;
     expect(nbAvant, greaterThan(0), reason: 'TÉMOIN : ratings en RAM');
@@ -620,6 +637,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     var maj2Terminee = false;
     maj2.whenComplete(() => maj2Terminee = true).ignore();

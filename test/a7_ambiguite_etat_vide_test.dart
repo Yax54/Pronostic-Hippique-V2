@@ -126,6 +126,23 @@ class _Store extends SharedPreferencesStorePlatform {
 const String _disc = 'Trot Attelé'; // → normalisé TROT_ATTELE
 const String _discNorm = 'TROT_ATTELE';
 
+/// ★ A7 (3.3-B2-e) — IDENTITÉS DE COURSE DES APPLICATIONS DE CE FICHIER.
+///
+/// Le contrat B2-e exige une identité exploitable pour TOUTE application ELO :
+/// un appel sans `courseKey` rend `identiteNonExploitable` et ne mute rien.
+/// Les appels de ce fichier vérifient des CALCULS et des ÉTATS DE STOCKAGE, pas
+/// l'absence d'identité : ils reçoivent donc une identité RÉELLE, cohérente et
+/// calendairement valide.
+///
+/// Choix de conception (et non contournement de la protection) :
+///   • `_cleCoursePopulations` — la course qui PEUPLE l'état avant un reset ;
+///   • `_cleCoursePostReset`   — la PREMIÈRE course APRÈS le reset, qui est une
+///     course LOGIQUEMENT DIFFÉRENTE (A7-3b en vérifie l'application).
+/// Les deux dates sont ancrées dans le PASSÉ (2026-11-01 / 2026-11-02), donc
+/// jamais refusées par la garde d'antériorité, et JAMAIS dans le futur.
+const String _cleCoursePeuplement = 'R1C1_01112026';
+const String _cleCoursePostReset = 'R2C2_02112026';
+
 String _cle(String nom) => '${nom.toUpperCase()}|$_discNorm';
 
 ZtPartant _partant(int num, {String? nom}) => ZtPartant(
@@ -187,11 +204,18 @@ int _nb(String nom) =>
     EloService.instance.getScore(nom, discipline: _disc).nbCourses;
 
 /// Une arrivée de 3 partants, pour observer l'effet d'UNE application ELO.
-Future<void> _appliquerUneCourse() async {
+///
+/// ★ A7 (3.3-B2-e) — [courseKey] est OBLIGATOIRE côté production : un appel
+///   sans identité est refusé (`identiteNonExploitable`) et ne mute aucun
+///   rating, ce qui rendrait les mesures de ce fichier vides de sens.
+///   L'identité est donc un paramètre explicite, choisi par chaque test selon
+///   la course qu'il représente RÉELLEMENT.
+Future<void> _appliquerUneCourse({required String courseKey}) async {
   await EloService.instance.mettreAJourApresArrivee(
     arrivee: const <int>[1, 2, 3],
     partants: <ZtPartant>[_partant(1), _partant(2), _partant(3)],
     discipline: _disc,
+    courseKey: courseKey,
   );
 }
 
@@ -281,7 +305,7 @@ void main() {
       expect(EloService.instance.nbChevauxSuivis, 0,
           reason: 'TÉMOIN : map vide avant application');
 
-      await _appliquerUneCourse();
+      await _appliquerUneCourse(courseKey: _cleCoursePeuplement);
 
       final nb = EloService.instance.nbChevauxSuivis;
       final export = EloService.instance.exporterPourBackup().length;
@@ -317,7 +341,7 @@ void main() {
       await EloService.init();
 
       // Peuplement : deux courses appliquées.
-      await _appliquerUneCourse();
+      await _appliquerUneCourse(courseKey: _cleCoursePeuplement);
       expect(store.contient('elo_ratings_v2'), isTrue,
           reason: 'TÉMOIN : le blob existe avant le reset');
 
@@ -346,14 +370,17 @@ void main() {
         'flutter.ia_seuils_v1': '{}',
       });
       await EloService.init();
-      await _appliquerUneCourse();
+      await _appliquerUneCourse(courseKey: _cleCoursePeuplement);
       await BackupService.instance.reinitialiserComplet();
 
       expect(EloService.instance.nbChevauxSuivis, 0,
           reason: 'TÉMOIN : état vierge après reset');
 
-      // Première nouvelle course.
-      await _appliquerUneCourse();
+      // Première nouvelle course — LOGIQUEMENT DIFFÉRENTE de celle qui a peuplé
+      // l'état avant le reset. Un même `courseKey` serait refusé à juste titre
+      // (`courseDejaJournalisee`) et le test mesurerait un refus, pas
+      // l'application qu'il prétend vérifier.
+      await _appliquerUneCourse(courseKey: _cleCoursePostReset);
 
       final r = _rating('CHEVAL_1');
       final nb = _nb('CHEVAL_1');

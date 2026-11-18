@@ -277,6 +277,36 @@ String kCleElo(String nom, [String discipline = kDiscipline]) {
 }
 
 const String kEloKey = 'elo_ratings_v2';
+
+/// ★ A7 (3.3-B2-e) — IDENTITÉ DE COURSE DES APPELS DE CE FICHIER.
+///
+/// Depuis B2-e (§6), une application ELO sans identité exploitable est REFUSÉE
+/// (`identiteNonExploitable`). Ces tests mesurent la PERSISTANCE et la
+/// PROTECTION DE RESET (`persistee`, `refusee`, `abandonneeParReset`, drain,
+/// non-résurrection) : sans identité, ils n'atteignaient plus le code testé.
+/// La clé est RÉELLE, calendairement valide et ANCRÉE DANS LE PASSÉ.
+///
+/// ⚠️ IDENTIQUE pour tous les appels d'un même test : aucun scénario de ce
+///    fichier ne représente DEUX courses distinctes, et plusieurs tests
+///    enchaînent volontairement des appels sur LA MÊME course (cumul, rejeu).
+///    Chaque test dispose d'un store neuf (setUp), donc aucune collision
+///    entre tests n'est possible.
+const String kCleCourseV29 = 'R1C1_01112026';
+
+/// ★ B2-e — identité de la SECONDE course du test G.
+///
+/// Le test G applique DEUX courses logiquement différentes :
+///   1. une course de PEUPLEMENT (état de départ : RAM et disque peuplés) ;
+///   2. une course NOUVELLE, née AVANT le reset et dont l'écriture atteint le
+///      disque APRÈS — c'est CETTE opération que le contrôle de génération
+///      doit refuser.
+///
+/// Réutiliser l'identité de la course de peuplement ferait refuser la seconde
+/// dès l'étape A.4 (`courseDejaJournalisee`) : elle n'atteindrait jamais
+/// `_sauvegarder()`, `deltaGen` resterait à 0, et le test mesurerait un refus
+/// de doublon au lieu du contrôle 2 qu'il a pour objet de vérifier.
+/// Deux courses différentes ⇒ deux identités différentes. Date dans le PASSÉ.
+const String kCleCourseV29G = 'R2C2_02112026';
 const String kEloTsKey = 'elo_ratings_v2_ts';
 const String kCleTardive = 'alert_config_v2'; // index 86 sur 107
 
@@ -321,6 +351,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
 
     debugPrint('V29-0 → nbChevauxSuivis=${elo.nbChevauxSuivis} '
@@ -365,6 +396,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
 
     final suspendue = await _attendreEntreeOuFin(entree, maj);
@@ -489,6 +521,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     final suspendue = await _attendreEntreeOuFin(entree, maj);
     expect(suspendue, isTrue, reason: 'TÉMOIN DE PRÉPARATION');
@@ -581,6 +614,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     expect(elo.nbChevauxSuivis, greaterThan(0), reason: 'TÉMOIN : RAM peuplée');
     expect(store.contient(kEloKey), isTrue, reason: 'TÉMOIN : disque peuplé');
@@ -607,6 +641,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     debugPrint('C → maj après reset : RAM=${elo.nbChevauxSuivis} '
         'disque=${store.contient(kEloKey)} '
@@ -625,6 +660,7 @@ void main() {
       arrivee: kArrivee,
       partants: <ZtPartant>[_partant(1), _partant(2)],
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     final nbApresVidage = elo.nbChevauxSuivis;
     debugPrint('C → après vidage + maj : RAM=$nbApresVidage '
@@ -652,6 +688,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     final nbAvant = elo.nbChevauxSuivis;
     expect(store.contient(kEloKey), isTrue, reason: 'TÉMOIN : clé présente');
@@ -662,6 +699,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     await _attendreEntreeOuFin(entree, maj);
     final reset = BackupService.instance.reinitialiserComplet();
@@ -741,6 +779,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     await _laisserProgresser(4);
 
@@ -781,6 +820,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     expect(store.contient(kEloKey), isTrue,
         reason: 'CORRECTION : une mise à jour normale, après le reset, écrit '
@@ -812,6 +852,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29, // ★ B2-e : identité exigée
     );
     expect(elo.nbChevauxSuivis, greaterThan(0), reason: 'TÉMOIN : RAM peuplée');
     expect(store.contient(kEloKey), isTrue, reason: 'TÉMOIN : disque peuplé');
@@ -825,6 +866,7 @@ void main() {
       arrivee: kArrivee,
       partants: kPartants,
       discipline: kDiscipline,
+      courseKey: kCleCourseV29G, // ★ B2-e : 2e course, DISTINCTE (test G)
     );
     final suspendue = await _attendreEntreeOuFin(entreeGetAll, maj);
     expect(suspendue, isTrue,
@@ -863,6 +905,7 @@ void main() {
     // ── Libération : l'écriture reprend, le reset est FINI ───────────────
     final refusResetAvant = elo.nbRefusParReset;
     final refusGenAvant = elo.nbRefusParGeneration;
+    final abandonsGenAvant = elo.nbAbandonsFileParGeneration;
     final indexLiberation = store.journal.length;
     store.libererGetAll();
     await maj;
@@ -870,10 +913,12 @@ void main() {
 
     final deltaReset = elo.nbRefusParReset - refusResetAvant;
     final deltaGen = elo.nbRefusParGeneration - refusGenAvant;
+    final deltaAbandonsGen = elo.nbAbandonsFileParGeneration - abandonsGenAvant;
     final journalEcriture =
         store.journal.skip(indexLiberation).where((e) => e.contains(kEloKey));
     debugPrint('G → après libération : disque=${store.contient(kEloKey)} '
         'deltaReset=$deltaReset deltaGen=$deltaGen '
+        'deltaAbandonsGen=$deltaAbandonsGen '
         'journal=${journalEcriture.toList()}');
 
     // ── CONTRÔLE 1 HORS JEU : le reset est terminé, `_resetEnCours` est faux ─
@@ -882,14 +927,40 @@ void main() {
             'au moment où l\'écriture reprend, le reset est terminé et '
             '`_resetEnCours` vaut `false`');
 
-    // ── CONTRÔLE 2 SEUL RESPONSABLE ──────────────────────────────────────
-    expect(deltaGen, 1,
-        reason: 'CORRECTION : la GÉNÉRATION refuse l\'écriture née avant le '
-            'reset. Sans ce contrôle (mutation M21), l\'écriture atteindrait '
-            'le disque APRÈS l\'effacement et recréerait la clé supprimée');
+    // ── GÉNÉRATION SEULE RESPONSABLE — ASSERTION INITIALE CONSERVÉE ───────
+    //
+    // OBJECTIF DU TEST, INCHANGÉ : prouver que c'est la GÉNÉRATION, et elle
+    // seule, qui empêche cette écriture d'atteindre le disque.
+    //
+    // ⚠ CE QUI CHANGE (et pourquoi) : AVANT B2-e, le refus survenait dans
+    //   `_sauvegarder()` (contrôle 2) et s'observait donc par
+    //   `nbRefusParGeneration == +1`. Avec B2-e, la même vérification de
+    //   génération a lieu PLUS TÔT — à l'étape A.3 de
+    //   `_mettreAJourApresArrivee`, AVANT toute mutation RAM — et c'est
+    //   `_abandonnerParGenerationFile` qui l'exécute, donc l'observable
+    //   `nbAbandonsFileParGeneration` qui l'enregistre.
+    //   MESURÉ : deltaGen == 0, deltaAbandonsGen == 1.
+    //
+    //   Ce n'est PAS un affaiblissement : la protection est PLUS forte (elle
+    //   empêche désormais la mutation RAM, pas seulement l'écriture). Ce n'est
+    //   pas non plus un déplacement silencieux — l'assertion ci-dessous ÉCHOUE
+    //   si le refus cesse d'être d'origine « génération ».
+    //
+    // PREUVE D'ISOLATION renforcée : les DEUX compteurs de refus restent à 0,
+    // donc AUCUN autre mécanisme n'est intervenu.
+    expect(deltaGen, 0,
+        reason: 'PREUVE D\'ISOLATION : le contrôle 2 de `_sauvegarder()` n\'est '
+            'plus atteint — la génération est vérifiée AVANT la mutation RAM');
+    expect(deltaAbandonsGen, 1,
+        reason: 'CORRECTION : c\'est bien le CONTRÔLE DE GÉNÉRATION (contrôle G) '
+            'qui refuse l\'écriture née avant le reset. Sans lui (mutation M21), '
+            'l\'écriture atteindrait le disque APRÈS l\'effacement et '
+            'recréerait la clé supprimée');
     expect(journalEcriture.toList(), isEmpty,
-        reason: 'CORRECTION : aucune écriture disque n\'est tentée — le refus a '
-            'lieu avant `_executerSauvegarde`');
+        reason: 'CORRECTION : aucune écriture disque n\'est tentée');
+    expect(elo.nbChevauxSuivis, 0,
+        reason: 'CORRECTION RENFORCÉE : refus AVANT la mutation, donc aucun '
+            'rating n\'est ressuscité en RAM — c\'est plus fort qu\'avant B2-e');
 
     expect(store.contient(kEloKey), isFalse,
         reason: 'CORRECTION : la clé reste ABSENTE — c\'est la conséquence '

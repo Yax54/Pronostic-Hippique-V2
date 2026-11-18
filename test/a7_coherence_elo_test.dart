@@ -364,10 +364,17 @@ Future<bool> _cycleDataRefresh({
     // Équivalent de `_mettreAJourEloApresArrivee` (regex + recherche des
     // partants) : ici les partants sont fournis directement, ce qui ne change
     // RIEN à l'appel ELO lui-même.
+    //
+    // ★ A7 (3.3-B2-e) — TRANSMISSION DE L'IDENTITÉ. C'est exactement le
+    //   correctif de production (`data_refresh_service.dart` l.1278) : le
+    //   `courseKey` déjà connu de ce cycle est transmis à l'ELO. Sans lui,
+    //   l'application serait refusée (`identiteNonExploitable`) et AUCUN test
+    //   basé sur ce helper ne mesurerait plus rien.
     await EloService.instance.mettreAJourApresArrivee(
       arrivee:    arrivee,
       partants:   partants,
       discipline: _disc,
+      courseKey:  courseKey,
     );
   }
   return resultatEnregistre;
@@ -403,10 +410,17 @@ void main() {
       final ecrituresAvant = store.ecrituresElo;
 
       // ── ACTION : chemin de production réel ──────────────────────────────
+      //
+      // ★ A7 (3.3-B2-e) — IDENTITÉ OBLIGATOIRE. Depuis B2-e, une application
+      //   ELO sans `courseKey` exploitable est REFUSÉE (`identiteNonExploitable`)
+      //   et ne mute aucun rating. Ce test vérifie un CALCUL (1500 + 18), il
+      //   reçoit donc une identité réelle, fournie par le helper `_cleCourse`
+      //   DÉJÀ PRÉSENT dans ce fichier — aucune convention inventée.
       await EloService.instance.mettreAJourApresArrivee(
         arrivee: arrivee,
         partants: partants,
         discipline: _disc,
+        courseKey: _cleCourse(11, 1, _jour),
       );
 
       // ── Calcul attendu, vérifiable à la main ────────────────────────────
@@ -465,8 +479,10 @@ void main() {
       final arrivee = [1, 2]; // A gagne
 
       // ── 1er appel : NOUVEAU résultat ────────────────────────────────────
+      // ★ A7 (3.3-B2-e) — deux courses successives ⇒ deux identités.
       await elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: [p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: [p1, p2], discipline: _disc,
+          courseKey: _cleCourse(12, 1, _jour));
 
       final r1a = _rating('A');
       final r2a = _rating('B');
@@ -475,7 +491,8 @@ void main() {
 
       // ── 2e appel : MÊME arrivée, MÊME résultat ──────────────────────────
       await elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: [p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: [p1, p2], discipline: _disc,
+          courseKey: _cleCourse(12, 2, _jour));
 
       final r1b = _rating('A');
       final r2b = _rating('B');
@@ -490,8 +507,12 @@ void main() {
       // ── LE FAIT : le second appel MODIFIE encore l'ELO ──────────────────
       expect(r1b, isNot(closeTo(r1a, 0.000001)),
           reason: 'T-A7-1b : MESURÉ — le rating de A change au 2e appel '
-              '($r1a → $r1b). `EloService` ne reçoit PAS de `courseKey` et '
-              'ne tient AUCUN registre des arrivées déjà traitées.');
+              '($r1a → $r1b). ⚠️ B2-e : la primitive REÇOIT désormais un '
+              '`courseKey` et REFUSE un rejeu de la MÊME course. Ce test '
+              'caractérise donc la primitive sur DEUX COURSES DISTINCTES '
+              '(R12C1 puis R12C2) : il isole le CUMUL du calcul, sans '
+              'confondre avec la protection anti-rejeu, qui relève de B2-e '
+              'et est mesurée dans le fichier B2-e.');
       expect(n1b, n1a + 1,
           reason: 'T-A7-1b : MESURÉ — nbCourses de A augmente ENCORE '
               '($n1a → $n1b) : il compte des APPLICATIONS, pas des courses.');
@@ -518,8 +539,14 @@ void main() {
       final initial = precedent;
 
       for (var i = 1; i <= 4; i++) {
+        // ★ A7 (3.3-B2-e) — 4 courses successives DISTINCTES (R13C1..R13C4).
+        //   Le test caractérise le CUMUL ARITHMÉTIQUE de la primitive : chaque
+        //   course apporte son delta. Réutiliser une clé ferait refuser les
+        //   rejeux (protection B2-e) et le cumul mesuré serait nul — ce serait
+        //   alors un test de refus, ce qu'il ne doit pas devenir.
         await elo.mettreAJourApresArrivee(
-            arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc);
+            arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc,
+            courseKey: _cleCourse(13, i, _jour));
         final courant = _rating('A');
         mesures.add('passage $i : A $precedent → $courant '
             '(nbCourses=${_nb('A')}, écritures=${store.ecrituresElo})');
@@ -571,7 +598,8 @@ void main() {
       final arrivee = [1, 2];
 
       await elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: [p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: [p1, p2], discipline: _disc,
+          courseKey: _cleCourse(14, 1, _jour)); // ★ B2-e : identité exigée
       final apres1 = _rating('A');
 
       // ── État disque : on inventorie ce qui est persisté ─────────────────
@@ -581,9 +609,11 @@ void main() {
       print('[T-A7-2b] champs persistés pour A : $champs');
 
       expect(champs, <String>['nb', 'nom', 'rating', 'var'],
-          reason: 'T-A7-2b : MESURÉ — le disque ne stocke QUE nom/rating/nb/var. '
-              'Aucun champ ne mémorise QUELLE arrivée a été appliquée, donc '
-              'aucune garde de rejeu ne peut survivre à un redémarrage.');
+          reason: 'T-A7-2b : MESURÉ — le disque ELO ne stocke QUE '
+              'nom/rating/nb/var. ⚠️ B2-e : la traçabilité des courses existe '
+              'désormais, mais dans un FICHIER DISTINCT (`elo_registre_v3`), '
+              'PAS dans les ratings. L\'assertion porte donc toujours sur les '
+              'ratings, et reste exacte : aucun champ de rejeu n\'y est ajouté.');
 
       // ── « Redémarrage » : l'état neuf vient EXCLUSIVEMENT du disque ─────
       await elo.importerDepuisBackup(disque);
@@ -591,18 +621,22 @@ void main() {
           reason: 'T-A7-2b : le rating relu du disque est identique');
 
       // ── Rejeu APRÈS « redémarrage » ─────────────────────────────────────
+      // ★ B2-e : COURSE DIFFÉRENTE (R14C2). Le test mesure le CUMUL du calcul
+      //   après rechargement, pas un rejeu de la même course — celui-ci est
+      //   refusé par la protection B2-e et relève du fichier B2-e.
       await elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: [p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: [p1, p2], discipline: _disc,
+          courseKey: _cleCourse(14, 2, _jour));
       final apres2 = _rating('A');
 
       // ignore: avoid_print
-      print('[T-A7-2b] A : $apres1 → $apres2 après rejeu post-redémarrage | '
-          'nbCourses=${_nb('A')}');
+      print('[T-A7-2b] A : $apres1 → $apres2 après nouvelle course post-'
+          'redémarrage | nbCourses=${_nb('A')}');
 
       expect(apres2, isNot(closeTo(apres1, 0.000001)),
-          reason: 'T-A7-2b : MESURÉ — le rejeu fonctionne aussi après '
-              'redémarrage : la « protection » n\'existe pas, elle n\'a donc '
-              'rien à conserver.');
+          reason: 'T-A7-2b : MESURÉ — une course NOUVELLE appliquée après '
+              'rechargement depuis le disque fait bien bouger le rating : le '
+              'calcul est opérationnel après redémarrage.');
     });
   });
 
@@ -843,9 +877,13 @@ void main() {
   //  T-A7-6 — TRAITEMENTS CONCURRENTS d'une même arrivée
   //
   //  Deux niveaux sont distingués :
-  //    • T-A7-6a : `EloService` SEUL (non modifié). Deux appels cumulent —
-  //      c'est un fait CARACTÉRISÉ de l'API bas niveau, qui ne reçoit pas
-  //      `courseKey`. Il n'est PAS corrigé (elo_service.dart interdit).
+  //    • T-A7-6a : `EloService` SEUL. Deux applications cumulent quand elles
+  //      portent sur DEUX COURSES DISTINCTES — c'est un fait CARACTÉRISÉ de
+  //      l'API bas niveau : elle sérialise (file FIFO) mais ne déduplique pas
+      //      les courses différentes.
+  //      ⚠️ B2-e : la primitive REFUSE désormais un rejeu de la MÊME course.
+  //      Ce test ne mesure donc pas cette protection (elle est mesurée dans le
+  //      fichier B2-e) mais bien le CUMUL, avec deux identités distinctes.
   //    • T-A7-6b : le CHEMIN DE PRODUCTION CORRIGÉ (enregistrerResultat +
   //      conditionnement de l'appel ELO). C'est CE test qui est normatif.
   // ═════════════════════════════════════════════════════════════════════════
@@ -863,10 +901,16 @@ void main() {
       final nbAvant = _nb('A');
 
       // ── Deux appels NON attendus, lancés ensemble ─────────────────────
+      // ★ B2-e : DEUX COURSES DISTINCTES (R61C1 puis R61C2). L'objectif du
+      //   test est de prouver qu'AUCUN verrou d'idempotence n'existe dans la
+      //   primitive : deux courses = deux applications. Avec une clé unique, la
+      //   seconde serait refusée et le test deviendrait un test de refus.
       final f1 = elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc,
+          courseKey: _cleCourse(61, 1, _jour));
       final f2 = elo.mettreAJourApresArrivee(
-          arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc);
+          arrivee: arrivee, partants: <ZtPartant>[p1, p2], discipline: _disc,
+          courseKey: _cleCourse(61, 2, _jour));
       await Future.wait(<Future<void>>[f1, f2]);
 
       final ratingApres = _rating('A');
@@ -876,13 +920,14 @@ void main() {
       print('[T-A7-6a] EloService seul, 2 appels concurrents | A : '
           '$ratingAvant → $ratingApres | nbCourses : $nbAvant → $nbApres');
 
-      //  Aucun verrou, aucun registre d'idempotence DANS la primitive :
-      //  les DEUX passages s'appliquent. C'est ce qui rend le
-      //  conditionnement de l'appelant INDISPENSABLE (voir T-A7-6b).
+      //  Aucun verrou d'idempotence DANS la primitive : les DEUX courses
+      //  distinctes s'appliquent. C'est ce qui rend le conditionnement de
+      //  l'appelant INDISPENSABLE (voir T-A7-6b).
       expect(nbApres, nbAvant + 2,
-          reason: 'T-A7-6a : les deux passages ont incrémenté nbCourses — '
-              'mesuré : $nbAvant → $nbApres. La primitive ne peut pas se '
-              'protéger : elle ne reçoit pas `courseKey`.');
+          reason: 'T-A7-6a : les deux courses ont incrémenté nbCourses — '
+              'mesuré : $nbAvant → $nbApres. La primitive sérialise mais ne '
+              'déduplique pas deux COURSES DIFFÉRENTES ; la protection '
+              'anti-rejeu d\'une MÊME course relève de B2-e.');
       expect(ratingApres, isNot(closeTo(ratingAvant, 0.000001)),
           reason: 'T-A7-6a : le rating a bougé');
       expect(IaMemoryService.instance.pronostics, isEmpty,

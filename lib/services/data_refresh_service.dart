@@ -1263,11 +1263,19 @@ class DataRefreshService extends ChangeNotifier {
       return;
     }
 
+    // ★ A7 (3.3-B2-e) — TRANSMISSION DE L'IDENTITÉ DE COURSE.
+    //   `courseKey` est le paramètre REÇU de `_recupererResultatsBatch`
+    //   (l.1195 : `p.courseKey`). Ce n'est ni une reconstruction, ni une
+    //   dérivation depuis `numR`/`numC` : une identité fabriquée ne serait pas
+    //   comparable à celle du registre. Sans elle, `EloService` ne peut ni
+    //   vérifier qu'une course a déjà été appliquée, ni journaliser : il
+    //   refuse alors l'application (aucune mutation ELO non journalisée).
     final EtatPersistanceElo etat =
         await EloService.instance.mettreAJourApresArrivee(
       arrivee:    arrivee,
       partants:   partants,
       discipline: typeCourse, // ★ v9.92
+      courseKey:  courseKey,  // ★ B2-e — identité réelle, jamais reconstruite
     );
 
     // ★ A7 (3.2) : l'issue est SIGNALÉE, jamais ignorée. Aucun rejeu n'est
