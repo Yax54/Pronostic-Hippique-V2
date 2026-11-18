@@ -57,6 +57,10 @@ import 'dart:convert';
 const int kSchemaRegistreElo = 3;
 
 /// Version de CONTENU du registre, à l'intérieur du schéma 3.
+///
+/// ⚠️ Contrôlée à l'égalité stricte, au même titre que [kSchemaRegistreElo].
+///    Une `version` différente rend le registre `schemaIncompatible` : il n'est
+///    ni interprété, ni supprimé, ni migré automatiquement.
 const int kVersionRegistreElo = 1;
 
 /// Clé SharedPreferences du registre. Déjà présente dans `_keysELO`
@@ -499,8 +503,27 @@ class RegistreEloV3 {
         entrees: const <EntreeRegistreElo>[],
       );
 
-  /// Vrai si un registre de ce schéma peut être interprété.
-  bool get interpretable => schema == kSchemaRegistreElo;
+  /// Vrai si ce registre peut être INTERPRÉTÉ par le code courant.
+  ///
+  /// Le contrôle porte sur les DEUX champs de versionnement, pas seulement sur
+  /// `schema` :
+  ///   • `schema == kSchemaRegistreElo` — la FORME du conteneur est connue ;
+  ///   • `version == kVersionRegistreElo` — la SÉMANTIQUE du contenu est connue.
+  ///
+  /// ⚠️ POURQUOI LA VERSION COMPTE AUTANT QUE LE SCHÉMA. Un registre de schéma
+  ///    3 et de `version` inconnue (2, 0, …) reste désérialisable : ses champs
+  ///    existent, ses invariants tiennent. Mais la SIGNIFICATION de ses entrées
+  ///    peut avoir changé. L'interpréter reviendrait à décider d'un sens qu'on
+  ///    ne possède pas — exactement ce que ce modèle s'interdit. Il est donc
+  ///    refusé comme un schéma étranger, et pour la même raison.
+  ///
+  /// Ce getter est le SEUL point de décision sur la lisibilité :
+  /// `diagnostiquerRegistre` s'y ramène, et `autoriseApplication` comme
+  /// `protegeContreDoubleApplication` en dérivent via la cohérence. Aucun autre
+  /// chemin ne peut déclarer un registre lisible — et un registre refusé ici
+  /// n'est ni supprimé, ni réinitialisé, ni migré, ni réinterprété.
+  bool get interpretable =>
+      schema == kSchemaRegistreElo && version == kVersionRegistreElo;
 
   /// Entrées INCERTAINES, dans l'ordre du journal. Elles ne sont JAMAIS
   /// supprimées automatiquement, pour aucun motif.
@@ -555,8 +578,9 @@ class RegistreEloV3 {
   /// Désérialisation STRICTE depuis une chaîne.
   ///
   /// Lève [FormatException] si le JSON est invalide, si un champ obligatoire
-  /// manque, ou si un type est incorrect. **Un schéma différent ne lève pas** :
-  /// il est rendu tel quel et c'est [interpretable] qui décide.
+  /// manque, ou si un type est incorrect. **Un `schema` ou une `version`
+  /// différents ne lèvent PAS** : le registre est rendu tel quel, intact, et
+  /// c'est [interpretable] qui décide de son refus.
   factory RegistreEloV3.decoder(String jsonBrut) {
     final Object? decode;
     try {
@@ -629,7 +653,17 @@ enum DiagnosticCoherenceElo {
   /// type incorrect, invariant violé).
   corrompu,
 
-  /// `schema` différent de [kSchemaRegistreElo]. Registre non interprété.
+  /// Le registre est REFUSÉ, jamais `coherent`, même empreinte identique.
+  ///
+  /// Couvre DEUX causes distinctes, volontairement réunies sous un seul état
+  /// pour rester une correction minimale :
+  ///   • `schema` différent de [kSchemaRegistreElo] — forme inconnue ;
+  ///   • `version` différente de [kVersionRegistreElo] — forme connue mais
+  ///     SÉMANTIQUE de contenu inconnue (voir [RegistreEloV3.interpretable]).
+  ///
+  /// ⚠️ Ce diagnostic l'emporte sur la comparaison d'empreintes. Une empreinte
+  ///    identique ne peut donc JAMAIS produire `coherent` sur un registre
+  ///    incompatible : le test T-V7 le vérifie explicitement.
   schemaIncompatible,
 }
 
@@ -707,8 +741,8 @@ class ResultatDiagnosticElo {
         return 'Registre ELO illisible. Aucune application automatique. '
             'Le registre n\'est pas supprimé.';
       case DiagnosticCoherenceElo.schemaIncompatible:
-        return 'Registre ELO d\'un schéma incompatible. Aucune application '
-            'automatique. Le registre n\'est pas supprimé.';
+        return 'Registre ELO d\'un schéma ou d\'une version incompatible. '
+            'Aucune application automatique. Le registre n\'est pas supprimé.';
     }
   }
 

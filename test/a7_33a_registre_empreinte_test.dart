@@ -1290,7 +1290,7 @@ void main() {
       // Le registre reste LISIBLE pour le diagnostic : rien n'est effacé.
       expect(d.registre, isNotNull);
       expect(d.registre!.schema, kSchemaRegistreElo + 1);
-      expect(d.message, contains('schéma incompatible'));
+      expect(d.message, contains('schéma ou d\'une version incompatible'));
       expect(d.message, contains('n\'est pas supprimé'));
     });
 
@@ -1435,6 +1435,468 @@ void main() {
         }
       }
       expect(coherences.length, 5);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  GROUPE 10 bis — 3.3-A.1 : VERSIONNEMENT DU REGISTRE
+  //
+  //  Défaut corrigé : `interpretable` ne contrôlait que `schema`. Un registre
+  //  portant `version: 2` était donc déclaré LISIBLE et pouvait ressortir
+  //  `coherent` sur une empreinte identique — c'est-à-dire être interprété
+  //  alors que la sémantique de son contenu n'était pas connue.
+  //
+  //  ⚠️ Ces tests ne touchent NI formule ELO, NI coefficient K, NI probabilité,
+  //     NI poids, NI seuil, NI mécanisme d'apprentissage, NI règle TOP3.
+  //     Ils ne lisent ni n'écrivent aucune SharedPreferences.
+  // ═════════════════════════════════════════════════════════════════════════
+  group('T-V · versionnement — version 1 acceptée', () {
+    test('T-V1 · version == kVersionRegistreElo → interprétable', () {
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo,
+        version: kVersionRegistreElo,
+        horloge: 0,
+        empreinteRatings: _fpA,
+        origine: OrigineRegistreElo.courante,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      expect(kVersionRegistreElo, 1);
+      expect(r.interpretable, isTrue);
+    });
+
+    test('T-V2 · version 1 + empreinte identique → cohérent, protégé', () {
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo,
+        version: kVersionRegistreElo,
+        horloge: 9,
+        empreinteRatings: _fpB,
+        origine: OrigineRegistreElo.courante,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      final d = diagnostiquerRegistre(
+        jsonRegistre: r.encoder(),
+        empreinteDisque: _fpB,
+        nombreRatings: 6,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.coherent);
+      expect(d.autoriseApplication, isTrue);
+      expect(d.protegeContreDoubleApplication, isTrue);
+      expect(d.message, 'Registre ELO cohérent.');
+    });
+
+    test('T-V3 · \'vierge()\' produit la version courante', () {
+      final v = RegistreEloV3.vierge(empreinteRatings: _fpA);
+      expect(v.version, kVersionRegistreElo);
+      expect(v.schema, kSchemaRegistreElo);
+      expect(v.interpretable, isTrue);
+    });
+  });
+
+  group('T-V · versionnement — versions inconnues REFUSÉES', () {
+    /// Registre bien formé, seule la version varie.
+    RegistreEloV3 avecVersion(int version) => RegistreEloV3(
+          schema: kSchemaRegistreElo,
+          version: version,
+          horloge: 3,
+          empreinteRatings: _fpA,
+          origine: OrigineRegistreElo.courante,
+          entrees: const <EntreeRegistreElo>[],
+        );
+
+    test('T-V4 · version 2 → NON interprétable', () {
+      expect(avecVersion(2).interpretable, isFalse);
+    });
+
+    test('T-V5 · version 0 → NON interprétable', () {
+      expect(avecVersion(0).interpretable, isFalse);
+    });
+
+    test('T-V6 · toute version ≠ 1 → NON interprétable', () {
+      for (final v in <int>[-1, 0, 2, 3, 99, 1000]) {
+        expect(avecVersion(v).interpretable, isFalse, reason: 'version $v');
+        // Par contraste : le schéma reste correct dans TOUS ces cas. Le refus
+        // vient donc bien de la version seule.
+        expect(avecVersion(v).schema, kSchemaRegistreElo, reason: 'version $v');
+      }
+    });
+
+    test('T-V7 · version 2 + EMPREINTE IDENTIQUE → JAMAIS cohérent', () {
+      // C'est le cœur de la correction : avant, ce cas rendait `coherent`.
+      final r = avecVersion(2);
+      final d = diagnostiquerRegistre(
+        jsonRegistre: r.encoder(),
+        empreinteDisque: _fpA, // ← strictement égale à celle du registre
+        nombreRatings: 4,
+      );
+      expect(d.empreinteRegistre, _fpA);
+      expect(d.empreinteDisque, _fpA);
+      expect(d.empreinteRegistre, d.empreinteDisque);
+      expect(d.coherence, isNot(DiagnosticCoherenceElo.coherent));
+      expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible);
+      expect(d.autoriseApplication, isFalse);
+      expect(d.protegeContreDoubleApplication, isFalse);
+    });
+
+    test('T-V8 · version 0 + empreinte identique → JAMAIS cohérent', () {
+      final d = diagnostiquerRegistre(
+        jsonRegistre: avecVersion(0).encoder(),
+        empreinteDisque: _fpA,
+        nombreRatings: 4,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible);
+      expect(d.coherence, isNot(DiagnosticCoherenceElo.coherent));
+      expect(d.autoriseApplication, isFalse);
+    });
+
+    test('T-V9 · version inconnue + empreinte DIFFÉRENTE → schemaIncompatible, '
+        'pas divergent', () {
+      // L'incompatibilité de version l'emporte sur l'écart d'empreinte : la
+      // cause première reste « je ne sais pas lire ce registre ».
+      final d = diagnostiquerRegistre(
+        jsonRegistre: avecVersion(7).encoder(),
+        empreinteDisque: _fpB,
+        nombreRatings: 4,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible);
+      expect(d.coherence, isNot(DiagnosticCoherenceElo.divergent));
+      expect(d.autoriseApplication, isFalse);
+    });
+
+    test('T-V10 · version incompatible : registre NI supprimé, NI migré, '
+        'NI réinterprété', () {
+      final r = avecVersion(2);
+      final brut = r.encoder();
+      final d = diagnostiquerRegistre(
+        jsonRegistre: brut,
+        empreinteDisque: _fpA,
+        nombreRatings: 4,
+      );
+      // Le registre reste lisible pour le diagnostic, intégralement.
+      expect(d.registre, isNotNull);
+      expect(d.registre!.version, 2);
+      expect(d.registre!.schema, kSchemaRegistreElo);
+      expect(d.registre!.horloge, 3);
+      expect(d.registre!.empreinteRatings, _fpA);
+      expect(d.registre!.entrees, isEmpty);
+      // La chaîne d'origine n'a pas été touchée : décoder ne mute pas.
+      final relu = RegistreEloV3.decoder(brut);
+      expect(relu.version, 2);
+      expect(relu.encoder(), brut);
+      // Aucune coercition de version vers 1.
+      expect(relu.version, isNot(kVersionRegistreElo));
+    });
+
+    test('T-V11 · message : « schéma ou version », mentions de sûreté', () {
+      final d = diagnostiquerRegistre(
+        jsonRegistre: avecVersion(2).encoder(),
+        empreinteDisque: _fpA,
+        nombreRatings: 1,
+      );
+      expect(d.message, contains('schéma ou d\'une version incompatible'));
+      expect(d.message, contains('Aucune application automatique'));
+      expect(d.message, contains('n\'est pas supprimé'));
+      // Le message ne prétend jamais avoir réparé quoi que ce soit.
+      for (final mot in <String>['migré', 'converti', 'réparé', 'mis à jour']) {
+        expect(d.message.contains(mot), isFalse, reason: mot);
+      }
+    });
+  });
+
+  group('T-V · versionnement — schéma ET version combinés', () {
+    test('T-V12 · schéma différent seul → refusé', () {
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo + 1,
+        version: kVersionRegistreElo,
+        horloge: 0,
+        empreinteRatings: _fpA,
+        origine: OrigineRegistreElo.courante,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      expect(r.interpretable, isFalse);
+      final d = diagnostiquerRegistre(
+        jsonRegistre: r.encoder(),
+        empreinteDisque: _fpA,
+        nombreRatings: 2,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible);
+    });
+
+    test('T-V13 · schéma ET version différents → refusé', () {
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo + 5,
+        version: kVersionRegistreElo + 1,
+        horloge: 0,
+        empreinteRatings: _fpA,
+        origine: OrigineRegistreElo.courante,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      expect(r.interpretable, isFalse);
+      final d = diagnostiquerRegistre(
+        jsonRegistre: r.encoder(),
+        empreinteDisque: _fpA,
+        nombreRatings: 2,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible);
+      expect(d.autoriseApplication, isFalse);
+    });
+
+    test('T-V14 · le getter est la SEULE porte : les deux getters en dérivent',
+        () {
+      // autoriseApplication / protegeContreDoubleApplication ne peuvent pas
+      // être vrais sur un diagnostic schemaIncompatible, quelle que soit
+      // l'origine déclarée par le registre.
+      for (final version in <int>[0, 2, 99]) {
+        for (final origine in OrigineRegistreElo.values) {
+          final r = RegistreEloV3(
+            schema: kSchemaRegistreElo,
+            version: version,
+            horloge: 0,
+            empreinteRatings: _fpA,
+            origine: origine,
+            entrees: const <EntreeRegistreElo>[],
+          );
+          final d = diagnostiquerRegistre(
+            jsonRegistre: r.encoder(),
+            empreinteDisque: _fpA,
+            nombreRatings: 2,
+          );
+          expect(d.coherence, DiagnosticCoherenceElo.schemaIncompatible,
+              reason: 'v$version/${origine.name}');
+          expect(d.autoriseApplication, isFalse,
+              reason: 'v$version/${origine.name}');
+          expect(d.protegeContreDoubleApplication, isFalse,
+              reason: 'v$version/${origine.name}');
+        }
+      }
+    });
+  });
+
+  group('T-V · versionnement — aucune perte à la sérialisation', () {
+    test('T-V15 · la version survit à encoder/decoder sans coercition', () {
+      for (final version in <int>[0, 1, 2, 7, 1234]) {
+        final r = RegistreEloV3(
+          schema: kSchemaRegistreElo,
+          version: version,
+          horloge: 42,
+          empreinteRatings: _fpB,
+          origine: OrigineRegistreElo.historiqueInconnu,
+          entrees: <EntreeRegistreElo>[_entreeCourse(id: 5)],
+        );
+        final relu = RegistreEloV3.decoder(r.encoder());
+        expect(relu.version, version, reason: 'version $version');
+        expect(relu.schema, kSchemaRegistreElo);
+        expect(relu.horloge, 42);
+        expect(relu.empreinteRatings, _fpB);
+        expect(relu.origine, OrigineRegistreElo.historiqueInconnu);
+        expect(relu.entrees.length, 1);
+        expect(relu.entrees.single.id, 5);
+        // Ré-encodage idempotent : rien n'est ajouté ni retiré.
+        expect(relu.encoder(), r.encoder());
+      }
+    });
+
+    test('T-V16 · le JSON contient bien le champ `version`', () {
+      final json = RegistreEloV3.vierge(empreinteRatings: _fpA).toJson();
+      expect(json.containsKey('version'), isTrue);
+      expect(json['version'], kVersionRegistreElo);
+      expect(json['schema'], kSchemaRegistreElo);
+    });
+
+    test('T-V17 · version absente du JSON → corrompu, pas « version 0 »', () {
+      // Aucune valeur par défaut n'est inventée : un champ manquant est une
+      // corruption. Sans cette exigence, un registre amputé passerait pour
+      // une version antérieure et pourrait être interprété à tort.
+      final json = RegistreEloV3.vierge(empreinteRatings: _fpA).toJson()
+        ..remove('version');
+      expect(() => RegistreEloV3.fromJson(json), throwsFormatException);
+
+      final d = diagnostiquerRegistre(
+        jsonRegistre: jsonEncode(json),
+        empreinteDisque: _fpA,
+        nombreRatings: 2,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.corrompu);
+      expect(d.autoriseApplication, isFalse);
+      expect(d.origine, OrigineRegistreElo.historiqueInconnu);
+    });
+
+    test('T-V18 · version non entière → refusée', () {
+      for (final mauvais in <Object>['1', 1.5, true, <int>[], <String, int>{}]) {
+        final json = RegistreEloV3.vierge(empreinteRatings: _fpA).toJson()
+          ..['version'] = mauvais;
+        expect(() => RegistreEloV3.fromJson(json), throwsFormatException,
+            reason: '$mauvais (${mauvais.runtimeType})');
+      }
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  GROUPE 10 ter — 3.3-A.1 : HISTORIQUE INCONNU, NON-RÉGRESSION
+  //  Les trois situations du contrat, assertées ensemble.
+  // ═════════════════════════════════════════════════════════════════════════
+  group('T-H · historique inconnu — les trois situations', () {
+    test('T-H1 · SITUATION 1 — registre absent + ratings vides = premier usage',
+        () {
+      final d = diagnostiquerRegistre(
+        jsonRegistre: null,
+        empreinteDisque: _fpVide,
+        nombreRatings: 0,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.registreAbsent);
+      expect(d.origine, OrigineRegistreElo.courante);
+      expect(d.message, 'Premier usage : aucun registre ELO antérieur.');
+      // Aucune protection n'est annoncée, et aucune n'est nécessaire : il n'y a
+      // rien à protéger.
+      expect(d.protegeContreDoubleApplication, isFalse);
+      expect(d.autoriseApplication, isTrue);
+      // Le message ne mentionne pas d'historique inconnu : ce serait faux.
+      expect(d.message.contains('Historique'), isFalse);
+    });
+
+    test('T-H2 · SITUATION 2 — registre absent + ratings existants = '
+        'historiqueInconnu', () {
+      final d = diagnostiquerRegistre(
+        jsonRegistre: null,
+        empreinteDisque: _fpB,
+        nombreRatings: 1, // une seule entrée suffit à changer de situation
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.registreAbsent);
+      expect(d.origine, OrigineRegistreElo.historiqueInconnu);
+      expect(d.message, _messageImpose);
+      // AUCUNE protection rétroactive n'est annoncée.
+      expect(d.protegeContreDoubleApplication, isFalse);
+      // Mais l'application reste autorisée : bloquer serait une régression.
+      expect(d.autoriseApplication, isTrue);
+    });
+
+    test('T-H2b · le seuil est exactement 0 / 1 rating', () {
+      for (final n in <int>[0, 1, 2, 37, 5000]) {
+        final d = diagnostiquerRegistre(
+          jsonRegistre: null,
+          empreinteDisque: _fpA,
+          nombreRatings: n,
+        );
+        expect(
+          d.origine,
+          n == 0
+              ? OrigineRegistreElo.courante
+              : OrigineRegistreElo.historiqueInconnu,
+          reason: 'nombreRatings=$n',
+        );
+      }
+    });
+
+    test('T-H3 · SITUATION 3 — origine historiqueInconnu + empreinte cohérente '
+        '→ origine CONSERVÉE, protection FAUSSE', () {
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo,
+        version: kVersionRegistreElo,
+        horloge: 11,
+        empreinteRatings: _fpB,
+        origine: OrigineRegistreElo.historiqueInconnu,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      final d = diagnostiquerRegistre(
+        jsonRegistre: r.encoder(),
+        empreinteDisque: _fpB, // strictement cohérent
+        nombreRatings: 9,
+      );
+      expect(d.coherence, DiagnosticCoherenceElo.coherent);
+      // L'origine déclarée par le registre est CONSERVÉE : rien ne la remet à
+      // `courante` automatiquement, même quand tout est cohérent.
+      expect(d.origine, OrigineRegistreElo.historiqueInconnu);
+      expect(d.registre!.origine, OrigineRegistreElo.historiqueInconnu);
+      // Aucune protection : c'est l'exigence centrale.
+      expect(d.protegeContreDoubleApplication, isFalse);
+      expect(d.autoriseApplication, isTrue);
+      expect(d.message, _messageImpose);
+    });
+
+    test('T-H4 · l\'origine n\'est jamais promue automatiquement', () {
+      // Un enregistrement à l'identique ne change rien : seule une opération
+      // explicite pourra le faire (hors périmètre de ce lot).
+      final r = RegistreEloV3(
+        schema: kSchemaRegistreElo,
+        version: kVersionRegistreElo,
+        horloge: 1,
+        empreinteRatings: _fpA,
+        origine: OrigineRegistreElo.historiqueInconnu,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      final une = RegistreEloV3.decoder(r.encoder());
+      final deux = RegistreEloV3.decoder(une.encoder());
+      expect(une.origine, OrigineRegistreElo.historiqueInconnu);
+      expect(deux.origine, OrigineRegistreElo.historiqueInconnu);
+      // copyWith ne promeut pas non plus.
+      expect(deux.copyWith(horloge: 2).origine,
+          OrigineRegistreElo.historiqueInconnu);
+    });
+
+    test('T-H5 · les trois situations sont mutuellement distinctes', () {
+      final s1 = diagnostiquerRegistre(
+        jsonRegistre: null,
+        empreinteDisque: _fpVide,
+        nombreRatings: 0,
+      );
+      final s2 = diagnostiquerRegistre(
+        jsonRegistre: null,
+        empreinteDisque: _fpB,
+        nombreRatings: 3,
+      );
+      final r3 = RegistreEloV3(
+        schema: kSchemaRegistreElo,
+        version: kVersionRegistreElo,
+        horloge: 0,
+        empreinteRatings: _fpB,
+        origine: OrigineRegistreElo.historiqueInconnu,
+        entrees: const <EntreeRegistreElo>[],
+      );
+      final s3 = diagnostiquerRegistre(
+        jsonRegistre: r3.encoder(),
+        empreinteDisque: _fpB,
+        nombreRatings: 3,
+      );
+      // S1 et S2 partagent la cohérence mais diffèrent par l'origine.
+      expect(s1.coherence, s2.coherence);
+      expect(s1.origine, isNot(s2.origine));
+      expect(s1.message, isNot(s2.message));
+      // S3 diffère des deux par la cohérence.
+      expect(s3.coherence, isNot(s1.coherence));
+      expect(s3.coherence, isNot(s2.coherence));
+      // S2 et S3 portent le même avertissement imposé, mais pas le même état.
+      expect(s2.message, s3.message);
+      expect(s2.coherence, isNot(s3.coherence));
+    });
+
+    test('T-H6 · aucun des trois cas ne prétend être protégé', () {
+      final diags = <ResultatDiagnosticElo>[
+        diagnostiquerRegistre(
+          jsonRegistre: null,
+          empreinteDisque: _fpVide,
+          nombreRatings: 0,
+        ),
+        diagnostiquerRegistre(
+          jsonRegistre: null,
+          empreinteDisque: _fpB,
+          nombreRatings: 3,
+        ),
+        diagnostiquerRegistre(
+          jsonRegistre: RegistreEloV3(
+            schema: kSchemaRegistreElo,
+            version: kVersionRegistreElo,
+            horloge: 0,
+            empreinteRatings: _fpB,
+            origine: OrigineRegistreElo.historiqueInconnu,
+            entrees: const <EntreeRegistreElo>[],
+          ).encoder(),
+          empreinteDisque: _fpB,
+          nombreRatings: 3,
+        ),
+      ];
+      for (final d in diags) {
+        expect(d.protegeContreDoubleApplication, isFalse,
+            reason: d.toString());
+      }
     });
   });
 
@@ -1713,6 +2175,10 @@ void main() {
 // ───────────────────────────────────────────────────────────────────────────
 
 const String _fpApres = 'fedcba9876543210';
+
+/// Empreinte MESURÉE de `empreinte64Ratings(<String, EloScore>{})`.
+/// Vérifiée par T-F6 : une map vide rend `16ed60fcfaed47f4`.
+const String _fpVide = '16ed60fcfaed47f4';
 
 const String _fichierModele = 'lib/models/elo_registre_v3.dart';
 const String _fichierEmpreinte = 'lib/utils/elo_empreinte.dart';
