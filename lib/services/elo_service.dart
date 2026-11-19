@@ -1185,16 +1185,48 @@ class EloService {
   //   `max` conserverait un niveau faux (mesuré : annonçait `saturation` pour
   //   un registre de niveau `normal`).
   //
-  //  ── LIMITE DE FRAÎCHEUR, ASSUMÉE ET NON MASQUÉE ──────────────────────────
+  //  ── SUR RESTAURATION ET RESET : CE QUI EST PROUVÉ ─────────────────────────
   //
-  //   `backup_service.dart` restaure les préférences en ÉCRIVANT DIRECTEMENT
-  //   la clé (l.950-972), sans passer par ce service. Ce chemin n'est pas
-  //   instrumentable ici (fichier gelé). Après une telle restauration,
-  //   [niveauRegistre] reflète donc l'état ANTÉRIEUR jusqu'au PROCHAIN
-  //   chargement du registre, qui le recalcule depuis le disque.
-  //   Tant que [niveauRegistreEstExact] est `false`, la valeur est une
-  //   ESTIMATION et ne doit pas être présentée comme une mesure actuelle
-  //   garantie. La seule valeur garantie est celle obtenue après hydratation.
+  //   RESTAURATION — le registre ne suit PAS le chemin des autres groupes.
+  //  `_restaurerGroupe` (défini `backup_service.dart` l.930) écrit les autres
+  //  clés directement par `prefs.setString` (l.952). Le groupe `elo_service`
+  //  est traité à part (l.1455-1459, `importerDepuisBackup`) et atteint
+  //  `_ecrireRegistreVerbatim` — c'est-à-dire P4, le chemin INSTRUMENTÉ.
+  //  MESURÉ : une écriture de registre par restauration, dans les DEUX sens.
+  //
+  //  ⚠️ AUCUN SEUIL DE TAILLE NE BLOQUE CETTE RESTAURATION. Ni
+  //    `kSeuilVeilleOctets`, ni `kSeuilAlerteOctets`, ni
+  //    `kSeuilSaturationOctets` n'est consulté sur ce chemin. Recherche
+  //    `grep -rnE "brut\.length\s*[<>]" lib/services/elo_service.dart` :
+  //    aucune occurrence. Une restauration peut donc AUGMENTER comme
+  //    DIMINUER la taille du registre, sans limite : mesuré 7 144 737 →
+  //    1 561 octets puis retour, sur le même appareil.
+  //
+  //  CE QUI EST MIS À JOUR, ET COMMENT — trois choses DISTINCTES, à ne pas
+  //  confondre :
+  //    1. la MESURE des OCTETS : exacte au chargement (`octetsUtf8` sur le
+  //       JSON du disque), minorante après une écriture (`brut.length`) ;
+  //    2. le CLASSEMENT du NIVEAU : `classerRetention` appliqué à cette
+  //       mesure — informatif, sans effet décisionnel ;
+  //    3. la FRAÎCHEUR de l'indicateur : `true` seulement si la valeur
+  //       provient d'une lecture réelle du disque. Après une écriture
+  //       confirmée, elle vaut `false` — la valeur est déclarée ESTIMÉE,
+  //       jamais présentée comme une mesure actuelle garantie.
+  //  Un niveau peut donc être JUSTE et NON EXACT en même temps : les deux
+  //  propriétés sont indépendantes.
+  //
+  //  RESET DONT L'EFFACEMENT ÉCHOUE. `executerResetComplet` ne peut affirmer
+  //  l'absence du registre que si le callback d'effacement a rendu la main
+  //  SANS lever. Si l'effacement échoue, la clé peut survivre sur le disque
+  //  (contrat C1-a : « les suppressions déjà réussies ne sont PAS annulées »).
+  //  Le niveau n'est alors PAS réécrit en `normal` — aucune valeur n'est
+  //  inventée — et la mesure est déclarée NON EXACTE. La vérité est rétablie
+  //  à la première opération qui retraverse P1.
+  //
+  //  ⚠️ UNE SEULE CHOSE EST GARANTIE : une valeur EXACTE
+  //    (`niveauRegistreEstExact == true`) provient d'une lecture réelle du
+  //    disque et reflète son contenu au moment de cette lecture. Une valeur
+  //    non exacte ne doit jamais être présentée comme actuelle.
   // ══════════════════════════════════════════════════════════════════════════
   NiveauRetentionElo _niveauRegistre = NiveauRetentionElo.normal;
   bool _niveauRegistreExact = false;

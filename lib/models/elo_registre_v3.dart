@@ -870,30 +870,94 @@ SousEtatInterruptionElo sousEtatInterruption({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-//  RÉTENTION — SEUILS EN OCTETS UTF-8 (valeurs PROVISOIRES)
+//  RÉTENTION — SEUILS DE NOMMAGE EN OCTETS UTF-8
 //
-//  Mesuré : une entrée `appliquee` complète de 12 chevaux = 2 195 octets ;
-//  compactée (sans `chevaux`) = 149 octets, soit 14,7× moins.
-//  Hypothèse réaliste (2 incertaines / 100, 10 000 courses) ≈ 1,81 Mio.
+//  ⚠️ CES SEUILS NE DÉCIDENT DE RIEN. Ils ne servent qu'à NOMMER un niveau
+//    d'affichage. Aucune écriture, aucun refus, aucune autorisation, aucune
+//    compaction, aucune purge n'en dépend. Vérifiable : la recherche
+//      grep -rn "classerRetention" lib/
+//    ne rend que sa définition et DEUX appels, tous deux dans
+//    `services/elo_service.dart` (`_hydraterNiveauRegistre` /
+//    `_observerNiveauRegistre`), qui n'écrivent qu'un champ lu par AUCUNE
+//    décision.
 //
-//  ⚠️ AUCUNE SUPPRESSION AUTOMATIQUE. La saturation est un état FAIL-CLOSED :
-//    l'ELO s'arrête avec un message. La seule sortie est un reset complet
-//    EXPLICITE, qui efface ratings et registre ensemble.
+//  ── CROISSANCE ────────────────────────────────────────────────────────────
+//
+//  Les AJOUTS ORDINAIRES sont APPEND-ONLY : une nouvelle entrée est
+//  concaténée (`[...registre.entrees, entree]`) et AUCUNE entrée n'est jamais
+//  retirée, filtrée, compactée ni purgée. Aucun plafond de taille n'existe.
+//
+//  Ce caractère append-only décrit les AJOUTS, PAS la totalité des écritures.
+//  DEUX opérations EXPLICITES de l'utilisateur réécrivent le registre entier
+//  et peuvent donc le faire DÉCROÎTRE comme CROÎTRE :
+//    • le RESET COMPLET : la clé `elo_registre_v3` est effacée, le registre
+//      devient ABSENT ; les ratings sont effacés dans le même geste.
+//    • la RESTAURATION d'une sauvegarde : `_ecrireRegistreVerbatim` écrit le
+//      JSON de sauvegarde TEL QUEL, sans AUCUN contrôle de taille — ni
+//      minimum, ni maximum, ni comparaison avec l'état précédent. Mesuré sur
+//      le registre de test : 7 144 737 → 1 561 octets dans un sens, puis
+//      1 561 → 7 144 737 dans l'autre.
+//  Ni l'un ni l'autre n'est un mécanisme de rétention : aucun ne s'exécute
+//  sans une action explicite. Aucune compaction ni purge automatique
+//  n'existe à ce jour.
+//
+//  ── TAILLES : POINTS D'UN BANC DE MESURE, PAS UNE PRÉVISION ───────────────
+//
+//  Les valeurs ci-dessous proviennent d'un banc reproductible et dépendent
+//  FORTEMENT du contenu. Conditions exactes : entrées `course`, 12 chevaux
+//  par entrée, images `avant` ET `apres` présentes pour chaque cheval,
+//  empreintes de 16 caractères hexadécimaux, série encodée dans l'enveloppe
+//  réelle du modèle.
+//
+//    • noms courts « C0 »..« C11 »         ≈ 1 798 o par course
+//    • noms réels « JAZZ DE BEAUVOIR0 »..   ≈ 2 158 o par course
+//    • mêmes noms avec accents              ≈ 2 326 o par course
+//
+//  Le seuil de 6 Mio est franchi vers 3 500 courses avec des noms courts,
+//  vers 2 900 avec des noms réels, et seulement vers 21 000 si les `chevaux`
+//  sont absents. Ce sont des ordres de grandeur de CE banc, PAS une garantie
+//  pour un usage réel : nombre de chevaux, longueur des noms et présence des
+//  images font varier la taille du simple au double. Aucune extrapolation à
+//  un usage réel n'est revendiquée ici.
+//
+//  ⚠️ LES VALEURS ANTÉRIEUREMENT DOCUMENTÉES (2 195 o, 149 o, 14,7×,
+//    ≈ 1,81 Mio pour 10 000 courses) ont été retirées. Ce n'étaient pas des
+//    mesures mais une PROJECTION SOUS HYPOTHÈSE : 1,81 Mio vaut exactement
+//    200 x 2 195 + 9 800 x 149, soit « 2 % d'entrées intactes et 98 %
+//    compactées ». Or cette compaction n'existe PAS en production : la
+//    fonction `compacterEntree` n'a AUCUN appelant (voir sa documentation).
+//    Sans elle, la même série de 10 000 courses pèse un ordre de grandeur de
+//    plus. Rien ne permet d'affirmer que ces valeurs redeviendraient exactes
+//    si une compaction était un jour branchée : elles reposaient sur un
+//    format d'entrée et une proportion qui n'ont jamais été confrontés au
+//    code exécuté.
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Niveau de rétention, calculé sur la taille sérialisée.
+///
+/// PUREMENT INFORMATIF : le niveau nomme une tranche de taille, il ne
+/// conditionne aucun comportement. Voir l'en-tête de section ci-dessus.
 enum NiveauRetentionElo {
   /// Sous le seuil de veille.
   normal,
 
-  /// ≥ 1,5 Mio : compaction des seules entrées `appliquee` autorisée
-  /// (les entrées incertaines ne sont JAMAIS compactées ni supprimées).
+  /// ≥ 1,5 Mio. Niveau PUREMENT INFORMATIF : aucun comportement ne lui est
+  /// associé. En particulier, AUCUNE compaction n'est déclenchée ni même
+  /// disponible en production — `compacterEntree` n'a aucun appelant (voir sa
+  /// documentation). Les entrées incertaines ne sont jamais compactées ni
+  /// supprimées, comme toutes les autres.
   veille,
 
-  /// ≥ 3 Mio : signal visible exigé, l'ELO continue.
+  /// ≥ 3 Mio. Niveau PUREMENT INFORMATIF : simple signal d'affichage.
+  /// L'ELO continue exactement comme en `normal`.
   alerte,
 
-  /// ≥ 6 Mio : fail-closed, plus aucune application.
+  /// ≥ 6 Mio. Niveau PUREMENT INFORMATIF.
+  ///
+  /// ⚠️ Malgré la formulation antérieure, ce n'est PAS un état « fail-closed »
+  /// et l'ELO ne s'arrête PAS : « plus aucune application » était FAUX. Aucun
+  /// des neuf `MotifRefusApplicationElo` ne dépend de la taille, et une course
+  /// s'applique normalement au-delà de 6 Mio (mesuré).
   saturation,
 }
 
@@ -911,12 +975,28 @@ NiveauRetentionElo classerRetention(int tailleOctets) {
 
 /// Compacte une entrée `appliquee` en retirant ses images par cheval.
 ///
-/// SÉCURITÉ : refuse de compacter une entrée incertaine — ses `chevaux` sont
-/// sa seule valeur de preuve. Rend l'entrée inchangée dans ce cas.
+/// ⚠️ AUCUN APPELANT EN PRODUCTION — FONCTION NON BRANCHÉE.
+/// Vérifiable : `grep -rn "compacterEntree" lib/` ne rend QUE cette
+/// définition. Les seuls appels existants sont dans
+/// `test/a7_33a_registre_empreinte_test.dart` (groupe T-L). Aucune compaction
+/// automatique n'existe donc, et aucun seuil ne la déclenche : cette fonction
+/// est conservée comme outil documenté, PAS comme mécanisme de rétention
+/// actif. Ne pas la présenter comme une politique de compaction en vigueur.
 ///
-/// Aucune garantie n'est dégradée par la compaction : le blocage ne dépend que
-/// de `cle` + `etape` + `issue`, et la vérification d'empreinte ne dépend que
-/// de `empreinteAvant` / `empreinteApres`.
+/// Conséquence directe : les tailles de registre réelles sont celles d'entrées
+/// NON compactées. Toute estimation qui suppose une compaction décrit un état
+/// que le code n'atteint pas (voir l'en-tête de section ci-dessus).
+///
+/// SÉCURITÉ (propriété de cette fonction, si elle était un jour branchée) :
+/// refuse de compacter une entrée incertaine — ses `chevaux` sont sa seule
+/// valeur de preuve. Rend l'entrée inchangée dans ce cas.
+///
+/// Aucune information n'est perdue par la compaction au regard des garanties
+/// du modèle : le blocage ne dépend que de `cle` + `etape` + `issue`, et la
+/// vérification d'empreinte ne dépend que de `empreinteAvant` /
+/// `empreinteApres`. Ce qui disparaît, ce sont les images par cheval —
+/// c'est-à-dire la preuve détaillée de la mutation, et non la preuve
+/// d'application.
 EntreeRegistreElo compacterEntree(EntreeRegistreElo entree) {
   if (entree.estIncertaine) return entree;
   if (entree.chevaux.isEmpty) return entree;
