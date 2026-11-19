@@ -24,7 +24,11 @@ import '../utils/date_utils.dart' show dateDepuisCourseKey;
 //   (verrou T-S5) ; `elo_registre_v3.dart` n'importe que `dart:convert`
 //   (verrou T-S4). Aucune de ces deux bibliothèques n'importe un service :
 //   aucun cycle n'est créé par ces deux ajouts.
-import '../utils/elo_empreinte.dart' show empreinte64Ratings;
+// ★ X1-b : `octetsUtf8` est ajoutée à la liste `show`. Elle EXISTAIT déjà
+//   (elo_empreinte.dart l.164) et n'était lue par aucun code de production
+//   (mesuré : 1 seule occurrence dans `lib/`, sa définition). Aucun cycle :
+//   `elo_empreinte.dart` n'importe ni service ni écran (verrou T-S5).
+import '../utils/elo_empreinte.dart' show empreinte64Ratings, octetsUtf8;
 // ★ A7 (3.3-B2-d2) : le registre est désormais ÉCRIT — mais seulement pour y
 //   AJOUTER une entrée `horsCourse`. Aucune fonction de ce modèle ne rend des
 //   ratings (verrou T-S6) : le registre reste un TÉMOIN, jamais une source.
@@ -37,10 +41,17 @@ import '../models/elo_registre_v3.dart'
         ImageRatingElo,
         IssueEcritureElo,
         MotifHorsCourse,
+        // ★ X1-b : niveau de rétention, PUREMENT INFORMATIF. `classerRetention`
+        //   et `NiveauRetentionElo` existaient déjà (elo_registre_v3.dart
+        //   l.885-910) et n'étaient lus par aucun code de production (mesuré :
+        //   1 seule occurrence dans `lib/`, leur définition). Ajout en lecture
+        //   seule : ni constante, ni valeur d'énumération n'est modifiée.
+        NiveauRetentionElo,
         OrigineRegistreElo,
         RegistreEloV3,
         ResultatDiagnosticElo,
         TypeEntreeRegistre,
+        classerRetention,
         diagnostiquerRegistre,
         kCleRegistreElo;
 
@@ -1131,6 +1142,109 @@ class EloService {
       _dernierResultatMiseAJour;
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  ★ X1-b — SURVEILLANCE DE LA TAILLE DU REGISTRE ELO.
+  //
+  //  ⚠️ STRICTEMENT INFORMATIF. Ces deux champs ne sont LUS PAR AUCUNE
+  //     DÉCISION : ils ne conditionnent aucune écriture, aucun refus, aucune
+  //     autorisation. Le point de décision reste [_chargerOuAmorcerRegistre]
+  //     puis [_doitEcrireTemoin] ; le seul verrou de doublon reste
+  //     `registre.entreePourCle(...) != null` (voir `mettreAJourApresArrivee`).
+  //     Aucun refus ELO n'est introduit à 1,5, 3 ou 6 Mio : les seuils
+  //     `kSeuilVeilleOctets` / `kSeuilAlerteOctets` / `kSeuilSaturationOctets`
+  //     ne servent ici qu'à NOMMER un niveau, jamais à décider.
+  //
+  //  ⚠️ AUCUNE COMPACTION, AUCUNE PURGE, AUCUNE SUPPRESSION. La surveillance
+  //     ne touche jamais `registre.entrees`, jamais `chevaux`, jamais les
+  //     images avant/après d'un cheval. Elle ne fait que MESURER une chaîne.
+  //
+  //  ⚠️ AUCUNE CLÉ SharedPreferences SUPPLÉMENTAIRE. L'état vit en RAM.
+  //     `test/a7_33b2b_identite_course_test.dart` l.678 verrouille
+  //     `cles.length == 3` : une clé ajoutée casserait ce contrat.
+  //
+  //  ── DEUX SOURCES, DEUX GARANTIES DISTINCTES ──────────────────────────────
+  //
+  //   • [_hydraterNiveauRegistre] — mesure EXACTE en octets, au CHARGEMENT.
+  //     Reçoit le JSON réellement lu depuis SharedPreferences. Aucune lecture
+  //     ni aucun décodage JSON supplémentaire n'est ajouté : la chaîne est
+  //     déjà en main à l'endroit de l'appel.
+  //
+  //   • [_observerNiveauRegistre] — MINORANT, après une écriture CONFIRMÉE.
+  //     `brut.length` compte des UNITÉS UTF-16, pas des octets. Comme
+  //     `octetsUtf8` facture au moins 1 par unité, on a toujours
+  //     `octetsUtf8(s) >= s.length` : la valeur est un MINORANT GARANTI.
+  //     Elle SOUS-ESTIME donc, et ne SURESTIME JAMAIS. Écart mesuré sur du
+  //     contenu réaliste : 0,00 % en ASCII pur, 1,20 % avec des noms accentués
+  //     (`_cleNom` ne retire pas les diacritiques). Conséquence : le niveau
+  //     annoncé peut être en RETARD, jamais en avance. Il est marqué ESTIMÉ.
+  //
+  //  ── PAS DE MONOTONIE : LE NIVEAU PEUT REDESCENDRE ────────────────────────
+  //
+  //   Les deux méthodes ÉCRASENT le champ, elles ne conservent JAMAIS un
+  //   maximum historique. C'est la correction de l'audit : après une
+  //   restitution verbatim d'un registre plus petit, ou après un reset, un
+  //   `max` conserverait un niveau faux (mesuré : annonçait `saturation` pour
+  //   un registre de niveau `normal`).
+  //
+  //  ── LIMITE DE FRAÎCHEUR, ASSUMÉE ET NON MASQUÉE ──────────────────────────
+  //
+  //   `backup_service.dart` restaure les préférences en ÉCRIVANT DIRECTEMENT
+  //   la clé (l.950-972), sans passer par ce service. Ce chemin n'est pas
+  //   instrumentable ici (fichier gelé). Après une telle restauration,
+  //   [niveauRegistre] reflète donc l'état ANTÉRIEUR jusqu'au PROCHAIN
+  //   chargement du registre, qui le recalcule depuis le disque.
+  //   Tant que [niveauRegistreEstExact] est `false`, la valeur est une
+  //   ESTIMATION et ne doit pas être présentée comme une mesure actuelle
+  //   garantie. La seule valeur garantie est celle obtenue après hydratation.
+  // ══════════════════════════════════════════════════════════════════════════
+  NiveauRetentionElo _niveauRegistre = NiveauRetentionElo.normal;
+  bool _niveauRegistreExact = false;
+
+  /// Niveau de rétention correspondant à la taille connue du registre ELO.
+  ///
+  /// INFORMATIF. Ne décide d'AUCUNE écriture, d'AUCUN refus, d'AUCUNE
+  /// autorisation. Voir [niveauRegistreEstExact] pour la fraîcheur.
+  NiveauRetentionElo get niveauRegistre => _niveauRegistre;
+
+  /// `true` si et seulement si [niveauRegistre] provient d'une mesure EXACTE
+  /// en octets, faite sur le JSON réellement lu depuis le stockage.
+  ///
+  /// `false` signifie : valeur ESTIMÉE par minorant (`brut.length`), ou
+  /// héritée d'un état antérieur. Dans ce cas elle ne doit pas être
+  /// présentée comme une mesure actuelle garantie.
+  bool get niveauRegistreEstExact => _niveauRegistreExact;
+
+  /// Recalcule le niveau depuis le JSON du DISQUE. `null` = registre absent.
+  ///
+  /// Mesure EXACTE via [octetsUtf8]. C'est la SEULE source de vérité : elle
+  /// est appelée au chargement du registre et après un reset complet.
+  ///
+  /// ⚠️ Ne pas lui passer une chaîne fabriquée depuis la RAM (un
+  ///    `registre.encoder()`) : cela re-sérialiserait tout le registre et la
+  ///    valeur ne serait plus celle du disque. Le paramètre doit être le JSON
+  ///    réellement lu, ou `null` quand la clé n'existe pas.
+  void _hydraterNiveauRegistre(String? jsonDisque) {
+    if (jsonDisque == null) {
+      _niveauRegistre = NiveauRetentionElo.normal;
+    } else {
+      _niveauRegistre = classerRetention(octetsUtf8(jsonDisque));
+    }
+    _niveauRegistreExact = true;
+  }
+
+  /// Recalcule un MINORANT depuis une chaîne DÉJÀ sérialisée.
+  ///
+  /// Appelée UNIQUEMENT après confirmation d'une écriture réussie : le disque
+  /// contient alors exactement `brut`, donc mesurer `brut` reflète l'état
+  /// persisté. Ne PAS appeler avant l'acquittement (le disque pourrait avoir
+  /// refusé l'écriture).
+  ///
+  /// Coût : `O(1)` (`String.length`), aucune allocation, aucun parcours.
+  void _observerNiveauRegistre(String brut) {
+    _niveauRegistre = classerRetention(brut.length);
+    _niveauRegistreExact = false;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  ★ A7 (3.3-B2-d2) — POINT DE CONTRÔLE UNIQUE DE L'ÉCRITURE DU TÉMOIN.
   //
   //  RÈGLE DE SÉCURITÉ, ÉNONCÉE ICI UNE FOIS ET NULLE PART AILLEURS :
@@ -1365,6 +1479,15 @@ class EloService {
 
     final String? jsonRegistre = brut as String?;
 
+    // ★ X1-b (P1) — MESURE EXACTE AU CHARGEMENT.
+    //   `jsonRegistre` vient d'être lu (`prefs.get` l.1359, après `reload()`
+    //   l.1353) : c'est le JSON du DISQUE. Aucune lecture, aucun décodage
+    //   supplémentaire n'est introduit — on ne fait que compter les octets
+    //   de la chaîne déjà en main. `null` (clé absente) => niveau `normal`.
+    //   Placé AVANT la branche d'amorçage pour couvrir aussi le registre
+    //   absent, et donc le cas d'un redémarrage après reset.
+    _hydraterNiveauRegistre(jsonRegistre);
+
     // ── Registre ABSENT : seul cas où un amorçage est autorisé. ─────────────
     if (jsonRegistre == null) {
       final String empreinte = empreinte64Ratings(_ratings);
@@ -1552,6 +1675,13 @@ class EloService {
 
     try {
       final bool ok = await future;
+      // ★ X1-b (P2) — APPLICATION ELO RÉUSSIE.
+      //   Uniquement si `ok` : le disque contient alors exactement `brut`.
+      //   Si l'écriture est refusée ou lève, on ne touche à RIEN : l'état
+      //   antérieur reste vrai puisque le disque n'a pas changé.
+      if (ok) {
+        _observerNiveauRegistre(brut);
+      }
       return ok
           ? (confirmee: true, refus: null)
           : (confirmee: false,
@@ -3511,6 +3641,9 @@ class EloService {
       final bool ok = await future;
       if (ok) {
         issue = IssueEcritureElo.persistee;
+        // ★ X1-b (P3) — TÉMOIN D'IMPORT ÉCRIT AVEC SUCCÈS.
+        //   `brut` est exactement ce que le disque contient désormais.
+        _observerNiveauRegistre(brut);
       } else {
         issue = IssueEcritureElo.refusee;
         debugPrint('[EloService] ⚠️ Témoin ELO REFUSÉ par le stockage sur '
@@ -3610,6 +3743,11 @@ class EloService {
       final bool ok = await future;
       if (ok) {
         issue = IssueEcritureElo.persistee;
+        // ★ X1-b (P4) — RESTITUTION VERBATIM RÉUSSIE.
+        //   C'est le chemin d'une restauration. ÉCRASEMENT, pas de `max` :
+        //   si `registreBrut` est plus PETIT que l'état antérieur, le niveau
+        //   REDESCEND — comportement exigé par l'audit.
+        _observerNiveauRegistre(registreBrut);
       } else {
         issue = IssueEcritureElo.refusee;
         debugPrint('[EloService] ⚠️ Registre VERBATIM REFUSÉ par le stockage '
@@ -4183,6 +4321,12 @@ class EloService {
     //    écriture pourrait naître dans la fenêtre.
     _resetEnCours = true;
     _generationCache++;
+    //  ★ X1-b (correctif fraîcheur) — TÉMOIN DE L'EFFACEMENT DISQUE.
+    //  Passe à `true` UNIQUEMENT quand `supprimerLesCles()` a rendu la main
+    //  SANS lever. C'est la seule preuve dont dispose ce service que les clés
+    //  ont effectivement été supprimées : il ne relit pas le stockage.
+    //  Déclaré AVANT le `try` pour être visible dans le `finally`.
+    var effacementConfirme = false;
     try {
       // 2. Drain des écritures ENGAGÉES. Boucle et non `Future.wait` unique :
       //    `whenComplete` s'exécute en microtâche APRÈS la complétion, donc
@@ -4223,6 +4367,11 @@ class EloService {
       // 3. Effacement disque — TOUJOURS sous barrière.
       //    Aucune exception capturée : elle remonte TELLE QUELLE.
       await supprimerLesCles();
+      //  ★ X1-b (correctif fraîcheur) — PREUVE D'EFFACEMENT.
+      //  Atteint SEULEMENT si l'appel ci-dessus a rendu la main sans lever.
+      //  Aucun `await` ne sépare ce marquage du `finally` : l'état observé
+      //  par le `finally` est exactement celui de la sortie du `try`.
+      effacementConfirme = true;
     } finally {
       // 4. Libérations INCONDITIONNELLES, même sur exception.
       //
@@ -4233,6 +4382,34 @@ class EloService {
       //    Aucun `await` ne sépare ces deux instructions : aucune autre tâche
       //    ne peut s'intercaler entre le vidage et la réouverture.
       _ratings.clear();
+      // ★ X1-b (P5) — RESET COMPLET, CONDITIONNÉ À LA PREUVE D'EFFACEMENT.
+      //
+      //  CAS 1 — `effacementConfirme == true` : `supprimerLesCles()` a rendu
+      //  la main sans lever. La clé `elo_registre_v3` a donc été supprimée
+      //  (elle figure dans `_keysELO`, lui-même inclus dans `_toutesLesCles`
+      //  de `backup_service.dart`). Le registre est ABSENT : niveau `normal`
+      //  et mesure EXACTE. `_niveauRegistre` ne conserve aucun maximum
+      //  historique, la mesure est donc bien celle du disque.
+      //
+      //  CAS 2 — `effacementConfirme == false` : l'effacement a LEVÉ. Son
+      //  contrat C1-a est explicite : « les suppressions déjà réussies ne
+      //  sont PAS annulées ». Le disque est donc dans un état INTERMÉDIAIRE
+      //  et `elo_registre_v3` peut y être encore présente. Annoncer `normal`
+      //  + `exact = true` serait alors une mesure à la fois FAUSSE et
+      //  présentée comme EXACTE (défaut mesuré : niveau annoncé `normal`,
+      //  disque `saturation`, 7 144 737 octets encore présents).
+      //
+      //  On ne peut donc RIEN affirmer : le niveau reste INCHANGÉ (aucune
+      //  valeur artificielle n'est inventée, notamment pas `normal`) et la
+      //  mesure est déclarée NON EXACTE. La vérité est rétablie par la
+      //  prochaine lecture réelle du disque, c'est-à-dire P1 (vérifié par
+      //  mesure : dès la première opération traversant P1, niveau et disque
+      //  redeviennent concordants et exacts).
+      if (effacementConfirme) {
+        _hydraterNiveauRegistre(null);
+      } else {
+        _niveauRegistreExact = false;
+      }
       _resetEnCours = false;
       debugPrint('[EloService] 🧹 Mémoire vidée (reset complet, disque non réécrit)');
     }
