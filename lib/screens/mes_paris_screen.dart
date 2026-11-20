@@ -3012,6 +3012,14 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
                           numeroCheval: _numCheval,
                           miseEngagee: _mise,
                           typePari: _typePari,
+                          // ★ LOT B2-C : Gagnant+Placé engage DEUX mises distinctes.
+                          //   Règle impérative : 10 € saisis = 10 € Gagnant
+                          //   + 10 € Placé = 20 € engagés. La mise saisie n'est
+                          //   JAMAIS divisée par deux. Autres paris : null.
+                          miseGagnant:
+                              estTypeGagnantPlace(_typePari) ? _mise : null,
+                          misePlace:
+                              estTypeGagnantPlace(_typePari) ? _mise : null,
                         ));
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(

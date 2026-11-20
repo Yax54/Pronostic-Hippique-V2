@@ -727,6 +727,10 @@ class AlertService extends ChangeNotifier {
       nomCheval: course.nomCheval,
       numeroCheval: course.numeroCheval,
       miseEngagee: course.miseEngagee,
+      // ★ LOT B2-C : sans ces deux lignes, la ventilation serait perdue
+      //   ici même — exactement le défaut corrigé par R1 sur `storageKey`.
+      miseGagnant: course.miseGagnant,
+      misePlace: course.misePlace,
       addedAt: course.addedAt,
       typePari: course.typePari,
       numerosJoues: course.numerosJoues,
@@ -2945,6 +2949,10 @@ class TrackedCourse {
   final String? nomCheval;          // cheval principal sélectionné
   final int? numeroCheval;          // numéro du cheval principal
   final double? miseEngagee;        // mise en €
+  // ★ LOT B2-C : ventilation Gagnant / Placé (C-2a : mises seules, aucune cote).
+  //   null = composante non renseignée (autre type de pari, ou donnée antérieure).
+  final double? miseGagnant;        // mise engagée sur le Gagnant, en €
+  final double? misePlace;          // mise engagée sur le Placé, en €
   final DateTime addedAt;
   // ★ Clé de stockage unique (avec timestamp) — persiste entre redémarrages
   final String? storageKey;
@@ -2965,6 +2973,21 @@ class TrackedCourse {
   final double? dividendePmuReel;  // ex: 45.2 → retour pour 1€ misé (null = pas encore récupéré)
   final String? combinaisonPmu;    // ex: "5-12-3" → numéros gagnants PMU officiels
 
+  /// ★ LOT B2-C — Mise totale réellement engagée (contrat B1) :
+  /// - les deux composantes nulles → `miseEngagee` (pari historique mono-composante)
+  /// - une seule nulle → `null` (état incomplet : aucun total inventé)
+  /// - les deux présentes → somme des deux composantes
+  /// Règle métier : 10 € saisis = 10 € Gagnant + 10 € Placé = 20 € engagés.
+  double? get miseTotaleEngagee {
+    if (miseGagnant == null && misePlace == null) return miseEngagee;
+    if (miseGagnant == null || misePlace == null) return null;
+    return miseGagnant! + misePlace!;
+  }
+
+  /// ★ LOT B2-C — Vrai si une seule des deux composantes est renseignée.
+  bool get misesGagnantPlaceIncompletes =>
+      (miseGagnant == null) != (misePlace == null);
+
   TrackedCourse({
     required this.numReunion,
     required this.numCourse,
@@ -2975,6 +2998,8 @@ class TrackedCourse {
     this.nomCheval,
     this.numeroCheval,
     this.miseEngagee,
+    this.miseGagnant,
+    this.misePlace,
     DateTime? addedAt,
     this.typePari = 'Simple Gagnant',
     this.numerosJoues = const [],
@@ -3002,6 +3027,9 @@ class TrackedCourse {
     nomCheval: nomCheval,
     numeroCheval: numeroCheval,
     miseEngagee: miseEngagee,
+    // ★ LOT B2-C : les deux composantes doivent survivre à la copie.
+    miseGagnant: miseGagnant,
+    misePlace: misePlace,
     addedAt: addedAt,
     typePari: typePari,
     numerosJoues: numerosJoues,
@@ -3016,7 +3044,9 @@ class TrackedCourse {
     // ★ LOT R1 : `storageKey` DOIT être propagée.
     //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
     //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
-    //   dans `withDividende()` l.3041 — asymétrie non intentionnelle).
+    //   dans `withDividende()` — asymétrie non intentionnelle).
+    //   NB : la référence était un numéro de ligne (« l.3041 »), devenu faux
+    //   après les insertions de B2-C → remplacé par le nom du champ.
     //   `_save()` sérialise ensuite `'storageKey': null` (l.611 → toJson) et
     //   `_load()` retombe sur `tc.storageKey ?? tc.key` (l.509) : au
     //   rechargement, l'entrée réapparaissait sous une clé SANS horodatage,
@@ -3038,6 +3068,9 @@ class TrackedCourse {
     nomCheval: nomCheval,
     numeroCheval: numeroCheval,
     miseEngagee: miseEngagee,
+    // ★ LOT B2-C : les deux composantes doivent survivre à la copie.
+    miseGagnant: miseGagnant,
+    misePlace: misePlace,
     addedAt: addedAt,
     typePari: typePari,
     numerosJoues: numerosJoues,
@@ -3088,6 +3121,9 @@ class TrackedCourse {
     'nomCheval': nomCheval,
     'numeroCheval': numeroCheval,
     'miseEngagee': miseEngagee,
+    // ★ LOT B2-C : ventilation Gagnant / Placé (null pour les autres paris)
+    'miseGagnant': miseGagnant,
+    'misePlace': misePlace,
     'addedAt': addedAt.toIso8601String(),
     'typePari': typePari,
     'numerosJoues': numerosJoues,
@@ -3115,6 +3151,9 @@ class TrackedCourse {
     nomCheval:    j['nomCheval']    as String?,
     numeroCheval: j['numeroCheval'] as int?,
     miseEngagee:  (j['miseEngagee'] as num?)?.toDouble(),
+    // ★ LOT B2-C : clés absentes des données antérieures → null (rétrocompatible)
+    miseGagnant:  (j['miseGagnant'] as num?)?.toDouble(),
+    misePlace:    (j['misePlace'] as num?)?.toDouble(),
     addedAt:      j['addedAt'] != null ? DateTime.parse(j['addedAt'] as String) : null,
     // Rétrocompatibles : valeurs par défaut si absent (anciens paris sauvegardés)
     typePari:     j['typePari']     as String? ?? 'Simple Gagnant',
