@@ -22,6 +22,7 @@ import '../services/data_refresh_service.dart'; // ★ Lot 4 : fix écran gris
 import '../services/ia_memory_service.dart';
 import '../services/ia_pronostic_engine.dart';
 import '../utils/format_euros.dart';
+import '../utils/type_pari_utils.dart'; // ★ B2-A : détection Gagnant+Placé
 import 'type_pari_badge.dart'; // ★ v10.32
 
 // ── Point d'entrée public ────────────────────────────────────────────────────
@@ -2861,6 +2862,16 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       // Score IA du cheval sélectionné (ou 0 si non dispo)
       final scoreIAForPred = _chevalSelectionne?.scoreIA ?? 0.0;
 
+      // ★ B2-A : un Gagnant+Placé engage DEUX mises distinctes.
+      //   10 € saisis = 10 € Gagnant + 10 € Placé = 20 € engagés.
+      //   La mise saisie n'est JAMAIS divisée par deux.
+      //   coteGagnant = cote de marché pré-course (coteDecimale du partant)
+      //   cotePlace   = estimation arithmétique pré-course (_cotePlacee)
+      //   Ce ne sont pas des rapports officiels PMU (ceux-ci n'arrivent
+      //   qu'après la course via `rapports-definitifs`).
+      //   Pour les autres types de paris : les 4 champs restent null.
+      final bool estGagnantPlace = estTypeGagnantPlace(typePariLabel);
+
       final prediction = UserPrediction(
         id: predId,
         dateStr: dateStr,
@@ -2881,6 +2892,11 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         numerosJoues: numerosJoues,
         dividendePmuReel: null,
         combinaisonPmu: null,
+        // ★ B2-A : ventilation Gagnant / Placé (uniquement pour Gagnant+Placé)
+        miseGagnant: estGagnantPlace ? _mise : null,
+        misePlace: estGagnantPlace ? _mise : null,
+        coteGagnant: estGagnantPlace ? _coteGagnant : null,
+        cotePlace: estGagnantPlace ? _cotePlacee : null,
       );
 
       // ignore: use_build_context_synchronously
