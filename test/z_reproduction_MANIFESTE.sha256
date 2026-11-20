@@ -1,0 +1,22 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  MANIFESTE D'INTÉGRITÉ — TESTS DE DIAGNOSTIC Z1 / Z2 / Z3 / Z4
+#
+#  Ces quatre fichiers ne sont PAS des tests de régression : ce sont des
+#  REPRODUCTIONS DE DÉFAUTS. Un échec dans ces fichiers est le RÉSULTAT
+#  ATTENDU, et non une régression nouvelle.
+#
+#  Statut mesuré le 2026-11-20 (HEAD ef1c16e423777d41e47eb916be05dad9c6a85803) :
+#      z1 → +0 -1   (D4  : dividende PMU du mauvais cheval)
+#      z2 → +2 -2   (N1  : espaces de clés courseKey disjoints ; N1-bis : copyWith)
+#      z3 → +3 -2   (N5/N6 : fenêtres de filtres incohérentes)
+#      z4 → +2 -2   (D2  : suppression de suivi inopérante)
+#      ensemble     → +7 -7
+#
+#  Vérification de l'intégrité à tout moment :
+#      cd test && sha256sum -c z_reproduction_MANIFESTE.sha256
+#  Sortie attendue : quatre lignes « OK ».
+# ═══════════════════════════════════════════════════════════════════════════
+d9a7e8926611d55937d4357d684d7ef08f775d46171583efdecef26ad2d9f1e0  z1_reproduction_d4_dividende_test.dart
+b18c294db041423a9e89c2e4a02d3f509687621b0114d75d0b32ddff7b459fc7  z2_reproduction_n1_coursekey_test.dart
+8faffeb039ae21f124a1826255da5d887fd126caccfa2152a61139bf49ca4b4a  z3_reproduction_n5_n6_filtres_test.dart
+ac5ed971a6ebc2a256bd7b07cc3015c1a2067356a4aa1ed3025ac5ead1ace958  z4_reproduction_d2_suppression_test.dart
