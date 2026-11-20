@@ -731,6 +731,9 @@ class AlertService extends ChangeNotifier {
       //   ici même — exactement le défaut corrigé par R1 sur `storageKey`.
       miseGagnant: course.miseGagnant,
       misePlace: course.misePlace,
+      // ★ SOUS-LOT B : même piège R1 — les deux cotes par composante aussi.
+      coteGagnant: course.coteGagnant,
+      cotePlace: course.cotePlace,
       addedAt: course.addedAt,
       typePari: course.typePari,
       numerosJoues: course.numerosJoues,
@@ -2953,6 +2956,12 @@ class TrackedCourse {
   //   null = composante non renseignée (autre type de pari, ou donnée antérieure).
   final double? miseGagnant;        // mise engagée sur le Gagnant, en €
   final double? misePlace;          // mise engagée sur le Placé, en €
+  // ★ SOUS-LOT B : cotes RÉELLEMENT connues au moment du pari, par composante.
+  //   Elles servent uniquement au « Gain potentiel » AVANT l'arrivée : après
+  //   la course, seuls les rapports officiels font foi. null = inconnue.
+  //   Aucune valeur par défaut n'est jamais inventée (ni ×2, ni ×2.5, ni ×3).
+  final double? coteGagnant;
+  final double? cotePlace;
   final DateTime addedAt;
   // ★ Clé de stockage unique (avec timestamp) — persiste entre redémarrages
   final String? storageKey;
@@ -3000,6 +3009,8 @@ class TrackedCourse {
     this.miseEngagee,
     this.miseGagnant,
     this.misePlace,
+    this.coteGagnant,
+    this.cotePlace,
     DateTime? addedAt,
     this.typePari = 'Simple Gagnant',
     this.numerosJoues = const [],
@@ -3030,6 +3041,9 @@ class TrackedCourse {
     // ★ LOT B2-C : les deux composantes doivent survivre à la copie.
     miseGagnant: miseGagnant,
     misePlace: misePlace,
+    // ★ SOUS-LOT B : les deux cotes par composante aussi (piège R1).
+    coteGagnant: coteGagnant,
+    cotePlace: cotePlace,
     addedAt: addedAt,
     typePari: typePari,
     numerosJoues: numerosJoues,
@@ -3071,6 +3085,9 @@ class TrackedCourse {
     // ★ LOT B2-C : les deux composantes doivent survivre à la copie.
     miseGagnant: miseGagnant,
     misePlace: misePlace,
+    // ★ SOUS-LOT B : les deux cotes par composante aussi (piège R1).
+    coteGagnant: coteGagnant,
+    cotePlace: cotePlace,
     addedAt: addedAt,
     typePari: typePari,
     numerosJoues: numerosJoues,
@@ -3124,6 +3141,9 @@ class TrackedCourse {
     // ★ LOT B2-C : ventilation Gagnant / Placé (null pour les autres paris)
     'miseGagnant': miseGagnant,
     'misePlace': misePlace,
+    // ★ SOUS-LOT B : cotes par composante (null pour les paris historiques)
+    'coteGagnant': coteGagnant,
+    'cotePlace': cotePlace,
     'addedAt': addedAt.toIso8601String(),
     'typePari': typePari,
     'numerosJoues': numerosJoues,
@@ -3154,6 +3174,9 @@ class TrackedCourse {
     // ★ LOT B2-C : clés absentes des données antérieures → null (rétrocompatible)
     miseGagnant:  (j['miseGagnant'] as num?)?.toDouble(),
     misePlace:    (j['misePlace'] as num?)?.toDouble(),
+    // ★ SOUS-LOT B : rétrocompatible — absentes des données antérieures ⇒ null
+    coteGagnant:  (j['coteGagnant'] as num?)?.toDouble(),
+    cotePlace:    (j['cotePlace'] as num?)?.toDouble(),
     addedAt:      j['addedAt'] != null ? DateTime.parse(j['addedAt'] as String) : null,
     // Rétrocompatibles : valeurs par défaut si absent (anciens paris sauvegardés)
     typePari:     j['typePari']     as String? ?? 'Simple Gagnant',

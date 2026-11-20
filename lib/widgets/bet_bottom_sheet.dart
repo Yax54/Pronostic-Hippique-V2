@@ -18,6 +18,7 @@ import '../providers/pmu_provider.dart';
 import '../services/alert_service.dart';
 import '../services/bookmaker_service.dart';
 import '../services/gain_calculator.dart';
+import '../services/gain_mise_calculator.dart'; // ★ SOUS-LOT B : mises et gains
 import '../services/data_refresh_service.dart'; // ★ Lot 4 : fix écran gris
 import '../services/ia_memory_service.dart';
 import '../services/ia_pronostic_engine.dart';
@@ -247,7 +248,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     final type = _typesPari[_typePariIndex];
     switch (type) {
       case 'Simple Placé':  return _cotePlacee;
-      case 'Gagnant+Placé':  return _coteGagnant; // mise ×2, on affiche Gagnant
+      case 'Gagnant+Placé':  return _coteGagnant; // deux composantes, 2 mises
       case 'Couplé Placé':   return _cotePlacee;
       default:               return _coteGagnant;
     }
@@ -290,7 +291,25 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
   /// Retour total du billet si gagnant (ce que le billet rapporte, mise incluse)
   /// À utiliser pour l'AFFICHAGE sur le billet — différent de _gainEstime (gain net)
-  double get _retourTotal => _gainEstime + _mise;
+  ///
+  /// ★ SOUS-LOT B : pour un « Gagnant+Placé », le billet porte DEUX composantes
+  ///   (Gagnant + Placé). Le retour brut est la somme des deux retours, et la
+  ///   mise totale est la somme des deux mises (20 € pour 10 €/composante).
+  ///   L'ancienne formule `_gainEstime + _mise` n'ajoutait qu'UNE mise et
+  ///   sous-estimait donc le retour de 10 € sur un ticket à 20 € engagés.
+  double get _retourTotal {
+    final type = _typesPari[_typePariIndex];
+    if (type == 'Gagnant+Placé') {
+      final res = calculerGain(composantes: [
+        ComposanteMise(mise: _mise, rapport: _coteGagnant > 1 ? _coteGagnant : null),
+        ComposanteMise(mise: _mise, rapport: _cotePlacee > 1 ? _cotePlacee : null),
+      ]);
+      // Si une cote manque, aucun retour n'est affichable : on ne fabrique
+      // pas de montant (pas de ×2 de repli).
+      return res.retourBrut ?? 0.0;
+    }
+    return _gainEstime + _mise;
+  }
 
   /// Estimation cote Couplé Gagnant (2 chevaux dans le top 2, ordre indéfini)
   double _getCoupleGagnantEstime() {
@@ -2317,7 +2336,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
               } else if (isCouple) {
                 sousTitre = 'Retour estimé : ~${fmtEuros(_retourTotal)} €  (≈×${_coteAffichee.toStringAsFixed(1)})';
               } else if (isGP) {
-                sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (×2 mise)';
+                sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (2 composantes : 2 mises engagées)';
               } else {
                 // Simple Gagnant / Simple Placé : cote du cheval, cohérente
                 sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (cote ×${_coteAffichee.toStringAsFixed(1)})';
@@ -2478,14 +2497,48 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
             _scenarioRow('❌ Si 1 seul dans le top 3',
                 '-${_mise.toStringAsFixed(0)} € (perdu)', const Color(0xFFEF5350)),
           ] else if (isGagnantPlace) ...[
-            _scenarioRow('🏆 Si 1er (Gagnant + Placé)',
-                '+${fmtEuros(_mise*_coteGagnant + _mise*_cotePlacee - _mise*2)} €',
-                Colors.greenAccent),
-            _scenarioRow('🥈 Si 2e/3e (Placé seul)',
-                '${(_mise*_cotePlacee - _mise*2) >= 0 ? "+" : ""}${fmtEuros(_mise*_cotePlacee - _mise*2)} €',
-                (_mise*_cotePlacee - _mise*2) >= 0
-                    ? const Color(0xFFFFB74D) : const Color(0xFFEF5350)),
-            _scenarioRow('❌ Si 4e+', '-${(_mise*2).toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+            // ★ SOUS-LOT B : on affiche le RETOUR BRUT (mise incluse) et le
+            //   BÉNÉFICE NET séparément, calculés sur les DEUX composantes.
+            //   L'ancienne ligne ajoutait deux fois le bénéfice au lieu du
+            //   retour, et déduisait deux mises d'un gain qui n'en contenait
+            //   qu'une.
+            Builder(builder: (_) {
+              final gagnant = calculerGain(composantes: [
+                ComposanteMise(
+                    mise: _mise, rapport: _coteGagnant > 1 ? _coteGagnant : null),
+                ComposanteMise(
+                    mise: _mise, rapport: _cotePlacee > 1 ? _cotePlacee : null),
+              ]);
+              final placeSeul = calculerGain(composantes: [
+                ComposanteMise(mise: _mise, rapport: null),
+                ComposanteMise(
+                    mise: _mise, rapport: _cotePlacee > 1 ? _cotePlacee : null),
+              ]);
+              final retourG = gagnant.retourBrut;
+              final netG = gagnant.beneficeNet;
+              final netP = placeSeul.retourBrut != null
+                  ? placeSeul.retourBrut! - 2 * _mise
+                  : null;
+              return Column(children: [
+                _scenarioRow(
+                    '🏆 Si 1er (Gagnant + Placé)',
+                    retourG == null
+                        ? 'Non calculable'
+                        : '${fmtEuros(retourG)} € brut'
+                            '${netG == null ? '' : ' / ${netG >= 0 ? '+' : ''}${fmtEuros(netG)} € net'}',
+                    Colors.greenAccent),
+                _scenarioRow(
+                    '🥈 Si 2e/3e (Placé seul)',
+                    netP == null
+                        ? 'Non calculable'
+                        : '${netP >= 0 ? '+' : ''}${fmtEuros(netP)} € net',
+                    netP != null && netP >= 0
+                        ? const Color(0xFFFFB74D)
+                        : const Color(0xFFEF5350)),
+                _scenarioRow('❌ Si 4e+', '-${(_mise * 2).toStringAsFixed(0)} €',
+                    const Color(0xFFEF5350)),
+              ]);
+            }),
           ] else if (typePari == 'Tiercé') ...[
             () {
               final r = GainCalculator.tierce(_mise, _getCotes3(), _nbPartants);
@@ -2825,6 +2878,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       );
     }
 
+    final estGP = typePariLabel == 'Gagnant+Placé';
     final tracked = TrackedCourse(
       numReunion: numR,
       numCourse: numC,
@@ -2839,6 +2893,15 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       iaMemKey: iaMemKey,   // ← lien vers le pronostic IA mémorisé
       scoreIA: _chevalSelectionne?.scoreIA ?? 0.0,
       cote: _coteAffichee > 0 ? _coteAffichee : (_chevalSelectionne?.coteDecimale ?? 0.0),   // ← cote du TYPE DE PARI (Tiercé, Quinté...) pas la cote brute du cheval
+      // ★ SOUS-LOT B : les mises et cotes des DEUX composantes d'un
+      //   « Gagnant+Placé » sont enregistrées ici. Sans ces quatre champs, le
+      //   ticket créé par ce chemin n'engageait qu'UNE mise de 10 € alors que
+      //   l'utilisateur en paie DEUX, et aucun rapport par composante
+      //   n'était conservé. Autres paris : null (comportement inchangé).
+      miseGagnant: estGP ? _mise : null,
+      misePlace: estGP ? _mise : null,
+      coteGagnant: estGP && _coteGagnant > 1 ? _coteGagnant : null,
+      cotePlace: estGP && _cotePlacee > 1 ? _cotePlacee : null,
     );
 
     widget.alertService.ajouterSuivi(tracked, overrideKey: widget.overrideKey);

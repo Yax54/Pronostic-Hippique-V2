@@ -1682,11 +1682,26 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                               fontSize: 17),
                         ),
                         Row(children: [
-                          if (course.miseEngagee != null)
+                          // ★ SOUS-LOT B : mise TOTALE réellement engagée.
+                          //   Un Gagnant+Placé à 10 €/composante engage 20 € :
+                          //   afficher « Mise : 10 € » sous-estimait le coût
+                          //   réel du ticket d'un facteur 2.
+                          if (course.miseTotaleEngagee != null &&
+                              course.miseTotaleEngagee! > 0)
                             Text(
-                              'Mise : ${course.miseEngagee!.toStringAsFixed(0)} €',
+                              estTypeGagnantPlace(course.typePari)
+                                  ? 'Mise : ${course.miseTotaleEngagee!.toStringAsFixed(0)} € (G+P)'
+                                  : 'Mise : ${course.miseTotaleEngagee!.toStringAsFixed(0)} €',
                               style: const TextStyle(
                                   color: Color(0xFFFFD700),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600),
+                            )
+                          else if (course.misesGagnantPlaceIncompletes)
+                            const Text(
+                              'Mise : incomplète',
+                              style: TextStyle(
+                                  color: Color(0xFFFFB300),
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600),
                             ),
@@ -1886,12 +1901,20 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                           size: 16,
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          _calculerGainAffiche(course),
-                          style: TextStyle(
-                            color: _isGagnant == true ? const Color(0xFFFFD700) : const Color(0xFFEF9A9A),
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
+                        // ★ SOUS-LOT B : `Flexible` + ellipsis. Les libellés
+                        //   « Gain potentiel » / « Gain gagné » sont plus longs
+                        //   que l'ancien texte et débordaient en 320 dp
+                        //   (régression mesurée sur A6-E3/E4/E5/E6).
+                        Flexible(
+                          child: Text(
+                            _calculerGainAffiche(course),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _isGagnant == true ? const Color(0xFFFFD700) : const Color(0xFFEF9A9A),
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ]),
@@ -2083,7 +2106,10 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                     data: ShareCardData(
                       typePariLabel: course.typePari,
                       paris: [course],
-                      miseTotal: course.miseEngagee ?? 0.0,
+                      // ★ SOUS-LOT B : mise TOTALE engagée (20 € pour un
+                      //   Gagnant+Placé à 10 €/composante), et aucun montant
+                      //   fictif : `_gainBrut` rend null si non calculable.
+                      miseTotal: course.miseTotaleEngagee ?? 0.0,
                       gainTotal: _isGagnant == true ? _gainBrut(course) : null,
                       estGagnant: _isGagnant,
                       scoreIA: course.scoreIA,
@@ -2103,7 +2129,10 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                     data: ShareCardData(
                       typePariLabel: course.typePari,
                       paris: [course],
-                      miseTotal: course.miseEngagee ?? 0.0,
+                      // ★ SOUS-LOT B : mise TOTALE engagée (20 € pour un
+                      //   Gagnant+Placé à 10 €/composante), et aucun montant
+                      //   fictif : `_gainBrut` rend null si non calculable.
+                      miseTotal: course.miseTotaleEngagee ?? 0.0,
                       gainTotal: _isGagnant == true ? _gainBrut(course) : null,
                       estGagnant: _isGagnant,
                       scoreIA: course.scoreIA,
@@ -2219,44 +2248,54 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
 
   /// Calcule le gain brut (retour total) pour affichage
   /// Priorité : dividende PMU réel > cote enregistrée > estimation
-  double _gainBrut(TrackedCourse c) {
-    if (c.miseEngagee == null || c.miseEngagee! <= 0) return 0.0;
-    final mise = c.miseEngagee!;
+  /// Calcule le retour BRUT (mise incluse) pour affichage.
+  ///
+  /// ★ SOUS-LOT B : plus AUCUN multiplicateur fictif. L'ancien repli
+  ///   `return mise * 2.0` inventait un retour de 20 € pour 10 € misés dès
+  ///   qu'aucun dividende ni aucune cote n'était connu. Il est supprimé :
+  ///   sans rapport ni cote, la fonction rend `null` (« non calculable »),
+  ///   ce qui est sémantiquement différent de 0 € (« perdu »).
+  ///
+  /// Ordre de priorité conservé :
+  ///  1. dividende PMU officiel (rapport réellement identifié) ;
+  ///  2. cote enregistrée (gain potentiel, AVANT le résultat officiel) ;
+  ///  3. sinon `null` — jamais un montant inventé.
+  double? _gainBrut(TrackedCourse c) {
+    final mise = c.miseTotaleEngagee;
+    if (mise == null || mise <= 0) return null;
     // Priorité 1 : dividende PMU réel récupéré après course
     if (c.dividendePmuReel != null && c.dividendePmuReel! > 0) {
       return c.dividendePmuReel! * mise;
     }
-    // Priorité 2 : cote enregistrée (Simple Gagnant/Placé)
+    // Priorité 2 : cote enregistrée (Simple Gagnant/Placé) — gain potentiel
     if (c.cote > 1.0) {
       return c.cote * mise;
     }
-    // Fallback : estimation ×2
-    return mise * 2.0;
+    // Priorité 3 : aucune donnée ⇒ non calculable. AUCUN ×2 de repli.
+    return null;
   }
 
-  /// Texte du gain ou perte affiché directement sur le ticket
+  /// Textes VOLONTAIREMENT COURTS : la carte doit tenir en 320 dp sans
+  /// débordement (contrainte A6 mesurée). Le détail complet (retour brut,
+  /// net, multiplicateur) reste disponible dans la fiche du pari.
   String _calculerGainAffiche(TrackedCourse c) {
-    final mise = c.miseEngagee ?? 0.0;
-    if (mise <= 0) {
-      return _isGagnant == true ? '🏆 Pari gagnant !' : '❌ Pari perdu';
+    final mise = c.miseTotaleEngagee;
+    if (mise == null || mise <= 0) {
+      return _isGagnant == true ? '🏆 Pari gagnant' : '❌ Perdu';
     }
-    // ── PARI PERDU ──────────────────────────────────────────────────────
     if (_isGagnant == false) {
-      return 'Perdu : -${fmtEuros(mise)} €';
+      return '❌ Perdu : -${fmtEuros(mise)} €';
     }
-    // ── PARI GAGNANT — dividende PMU réel disponible ────────────────────
     if (c.dividendePmuReel != null && c.dividendePmuReel! > 0) {
+      // Gain GAGNÉ : rapport officiel identifié.
       final retour = c.dividendePmuReel! * mise;
-      final gainNet = retour - mise;
-      return '🏆 Gagné : +${fmtEuros(gainNet)} € (retour ${fmtEuros(retour)} €, ×${c.dividendePmuReel!.toStringAsFixed(2)} PMU officiel)';
+      return '🏆 Gain gagné : ${fmtEuros(retour)} € brut';
     }
-    // ── PARI GAGNANT — cote enregistrée (Simple Gagnant/Placé) ─────────
     if (c.cote > 1.0) {
-      final retour = c.cote * mise;
-      final gainNet = retour - mise;
-      return 'Gagné : +${fmtEuros(gainNet)} € (retour ${fmtEuros(retour)} €, ×${c.cote.toStringAsFixed(1)})';
+      // Gain POTENTIEL : ce n'est pas un gain officiellement acquis.
+      return '📐 Gain potentiel : ${fmtEuros(c.cote * mise)} € brut';
     }
-    return '🏆 Gagnant ! (gain à valider dans Mon Profil)';
+    return '⏳ En attente du rapport officiel';
   }
 
   /// Bloc dividendes PMU dans la vue Suivi (compact, coloré)
@@ -2691,7 +2730,10 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
   _CourseSuivi? _selected;
   String? _nomCheval;
   int? _numCheval;
-  double _mise = 10.0;
+  // ★ SOUS-LOT B : mise NULLABLE. Une mise absente ou illisible n'est plus
+  //   remplacée par 10 € — c'était une mise inventée qui faussait tout le
+  //   calcul du ticket. `null` ⇒ l'ajout est refusé avec un message explicite.
+  double? _mise = 10.0;
   String _typePari = 'Simple Gagnant';
   final _miseCtrl = TextEditingController(text: '10');
 
@@ -2984,7 +3026,12 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
                         borderSide: const BorderSide(color: Color(0xFFFFD700)),
                       ),
                     ),
-                    onChanged: (v) => _mise = double.tryParse(v) ?? 10.0,
+                    // ★ SOUS-LOT B : plus de repli à 10 €. Un champ vide ou
+                    //   illisible ⇒ _mise = null (mise non renseignée).
+                    onChanged: (v) {
+                      final parsed = double.tryParse(v.trim());
+                      setState(() => _mise = (parsed != null && parsed > 0) ? parsed : null);
+                    },
                   ),
                   const SizedBox(height: 20),
                   SizedBox(
@@ -3002,6 +3049,20 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
                       ),
                       onPressed: () {
                         final c = _selected!;
+                        // ★ SOUS-LOT B : sans mise valide, on n'enregistre PAS
+                        //   de ticket financier — plutôt que d'inventer 10 €.
+                        final miseSaisie = _mise;
+                        if (miseSaisie == null || miseSaisie <= 0) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Mise invalide : saisissez un montant supérieur à 0 €.'),
+                              backgroundColor: Color(0xFFB71C1C),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
                         widget.alertSvc.ajouterSuivi(TrackedCourse(
                           numReunion: c.numReunion,
                           numCourse: c.numCourse,
@@ -3010,16 +3071,24 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
                           heureDepart: c.heureDepart,
                           nomCheval: _nomCheval,
                           numeroCheval: _numCheval,
-                          miseEngagee: _mise,
+                          miseEngagee: miseSaisie,
                           typePari: _typePari,
                           // ★ LOT B2-C : Gagnant+Placé engage DEUX mises distinctes.
                           //   Règle impérative : 10 € saisis = 10 € Gagnant
                           //   + 10 € Placé = 20 € engagés. La mise saisie n'est
                           //   JAMAIS divisée par deux. Autres paris : null.
-                          miseGagnant:
-                              estTypeGagnantPlace(_typePari) ? _mise : null,
-                          misePlace:
-                              estTypeGagnantPlace(_typePari) ? _mise : null,
+                          miseGagnant: estTypeGagnantPlace(_typePari)
+                              ? miseSaisie
+                              : null,
+                          misePlace: estTypeGagnantPlace(_typePari)
+                              ? miseSaisie
+                              : null,
+                          // ★ SOUS-LOT B : aucune cote n'est disponible dans ce
+                          //   formulaire (saisie manuelle sans partants chargés).
+                          //   On enregistre null plutôt qu'une cote inventée :
+                          //   le « Gain potentiel » restera « non calculable ».
+                          coteGagnant: null,
+                          cotePlace: null,
                         ));
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
