@@ -414,6 +414,60 @@ class UserPrediction {
   /// Combinaison gagnante PMU (ex: "5-12-3")
   String? combinaisonPmu;
 
+  // ★ LOT B1 — Représentation des DEUX composantes d'un pari Gagnant + Placé.
+  //
+  //  Règle métier impérative : la mise saisie s'applique SÉPARÉMENT à chaque
+  //  composante. 10 € saisis = 10 € Gagnant + 10 € Placé = 20 € engagés.
+  //  Les deux mises sont donc stockées dans DEUX champs distincts : aucune
+  //  division, aucune fusion, aucun champ agrégé persisté qui permettrait
+  //  plus tard de « reconstituer » 20 puis de le rediviser.
+  //
+  //  `null` = composante non renseignée (pari simple, ou G+P antérieur à B2).
+  //  Pour un pari simple ces quatre champs restent `null` : aucun
+  //  consommateur existant ne les lit, donc AUCUNE régression.
+  //
+  //  ⚠️ B1 est une évolution de MODÈLE uniquement : `gainNet`, `retourTotal`,
+  //     `dividendePmuReel`, `combinaisonPmu`, `cote` et `montantMise`
+  //     conservent leur sens et leur valeur actuels.
+  double? miseGagnant;
+  double? misePlace;
+  double? coteGagnant;
+  double? cotePlace;
+
+  /// Mise réellement engagée d'un Gagnant + Placé — `null` si l'état est
+  /// INCOMPLET (une seule des deux mises renseignée).
+  ///
+  /// Trois cas, volontairement distincts :
+  ///  - **deux mises présentes** → leur somme (10 + 10 = **20,0**) ;
+  ///  - **les deux absentes** → `montantMise`, c'est-à-dire le comportement
+  ///    historique, sans inventer de donnée (pari simple, ou G+P d'avant B2) ;
+  ///  - **une seule présente** → **`null`** : état incomplet SIGNALÉ, aucune
+  ///    mise totale n'est calculée. Retourner la seule composante connue
+  ///    reviendrait à affirmer une mise totale fausse, et la doubler
+  ///    reviendrait à inventer la composante manquante.
+  ///
+  /// Le type est `double?` — et non `double` — précisément pour que le
+  /// troisième cas soit représentable sans valeur sentinelle : `null` est
+  /// déjà l'idiome de ce modèle pour « information absente » (`dividendePmuReel`,
+  /// `gainRealise`, `cotePlace`…). Un appelant qui obtient `null` sait qu'il
+  /// ne doit RIEN afficher ni calculer.
+  ///
+  /// Getter **dérivé**, jamais stocké : il ne peut donc pas se désynchroniser
+  /// des deux mises réelles.
+  double? get miseTotaleEngagee {
+    final g = miseGagnant;
+    final p = misePlace;
+    if (g == null && p == null) return montantMise;
+    if (g == null || p == null) return null; // état incomplet — signalé
+    return g + p;
+  }
+
+  /// Indique si le pari porte une représentation Gagnant + Placé INCOMPLÈTE
+  /// (exactement une des deux mises renseignée). Utile aux appelants qui
+  /// veulent distinguer « pas de composantes » de « composantes partielles ».
+  bool get misesGagnantPlaceIncompletes =>
+      (miseGagnant == null) != (misePlace == null);
+
   /// Indique si le dividende PMU réel a été récupéré
   bool get dividendeRecupere => dividendePmuReel != null;
 
@@ -442,6 +496,10 @@ class UserPrediction {
     this.numerosJoues = const [],
     this.dividendePmuReel,
     this.combinaisonPmu,
+    this.miseGagnant,
+    this.misePlace,
+    this.coteGagnant,
+    this.cotePlace,
   });
 
   /// Gain net calculé :
@@ -503,6 +561,10 @@ class UserPrediction {
     'numerosJoues': numerosJoues,
     'dividendePmuReel': dividendePmuReel,
     'combinaisonPmu': combinaisonPmu,
+    'miseGagnant': miseGagnant,
+    'misePlace': misePlace,
+    'coteGagnant': coteGagnant,
+    'cotePlace': cotePlace,
   };
 
   factory UserPrediction.fromJson(Map<String, dynamic> json) {
@@ -529,6 +591,14 @@ class UserPrediction {
           [],
       dividendePmuReel: (json['dividendePmuReel'] as num?)?.toDouble(),
       combinaisonPmu: json['combinaisonPmu'] as String?,
+      // ★ B1 — lecture TOLÉRANTE à l'absence de clé (→ null), mais STRICTE
+      //   sur le type : `as num?` lève un `_TypeError` si la valeur est une
+      //   chaîne (mesuré : `{'x': '10'}` → `as num?` lève `_TypeError`).
+      //   Ce comportement est celui des 8 autres champs optionnels ci-dessus.
+      miseGagnant: (json['miseGagnant'] as num?)?.toDouble(),
+      misePlace: (json['misePlace'] as num?)?.toDouble(),
+      coteGagnant: (json['coteGagnant'] as num?)?.toDouble(),
+      cotePlace: (json['cotePlace'] as num?)?.toDouble(),
     );
   }
 }
