@@ -3013,6 +3013,16 @@ class TrackedCourse {
     messageResultat: message,
     dividendePmuReel: dividendePmuReel,
     combinaisonPmu: combinaisonPmu,
+    // ★ LOT R1 : `storageKey` DOIT être propagée.
+    //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
+    //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
+    //   dans `withDividende()` l.3041 — asymétrie non intentionnelle).
+    //   `_save()` sérialise ensuite `'storageKey': null` (l.611 → toJson) et
+    //   `_load()` retombe sur `tc.storageKey ?? tc.key` (l.509) : au
+    //   rechargement, l'entrée réapparaissait sous une clé SANS horodatage,
+    //   distincte de la clé d'origine — la persistance demandée par R1
+    //   échouait alors même que la session paraissait correcte.
+    storageKey: storageKey,
   );
 
   /// Crée une copie avec le dividende PMU réel mis à jour

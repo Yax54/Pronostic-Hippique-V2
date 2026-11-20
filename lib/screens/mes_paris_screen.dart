@@ -1283,7 +1283,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
             _resultMessage = msg;
             _checkingResult = false;
           });
-          alertSvc.enregistrerResultatPari(course.key, isGagne: false, arrivee: arrivee, message: msg);
+          alertSvc.enregistrerResultatPari(widget.storageKey, isGagne: false, arrivee: arrivee, message: msg);
           _autoRetryTimer?.cancel();
           return;
         }
@@ -1424,7 +1424,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
 
         // ★ Persister le résultat dans TrackedCourse pour ne pas le perdre à la navigation
         alertSvc.enregistrerResultatPari(
-          course.key,
+          widget.storageKey,
           isGagne: gagnant,
           arrivee: arrivee,
           message: msg,
