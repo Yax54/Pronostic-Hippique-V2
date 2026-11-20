@@ -24,6 +24,7 @@ import '../services/ia_badges_service.dart';       // ★ v9.85
 import '../services/ia_user_prefs_service.dart';   // ★ v9.85
 import '../providers/pmu_provider.dart';
 import '../utils/format_euros.dart';
+import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../widgets/ia/ia_performance_dialogs.dart';
 import '../widgets/ia/ia_widgets_communs.dart';     // ★ v9.90 découpage
 import '../widgets/ia/ia_tab_stats.dart';           // ★ v9.90 découpage
@@ -327,6 +328,24 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       // Calculer le gain net : si gagné, on estime le retour selon la cote
       final mise = tc.miseEngagee ?? 0.0;
       final cote = tc.cote > 0 ? tc.cote : 2.0;
+      // ★ LOT A-0 (protection P6) — SOLUTION S2 : l'entrée Gagnant+Placé est
+      //   CONSERVÉE (la cardinalité de la liste ne change pas, donc la garde
+      //   `if (statsFusionnees.isNotEmpty)` d'analyseJourneeComplete l.5124
+      //   se comporte exactement comme avant), mais ses valeurs FINANCIÈRES
+      //   sont neutralisées : isCorrect/ gainNet null/0.0.
+      //   L'exclusion des statistiques est faite par la règle PRÉEXISTANTE
+      //   `mettreAJourStatsTypes` l.5493 `if (isCorrect == null) continue;`.
+      //   Aucune donnée financière G+P fictive n'entre donc dans _statsTypes.
+      //   Le résultat SPORTIF n'est pas concerné : il est porté par
+      //   IaMemoryService.enregistrerResultat (hors de ce chemin).
+      final estGP = estTypeGagnantPlace(tc.typePari);
+      if (estGP) {
+        return {
+          'typePari':  tc.typePari,
+          'isCorrect': null, // en attente du Lot B
+          'gainNet':   0.0,  // aucun gain fictif
+        };
+      }
       final gainNet = tc.isGagne == true
           ? (mise * cote - mise) // gain = mise * cote - mise
           : -mise;              // perte = mise engagée
@@ -635,6 +654,23 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         .map((tc) {
           final mise    = tc.miseEngagee ?? 0.0;
           final cote    = tc.cote > 0 ? tc.cote : 2.0;
+          // ★ LOT A-0 (protection P7) — SOLUTION S2 : entrée Gagnant+Placé
+          //   CONSERVÉE, valeurs financières neutralisées. Cette liste devient
+          //   `predictionsJson` → `analyseJourneeComplete(predictionsUtilisateur:)`
+          //   → `statsManuel` → `statsFusionnees` → `mettreAJourStatsTypes()`.
+          //   `analyseJourneeComplete()` n'est PAS modifiée : elle reçoit la
+          //   même liste, de même longueur, et écarte l'entrée par sa règle
+          //   préexistante `isCorrect == null → continue` (l.5493).
+          //   Aucun mécanisme d'apprentissage n'est atteint : `_statsTypes`
+          //   n'est lu par aucun d'eux (mesuré : 15 occurrences, toutes
+          //   internes, 2 lecteurs d'affichage).
+          if (estTypeGagnantPlace(tc.typePari)) {
+            return {
+              'typePari':  tc.typePari,
+              'isCorrect': null, // en attente du Lot B
+              'gainNet':   0.0,  // aucun gain fictif
+            };
+          }
           final gainNet = tc.isGagne == true ? (mise * cote - mise) : -mise;
           return {
             'typePari':  tc.typePari,

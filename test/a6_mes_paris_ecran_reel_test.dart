@@ -302,12 +302,20 @@ bool _concerneBlocA6(String ligne) =>
 ///   • un débordement d'origine inconnue n'est ni « A6 » ni « préexistant » :
 ///     il tombe dans « autres » et fait ÉCHOUER le test.
 const Set<String> _lignesPreexistantes = <String>{
-  'mes_paris_screen.dart:119:',
-  'mes_paris_screen.dart:1515:',
-  'mes_paris_screen.dart:1661:',
-  'mes_paris_screen.dart:1859:',
-  'mes_paris_screen.dart:2454:',
-  'mes_paris_screen.dart:2597:',
+  // ★ LOT A-0 — décalage de numéros de ligne uniquement.
+  //   Le Lot A-0 ajoute 2 blocs de commentaires dans `mes_paris_screen.dart`
+  //   (import + gardes P1/P4). Les 6 widgets préexistants n'ont PAS bougé :
+  //   même `Row`, même rôle, même nombre de débordements (2 en E1/E2,
+  //   5 en E5). Seuls leurs numéros de ligne ont glissé. Correspondance
+  //   vérifiée par comparaison du contenu des lignes (`git show HEAD:` vs
+  //   fichier courant) : 119→120, 1515→1538, 1661→1684, 1859→1882,
+  //   2454→2477, 2597→2620.
+  'mes_paris_screen.dart:120:',   // ex-119  — `title: const Row` de l'AppBar
+  'mes_paris_screen.dart:1538:',  // ex-1515 — `child: Row(children: [`
+  'mes_paris_screen.dart:1684:',  // ex-1661 — `Row` « Mise + badge type »
+  'mes_paris_screen.dart:1882:',  // ex-1859 — `Row(mainAxisSize: min)`
+  'mes_paris_screen.dart:2477:',  // ex-2454 — `child: Row(`
+  'mes_paris_screen.dart:2620:',  // ex-2597 — `Row(mainAxisSize: min)`
 };
 
 /// Vrai si la ligne tombe sur une localisation PRÉEXISTANTE connue.

@@ -20,6 +20,7 @@ import '../services/zone_turf_service.dart';
 import '../services/pmu_api_service.dart';
 import '../services/gain_calculator.dart';
 import '../utils/format_euros.dart';
+import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../services/ia_pronostic_engine.dart';
 import '../services/bookmaker_service.dart';
 import '../widgets/bet_bottom_sheet.dart';
@@ -640,6 +641,14 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
     // isGagne == null = résultat inconnu → on n'enregistre pas encore
     // isGagne == false = perdu → on n'enregistre pas de gain
     if (widget.tracked.isGagne != true) return;
+    // ★ LOT A-0 (protection P5 — DÉFENSIVE) : Gagnant+Placé = 2 composantes.
+    //   Même raison que P4 (`mes_paris_screen.dart`) : le `reduce(MAX)` l.676
+    //   ne peut pas attribuer le bon dividende à la bonne composante.
+    //   Garde INERTE aujourd'hui (défaut R1 : `TrackedCourse.isGagne` n'est
+    //   jamais écrit), posée pour sécuriser la future correction de R1.
+    //   Ne bloque QUE l'attribution financière : les rapports restent
+    //   affichés (`_rapportsPmu` renseigné l.622-625 avant cet appel).
+    if (estTypeGagnantPlace(widget.tracked.typePari)) return; // A-0
     try {
       final provider = context.read<PmuProvider>();
       final tc = widget.tracked;

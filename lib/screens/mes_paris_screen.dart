@@ -28,6 +28,7 @@ import '../services/ia_personality_service.dart'; // ★ v9.85 IA bulle
 import '../widgets/ia/ia_bubble_widget.dart';      // ★ v9.85 IA bulle
 import '../services/arrivee_officielle_service.dart'; // ★ A6 — lecture L0
 import '../widgets/arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu ex æquo
+import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 
 // ★ v9.85 : deepLinkCourseKeyNotifier retiré de main.dart — notifier local
 final deepLinkCourseKeyNotifier = ValueNotifier<String?>(null);
@@ -1058,6 +1059,17 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     if (!mounted) return;
     // CRITIQUE : enregistrer SEULEMENT si isGagne == true (pas null, pas false)
     if (course.isGagne != true) return;
+    // ★ LOT A-0 (protection P4 — DÉFENSIVE) : Gagnant+Placé = 2 composantes.
+    //   Le bloc ci-dessous sélectionne UN dividende par `reduce(MAX)` (l.1093),
+    //   ce qui ne peut pas attribuer le bon dividende à la bonne composante.
+    //   Aujourd'hui cette garde est INERTE : `TrackedCourse.isGagne` n'est
+    //   jamais écrit effectivement (défaut R1, clé de map ≠ clé passée).
+    //   Elle est posée dès maintenant pour que la correction de R1 ne rende
+    //   pas ce `reduce(MAX)` soudainement actif sur les G+P.
+    //   Ne bloque QUE l'attribution financière : `_rapportsPmu` est déjà
+    //   renseigné avant l'appel (voir `_chargerRapportsPmu` l.1040-1043),
+    //   donc l'affichage des rapports reste intact.
+    if (estTypeGagnantPlace(course.typePari)) return; // A-0
     try {
       final provider = context.read<PmuProvider>();
       final pred = provider.getPredictionForCourse(course.numReunion, course.numCourse);
@@ -1428,6 +1440,17 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
             return courseKeyStr.startsWith(pk);
           }).toList();
           for (final pred in matchingPred) {
+            // ★ LOT A-0 : Gagnant+Placé = 2 composantes financières.
+            //   Tant que le Lot B n'a pas traité les deux composantes, aucune
+            //   écriture financière automatique ne peut produire un gain G+P
+            //   exact (la cote enregistrée est celle du Gagnant seul).
+            //   On n'écrit donc RIEN : `isCorrect` reste null → pari
+            //   « en attente » → exclu des statistiques par la règle
+            //   préexistante `ia_memory_service.dart:5493`.
+            //   Le RÉSULTAT SPORTIF n'est pas perdu : il est porté par
+            //   `_arrivee` / `_isGagnant` / `_resultMessage` (setState l.1405)
+            //   et par la mémoire IA (alert_service.dart:2719).
+            if (estTypeGagnantPlace(pred.typePari)) continue; // A-0
             if (pred.isCorrect == null) {
               pmuProvider.validatePrediction(
                 pred.id,

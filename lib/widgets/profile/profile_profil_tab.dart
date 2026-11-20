@@ -13,6 +13,7 @@ import '../../services/ia_personality_service.dart'; // ★ v9.85
 import '../../services/ia_badges_service.dart';       // ★ v9.85
 import '../../services/ia_user_prefs_service.dart';   // ★ v9.85
 import '../../utils/format_euros.dart';
+import '../../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../../screens/widget_setup_screen.dart';
 
 
@@ -1641,6 +1642,14 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
             return pk == courseKey && p.isCorrect == null;
           }).toList();
           for (final pred in matching) {
+            // ★ LOT A-0 (protection P2) : Gagnant+Placé = 2 composantes.
+            //   Cette synchronisation post-restauration écrit `isCorrect` ET
+            //   `montantMise` (une seule mise, alors que le G+P en engage
+            //   deux) → gain G+P faux. On n'écrit RIEN pour ce type :
+            //   `isCorrect` reste null → pari « en attente ».
+            //   Le résultat sportif reste porté par `TrackedCourse.isGagne`
+            //   et par la mémoire IA : il n'est pas effacé ici.
+            if (estTypeGagnantPlace(pred.typePari)) continue; // A-0
             widget.provider.validatePrediction(
               pred.id,
               isCorrect: tc.isGagne!,

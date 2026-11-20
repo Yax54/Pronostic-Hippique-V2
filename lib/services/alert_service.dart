@@ -16,6 +16,7 @@ import 'data_refresh_service.dart';
 import '../models/zt_models.dart';
 import '../providers/pmu_provider.dart';
 import '../utils/format_euros.dart';
+import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// AlertService — Gestion complète des alertes Pronostic Hippique v3.0 (Lot 2)
@@ -2688,6 +2689,16 @@ class AlertService extends ChangeNotifier {
           p.isCorrect == null  // seulement si pas encore validé
         ).toList();
         for (final pred in matched) {
+          // ★ LOT A-0 (protection P3) : Gagnant+Placé = 2 composantes.
+          //   `gainNet` provient du bloc l.2348-2419, qui calcule le G+P avec
+          //   une cote Placé lue sur le MAUVAIS cheval (`cotePlace` vient de
+          //   `rList.first` l.2133, alors que l'ordre de `E_SIMPLE_PLACE`
+          //   n'est pas le classement officiel — `arrivee_pmu_ordonnee.dart`).
+          //   On n'écrit donc RIEN : `isCorrect`/`gainRealise` restent null.
+          //   Le RÉSULTAT SPORTIF est conservé : l'arrivée est déjà enregistrée
+          //   dans la mémoire IA plus bas (l.2719, hors de cette boucle), et
+          //   les notifications d'arrivée (l.2649+) ne dépendent pas d'ici.
+          if (estTypeGagnantPlace(pred.typePari)) continue; // A-0
           final misePred = pred.montantMise > 0
               ? pred.montantMise
               : (tc.miseEngagee ?? pred.montantMise);
