@@ -1291,7 +1291,7 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
             ),
           );
           if (confirm == true && mounted) {
-            widget.alertSvc.retirerSuivi(tc.key);
+            widget.alertSvc.retirerSuivi(tc.storageKey ?? tc.key);
             Navigator.pop(context);
           }
         },
