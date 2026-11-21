@@ -761,6 +761,12 @@ class AlertService extends ChangeNotifier {
       messageResultat: course.messageResultat,
       dividendePmuReel: course.dividendePmuReel,
       combinaisonPmu: course.combinaisonPmu,
+      // ★ LOT B-2 : l'arrivée structurée suit `arriveeFinale`, qui est
+      //   recopiée telle quelle deux lignes plus haut. Les groupes restent
+      //   donc cohérents par construction. Sans ces deux lignes, un ticket
+      //   ré-ajouté perdrait ses ex æquo et son caractère définitif.
+      arriveeGroupes: course.arriveeGroupes,
+      arriveeDefinitive: course.arriveeDefinitive,
       // ★ ÉTAPE 4-F : les quatre champs de capture DOIVENT survivre à cette
       //   reconstruction. Sans ces lignes, tout ticket tiercé/couplé ordre
       //   perdrait sa variante et son ordre dès l'appel à `ajouterSuivi`,
@@ -3026,6 +3032,67 @@ class TrackedCourse {
   final String? combinaisonPmu;    // ex: "5-12-3" → numéros gagnants PMU officiels
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  ★ LOT B-2 — ARRIVÉE OFFICIELLE STRUCTURÉE (2 champs FACULTATIFS)
+  //
+  //  POURQUOI CES CHAMPS EXISTENT — mesuré, pas supposé :
+  //  `arriveeFinale` (ci-dessus) est une `List<int>` APLATIE. Elle ne peut pas
+  //  représenter deux chevaux ex æquo : `[5, 7]` et `[7, 5]` y sont
+  //  indiscernables, et le rang de chaque cheval devient indéterminable.
+  //  Trois courses réelles portent un ex æquo dans les captures :
+  //    prog_17112026 R5C5  [[2],[4],[5,7],[8],[3],[6]]
+  //    prog_17112026 R6C5  [[12],[1,7],[9],[2],[10],[8],[6],[13],[5]]
+  //    prog_20112026 R5C7  [[4],[6],[1,5],[2]]
+  //
+  //  RÈGLES ABSOLUES DE CE LOT :
+  //   • `arriveeFinale` GARDE son format et son fonctionnement, à l'identique.
+  //     Ces deux champs sont ADDITIFS et ne la remplacent pas.
+  //   • Aucun groupe n'est JAMAIS reconstruit à partir d'une liste aplatie :
+  //     `arriveeGroupes` ne peut contenir qu'une structure reçue telle quelle.
+  //   • `null` = « groupes non connus ». Ce n'est PAS « pas d'ex æquo ».
+  //     Un ticket historique n'aura jamais de groupes inventés.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Groupes d'arrivée EXACTS tels que publiés par l'API (`List<List<int>>`),
+  /// chaque sous-liste étant un rang (plusieurs numéros = ex æquo).
+  /// `null` = informations non disponibles. Jamais déduit d'[arriveeFinale].
+  final List<List<int>>? arriveeGroupes;
+
+  /// Caractère DÉFINITIF de l'arrivée.
+  /// `null` = inconnu (ticket historique, ou API muette). `false` = provisoire.
+  /// Une arrivée provisoire ne doit JAMAIS être présentée ni exploitée comme
+  /// définitive ; l'absence d'information n'autorise pas à conclure « définitive ».
+  final bool? arriveeDefinitive;
+
+  /// `true` s'il y a au moins un ex æquo dans les groupes CONNUS.
+  /// `false` si les groupes sont inconnus : on n'affirme pas l'absence.
+  bool get aDesExAequo => arriveeGroupes?.any((g) => g.length > 1) ?? false;
+
+  /// ★ LOT B-2 — les groupes connus décrivent-ils EXACTEMENT cette liste plate ?
+  ///
+  /// Comparaison stricte, dans l'ordre : un aplatissement de groupes est
+  /// ordonné par rangs, donc la comparaison positionnelle est la bonne.
+  /// Sert uniquement à décider si une donnée DÉJÀ STOCKÉE reste valable après
+  /// le remplacement de `arriveeFinale`. Ne fabrique jamais de groupes.
+  static bool _groupesCoherentsAvec(
+    List<List<int>>? groupes,
+    List<int> plate,
+  ) {
+    if (groupes == null) return false;
+    final aplati = <int>[for (final g in groupes) ...g];
+    if (aplati.length != plate.length) return false;
+    for (var i = 0; i < aplati.length; i++) {
+      if (aplati[i] != plate[i]) return false;
+    }
+    return true;
+  }
+
+  /// Aplatit les groupes SANS PERTE, en conservant l'ordre des rangs.
+  /// Retourne `null` si les groupes sont inconnus : un appelant ne peut pas
+  /// fabriquer une arrivée plate à partir de rien.
+  List<int>? get arriveeGroupesAplatis =>
+      arriveeGroupes == null ? null : <int>[for (final g in arriveeGroupes!) ...g];
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  ★ ÉTAPE 4-F — CAPTURE DU PARI RÉELLEMENT JOUÉ (4 champs FACULTATIFS)
   //
   //  Contrat STRICTEMENT identique à celui de `UserPrediction` :
@@ -3214,6 +3281,9 @@ class TrackedCourse {
     this.messageResultat,
     this.dividendePmuReel,
     this.combinaisonPmu,
+    // ★ LOT B-2 — arrivée structurée (tous facultatifs, null par défaut)
+    this.arriveeGroupes,
+    this.arriveeDefinitive,
     // ★ ÉTAPE 4-F — capture du pari réellement joué (tous facultatifs)
     this.codePmuOfficiel,
     this.varianteChoisie,
@@ -3234,6 +3304,8 @@ class TrackedCourse {
     required bool isGagne,
     required List<int> arrivee,
     required String message,
+    List<List<int>>? arriveeGroupes,
+    bool? arriveeDefinitive,
   }) => TrackedCourse(
     numReunion: numReunion,
     numCourse: numCourse,
@@ -3258,6 +3330,25 @@ class TrackedCourse {
     isGagne: isGagne,
     arriveeFinale: arrivee,
     messageResultat: message,
+    // ★ LOT B-2 — arrivée structurée. DEUX SOURCES, UNE SEULE VÉRITÉ.
+    //
+    //   `arrivee` (paramètre) REMPLACE `arriveeFinale` : la nouvelle arrivée
+    //   fait foi. Propager aveuglément `this.arriveeGroupes` associerait donc
+    //   des groupes à une liste plate qui ne leur correspond plus — exactement
+    //   le genre d'incohérence silencieuse que ce chantier traque.
+    //
+    //   Choix retenu, explicite :
+    //     • si l'appelant FOURNIT des groupes, ils sont retenus (chemin neuf) ;
+    //     • sinon, on CONSERVE les groupes déjà connus UNIQUEMENT s'ils sont
+    //       cohérents avec la nouvelle liste plate — c'est-à-dire s'ils
+    //       s'aplatissent exactement dessus. Sinon `null` : « inconnus ».
+    //   `arriveeDefinitive` ne dépend pas de la forme de l'arrivée : elle est
+    //   conservée si l'appelant n'en fournit pas.
+    arriveeGroupes: arriveeGroupes ??
+        (_groupesCoherentsAvec(this.arriveeGroupes, arrivee)
+            ? this.arriveeGroupes
+            : null),
+    arriveeDefinitive: arriveeDefinitive ?? this.arriveeDefinitive,
     dividendePmuReel: dividendePmuReel,
     combinaisonPmu: combinaisonPmu,
     // ★ ÉTAPE 4-F : capture du pari propagée. Un ticket Tiercé Ordre dont le
@@ -3322,6 +3413,11 @@ class TrackedCourse {
     messageResultat: messageResultat,
     dividendePmuReel: dividende,
     combinaisonPmu: combinaison,
+    // ★ LOT B-2 : l'arrivée structurée survit à `withDividende`.
+    //   `arriveeFinale` n'est PAS modifiée par ce chemin : les groupes restent
+    //   donc cohérents par construction, et sont propagés tels quels.
+    arriveeGroupes: arriveeGroupes,
+    arriveeDefinitive: arriveeDefinitive,
     // ★ LOT B-1 : les gains structurés survivent aussi à `withDividende`.
     //   Ce chemin est utilisé par l'ancien moteur (`enregistrerDividendePmu`) ;
     //   il ne doit ni perdre ni écraser les rapports attribués par le nouveau.
@@ -3402,6 +3498,24 @@ class TrackedCourse {
     'varianteChoisie': varianteChoisie,
     'numerosDansOrdre': numerosDansOrdre,
     'formulePari': formulePari,
+    // ★ LOT B-2 — arrivée structurée, ÉCRITURE CONDITIONNELLE.
+    //
+    //   Même raisonnement que pour B-1 : un ticket historique relu puis
+    //   réécrit doit conserver EXACTEMENT 28 clés. Ces deux clés ne sont donc
+    //   écrites que si l'une des deux au moins est connue. Un ticket sans
+    //   arrivée structurée ne grossit pas.
+    //
+    //   `arriveeDefinitive` peut être connue seule (arrivée définitive mais
+    //   groupes non récupérés) : les deux clés sont alors écrites ensemble,
+    //   la seconde valant `null`, pour que la forme soit stable et lisible.
+    ...?(arriveeGroupes == null && arriveeDefinitive == null)
+        ? null
+        : <String, dynamic>{
+            'arriveeGroupes': arriveeGroupes
+                ?.map((g) => List<int>.from(g))
+                .toList(growable: false),
+            'arriveeDefinitive': arriveeDefinitive,
+          },
     // ★ LOT B-1 — gains PMU structurés.
     //
     //   ⚠️ ÉCRITURE CONDITIONNELLE, ET C'EST VOLONTAIRE.
@@ -3465,6 +3579,20 @@ class TrackedCourse {
     numerosDansOrdre: (j['numerosDansOrdre'] as List<dynamic>?)
                           ?.map((e) => (e as num).toInt()).toList(),
     formulePari:      j['formulePari'] as String?,
+    // ★ LOT B-2 — lecture STRICTE de l'arrivée structurée.
+    //
+    //   `null` si les groupes sont absents, mal formés, ou vides : on ne
+    //   reconstruit JAMAIS des groupes à partir de `arriveeFinale`. Mieux vaut
+    //   « groupes inconnus » qu'une structure inventée qui ferait croire à des
+    //   ex æquo là où il n'y en a pas — ou l'inverse.
+    arriveeGroupes: _lireArriveeGroupes(j['arriveeGroupes']),
+    //   Lecture TOLÉRANTE : `as bool?` LÈVE une exception si la valeur est
+    //   d'un autre type (mesuré : `type 'String' is not a subtype of type
+    //   'bool?' in type cast`). Une sauvegarde corrompue ferait alors échouer
+    //   la restauration du ticket ENTIER. On rend `null` — « inconnu » — et
+    //   `null` n'est jamais interprété comme « définitif ».
+    arriveeDefinitive:
+        j['arriveeDefinitive'] is bool ? j['arriveeDefinitive'] as bool : null,
     // ★ LOT B-1 — lecture TOLÉRANTE des gains structurés.
     //   Clé absente ⇒ `null` ⇒ chemin legacy inchangé. Aucun état déduit,
     //   aucun rapport reconstruit, aucun montant complété.
@@ -3496,5 +3624,36 @@ class TrackedCourse {
       }
     }
     return out.isEmpty ? null : out;
+  }
+
+  /// ★ LOT B-2 — lit `arriveeGroupes` de façon STRICTE.
+  ///
+  /// Rend `null` — et n'invente RIEN — si :
+  ///   • la valeur n'est pas une liste, ou est vide ;
+  ///   • un « rang » n'est pas une liste non vide ;
+  ///   • un numéro n'est pas un entier > 0.
+  ///
+  /// Un seul élément invalide fait refuser l'ENSEMBLE : mieux vaut « groupes
+  /// inconnus » qu'une arrivée partielle présentée comme complète. En
+  /// particulier, cette fonction ne consulte JAMAIS `arriveeFinale` : aucun
+  /// regroupement n'est reconstruit par déduction.
+  static List<List<int>>? _lireArriveeGroupes(dynamic valeur) {
+    if (valeur is! List || valeur.isEmpty) return null;
+    final out = <List<int>>[];
+    for (final g in valeur) {
+      if (g is! List || g.isEmpty) return null;
+      final groupe = <int>[];
+      for (final n in g) {
+        if (n is int && n > 0) {
+          groupe.add(n);
+        } else if (n is num && n > 0 && n == n.toInt()) {
+          groupe.add(n.toInt());
+        } else {
+          return null;
+        }
+      }
+      out.add(List<int>.unmodifiable(groupe));
+    }
+    return List<List<int>>.unmodifiable(out);
   }
 }
