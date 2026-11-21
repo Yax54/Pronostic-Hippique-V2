@@ -803,15 +803,36 @@ void main() {
     });
 
     test('aucun fichier de lib/ ne cite le résolveur (hors lui-même)', () {
-      final fautifs = <String>[];
+      // ★ LOT B-3 — CONTRÔLE RESSERRÉ : citation ≠ dépendance.
+      //
+      // La recherche d'origine était une sous-chaîne nue : un simple
+      // commentaire la faisait échouer, et un vrai `import` passait
+      // inaperçu si le chemin était écrit autrement. On distingue
+      // maintenant les deux, et la liste des DÉPENDANTS est fermée et
+      // nominative. B-3 est le lot qui autorise la délégation ; il reste le
+      // seul, et l'adaptateur 4-D n'en fait toujours pas partie.
+      const dependantsAutorises = <String>[
+        'lib/services/moteur_gain_pmu.dart',
+      ];
+      final dependantsReels = <String>[];
+      final citationsSeules = <String>[];
       for (final f in Directory('lib').listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
         if (f.path.endsWith('resolveur_rapport_pmu.dart')) continue;
-        if (f.readAsStringSync().contains('resolveur_rapport_pmu.dart')) {
-          fautifs.add(f.path);
-        }
+        final contenu = f.readAsStringSync();
+        if (!contenu.contains('resolveur_rapport_pmu.dart')) continue;
+        final importe = RegExp(
+          r'''^\s*import\s+['"][^'"]*resolveur_rapport_pmu\.dart['"]''',
+          multiLine: true,
+        ).hasMatch(contenu);
+        (importe ? dependantsReels : citationsSeules).add(f.path);
       }
-      expect(fautifs, isEmpty, reason: 'branchement interdit : $fautifs');
+      dependantsReels.sort();
+      citationsSeules.sort();
+      expect(dependantsReels, equals(dependantsAutorises),
+          reason: 'branchement interdit : $dependantsReels');
+      expect(citationsSeules, equals(<String>['lib/services/arbitre_variante_pmu.dart']),
+          reason: 'citations du résolveur sans import : $citationsSeules');
     });
   });
 }

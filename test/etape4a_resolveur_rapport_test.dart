@@ -575,16 +575,56 @@ void main() {
     });
 
     test('le résolveur n\'est importé par aucun écran ni service existant', () {
-      final dossier = Directory('lib');
-      final fautifs = <String>[];
-      for (final f in dossier.listSync(recursive: true)) {
+      // ★ LOT B-3 — LE CONTRÔLE EST RENFORCÉ, PAS AFFAIBLI.
+      //
+      // L'assertion d'origine était « aucun fichier de lib/ ne cite le
+      // résolveur ». Elle est devenue fausse par construction : B-3 est
+      // précisément le lot autorisé à DÉLÉGUER au résolveur, et son moteur
+      // doit donc l'importer pour de vrai.
+      //
+      // La recherche d'origine était une simple sous-chaîne : elle ne
+      // distinguait pas une CITATION dans un commentaire d'une DÉPENDANCE
+      // réelle. On resserre donc : la liste des fichiers autorisés à
+      // dépendre du résolveur est FERMÉE et nominative, et l'on exige en plus
+      // un `import` effectif pour chacun. Un fichier qui ne fait que citer le
+      // résolveur en commentaire n'a aucune raison d'être dans cette liste —
+      // il n'y entre donc pas.
+      //
+      // Conséquence : tout écran, tout provider, tout service de production
+      // qui importerait le résolveur échoue encore ici. B-3 reste un moteur
+      // PUR, non branché.
+      const dependantsAutorises = <String>[
+        'lib/services/moteur_gain_pmu.dart',
+      ];
+
+      final dependantsReels = <String>[];
+      final citationsSeules = <String>[];
+      for (final f in Directory('lib').listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
         if (f.path.endsWith('resolveur_rapport_pmu.dart')) continue;
         final contenu = f.readAsStringSync();
-        if (contenu.contains('resolveur_rapport_pmu.dart')) fautifs.add(f.path);
+        if (!contenu.contains('resolveur_rapport_pmu.dart')) continue;
+        final importe = RegExp(
+          r'''^\s*import\s+['"][^'"]*resolveur_rapport_pmu\.dart['"]''',
+          multiLine: true,
+        ).hasMatch(contenu);
+        if (importe) {
+          dependantsReels.add(f.path);
+        } else {
+          citationsSeules.add(f.path);
+        }
       }
-      expect(fautifs, isEmpty,
-          reason: 'aucun branchement tant que l\'étape 4-B n\'est pas validée');
+      dependantsReels.sort();
+      citationsSeules.sort();
+
+      expect(dependantsReels, equals(dependantsAutorises),
+          reason: 'seul le moteur B-3 est autorisé à déléguer au résolveur : '
+              '$dependantsReels');
+      // Une citation en commentaire n'est pas un branchement : elle est
+      // tolérée, mais elle est NOMMÉE pour rester auditable.
+      expect(citationsSeules, equals(<String>['lib/services/arbitre_variante_pmu.dart']),
+          reason: 'citations du résolveur sans import (documentation seule) : '
+              '$citationsSeules');
     });
   });
 

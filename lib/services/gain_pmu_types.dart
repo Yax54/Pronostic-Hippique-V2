@@ -183,7 +183,19 @@ enum MotifNonDetermination {
   montantAbsent,
 
   /// Tirelire proposée mais éligibilité non démontrable : aucun montant.
-  tirelireNonDeterminee;
+  tirelireNonDeterminee,
+
+  /// La combinaison Bonus publiée par l'API ne satisfait PAS les conditions
+  /// réglementaires (règlement e-QUINTÉ+, art. 1 c et d), alors que la règle
+  /// mesurée sur les captures la rendrait payable. Divergence documentée et
+  /// NON tranchée : ni attribution, ni perte déclarée.
+  ///
+  /// ★ LOT B-3, décision utilisateur (option 3) : « Lorsqu'une combinaison
+  /// Bonus publiée par l'API ne satisfait pas les conditions réglementaires
+  /// étudiées : retourner nonDetermine, fournir un motif explicite
+  /// d'ambiguïté réglementaire, ne pas attribuer de montant, ne pas déclarer
+  /// le ticket perdant, ne pas sélectionner une autre catégorie par défaut. »
+  ambiguiteReglementaireBonus;
 
   String toJson() => name;
 

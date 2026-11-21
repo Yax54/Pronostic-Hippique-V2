@@ -651,18 +651,35 @@ void main() {
     });
 
     test('le résolveur n\'est raccordé à AUCUNE écriture financière', () {
-      // Garde structurelle réaffirmée : aucun fichier de `lib/` ne doit
-      // mentionner le résolveur tant que l'intégration n'est pas validée.
-      final fautifs = <String>[];
+      // Garde structurelle réaffirmée.
+      //
+      // ★ LOT B-3 — le CONTRÔLE est resserré, pas retiré. La recherche naïve
+      // de sous-chaîne ne distinguait pas une citation en commentaire d'une
+      // dépendance réelle. La liste des fichiers autorisés à DÉPENDRE du
+      // résolveur est désormais FERMÉE et nominative, et l'on exige un
+      // `import` effectif. B-3 est le seul lot autorisé à déléguer.
+      const dependantsAutorises = <String>[
+        'lib/services/moteur_gain_pmu.dart',
+      ];
+      final dependantsReels = <String>[];
+      final citationsSeules = <String>[];
       for (final f in Directory('lib').listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
         if (f.path.endsWith('resolveur_rapport_pmu.dart')) continue;
-        if (f.readAsStringSync().contains('resolveur_rapport_pmu.dart')) {
-          fautifs.add(f.path);
-        }
+        final contenu = f.readAsStringSync();
+        if (!contenu.contains('resolveur_rapport_pmu.dart')) continue;
+        final importe = RegExp(
+          r'''^\s*import\s+['"][^'"]*resolveur_rapport_pmu\.dart['"]''',
+          multiLine: true,
+        ).hasMatch(contenu);
+        (importe ? dependantsReels : citationsSeules).add(f.path);
       }
-      expect(fautifs, isEmpty,
-          reason: 'aucun branchement du résolveur à cette étape : $fautifs');
+      dependantsReels.sort();
+      citationsSeules.sort();
+      expect(dependantsReels, equals(dependantsAutorises),
+          reason: 'aucun branchement en écriture : $dependantsReels');
+      expect(citationsSeules, equals(<String>['lib/services/arbitre_variante_pmu.dart']),
+          reason: 'citations du résolveur sans import : $citationsSeules');
     });
   });
 

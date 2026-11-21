@@ -110,9 +110,22 @@ void main() {
       // écran, tout service de calcul, tout branchement — fait échouer ce
       // test. Le branchement effectif reste ainsi interdit jusqu'à ce qu'un
       // lot l'autorise explicitement.
+      //
+      // ★ LOT B-3 — EXTENSION DÉLIBÉRÉE DE CETTE LISTE FERMÉE.
+      //
+      // B-3 est exactement le lot qui AUTORISE un service de calcul à importer
+      // le socle. Deux fichiers entrent, et eux seuls :
+      //   • arbitre_variante_pmu.dart — la couche d'arbitrage a besoin de
+      //     RapportPublie et EtatTirelire pour filtrer les rapports ;
+      //   • moteur_gain_pmu.dart     — le moteur a besoin de VerdictGain,
+      //     EtatTirelire et MotifNonDetermination pour rendre son verdict.
+      // Le contrat reste FERMÉ : un cinquième importateur — donc tout écran,
+      // tout provider, tout branchement en production — échoue encore ici.
       final importateursAttendus = <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
+        'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/moteur_gain_pmu.dart',
       ];
 
       final racine = Directory('lib');
@@ -138,9 +151,19 @@ void main() {
         'RapportAttribue.calculer',
         'totalDesMontantsRetour',
       ];
+      // ★ LOT B-3 — le périmètre est ÉTENDU, la garde ne faiblit pas.
+      //
+      // Les deux fichiers B-3 importent le socle, il faut donc les contrôler :
+      // sinon l'invariant « aucun montant produit » aurait un angle mort
+      // exactement là où l'on calcule des montants. Vérifié par grep avant
+      // d'écrire ce test : aucune des deux chaînes n'apparaît dans ces
+      // fichiers. B-3 produit ses VerdictGain sans jamais appeler
+      // RapportAttribue.calculer ni totalDesMontantsRetour.
       for (final chemin in <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
+        'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/moteur_gain_pmu.dart',
       ]) {
         final contenu = File(chemin).readAsStringSync();
         for (final calcul in calculsDuSocle) {
@@ -235,14 +258,27 @@ void main() {
     });
 
     test('chaque motif de non-détermination nomme une cause mesurée', () {
-      // Ces neuf causes sont celles identifiées par diagnostic. Toute
+      // Ces causes sont celles identifiées par diagnostic. Toute
       // disparition serait une perte de traçabilité.
-      expect(MotifNonDetermination.values.length, 9);
+      //
+      // ★ LOT B-3 — passage de 9 à 10 motifs, EXTENSION MOTIVÉE.
+      // Le 10e, `ambiguiteReglementaireBonus`, est exigé par la décision
+      // utilisateur (option 3 de l'arbitrage R22) : lorsqu'une combinaison
+      // Bonus publiée par l'API ne satisfait pas les conditions du règlement
+      // e-QUINTÉ+ art. 1 c)/d), le moteur doit rendre `nonDetermine` avec un
+      // motif EXPLICITE plutôt que d'attribuer ou de déclarer perdant. Un
+      // compteur figé sans ce motif aurait obligé à le coder « en fraude »
+      // dans une valeur existante, ce qui aurait détruit la traçabilité que
+      // ce test protège.
+      expect(MotifNonDetermination.values.length, 10);
       expect(MotifNonDetermination.values, contains(MotifNonDetermination.captureIncomplete));
       expect(MotifNonDetermination.values, contains(MotifNonDetermination.blocJusteAbsent),
           reason: 'R19 : E_TRIO/E_SUPER_QUATRE/E_MULTI ne sont pas le bon bloc');
       expect(MotifNonDetermination.values, contains(MotifNonDetermination.deadHeatSansGroupes));
       expect(MotifNonDetermination.values, contains(MotifNonDetermination.tirelireNonDeterminee));
+      expect(MotifNonDetermination.values,
+          contains(MotifNonDetermination.ambiguiteReglementaireBonus),
+          reason: 'B-3 : divergence règlement ↔ API sur les Bonus, non tranchée');
     });
   });
 
