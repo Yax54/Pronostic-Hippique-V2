@@ -973,7 +973,30 @@ class ZoneTurfService {
   // Retourne null si la course n'est pas encore terminée ou API indispo
   // ──────────────────────────────────────────────────────────────────
   // ── Résultat étendu incluant les disqualifiés ───────────────────────────
-  /// Résultat complet d'une course : arrivée officielle + liste des DQ
+  /// ★ LOT B-2 bis — lit le caractère définitif SANS RIEN SUPPOSER.
+  ///
+  /// Trois états, jamais deux :
+  ///   • `false`  → l'API dit explicitement que l'arrivée n'est pas définitive ;
+  ///   • `true`   → l'API dit explicitement qu'elle l'est ;
+  ///   • `null`   → l'API ne le dit pas (clé absente, type inattendu).
+  ///
+  /// ⚠️ MESURE D'HONNÊTETÉ : aucune capture de l'endpoint `/participants`
+  /// n'est disponible dans `/home/user/recherche_pmu/`. Je ne peux donc pas
+  /// affirmer que ces clés y figurent. La lecture est donc TOLÉRANTE, et
+  /// `null` n'est JAMAIS interprété comme « définitive » : c'est la seule
+  /// lecture qui ne puisse pas produire un enregistrement abusif.
+  ///
+  /// `statut` n'est volontairement PAS utilisé comme substitut : traduire un
+  /// libellé en booléen serait exactement la décision métier inventée que ce
+  /// lot s'interdit.
+  static bool? _lireDrapeauDefinitif(Map<String, dynamic> data) {
+    final direct = data['arriveeDefinitive'];
+    if (direct is bool) return direct;
+    final indirect = data['isArriveeDefinitive'];
+    if (indirect is bool) return indirect;
+    return null;
+  }
+
   static Future<ResultatCourse?> chargerResultatsCourseComplet({
     required DateTime heureDepart,
     required int numReunion,
@@ -1000,7 +1023,20 @@ class ZoneTurfService {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final participants = data['participants'] as List<dynamic>? ?? [];
 
-      final Map<int, int> rangParNumero = {};
+      // ★ LOT B-2 bis — CORRECTION DU DÉFAUT D'ÉCRASEMENT.
+      //
+      //   AVANT : `rangParNumero[rangInt] = num` dans une `Map<int,int>`
+      //   indexée par RANG. Deux chevaux ex æquo partagent le même rang, donc
+      //   le second ÉCRASAIT le premier et le cheval disparaissait de
+      //   l'arrivée. Mesuré sur les trois courses réelles à ex æquo :
+      //     R5C5 [[2],[4],[5,7],[8],[3],[6]]        → le 5 disparaissait
+      //     R6C5 [[12],[1,7],[9],[2],[10],[8],[6],[13],[5]] → le 1 disparaissait
+      //     R5C7 [[4],[6],[1,5],[2]]                → le 1 disparaissait
+      //
+      //   APRÈS : `rangsGroupes[rangInt]` est une LISTE. Tous les chevaux d'un
+      //   même rang y sont ajoutés dans l'ordre de l'API. Aucun départage,
+      //   aucun tri, aucun cheval écarté.
+      final Map<int, List<int>> rangsGroupes = {};
       final List<int> disqualifies = [];
       final Map<int, String> statutsParNumero = {}; // numero -> statut PMU
 
@@ -1029,17 +1065,27 @@ class ZoneTurfService {
         final rang = part['ordreArrivee'] ?? part['placeCourse'] ?? part['rang'];
         final rangInt = rang is int ? rang : int.tryParse(rang?.toString() ?? '');
         if (rangInt != null && rangInt > 0) {
-          rangParNumero[rangInt] = num;
+          // ★ B-2 bis : ajout dans la liste du rang, JAMAIS remplacement.
+          //   L'ordre d'insertion est celui de l'API : deux ex æquo gardent
+          //   l'ordre où le PMU les a publiés.
+          rangsGroupes.putIfAbsent(rangInt, () => <int>[]).add(num);
         }
       }
 
-      if (rangParNumero.isEmpty && disqualifies.isEmpty) {
+      if (rangsGroupes.isEmpty && disqualifies.isEmpty) {
         if (kDebugMode) debugPrint('PMU Résultats: pas de classement disponible');
         return null;
       }
 
-      final rangs = rangParNumero.keys.toList()..sort();
-      final arrivee = rangs.map((r) => rangParNumero[r]!).toList();
+      // ★ B-2 bis : rangs triés, chaque rang rendant TOUS ses chevaux.
+      final rangs = rangsGroupes.keys.toList()..sort();
+      final groupes = <List<int>>[
+        for (final r in rangs) List<int>.unmodifiable(rangsGroupes[r]!)
+      ];
+      // `arriveeOfficielle` reste un APLATISSEMENT de `groupes` : même contenu
+      // qu'avant, mais désormais SANS PERTE. Le format `List<int>` est
+      // préservé, seul le nombre d'éléments est enfin correct.
+      final arrivee = <int>[for (final g in groupes) ...g];
 
       if (kDebugMode) debugPrint('PMU Résultats: arrivée officielle = $arrivee | DQ = $disqualifies');
 
@@ -1047,6 +1093,13 @@ class ZoneTurfService {
         arriveeOfficielle: arrivee,
         disqualifies: disqualifies,
         statutsPartants: statutsParNumero,
+        // ★ B-2 bis : les groupes EXACTS accompagnent l'aplatissement.
+        arriveeGroupes: List<List<int>>.unmodifiable(groupes),
+        // Lecture TOLÉRANTE : trois états distincts. `null` (inconnu) n'est
+        // jamais converti en `true`. Un drapeau explicite à `false` est
+        // conservé tel quel — c'est précisément l'information qui empêche
+        // d'enregistrer une arrivée provisoire comme définitive.
+        arriveeDefinitive: _lireDrapeauDefinitif(data),
       );
     } catch (e) {
       if (kDebugMode) debugPrint('PMU Résultats complet erreur: $e');

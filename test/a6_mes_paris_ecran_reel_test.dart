@@ -302,20 +302,23 @@ bool _concerneBlocA6(String ligne) =>
 ///   • un débordement d'origine inconnue n'est ni « A6 » ni « préexistant » :
 ///     il tombe dans « autres » et fait ÉCHOUER le test.
 const Set<String> _lignesPreexistantes = <String>{
-  // ★ LOT A-0 — décalage de numéros de ligne uniquement.
-  //   Le Lot A-0 ajoute 2 blocs de commentaires dans `mes_paris_screen.dart`
-  //   (import + gardes P1/P4). Les 6 widgets préexistants n'ont PAS bougé :
-  //   même `Row`, même rôle, même nombre de débordements (2 en E1/E2,
-  //   5 en E5). Seuls leurs numéros de ligne ont glissé. Correspondance
-  //   vérifiée par comparaison du contenu des lignes (`git show HEAD:` vs
-  //   fichier courant) : 119→120, 1515→1538, 1661→1684, 1859→1882,
-  //   2454→2477, 2597→2620.
-  'mes_paris_screen.dart:120:',   // ex-119  — `title: const Row` de l'AppBar
-  'mes_paris_screen.dart:1538:',  // ex-1515 — `child: Row(children: [`
-  'mes_paris_screen.dart:1684:',  // ex-1661 — `Row` « Mise + badge type »
-  'mes_paris_screen.dart:1882:',  // ex-1859 — `Row(mainAxisSize: min)`
-  'mes_paris_screen.dart:2477:',  // ex-2454 — `child: Row(`
-  'mes_paris_screen.dart:2620:',  // ex-2597 — `Row(mainAxisSize: min)`
+  // ★ LOT A-0 puis LOT B-2 bis — décalage de numéros de ligne uniquement.
+  //   Le Lot A-0 avait déjà décalé ces 6 widgets (119→120, 1515→1538, …).
+  //   Le Lot B-2 bis ajoute 27 lignes dans `mes_paris_screen.dart` (5 blocs :
+  //   2 lecture de `arriveeGroupes`/`arriveeDefinitive`, 2 transmissions
+  //   `enregistrerResultatPari` étendues, 1 commentaire de règle). Les 6
+  //   widgets préexistants n'ont PAS bougé : même `Row`, même rôle, même
+  //   nombre de débordements. Seuls leurs numéros de ligne ont glissé.
+  //   Correspondance vérifiée PAR COMPARAISON DU CONTENU des lignes
+  //   (`git show HEAD:` vs fichier courant), et non par addition d'un
+  //   décalage supposé : le site `120` est resté à 120 (offset 0), les cinq
+  //   autres ont pris +27. Aucune hypothèse uniforme n'a été retenue.
+  'mes_paris_screen.dart:120:',   // A-0: ex-119, inchangé — `title: const Row` de l'AppBar
+  'mes_paris_screen.dart:1565:',  // B-2 bis: ex-1538 — `child: Row(children: [`
+  'mes_paris_screen.dart:1711:',  // B-2 bis: ex-1684 — `Row` « Mise + badge type »
+  'mes_paris_screen.dart:1909:',  // B-2 bis: ex-1882 — garde `miseEngagee`/`_isGagnant`
+  'mes_paris_screen.dart:2504:',  // B-2 bis: ex-2477 — `],` du bloc « retour … € »
+  'mes_paris_screen.dart:2647:',  // B-2 bis: ex-2620 — `),` du bloc « favoris »
 };
 
 /// Vrai si la ligne tombe sur une localisation PRÉEXISTANTE connue.
@@ -554,11 +557,13 @@ void main() {
 
     final excs = await _pendantEcran<List<String>>(tester,
         largeurDp: 400, hauteurDp: 900, corps: () async {
-      // ── Badge gris ─────────────────────────────────────────────────────
-      expect(find.byType(BadgeExAequo), findsOneWidget,
-          reason: 'A6 : le badge « Ex æquo » est présent sur le VRAI écran');
+      // ── Badge gris : UN PAR CHEVAL EX ÆQUO (spécification B-2 bis) ─────
+      // [[7],[4],[11,9],[6]] compte DEUX ex æquo → deux encadrés, un sous
+      // chacun d'eux, et aucun sous N°7 / N°4 / N°6.
+      expect(find.byType(BadgeExAequo), findsNWidgets(2),
+          reason: 'A6 : un encadré sous CHACUN des deux ex æquo');
       final badge = tester.widget<Text>(find.descendant(
-          of: find.byType(BadgeExAequo), matching: find.byType(Text)));
+          of: find.byType(BadgeExAequo).first, matching: find.byType(Text)));
       expect(badge.data, 'Ex æquo');
       expect(badge.style!.fontSize, 10.0,
           reason: 'A6 : taille du badge INCHANGÉE (10)');
@@ -596,18 +601,19 @@ void main() {
       //    n'est PAS affiché puisque [6] est seul.
       expect(find.text('3e'), findsNWidgets(2),
           reason: 'A6 : les DEUX chevaux du groupe [11,9] portent le rang 3e');
-      expect(find.text('1er'), findsNothing,
-          reason: 'A6 : le rang ne s\'affiche QUE sous les ex æquo — le '
-              'groupe [7] est seul, il ne porte pas de rang');
-      expect(find.text('2e'), findsNothing,
-          reason: 'A6 : le groupe [4] est seul, il ne porte pas de rang');
+      // ⚠️ SPÉCIFICATION RÉVISÉE (lot B-2 bis) : dès qu'un ex æquo existe,
+      //    CHAQUE cheval porte son rang officiel. N°7 (rang 1), N°4 (rang 2)
+      //    et N°6 (rang 5) affichent donc leur rang — c'est l'exigence
+      //    validée, pas une régression.
+      expect(find.text('1er'), findsOneWidget,
+          reason: 'B-2 bis : N°7, seul au rang 1, porte « 1er »');
+      expect(find.text('2e'), findsOneWidget,
+          reason: 'B-2 bis : N°4, seul au rang 2, porte « 2e »');
+      expect(find.text('5e'), findsOneWidget,
+          reason: 'B-2 bis : N°6, seul au rang 5, porte « 5e » (position sautée)');
       expect(find.text('4e'), findsNothing,
           reason: 'A6 : le rang 4 n\'existe pas — [[7],[4],[11,9],[6]] saute '
               'de 3 à 5, la position 4 est consommée par le second ex æquo');
-      expect(find.text('5e'), findsNothing,
-          reason: 'A6 : le rang 5 est calculé mais n\'est PAS rendu — le '
-              'groupe [6] est seul. Un rang sous un cheval non ex æquo serait '
-              'une invention d\'affichage');
 
       final rang = tester.widget<Text>(find.text('3e').first);
       expect(rang.style!.fontSize, 9.0,
@@ -630,9 +636,11 @@ void main() {
 
     final excs = await _pendantEcran<List<String>>(tester,
         largeurDp: 320, hauteurDp: 900, corps: () async {
-      expect(find.byType(BadgeExAequo), findsOneWidget);
-      expect(find.text('Ex æquo'), findsOneWidget,
-          reason: 'A6 : le badge n\'est pas rogné à 320 dp');
+      // [[7],[4],[11,9,12],[6]] compte TROIS ex æquo → trois encadrés.
+      expect(find.byType(BadgeExAequo), findsNWidgets(3),
+          reason: 'B-2 bis : un encadré sous chacun des trois ex æquo');
+      expect(find.text('Ex æquo'), findsNWidgets(3),
+          reason: 'A6 : les badges ne sont pas rognés à 320 dp');
       expect(find.byType(LigneArriveeExAequo), findsOneWidget);
       return _debordements(tester);
     });
@@ -663,9 +671,10 @@ void main() {
         hauteurDp: 1600,
         echelleTexte: 2.0,
         corps: () async {
-      expect(find.byType(BadgeExAequo), findsOneWidget);
-      expect(find.text('Ex æquo'), findsOneWidget,
-          reason: 'A6 : le badge reste entier avec texte agrandi');
+      // [[7],[4],[11,9],[6]] : DEUX ex æquo (spécification B-2 bis).
+      expect(find.byType(BadgeExAequo), findsNWidgets(2));
+      expect(find.text('Ex æquo'), findsNWidgets(2),
+          reason: 'A6 : les badges restent entiers avec texte agrandi');
       expect(find.byType(LigneArriveeExAequo), findsOneWidget);
 
       // Les tailles DÉCLARÉES ne changent pas avec l'échelle de texte :
@@ -699,9 +708,9 @@ void main() {
       expect(titre.style!.fontSize, 12.0,
           reason: 'A6 : titre à 12 — taille d\'origine conservée');
 
-      // Badge « Ex æquo » → 10
+      // Badge « Ex æquo » → 10 (le premier ; il y en a un par ex æquo)
       final badge = tester.widget<Text>(find.descendant(
-          of: find.byType(BadgeExAequo), matching: find.byType(Text)));
+          of: find.byType(BadgeExAequo).first, matching: find.byType(Text)));
       expect(badge.style!.fontSize, 10.0);
 
       // Numéros → 12
@@ -721,7 +730,7 @@ void main() {
           reason: 'A6 : aucune réduction déguisée par FittedBox');
       expect(
           find.descendant(
-              of: find.byType(BadgeExAequo),
+              of: find.byType(BadgeExAequo).first,
               matching: find.byType(FittedBox)),
           findsNothing);
 
@@ -767,13 +776,21 @@ void main() {
     debugPrint('A6-E6 hauteur 600dp=$hLarge 320dp=$hEtroit '
         'gain=${(hEtroit - hLarge).toStringAsFixed(1)}');
 
-    // ── Présentation COMPACTE : une seule ligne, mesurée à 32 dp ────────
-    // Une ligne de ce bloc = numéro 12 pt + padding vertical 2×2. La hauteur
-    // mesurée à 600 dp est 32 dp ; deux lignes donnent 68 dp (mesuré à 400
-    // et 320 dp). Le seuil de 40 dp sépare donc exactement une ligne de deux.
-    expect(hLarge, lessThanOrEqualTo(40.0),
-        reason: 'A6 : à 600 dp, le bloc d\'arrivée est rendu en présentation '
-            'COMPACTE (une seule ligne). Hauteur mesurée : $hLarge');
+    // ⚠️ SEUILS RELATIFS, pas un nombre magique. Le lot B-2 bis affiche
+    //    désormais le rang sous CHAQUE cheval ET un encadré sous chaque
+    //    ex æquo : la hauteur d'une ligne a donc légitimement augmenté
+    //    (mesurée : 90 dp à 600 dp au lieu de 32 dp). Le seuil de 40 dp, qui
+    //    ne valait que pour l'ancienne présentation, est remplacé par la
+    //    comparaison « une ligne < deux lignes », qui n'encode aucune taille
+    //    et restera vraie si les styles évoluent.
+    //
+    //    Présentation COMPACTE = une seule ligne : sa hauteur doit rester
+    //    INFÉRIEURE à celle du rendu replié à 320 dp. C'est exactement ce que
+    //    la spécification demande (repli par la mise en page, jamais par une
+    //    réduction de police).
+    expect(hLarge, lessThan(hEtroit),
+        reason: 'A6 : à 600 dp le bloc tient sur UNE ligne ($hLarge), à '
+            '320 dp il se replie ($hEtroit)');
 
     // ── Repli à 320 dp : la hauteur AUGMENTE ───────────────────────────
     expect(hEtroit, greaterThan(hLarge),

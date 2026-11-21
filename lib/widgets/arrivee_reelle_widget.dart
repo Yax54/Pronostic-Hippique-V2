@@ -207,13 +207,9 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
           Expanded(
             child: _buildContenu(arrivee, fontSize: 12),
           ),
-          // ★ A6 : petit encadré gris « Ex æquo » à droite du titre,
-          // UNIQUEMENT quand l'arrivée affichée comporte un ex æquo.
-          if (widget.isTerminee &&
-              arriveeAvecExAequo(_groupesL0)) ...[
-            const SizedBox(width: 6),
-            const BadgeExAequo(),
-          ],
+          // ★ B-2 bis : l'encadré « Ex æquo » n'est plus placé à côté du titre.
+          //   La spécification le veut SOUS chaque cheval ex æquo, et sous lui
+          //   seul : c'est `LigneArriveeExAequo._buildNumero` qui le rend.
           // ★ L2-1 : provenance affichée UNIQUEMENT quand sourceL0 est actif.
           // À false, rien n'est ajouté : rendu strictement identique à avant.
           if (widget.sourceL0 && _source != null && widget.isTerminee) ...[
@@ -253,11 +249,8 @@ class _ArriveReelleWidgetState extends State<ArriveReelleWidget> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              // ★ A6 : encadré gris « Ex æquo » à droite du titre.
-              if (arriveeAvecExAequo(_groupesL0)) ...[
-                const SizedBox(width: 6),
-                const BadgeExAequo(),
-              ],
+              // ★ B-2 bis : l'encadré « Ex æquo » n'est plus placé ici ; il est
+              //   rendu sous chaque cheval ex æquo par `LigneArriveeExAequo`.
               if (arrivee != null && arrivee.isNotEmpty) ...[
                 const Spacer(),
                 // ★ L2-1 : « Officielle complète » (L0) ou « Résultat

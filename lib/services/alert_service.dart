@@ -831,6 +831,10 @@ class AlertService extends ChangeNotifier {
     required bool isGagne,
     required List<int> arrivee,
     required String message,
+    // ★ LOT B-2 bis — arrivée structurée, facultative. `null` = groupes
+    //   inconnus ou arrivée provisoire. Jamais déduite de `arrivee`.
+    List<List<int>>? arriveeGroupes,
+    bool? arriveeDefinitive,
   }) async {
     final tc = _trackedCourses[courseKey];
     if (tc == null) return;
@@ -839,6 +843,8 @@ class AlertService extends ChangeNotifier {
       isGagne: isGagne,
       arrivee: arrivee,
       message: message,
+      arriveeGroupes: arriveeGroupes,
+      arriveeDefinitive: arriveeDefinitive,
     );
     notifyListeners();
     await _save();

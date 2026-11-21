@@ -898,23 +898,28 @@ void main() {
   });
 
   // ═════════════════════════════════════════════════════════════════════════
-  //  CARACTÉRISATION D'UNE ANOMALIE EXISTANTE — HORS L2-1
+  //  CARACTÉRISATION DE L'ANOMALIE — CORRIGÉE PAR LE LOT B-2 bis
   //
-  //  ⚠️ CE TEST DOCUMENTE UN DÉFAUT, IL NE LE CONSACRE PAS.
+  //  ⚠️ CE TEST DOCUMENTAIT UN DÉFAUT ; IL VÉRIFIE DÉSORMAIS SA CORRECTION.
   //
-  //  `ZoneTurfService.chargerResultatsCourseComplet` construit
-  //  `Map<int,int> rangParNumero` (zone_turf_service.dart:1003) et affecte
-  //  `rangParNumero[rangInt] = num` (:1032). Deux chevaux au MÊME rang
-  //  partagent la même clé : le second écrase le premier. L'arrivée retournée
-  //  perd donc un ex æquo.
+  //  `ZoneTurfService.chargerResultatsCourseComplet` construisait
+  //  `Map<int,int> rangParNumero` et affectait `rangParNumero[rangInt] = num`.
+  //  Deux chevaux au MÊME rang partageaient la même clé : le second écrasait
+  //  le premier, et l'arrivée retournée PERDAIT un ex æquo.
   //
-  //  Ce comportement est ANTÉRIEUR à L2-1 et n'est pas corrigé (exclusion
-  //  explicite du périmètre). Le test fixe l'état OBSERVÉ pour qu'une
-  //  correction future soit visible et intentionnelle. Si ce test échoue
-  //  parce que le défaut a été corrigé, mettre à jour l'attendu : c'est le
-  //  signal attendu, pas une régression.
+  //  Le lot B-2 bis remplace cette Map par `Map<int,List<int>> rangsGroupes`,
+  //  dont l'affectation est un AJOUT (`putIfAbsent(...).add(num)`). Le cheval
+  //  ex æquo n'est plus perdu.
+  //
+  //  Double emploi volontaire de ce test :
+  //    1. il atteste l'état CORRIGÉ ([4,7,2] — les 3 chevaux, aucun perdu) ;
+  //    2. il ÉCHOUERAIT si l'écrasement était réintroduit : l'ancien code
+  //       rendait `[7,2]`, et les assertions ci-dessous l'excluent
+  //       explicitement (`isNot(equals(<int>[7, 2]))`, `contains(4)`).
+  //  C'est donc à la fois une preuve de correction et un garde-fou de
+  //  non-régression sur ce chemin précis.
   // ═════════════════════════════════════════════════════════════════════════
-  test('L2-X [caractérisation, anomalie existante] ex æquo écrasés par Map',
+  test('L2-X [corrigé par B-2 bis] les ex æquo ne sont plus écrasés par Map',
       () async {
     final client = MockClient((request) async {
       if (request.url.path.contains('participants')) {
@@ -955,20 +960,23 @@ void main() {
       () => client,
     );
 
-    debugPrint('L2-X ANOMALIE : arrivée retournée = '
-        '${resultat?.arriveeOfficielle} (attendu informatif : 4 perdu)');
+    debugPrint('L2-X ÉTAT CORRIGÉ : arrivée retournée = '
+        '${resultat?.arriveeOfficielle} (attendu : [4, 7, 2], 4 conservé)');
 
     expect(resultat, isNotNull);
-    // ÉTAT OBSERVÉ, non souhaitable : l'un des deux ex æquo a disparu.
-    expect(resultat!.arriveeOfficielle, equals(<int>[7, 2]),
-        reason: 'ANOMALIE DOCUMENTÉE : le N°4, ex æquo du N°7 au rang 1, est '
-            'écrasé par la Map<int,int> de zone_turf_service.dart:1032. '
-            'L2-1 ne corrige pas ce défaut (hors périmètre) et n\'utilise pas '
-            'ce chemin pour afficher.');
-    expect(resultat.arriveeOfficielle, hasLength(2),
-        reason: 'ANOMALIE : 3 chevaux classés, 2 restitués');
-    expect(resultat.arriveeOfficielle, isNot(contains(4)),
-        reason: 'ANOMALIE : le N°4 a été perdu');
+    // ÉTAT CORRIGÉ : les DEUX ex æquo du rang 1 sont restitués, puis le rang 2.
+    expect(resultat!.arriveeOfficielle, equals(<int>[4, 7, 2]),
+        reason: 'le N°4 et le N°7 sont ex æquo au rang 1 : les deux doivent '
+            'figurer, dans l\'ordre publié par l\'API, suivis du N°2 (rang 2). '
+            'La Map<int,int> qui écrasait l\'un des deux a été remplacée par '
+            'Map<int,List<int>> au lot B-2 bis.');
+    expect(resultat.arriveeOfficielle, hasLength(3),
+        reason: '3 chevaux classés, 3 chevaux restitués');
+    expect(resultat.arriveeOfficielle, contains(4),
+        reason: 'GARDE-FOU : le N°4 ne doit plus jamais être perdu');
+    expect(resultat.arriveeOfficielle, isNot(equals(<int>[7, 2])),
+        reason: 'GARDE-FOU : [7, 2] est l\'ancien résultat fautif. S\'il '
+            'réapparaît, l\'écrasement a été réintroduit.');
   });
 }
 

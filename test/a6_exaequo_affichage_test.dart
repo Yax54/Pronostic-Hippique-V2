@@ -188,10 +188,14 @@ void main() {
 
       expect(_nbTextes(tester, '1er'), 3,
           reason: 'un rang sous CHACUN des trois chevaux ex æquo');
-      // Le cheval seul du rang 4 ne porte AUCUN rang.
-      final textes = _textes(tester);
-      expect(textes.where((s) => s == '4e'), isEmpty,
-          reason: 'seuls les chevaux ex æquo portent un rang');
+      // ⚠️ SPÉCIFICATION RÉVISÉE (lot B-2 bis) : dès qu'un ex æquo existe,
+      //    CHAQUE cheval porte son rang. N°1, seul au rang 4, porte donc
+      //    « 4e » — c'est l'exigence validée, pas une régression.
+      expect(_nbTextes(tester, '4e'), 1,
+          reason: 'B-2 bis : N°1, seul au rang 4, porte « 4e »');
+      // Seuls les ex æquo portent un encadré « Ex æquo ».
+      expect(_nbTextes(tester, 'Ex æquo'), 3,
+          reason: 'un encadré sous chacun des trois ex æquo, et sous eux seuls');
     });
 
     testWidgets('A6-2.3 ex æquo au 3e rang : « 3e » sous les concernés',
@@ -210,8 +214,15 @@ void main() {
       final textes = _textes(tester);
       expect(textes.where((s) => s == '4e'), isEmpty,
           reason: 'position sautée : le rang 4 n\'existe pas');
-      expect(textes.where((s) => s == '1er'), isEmpty,
-          reason: 'aucun ex æquo au rang 1 → aucun rang affiché');
+      // ⚠️ SPÉCIFICATION RÉVISÉE (lot B-2 bis) : dès qu'un ex æquo existe,
+      //    CHAQUE cheval porte son rang officiel. N°7 est donc 1er, N°4 2e et
+      //    N°6 5e — c'est l'exigence validée, pas une régression.
+      expect(_nbTextes(tester, '1er'), 1,
+          reason: 'B-2 bis : N°7, seul au rang 1, porte « 1er »');
+      expect(_nbTextes(tester, '2e'), 1,
+          reason: 'B-2 bis : N°4, seul au rang 2, porte « 2e »');
+      expect(_nbTextes(tester, '5e'), 1,
+          reason: 'B-2 bis : N°6, seul au rang 5, porte « 5e »');
     });
 
     testWidgets('A6-2.4 fond et bordure jaune doré sur les SEULS ex æquo',
@@ -259,18 +270,18 @@ void main() {
       expect(_textes(tester), equals(<String>['Ex æquo']),
           reason: 'encadré gris portant exactement « Ex æquo »');
 
-      // 2. La ligne de numéros ne porte PAS l'encadré elle-même : celui-ci
-      //    appartient au TITRE, et c'est chaque bulle qui l'ajoute. Ce test
-      //    verrouille cette séparation (sinon l'encadré apparaîtrait deux
-      //    fois dans les écrans qui l'ajoutent aussi à côté du titre).
+      // 2. ⚠️ SPÉCIFICATION RÉVISÉE (lot B-2 bis) : l'encadré « Ex æquo »
+      //    appartient désormais à la LIGNE, et non au titre. Il est rendu
+      //    SOUS chaque cheval ex æquo, et sous lui seul. Les encadrés placés
+      //    auprès des titres ont été retirés des écrans : plus de doublon.
       await _monter(tester, const <List<int>>[
         [7, 12],
         [8],
       ]);
-      expect(find.byType(BadgeExAequo), findsNothing,
-          reason: 'la ligne de numéros n\'affiche jamais l\'encadré');
-      expect(_textes(tester).where((s) => s == 'Ex æquo'), isEmpty,
-          reason: 'aucun encadré rendu par la ligne seule');
+      expect(find.byType(BadgeExAequo), findsNWidgets(2),
+          reason: 'B-2 bis : un encadré SOUS chacun des deux ex æquo');
+      expect(_textes(tester).where((s) => s == 'Ex æquo').length, 2,
+          reason: 'B-2 bis : exactement deux encadrés, pas un de plus');
     });
 
     testWidgets('A6-2.6 sélection IA conservée en vert, ex æquo en doré',

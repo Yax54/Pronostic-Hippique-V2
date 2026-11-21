@@ -1259,6 +1259,11 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       );
       final arrivee = resultat?.arriveeOfficielle;
       final disqualifies = resultat?.disqualifies ?? [];
+      // ★ LOT B-2 bis — groupes OFFICIELS EXACTS, ou `null` si l'API ne les a
+      //   pas fournis. Ils ne sont JAMAIS déduits de `arrivee` (liste plate) :
+      //   ce serait reconstruire des ex æquo par déduction.
+      final groupes = resultat?.arriveeGroupes;
+      final definitive = resultat?.arriveeDefinitive;
 
       if (!mounted) return;
 
@@ -1283,7 +1288,17 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
             _resultMessage = msg;
             _checkingResult = false;
           });
-          alertSvc.enregistrerResultatPari(widget.storageKey, isGagne: false, arrivee: arrivee, message: msg);
+          // ★ LOT B-2 bis : mêmes règles que le chemin principal. Une arrivée
+          //   provisoire n'est jamais enregistrée comme définitive, et les
+          //   groupes ne sont jamais déduits de la liste plate.
+          alertSvc.enregistrerResultatPari(
+            widget.storageKey,
+            isGagne: false,
+            arrivee: arrivee,
+            message: msg,
+            arriveeGroupes: definitive == false ? null : groupes,
+            arriveeDefinitive: definitive,
+          );
           _autoRetryTimer?.cancel();
           return;
         }
@@ -1423,11 +1438,23 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
         });
 
         // ★ Persister le résultat dans TrackedCourse pour ne pas le perdre à la navigation
+        //
+        // ★ LOT B-2 bis — les groupes officiels sont transmis au ticket.
+        //   RÈGLE ABSOLUE : une arrivée explicitement PROVISOIRE n'est jamais
+        //   enregistrée comme définitive. Si `definitive == false`, on ne
+        //   transmet AUCUN groupe (`null` = inconnu) et le drapeau `false`
+        //   est conservé tel quel : le ticket saura que son arrivée n'est pas
+        //   définitive, au lieu de la présenter comme telle.
+        //   Si `definitive == null` (API muette), les groupes sont transmis —
+        //   ce sont des données factuelles — et le drapeau reste `null`.
+        final groupesAEnregistrer = definitive == false ? null : groupes;
         alertSvc.enregistrerResultatPari(
           widget.storageKey,
           isGagne: gagnant,
           arrivee: arrivee,
           message: msg,
+          arriveeGroupes: groupesAEnregistrer,
+          arriveeDefinitive: definitive,
         );
 
         // ★ Synchroniser le résultat dans PmuProvider (Profil/Stats)
@@ -1939,17 +1966,15 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                           // renvoie le badge à la ligne SANS réduire la
                           // taille des caractères (mesuré : 209 px de
                           // débordement sur un rendu comparable).
-                          Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            spacing: 6,
-                            runSpacing: 2,
-                            children: const [
-                              Text('Arrivée officielle :',
-                                  style: TextStyle(
-                                      color: Colors.white54, fontSize: 12)),
-                              BadgeExAequo(),
-                            ],
-                          ),
+                          //
+                          // ★ B-2 bis — l'encadré « Ex æquo » n'est PLUS placé
+                          // ici : la spécification validée le veut SOUS chaque
+                          // cheval ex æquo, et sous lui seul. Il est donc rendu
+                          // par `LigneArriveeExAequo._buildNumero`. Le titre
+                          // retrouve sa présentation historique.
+                          const Text('Arrivée officielle :',
+                              style: TextStyle(
+                                  color: Colors.white54, fontSize: 12)),
                           const SizedBox(height: 4),
                           LigneArriveeExAequo(
                             groupes: _groupesExAequoAffiches()!,

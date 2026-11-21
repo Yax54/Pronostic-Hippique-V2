@@ -2900,15 +2900,10 @@ class _DetailJourSheet extends StatelessWidget {
         // étroite du détail de journée (mesuré : une `Row` débordait de
         // 53 px). Sans ex æquo, le `Wrap` ne contient que le titre et le
         // rendu est identique à l'existant.
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 6,
-          children: [
-            const Text('Arrivée réelle',
-                style: TextStyle(color: Colors.white38, fontSize: 14)),
-            if (arriveeAvecExAequo(groupes)) const BadgeExAequo(),
-          ],
-        ),
+        // ★ B-2 bis : l'encadré « Ex æquo » n'est plus placé ici ; il est rendu
+        //   sous chaque cheval ex æquo par `LigneArriveeExAequo`.
+        const Text('Arrivée réelle',
+            style: TextStyle(color: Colors.white38, fontSize: 14)),
         const SizedBox(height: 3),
         if (groupes != null)
           // ★ A6 : nouveau rendu UNIQUEMENT en présence d'un ex æquo ; sinon

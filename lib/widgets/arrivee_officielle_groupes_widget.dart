@@ -14,19 +14,24 @@
 //  chevaux arrivés SIMULTANÉMENT ; aplatir ou masquer la simultanéité fait
 //  lire à l'utilisateur un classement qui n'existe pas.
 //
-//  ── Règle d'affichage retenue (spécification validée) ────────────────────
-//  • Les numéros gardent leur présentation habituelle.
-//  • SEULS les chevaux ex æquo sont mis en évidence : fond jaune doré et
-//    bordure assortie.
-//  • Sous chacun de ces numéros figure son RANG OFFICIEL (« 2e », « 3e »…).
-//  • Un petit encadré gris « Ex æquo » est placé à droite du titre.
-//  • Les positions SAUTÉES sont respectées : un groupe de 2 chevaux occupe
-//    UN rang et consomme 2 places, le groupe suivant démarre donc au rang 3.
-//  • Aucune phrase explicative longue.
+//  ── Règle d'affichage retenue (spécification validée, révisée B-2 bis) ───
+//  Dès qu'une arrivée comporte au moins un ex æquo :
+//    • CHAQUE cheval porte son RANG OFFICIEL sous son numéro (« 1er », « 2e »,
+//      « 8e »…), y compris les chevaux arrivés seuls ;
+//    • les chevaux ex æquo partagent le MÊME rang officiel ;
+//    • un petit encadré gris « Ex æquo » figure sous CHACUN des chevaux
+//      ex æquo, et sous eux seuls ;
+//    • les positions SAUTÉES sont respectées : un groupe de 2 chevaux occupe
+//      UN rang et consomme 2 places, le groupe suivant démarre donc au rang 3.
+//  Les numéros gardent leur présentation habituelle : SEULS les ex æquo sont
+//  mis en évidence (fond et bordure jaune doré).
+//  Aucune phrase explicative longue.
 //
 //  ⚠️ Ce widget n'est INSTANCIÉ que lorsqu'un ex æquo existe réellement.
 //  Une arrivée sans ex æquo continue d'emprunter le rendu historique de son
 //  écran, strictement inchangé (aucun rang, aucun encadré, aucune retouche).
+//  Les prédicats purs ci-dessous le garantissent : hors ex æquo, les rangs ne
+//  sont pas produits et aucun badge n'est rendu.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
@@ -63,6 +68,27 @@ List<int> rangsOfficiels(List<List<int>> groupes) {
   for (final g in groupes) {
     rangs.add(rang);
     rang += g.length;
+  }
+  return rangs;
+}
+
+/// Rang officiel de CHAQUE cheval, dans l'ordre d'affichage.
+///
+/// PURE. Les chevaux d'un même groupe partagent le MÊME rang officiel :
+///   `[[2],[4],[5,7],[8],[3],[6]]` → `[1, 2, 3, 3, 5, 6, 7]`
+///
+/// Le rang de chaque cheval est celui de son groupe (`rangsOfficiels`), répété
+/// autant de fois que le groupe compte de chevaux. Aucun départage : les ex
+/// æquo reçoivent une valeur identique, jamais deux rangs voisins.
+///
+/// Un groupe vide ne produit aucun rang (0 cheval → 0 valeur).
+List<int> rangsParCheval(List<List<int>> groupes) {
+  final parGroupe = rangsOfficiels(groupes);
+  final rangs = <int>[];
+  for (var i = 0; i < groupes.length; i++) {
+    for (var k = 0; k < groupes[i].length; k++) {
+      rangs.add(parGroupe[i]);
+    }
   }
   return rangs;
 }
@@ -124,6 +150,11 @@ class LigneArriveeExAequo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rangs = rangsOfficiels(groupes);
+    // Les rangs ne sont affichés QUE si l'arrivée comporte réellement un ex
+    // æquo. Sans ex æquo, le rendu reste strictement celui d'avant : aucun
+    // rang, aucun badge. C'est la garde qui garantit « aucun changement
+    // visuel inutile sur une arrivée normale ».
+    final montrerRangs = arriveeAvecExAequo(groupes);
     final children = <Widget>[];
 
     for (var gi = 0; gi < groupes.length; gi++) {
@@ -168,6 +199,7 @@ class LigneArriveeExAequo extends StatelessWidget {
           numero: num,
           exAequo: estExAequo,
           rang: rangs[gi],
+          montrerRang: montrerRangs,
         ));
       }
     }
@@ -179,6 +211,7 @@ class LigneArriveeExAequo extends StatelessWidget {
     required int numero,
     required bool exAequo,
     required int rang,
+    required bool montrerRang,
   }) {
     final estIa = numerosIa.contains(numero.toString());
 
@@ -224,17 +257,28 @@ class LigneArriveeExAequo extends StatelessWidget {
                   exAequo || estIa ? FontWeight.bold : FontWeight.normal,
             ),
           ),
-          // Le rang n'est affiché QUE sous les chevaux ex æquo.
-          if (exAequo)
+          // Le rang officiel est affiché sous CHAQUE cheval dès qu'une arrivée
+          // comporte un ex æquo : les ex æquo partagent la même valeur.
+          // Les chevaux arrivés seuls le portent aussi (spécification B-2 bis).
+          if (montrerRang)
             Text(
               libelleRang(rang),
               style: TextStyle(
-                color: kCouleurExAequo.withValues(alpha: 0.85),
+                color: exAequo
+                    ? kCouleurExAequo.withValues(alpha: 0.85)
+                    : Colors.white.withValues(alpha: 0.45),
                 fontSize: fontSize - 3,
                 fontWeight: FontWeight.bold,
                 height: 1.0,
               ),
             ),
+          // Encadré gris « Ex æquo » SOUS le cheval concerné, et sous lui seul.
+          // Réutilise le composant gris existant `BadgeExAequo` : aucune
+          // nouvelle couleur, aucun nouveau style, aucun fond ajouté.
+          if (exAequo) ...[
+            const SizedBox(height: 2),
+            const BadgeExAequo(),
+          ],
         ],
       ),
     );

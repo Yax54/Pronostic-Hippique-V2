@@ -29,12 +29,36 @@ class ResultatCourse {
   final List<int> arriveeOfficielle;
   final List<int> disqualifies;
   final Map<int, String> statutsPartants;
+
+  /// ★ LOT B-2 bis — GROUPES OFFICIELS EXACTS (`List<List<int>>`).
+  ///
+  /// `arriveeOfficielle` est un APLATISSEMENT. Elle ne peut pas représenter
+  /// deux chevaux ex æquo : `[5, 7]` et `[7, 5]` y sont indiscernables et le
+  /// rang de chacun devient indéterminable. Ce champ porte donc la structure
+  /// exacte publiée par l'API, groupes préservés.
+  ///
+  /// `null` = groupes NON CONNUS (aucune donnée, ou structure invalide).
+  /// Ne jamais en déduire une absence d'ex æquo.
+  final List<List<int>>? arriveeGroupes;
+
+  /// ★ LOT B-2 bis — caractère définitif, tel que fourni par l'API.
+  /// `null` = inconnu. Aucune valeur par défaut : on n'affirme jamais
+  /// « définitif » sans que l'API le dise.
+  final bool? arriveeDefinitive;
+
   const ResultatCourse({
     required this.arriveeOfficielle,
     this.disqualifies = const [],
     this.statutsPartants = const {},
+    this.arriveeGroupes,
+    this.arriveeDefinitive,
   });
   bool get aDesDisqualifies => disqualifies.isNotEmpty;
+
+  /// `true` s'il y a au moins un ex æquo parmi les groupes CONNUS.
+  /// `false` si les groupes sont inconnus : on n'affirme pas l'absence.
+  bool get aDesExAequo => arriveeGroupes?.any((g) => g.length > 1) ?? false;
+
   String get resumeDisq {
     if (disqualifies.isEmpty) return '';
     return 'DISQ : ${disqualifies.map((n) => 'N°$n').join(', ')}';
