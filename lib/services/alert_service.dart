@@ -17,6 +17,10 @@ import '../models/zt_models.dart';
 import '../providers/pmu_provider.dart';
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
+// ★ ÉTAPE 2 — référentiel central : reconnaissance EN LECTURE des types de
+//   paris historiques. Module pur, sans état et sans import : aucune boucle
+//   possible. Utilisé UNIQUEMENT par des getters dérivés de `TrackedCourse`.
+import 'referentiel_paris_pmu.dart';
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// AlertService — Gestion complète des alertes Pronostic Hippique v3.0 (Lot 2)
@@ -2996,6 +3000,43 @@ class TrackedCourse {
   /// ★ LOT B2-C — Vrai si une seule des deux composantes est renseignée.
   bool get misesGagnantPlaceIncompletes =>
       (miseGagnant == null) != (misePlace == null);
+
+  // ★ ÉTAPE 2 — INTERPRÉTATION EN LECTURE DU TYPE DE PARI.
+  //
+  //  Contrat strict :
+  //   • `typePari` n'est JAMAIS modifié, normalisé ni réécrit ;
+  //   • aucun getter ci-dessous n'écrit quoi que ce soit ;
+  //   • `toJson` reste inchangé, et `fromJson` conserve son défaut existant
+  //     (`?? 'Simple Gagnant'`) : ces valeurs sont DÉRIVÉES, jamais stockées ;
+  //   • les anciens tickets gardent leur `storageKey` et leurs champs intacts.
+  //
+  //  ⚠️ POINT DÉLICAT, MESURÉ ET NON CORRIGÉ ICI : `fromJson` applique
+  //     `j['typePari'] as String? ?? 'Simple Gagnant'`. Un ticket enregistré
+  //     SANS clé `typePari` est donc relu comme « Simple Gagnant » — une
+  //     supposition faite EN AMONT, dans le désérialiseur. La présente étape
+  //     ne la modifie pas (elle changerait le comportement de chargement des
+  //     anciens tickets, ce qui est interdit) ; elle ne peut donc pas la
+  //     distinguer d'un vrai Simple Gagnant. C'est une limite assumée,
+  //     documentée ici pour l'étape 3.
+
+  /// Type de pari PMU canonique, ou `null` si le libellé enregistré n'est pas
+  /// répertorié. Lecture seule.
+  ///
+  /// Un ticket « Gagnant+Placé » rend `null` : ce n'est pas un pari PMU mais
+  /// un ticket applicatif à deux composantes.
+  TypePariPmu? get typePmu => typePmuDepuisLibelleHistorique(typePari);
+
+  /// `true` si le libellé enregistré est reconnu par le référentiel.
+  bool get typePariReconnu => typePmu != null;
+
+  /// `true` si le libellé est le ticket applicatif à deux composantes
+  /// (« Gagnant+Placé »), volontairement hors référentiel PMU.
+  bool get typePariHorsReferentielPmu =>
+      estTicketApplicatifHorsReferentielPmu(typePari);
+
+  /// `true` si le type est absent, vide ou inconnu : aucune interprétation
+  /// possible. État signalé, jamais comblé par un type par défaut.
+  bool get typePariNonResolu => typePmu == null && !typePariHorsReferentielPmu;
 
   TrackedCourse({
     required this.numReunion,

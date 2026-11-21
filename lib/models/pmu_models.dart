@@ -1,3 +1,18 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ÉTAPE 2 — RECONNAISSANCE EN LECTURE DES TYPES DE PARIS HISTORIQUES
+//
+//  Ce fichier importe le référentiel central pour pouvoir INTERPRÉTER un
+//  `typePari` déjà enregistré. Il ne l'utilise QUE dans des getters dérivés :
+//  aucun champ n'est ajouté, aucune chaîne n'est réécrite, `toJson` et
+//  `fromJson` sont inchangés au caractère près.
+//
+//  Le sens de la dépendance est volontaire et unique :
+//      pmu_models.dart  ──►  services/referentiel_paris_pmu.dart
+//  Le référentiel n'importe rien (mesuré : 0 directive `import`), il ne peut
+//  donc pas y avoir de cycle.
+// ═══════════════════════════════════════════════════════════════════════════
+import '../services/referentiel_paris_pmu.dart';
+
 // ─── Réunion ────────────────────────────────────────────────────────────────
 
 class PmuReunion {
@@ -476,6 +491,40 @@ class UserPrediction {
     final t = typePari.toLowerCase();
     return t.contains('tiercé') || t.contains('quarté') || t.contains('quinté');
   }
+
+  // ★ ÉTAPE 2 — INTERPRÉTATION EN LECTURE DU TYPE DE PARI.
+  //
+  //  Contrat strict, identique à celui de `TrackedCourse` :
+  //   • `typePari` n'est JAMAIS modifié, normalisé ni réécrit ;
+  //   • aucun getter ci-dessous n'écrit quoi que ce soit ;
+  //   • `toJson` reste inchangé : ces valeurs sont DÉRIVÉES, jamais stockées.
+  //
+  //  Un type absent, vide ou inconnu rend `null`. JAMAIS « Simple Gagnant » :
+  //  supposer un type par défaut reviendrait à attribuer un rapport officiel
+  //  à un ticket dont on ignore ce qu'il est. À noter que `fromJson` de ce
+  //  modèle applique déjà `?? ''` pour un `typePari` absent — la chaîne reste
+  //  telle quelle, et c'est bien `''` qui est interprété comme non résolu.
+
+  /// Type de pari PMU canonique, ou `null` si le libellé enregistré n'est pas
+  /// répertorié. Lecture seule.
+  ///
+  /// Un ticket « Gagnant+Placé » rend `null` : ce n'est pas un pari PMU mais
+  /// un ticket applicatif à deux composantes (voir
+  /// [estTicketApplicatifHorsReferentielPmu] pour le distinguer d'un libellé
+  /// réellement inconnu).
+  TypePariPmu? get typePmu => typePmuDepuisLibelleHistorique(typePari);
+
+  /// `true` si le libellé enregistré est reconnu par le référentiel.
+  bool get typePariReconnu => typePmu != null;
+
+  /// `true` si le libellé est un ticket applicatif à deux composantes
+  /// (« Gagnant+Placé »), donc volontairement hors référentiel PMU.
+  bool get typePariHorsReferentielPmu =>
+      estTicketApplicatifHorsReferentielPmu(typePari);
+
+  /// `true` si le type est ABSENT, vide ou inconnu — c'est-à-dire si aucune
+  /// interprétation n'est possible. État signalé, jamais comblé par un défaut.
+  bool get typePariNonResolu => typePmu == null && !typePariHorsReferentielPmu;
 
   UserPrediction({
     required this.id,
