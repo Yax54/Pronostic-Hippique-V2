@@ -154,12 +154,51 @@ void main() {
     });
 
     test('aucun type du sélecteur n\'exige une variante choisie', () {
-      // Conséquence directe : `capturePariComplete` ne doit jamais être
-      // bloquée par l'absence de variante pour ces huit types.
+      // ★ R10 : ce test visait un point VALIDE — ces trois types ne réclament
+      //   effectivement aucune variante choisie. Mais il l'affirmait par le
+      //   biais de `capturePariComplete`, qui depuis R10 exige AUSSI le bon
+      //   nombre de numéros. Le helper `_tc` ne fournit que 3 numéros par
+      //   défaut, ce qui rendait l'assertion dépendante d'un détail sans
+      //   rapport avec ce qu'elle voulait prouver (un Quinté+ passait pour
+      //   complet avec 3 numéros sur 5).
+      //
+      //   On teste désormais l'intention RÉELLE, directement : ces types ne
+      //   font pas partie des types à variante obligatoire. Et on vérifie en
+      //   plus qu'avec un nombre de numéros CORRECT, ils sont bien complets.
+      const exigeVariante = {'Tiercé Ordre', 'Tiercé Désordre', 'Couplé Ordre'};
+      const nbRequis = {'Quarté+': 4, 'Quinté+': 5, 'Tiercé': 3};
+
       for (final t in ['Quarté+', 'Quinté+', 'Tiercé']) {
-        final ticket = _tc(typePari: t, codePmuOfficiel: codePmuPour(t));
+        expect(exigeVariante.contains(t), isFalse,
+            reason: '$t n\'exige aucune variante choisie');
+
+        // Et avec le bon nombre de numéros, la capture est bien complète.
+        final ticket = _tc(
+          typePari: t,
+          codePmuOfficiel: codePmuPour(t),
+          numerosJoues: List<int>.generate(nbRequis[t]!, (i) => i + 1),
+        );
         expect(ticket.capturePariComplete, isTrue,
-            reason: '$t : aucun choix de variante n\'est requis');
+            reason: '$t avec ${nbRequis[t]} numéros : capture complète');
+      }
+    });
+
+    test('★ R10 — avec un nombre de numéros INSUFFISANT, c\'est incomplet', () {
+      // Le faux positif précisément corrigé : un Quinté+ à 3 numéros n'est
+      // pas complet. Ce cas n'était couvert nulle part auparavant.
+      for (final t in ['Quarté+', 'Quinté+', 'Tiercé']) {
+        final ticket = _tc(
+          typePari: t,
+          codePmuOfficiel: codePmuPour(t),
+          numerosJoues: const [1, 3, 5], // 3 numéros, insuffisant pour Q+/Q+
+        );
+        if (t == 'Tiercé') {
+          expect(ticket.capturePariComplete, isTrue,
+              reason: 'Tiercé : 3 numéros sont exactement ce qu\'il faut');
+        } else {
+          expect(ticket.capturePariComplete, isFalse,
+              reason: '$t : 3 numéros ne suffisent pas');
+        }
       }
     });
   });

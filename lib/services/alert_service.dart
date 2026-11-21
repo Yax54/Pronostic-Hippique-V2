@@ -21,6 +21,9 @@ import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Pl
 //   paris historiques. Module pur, sans état et sans import : aucune boucle
 //   possible. Utilisé UNIQUEMENT par des getters dérivés de `TrackedCourse`.
 import 'referentiel_paris_pmu.dart';
+// ★ R10 : source UNIQUE du nombre de chevaux attendu. Fichier pur (0 import).
+import 'gain_ticket_calculator.dart'
+    show TypePariJoue, typePariDepuisLibelle, tailleCombinaisonAttendue, exigeOrdreExact;
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// AlertService — Gestion complète des alertes Pronostic Hippique v3.0 (Lot 2)
@@ -3027,10 +3030,43 @@ class TrackedCourse {
   /// Formule Multi / Mini Multi (`'en4'`…`'en7'`). Toujours `null` dans ce lot.
   final String? formulePari;
 
-  /// Le ticket porte-t-il de quoi identifier sa variante sans deviner ?
+  /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
+  ///
+  /// CONTRAT STRICTEMENT IDENTIQUE à `UserPrediction.capturePariComplete`
+  /// (approche FACTUELLE). L'ancienne version rendait `true` dès que le code
+  /// PMU était présent, ce qui était faux dans cinq cas mesurés (Quinté+ sans
+  /// numéro, Tiercé à deux numéros, ticket vide avec code forcé, ordre
+  /// incohérent, Multi sans formule).
+  ///
+  /// `true` exige donc TOUT ceci : code PMU connu, type identifié, nombre de
+  /// numéros EXACTEMENT celui attendu par le règlement, ordre réellement
+  /// capturé si le pari l'impose (et cohérent avec `numerosJoues`), variante
+  /// explicitement choisie s'il en faut une.
+  ///
+  /// ⚠️ Ne dit RIEN de la calculabilité financière : une mise absente ou un
+  ///    rapport officiel manquant ne changent pas ce verdict.
+  ///
   /// Getter DÉRIVÉ : jamais persisté.
   bool get capturePariComplete {
     if (codePmuOfficiel == null) return false;
+
+    final type = typePariDepuisLibelle(typePari);
+    if (type == TypePariJoue.inconnu) return false;
+
+    final attendu = tailleCombinaisonAttendue(type);
+    if (attendu == null || numerosJoues.length != attendu) return false;
+
+    if (exigeOrdreExact(type)) {
+      final ordre = numerosDansOrdre;
+      if (ordre == null) return false;
+      if (ordre.length != numerosJoues.length) return false;
+      final triOrdre = List<int>.from(ordre)..sort();
+      final triJoues = List<int>.from(numerosJoues)..sort();
+      for (var i = 0; i < triOrdre.length; i++) {
+        if (triOrdre[i] != triJoues[i]) return false;
+      }
+    }
+
     final exigeVariante = typePari == 'Tiercé Ordre' ||
         typePari == 'Tiercé Désordre' ||
         typePari == 'Couplé Ordre';

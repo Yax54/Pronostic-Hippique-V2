@@ -18,6 +18,15 @@
 //  Placé ? » ait UNE seule autorité et ne soit jamais redéfini localement.
 // ═══════════════════════════════════════════════════════════════════════════
 import '../services/referentiel_paris_pmu.dart';
+// ★ R10 : source UNIQUE du nombre de chevaux attendu et du type joué.
+//   `gain_ticket_calculator.dart` n'a AUCUN import (mesuré : 0 directive), il
+//   est donc pur et ne peut pas créer de cycle.
+import '../services/gain_ticket_calculator.dart'
+    show
+        TypePariJoue,
+        typePariDepuisLibelle,
+        tailleCombinaisonAttendue,
+        exigeOrdreExact;
 import '../utils/type_pari_utils.dart' show estTypeGagnantPlace;
 
 // ─── Réunion ────────────────────────────────────────────────────────────────
@@ -489,18 +498,54 @@ class UserPrediction {
   /// soit nécessaire lorsqu'ils le seront.
   final String? formulePari;
 
-  /// Le ticket porte-t-il de quoi identifier sa variante **sans deviner** ?
+  /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
-  /// `true` si le code PMU est connu ET qu'aucun choix de variante n'était
-  /// requis (Quarté+/Quinté+ : c'est le rapport officiel qui tranche), ou si
-  /// le choix requis a bien été capturé. `false` sinon.
+  /// CONTRAT CORRIGÉ. L'ancienne version rendait `true` dès que le code PMU
+  /// était présent, ce qui était FAUX dans cinq cas mesurés :
+  ///   • Quinté+ avec un code mais ZÉRO numéro ;
+  ///   • Tiercé avec un code mais deux numéros au lieu de trois ;
+  ///   • ticket vide dont seul le code a été forcé ;
+  ///   • ordre incompatible avec les numéros joués ;
+  ///   • Multi sans formule.
   ///
-  /// Getter DÉRIVÉ : jamais persisté (voir le test `etape2` qui interdit les
-  /// getters dans le JSON).
+  /// La règle est désormais **factuelle** : on n'affirme complet que si l'on
+  /// peut NOMMER ce qui est présent. `true` exige donc TOUT ceci :
+  ///   1. le code PMU est connu ;
+  ///   2. le type de pari est identifié (sinon on ne sait rien attendre) ;
+  ///   3. le nombre de numéros enregistrés égale EXACTEMENT le nombre attendu
+  ///      par le règlement ([tailleCombinaisonAttendue]), et il est non nul ;
+  ///   4. si le pari impose l'ordre exact, `numerosDansOrdre` est présent ;
+  ///   5. si une variante est requise, elle a été explicitement choisie.
+  ///
+  /// ⚠️ Ce getter ne dit RIEN de la calculabilité financière : une mise
+  ///    absente ou un rapport officiel manquant ne le font pas changer d'avis.
+  ///    « Informations capturées » ≠ « ticket financièrement calculable ».
+  ///
+  /// Getter DÉRIVÉ : jamais persisté.
   bool get capturePariComplete {
     if (codePmuOfficiel == null) return false;
-    // Le choix de variante n'est requis que pour Tiercé Ordre/Désordre et
-    // Couplé Ordre — soit exactement les types où `varianteChoisie` a un sens.
+
+    final type = typePariDepuisLibelle(typePari);
+    if (type == TypePariJoue.inconnu) return false;
+
+    // 3. Le nombre de numéros enregistrés doit être EXACTEMENT celui attendu.
+    final attendu = tailleCombinaisonAttendue(type);
+    if (attendu == null || numerosJoues.length != attendu) return false;
+
+    // 4. Ordre exact exigé => l'ordre doit avoir été réellement capturé, et
+    //    désigner les mêmes chevaux que `numerosJoues` (invariant documenté).
+    if (exigeOrdreExact(type)) {
+      final ordre = numerosDansOrdre;
+      if (ordre == null) return false;
+      if (ordre.length != numerosJoues.length) return false;
+      final triOrdre = List<int>.from(ordre)..sort();
+      final triJoues = List<int>.from(numerosJoues)..sort();
+      for (var i = 0; i < triOrdre.length; i++) {
+        if (triOrdre[i] != triJoues[i]) return false;
+      }
+    }
+
+    // 5. Variante explicitement requise => elle doit être renseignée.
     final exigeVariante = typePari == 'Tiercé Ordre' ||
         typePari == 'Tiercé Désordre' ||
         typePari == 'Couplé Ordre';

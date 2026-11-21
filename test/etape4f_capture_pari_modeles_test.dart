@@ -326,6 +326,12 @@ void main() {
         typePari: 'Tiercé Ordre',
         codePmuOfficiel: 'E_TIERCE',
         varianteChoisie: 'ordre',
+        // ★ R10 : `Tiercé Ordre` impose l'ordre exact (`exigeOrdreExact` rend
+        //   vrai). Depuis R10, « complet » exige donc AUSSI que l'ordre ait
+        //   été réellement capturé. Ce test ne fournissait que la variante :
+        //   il validait donc un ticket incomplet. On fournit l'ordre — sans
+        //   changer l'intention du test, qui reste « avec variante : complet ».
+        numerosDansOrdre: const [1, 3, 5],
       );
       expect(tc.capturePariComplete, isTrue);
     });
@@ -353,6 +359,10 @@ void main() {
         numerosJoues: const [1, 3],
         codePmuOfficiel: 'E_COUPLE_ORDRE',
         varianteChoisie: 'ordre',
+        // ★ R10 : `Couplé Ordre` impose l'ordre exact. Depuis R10, la variante
+        //   seule ne suffit plus : l'ordre doit être présent ET désigner les
+        //   mêmes deux chevaux que `numerosJoues`.
+        numerosDansOrdre: const [3, 1],
       );
       expect(avec.capturePariComplete, isTrue);
     });

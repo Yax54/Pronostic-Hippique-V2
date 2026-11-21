@@ -4,6 +4,10 @@ import 'package:provider/provider.dart';
 import '../models/pmu_models.dart';
 import '../providers/pmu_provider.dart';
 import '../services/alert_service.dart';
+// ★ R1 : référentiel canonique en LECTURE SEULE, pour traduire le libellé de
+//   pari en code API PMU. Ce fichier n'a aucun import : il est pur.
+import '../services/referentiel_paris_pmu.dart'
+    show typePmuDepuisLibelleHistorique, codeApiPourTypePmu;
 import '../utils/format_euros.dart';
 
 class RaceDetailScreen extends StatefulWidget {
@@ -32,6 +36,48 @@ class _RaceDetailScreenState extends State<RaceDetailScreen> with SingleTickerPr
   late TabController _tabController;
   int? _selectedNum;
   String _betType = 'Simple Gagnant';
+
+  /// ★ R1 — Code API PMU du type de pari sélectionné.
+  ///
+  /// Passe par le RÉFÉRENTIEL canonique ([typePmuDepuisLibelleHistorique] puis
+  /// [codeApiPourTypePmu]) au lieu d'une table recopiée : la correspondance
+  /// n'existe qu'à un seul endroit du projet.
+  ///
+  /// Rend `null` sans jamais inventer, dans trois cas :
+  ///   • « Gagnant+Placé » : ce n'est pas un pari PMU mais un ticket
+  ///     applicatif à DEUX composantes. Lui donner un code unique serait
+  ///     l'assimilation interdite ; le référentiel le laisse hors table ;
+  ///   • type non répertorié (libellé inconnu) ;
+  ///   • type dont le référentiel ne publie pas de code.
+  String? get _codePmuDuTypeChoisi {
+    final type = typePmuDepuisLibelleHistorique(_betType);
+    if (type == null) return null;
+    return codeApiPourTypePmu(type);
+  }
+
+  /// ★ R1 — Nombre de chevaux qu'exige le type de pari sélectionné.
+  ///
+  /// Sert UNIQUEMENT à qualifier la capture : cet écran ne permet de
+  /// sélectionner qu'UN SEUL cheval (`_selectedNum`). Pour un pari combiné
+  /// (Couplé = 2, Tiercé = 3, Quarté+ = 4, Quinté+ = 5), la combinaison
+  /// réellement jouée est donc INCONNUE de cet écran. On n'en fabrique pas.
+  int _nbChevauxRequisPour(String libelle) {
+    switch (libelle) {
+      case 'Couplé Gagnant':
+      case 'Couplé Placé':
+        return 2;
+      case 'Tiercé':
+        return 3;
+      case 'Quarté+':
+        return 4;
+      case 'Quinté+':
+        return 5;
+      case 'Gagnant+Placé':
+        return 1;
+      default:
+        return 1; // Simple Gagnant / Simple Placé
+    }
+  }
 
   @override
   void initState() {
@@ -345,6 +391,24 @@ class _RaceDetailScreenState extends State<RaceDetailScreen> with SingleTickerPr
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () {
+                      // ★ R1 — CAPTURE FACTUELLE DES NUMÉROS.
+                      //
+                      //   Cet écran ne permet de choisir qu'UN SEUL cheval
+                      //   (`sel.numero`). On enregistre donc EXACTEMENT ce
+                      //   qui est connu :
+                      //     • numéros réellement sélectionnés = [sel.numero] ;
+                      //     • combinaison réellement jouée = INCONNUE pour un
+                      //       pari combiné (il en faudrait 2, 3, 4 ou 5).
+                      //
+                      //   `numerosJoues` ne reçoit QUE le cheval sélectionné.
+                      //   On n'invente jamais les chevaux manquants pour
+                      //   « satisfaire » un type de pari : un Quinté+ saisi
+                      //   ici reste un ticket à un seul numéro connu, et il
+                      //   doit être signalé comme tel en aval.
+                      final numerosCaptures = <int>[sel.numero];
+                      // ★ montantMise n'est PAS renseigné : cet écran ne
+                      //   saisit aucune mise. Le défaut du modèle (0.0) reste,
+                      //   et aucune mise n'est inventée.
                       provider.addPrediction(UserPrediction(
                         id: DateTime.now().millisecondsSinceEpoch.toString(),
                         dateStr: provider.dateStr,
@@ -357,6 +421,14 @@ class _RaceDetailScreenState extends State<RaceDetailScreen> with SingleTickerPr
                         cote: sel.coteAffichee,
                         typePari: _betType,
                         createdAt: DateTime.now(),
+                        numerosJoues: numerosCaptures,
+                        codePmuOfficiel: _codePmuDuTypeChoisi,
+                        // null volontaire : cet écran n'offre aucun choix de
+                        // variante Ordre/Désordre, et ne connaît pas l'ordre
+                        // de classement.
+                        varianteChoisie: null,
+                        numerosDansOrdre: null,
+                        formulePari: null,
                       ));
                       // ★ v9.4 : stopper les alertes favori dès qu'un pari est placé
                       widget.alertService?.marquerFavoriCommeParI(
@@ -376,6 +448,22 @@ class _RaceDetailScreenState extends State<RaceDetailScreen> with SingleTickerPr
                                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                                 Text('N°${sel.numero} ${sel.nom}',
                                     style: const TextStyle(color: Color(0xFFFFD700), fontSize: 13)),
+                                // ★ R1 — SIGNALER LA LIMITE DE CAPTURE.
+                                //   Pour un pari combiné, cet écran ne connaît
+                                //   qu'un cheval : les autres numéros de la
+                                //   combinaison ne sont pas saisis. On le dit
+                                //   à l'utilisateur au lieu de laisser croire
+                                //   que la combinaison complète est connue.
+                                if (_nbChevauxRequisPour(_betType) > 1)
+                                  Text(
+                                    'Attention : $_betType exige '
+                                    '${_nbChevauxRequisPour(_betType)} chevaux, '
+                                    'un seul est sélectionné ici. '
+                                    'La combinaison jouée n\'est pas enregistrée.',
+                                    style: const TextStyle(
+                                        color: Color(0xFFFFA726),
+                                        fontSize: 12),
+                                  ),
                               ],
                             ),
                           ),

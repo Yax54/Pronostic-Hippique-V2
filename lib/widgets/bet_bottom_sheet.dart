@@ -26,7 +26,10 @@ import '../services/ia_pronostic_engine.dart';
 //   traduire un libellé de pari en code API PMU. Ce fichier n'a aucun import :
 //   il est pur, et l'importer n'introduit aucun effet de bord.
 import '../services/referentiel_paris_pmu.dart'
-    show typePmuDepuisLibelleHistorique, codeApiPourTypePmu;
+    show
+        typePmuDepuisLibelleHistorique,
+        codeApiPourTypePmu,
+        exigeOrdreExactSaisie;
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart'; // ★ B2-A : détection Gagnant+Placé
 import 'type_pari_badge.dart'; // ★ v10.32
@@ -135,6 +138,25 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
   static const _typesPari = ['Simple Gagnant', 'Simple Placé', 'Gagnant+Placé', 'Couplé Gagnant', 'Couplé Placé', 'Tiercé', 'Quarté+', 'Quinté+'];
   int _typePariIndex = 0;
 
+  /// ★ R13 — ORDRE DU PARI, réellement désigné par le parieur.
+  ///
+  /// Liste ordonnée des numéros dans l'ordre de son PRONOSTIC (1er, 2e, 3e…).
+  /// C'est la seule source légitime de `numerosDansOrdre`.
+  ///
+  /// ⚠️ Ne jamais confondre avec trois notions voisines :
+  ///   • l'**ordre de sélection** (`_numerosManuelsSel`, un `Set`) : effet de
+  ///     bord de l'interface, sans intention ;
+  ///   • `numerosJoues` : ensemble TRIÉ, comportement historique conservé ;
+  ///   • l'**ordre d'arrivée officiel** : connu après la course, il ne se
+  ///     saisit pas.
+  ///
+  /// Le parieur ne choisit JAMAIS « Ordre » ou « Désordre » : le guide PMU est
+  /// explicite (« si vos chevaux arrivent dans l'ordre indiqué, vous gagnez le
+  /// rapport Ordre ; s'ils arrivent dans un ordre différent, vous gagnez le
+  /// rapport Désordre »). C'est l'arrivée qui qualifie le gain. On capture donc
+  /// l'ordre prédit, et rien d'autre.
+  final List<int> _ordrePronostic = [];
+
   // ── Sélection manuelle pour paris combinés ───────────────────────────────
   // Numéros sélectionnés manuellement par l'utilisateur (pour Tiercé/Quarté+/Quinté+)
   final Set<int> _numerosManuelsSel = {};
@@ -225,6 +247,60 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     if (type == null) return null;
     return codeApiPourTypePmu(type);
   }
+
+  /// ★ R13 — Le type sélectionné impose-t-il de désigner les chevaux dans un
+  /// ordre à la SAISIE ?
+  ///
+  /// Réponse du RÉFÉRENTIEL ([exigeOrdreExactSaisie]), pas d'une liste
+  /// recopiée. Mesuré : `true` pour Tiercé, Quarté+ et Quinté+.
+  ///
+  /// ⚠️ Ne pas confondre avec `exigeOrdreExact` (calculateur de gains), qui
+  ///    répond à une AUTRE question : « le paiement exige-t-il l'ordre exact ? »
+  ///    et rend `false` pour ces trois types — puisqu'ils sont aussi payables
+  ///    en Désordre ou en Bonus. Les deux fonctions ne divergent pas : elles
+  ///    sont complémentaires. L'une parle de SAISIE, l'autre de PAIEMENT.
+  bool get _ordonnancementRequis {
+    final type = typePmuDepuisLibelleHistorique(_typesPari[_typePariIndex]);
+    if (type == null) return false;
+    return exigeOrdreExactSaisie(type) ?? false;
+  }
+
+  /// ★ R13 — Ordre réellement transmis au ticket.
+  ///
+  /// Rend la liste ordonnée des numéros joués UNIQUEMENT si :
+  ///   • le type impose un ordre à la saisie, ET
+  ///   • l'ordre saisi couvre exactement les numéros joués (mêmes chevaux).
+  ///
+  /// Sinon `null` : on n'invente jamais un ordre, et on ne présente jamais un
+  /// tri arbitraire comme une prédiction du parieur.
+  List<int>? get _numerosDansOrdreCapture {
+    if (!_ordonnancementRequis) return null;
+    final ordre = _ordrePronostic;
+    if (ordre.isEmpty) return null;
+    // Seuls comptent les numéros réellement joués (`_numerosFinaux` peut
+    // tronquer si le parieur a sélectionné plus de chevaux que nécessaire).
+    // On conserve l'ORDRE RELATIF choisi par le parieur pour ces chevaux.
+    final attendus = _numerosFinaux;
+    final ordreFiltre =
+        ordre.where((n) => attendus.contains(n)).toList(growable: false);
+    // L'ordre doit couvrir EXACTEMENT les mêmes chevaux que numerosJoues ;
+    // sinon on ne peut pas affirmer connaître l'ordre du pari.
+    if (ordreFiltre.length != attendus.length) return null;
+    if (ordreFiltre.toSet().length != attendus.toSet().length) return null;
+    return List<int>.unmodifiable(ordreFiltre);
+  }
+
+  /// ★ R13 — Variante transmise au ticket : TOUJOURS `null` en création.
+  ///
+  /// Le parieur ne choisit pas sa variante de rapport. Le guide PMU est
+  /// explicite : c'est l'arrivée officielle qui décide si son ordre exact lui
+  /// vaut le rapport Ordre, ou si ses chevaux dans un autre ordre lui valent le
+  /// rapport Désordre. Écrire une variante ici serait inventer une décision
+  /// que le parieur n'a jamais prise.
+  ///
+  /// Ce champ reste utile pour les libellés qui PORTENT la variante dans leur
+  /// nom (`Tiercé Ordre`, `Couplé Ordre`), reconnus par `typePariDepuisLibelle`.
+  String? get _varianteChoisiePourCapture => null;
 
   /// Nombre de chevaux requis selon le type de pari
   int get _nbChevauxRequis {
@@ -2102,7 +2178,13 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
               final sel = i == _typePariIndex;
               final coteLabel = _coteLabelForType(_typesPari[i]);
               return GestureDetector(
-                onTap: () => setState(() => _typePariIndex = i),
+                // ★ R13 : changer de type RÉINITIALISE l'ordre saisi. Un ordre
+                //   de pronostic construit pour un Tiercé (3 chevaux) n'a aucun
+                //   sens transporté vers un Quinté+ (5 chevaux).
+                onTap: () => setState(() {
+                  _typePariIndex = i;
+                  _ordrePronostic.clear();
+                }),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   margin: const EdgeInsets.only(right: 8),
@@ -2144,7 +2226,93 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
             }),
           ),
         ),
+        // ★ R13 — ORDONNANCEMENT DU PRONOSTIC.
+        //
+        //   Pour Tiercé / Quarté+ / Quinté+, le PMU demande de désigner les
+        //   chevaux « dans l'ordre d'arrivée » (guide officiel). Le parieur ne
+        //   choisit donc PAS entre un rapport Ordre et un rapport Désordre :
+        //   c'est la comparaison entre son ordre et l'arrivée officielle qui
+        //   décide du rapport applicable (Ordre, Désordre, Bonus 4sur5, Bonus 3).
+        //
+        //   On offre donc ici ce que le PMU attend réellement : l'ordre du
+        //   pronostic. Aucun bouton de variante n'est présenté.
+        if (_ordonnancementRequis) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Ordre de votre pronostic (1er → ${_nbChevauxRequis}e)',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              // Numéros retenus, dans l'ordre choisi (ou à choisir).
+              for (var i = 0; i < _nbChevauxRequis; i++)
+                _ordreSlot(i),
+              // Numéros joués mais pas encore placés dans l'ordre.
+              for (final n in _numerosFinaux)
+                if (!_ordrePronostic.contains(n))
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      if (_ordrePronostic.length < _nbChevauxRequis) {
+                        _ordrePronostic.add(n);
+                      }
+                    }),
+                    child: _ordreChip('N°$n', actif: false),
+                  ),
+            ],
+          ),
+          // Signalement factuel : tant que l'ordre n'est pas complet, on le dit.
+          if (_numerosDansOrdreCapture == null)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Ordre incomplet : le rapport Ordre ne pourra pas être établi. '
+                'Les autres rapports (Désordre, Bonus) restent possibles.',
+                style: TextStyle(color: Color(0xFFFFA726), fontSize: 11),
+              ),
+            ),
+        ],
       ],
+    );
+  }
+
+  /// ★ R13 — Une case d'ordre (1er, 2e, 3e…). Vide ou remplie.
+  /// Un appui sur une case remplie libère sa position ; les suivantes
+  /// remontent, pour que l'ordre reste toujours contigu.
+  Widget _ordreSlot(int index) {
+    final rempli = index < _ordrePronostic.length;
+    final numero = rempli ? _ordrePronostic[index] : null;
+    return GestureDetector(
+      onTap: rempli
+          ? () => setState(() => _ordrePronostic.removeAt(index))
+          : null,
+      child: _ordreChip(
+        numero == null ? '${index + 1}er' : '${index + 1}. N°$numero',
+        actif: rempli,
+      ),
+    );
+  }
+
+  Widget _ordreChip(String texte, {required bool actif}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: actif ? _dgreen.withValues(alpha: 0.25) : _card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: actif ? _green : Colors.white.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Text(
+        texte,
+        style: TextStyle(
+          color: actif ? _green : Colors.white54,
+          fontSize: 12,
+          fontWeight: actif ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
     );
   }
 
@@ -2927,27 +3095,21 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       misePlace: estGP ? _mise : null,
       coteGagnant: estGP && _coteGagnant > 1 ? _coteGagnant : null,
       cotePlace: estGP && _cotePlacee > 1 ? _cotePlacee : null,
-      // ★ ÉTAPE 4-F (2/5) : capture du code PMU RÉELLEMENT attribué au type
-      //   sélectionné. Les trois autres champs restent `null`, et c'est
-      //   l'état CORRECT de ce sélecteur :
-      //   • `varianteChoisie` : aucun des huit types proposés ici n'offre un
-      //     choix Ordre/Désordre explicite (« Tiercé » est générique, payable
-      //     dans les deux variantes ; Quarté+ et Quinté+ voient leur variante
-      //     décidée par le rapport officiel, pas par le parieur). Écrire
-      //     'ordre' serait une invention de choix utilisateur.
-      //   • `numerosDansOrdre` : reste `null` ici, MAIS PAS parce que l'ordre
-      //     serait sans objet. Mesuré : `exigeOrdreExactSaisie` rend `true`
-      //     pour Tiercé, Quarté+ ET Quinté+ — le règlement impose de désigner
-      //     les chevaux « dans l'ordre de classement », et c'est cet ordre qui
-      //     décide du paiement en Ordre ou en Désordre. Le champ reste `null`
-      //     uniquement parce que ce sélecteur NE CONNAÎT PAS cet ordre :
-      //     `_numerosManuelsSel` est un ensemble et `_numerosFinaux` le trie.
-      //     Renseigner ici la liste triée laisserait croire à un ordre
-      //     signifiant alors qu'il n'en est rien. Capturer l'ordre réel suppose
-      //     que la saisie le conserve (registre R3).
+      // ★ ÉTAPE 4-F + R13 — capture du pari RÉELLEMENT joué.
+      //   • `codePmuOfficiel` : code du type sélectionné, via le référentiel.
+      //   • `varianteChoisie` : TOUJOURS `null`. Le parieur ne choisit pas sa
+      //     variante de rapport — c'est l'arrivée officielle qui décide s'il
+      //     obtient Ordre, Désordre ou un Bonus (guide PMU). Écrire 'ordre'
+      //     serait inventer une décision qu'il n'a jamais prise.
+      //   • `numerosDansOrdre` : renseigné par [_numerosDansOrdreCapture] dès
+      //     que le type impose un ordre à la saisie (Tiercé, Quarté+,
+      //     Quinté+ — mesuré via `exigeOrdreExactSaisie`) ET que le parieur a
+      //     ordonné exactement les chevaux joués. `null` sinon : on ne
+      //     présente jamais un tri arbitraire comme une prédiction.
+      //   • `formulePari` : `null`, Multi/Mini Multi n'étant pas proposés ici.
       codePmuOfficiel: _codePmuDuTypeChoisi,
-      varianteChoisie: null,
-      numerosDansOrdre: null,
+      varianteChoisie: _varianteChoisiePourCapture,
+      numerosDansOrdre: _numerosDansOrdreCapture,
       formulePari: null,
     );
 
@@ -3012,8 +3174,8 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         //   porter exactement les mêmes valeurs, sinon le suivi et le profil
         //   décriraient deux paris différents.
         codePmuOfficiel: _codePmuDuTypeChoisi,
-        varianteChoisie: null,
-        numerosDansOrdre: null,
+        varianteChoisie: _varianteChoisiePourCapture,
+        numerosDansOrdre: _numerosDansOrdreCapture,
         formulePari: null,
       );
 
