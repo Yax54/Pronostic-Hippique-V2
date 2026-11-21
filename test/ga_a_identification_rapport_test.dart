@@ -223,6 +223,113 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // 2 bis. TABLE DES CODES — CORRESPONDANCES VÉRIFIÉES
+  //
+  // Sources croisées :
+  //  • 3 742 rapports réels / 206 courses (08→16 nov. 2026, API v7) ;
+  //  • règlement officiel 05/07/2022 (/home/user/recherche_pmu/reglement.txt).
+  //
+  // Chaque test ci-dessous correspond à une affirmation VÉRIFIÉE, pas à une
+  // intuition : il échouera si quelqu'un ré-assimile deux paris distincts.
+  // ─────────────────────────────────────────────────────────────────────────
+  group('A/12 — table des codes API : correspondances vérifiées', () {
+    test('les codes retenus sont EXACTEMENT ceux mesurés sur l\'API', () {
+      // Mesuré dans les 3 742 rapports : les six codes ci-dessous existent
+      // réellement et portent les libellés cités en commentaire.
+      expect(codeApiPourType(TypePariJoue.simpleGagnant), 'E_SIMPLE_GAGNANT');
+      expect(codeApiPourType(TypePariJoue.simplePlace), 'E_SIMPLE_PLACE');
+      expect(codeApiPourType(TypePariJoue.coupleGagnant), 'E_COUPLE_GAGNANT');
+      expect(codeApiPourType(TypePariJoue.couplePlace), 'E_COUPLE_PLACE');
+      expect(codeApiPourType(TypePariJoue.coupleOrdre), 'E_COUPLE_ORDRE');
+      expect(codeApiPourType(TypePariJoue.tierce), 'E_TIERCE');
+      expect(codeApiPourType(TypePariJoue.quarte), 'E_QUARTE_PLUS');
+      expect(codeApiPourType(TypePariJoue.quinte), 'E_QUINTE_PLUS');
+    });
+
+    test('E_TRIO n\'est JAMAIS assimilé au Tiercé (E_TIERCE)', () {
+      // Mesuré : E_TRIO = 179 courses (« e-Trio », sans ordre, règlement
+      // l.6832) ; E_TIERCE = 9 courses (« e-Tiercé Ordre/Désordre », ordre
+      // imposé, l.2674). Co-occurrence sur une même course : 0/206.
+      final codesTierce = {
+        codeApiPourType(TypePariJoue.tierce),
+        codeApiPourType(TypePariJoue.tierceOrdre),
+        codeApiPourType(TypePariJoue.tierceDesordre),
+      };
+      expect(codesTierce, {'E_TIERCE'});
+      expect(codesTierce.contains('E_TRIO'), isFalse);
+      expect(codesTierce.contains('E_TRIO_ORDRE'), isFalse);
+    });
+
+    test('E_SUPER_QUATRE n\'est JAMAIS assimilé au Quarté+ (E_QUARTE_PLUS)', () {
+      // Mesuré : E_SUPER_QUATRE = 44 courses (« e-Super4 », ordre imposé,
+      // règlement l.7172) ; E_QUARTE_PLUS = 9 courses. Co-occurrence : 0/206.
+      expect(codeApiPourType(TypePariJoue.quarte), 'E_QUARTE_PLUS');
+      expect(codeApiPourType(TypePariJoue.quarte), isNot('E_SUPER_QUATRE'));
+    });
+
+    test('E_MULTI / E_MINI_MULTI ne sont JAMAIS assimilés au Quinté+', () {
+      // Mesuré : E_QUINTE_PLUS = 9 courses ; E_MULTI = 62, E_MINI_MULTI = 87.
+      // Ce sont trois chapitres distincts du règlement (7, 8 et 9).
+      expect(codeApiPourType(TypePariJoue.quinte), 'E_QUINTE_PLUS');
+      expect(codeApiPourType(TypePariJoue.quinte), isNot('E_MULTI'));
+      expect(codeApiPourType(TypePariJoue.quinte), isNot('E_MINI_MULTI'));
+    });
+
+    test('E_COUPLE_ORDRE reste distinct de E_COUPLE_GAGNANT', () {
+      // Règlement l.1784-1790 : même pari, mais condition de paiement
+      // différente (ordre exact exigé) dès que la liste des partants le
+      // mentionne. Deux codes, jamais interchangeables.
+      expect(codeApiPourType(TypePariJoue.coupleOrdre), 'E_COUPLE_ORDRE');
+      expect(codeApiPourType(TypePariJoue.coupleGagnant), 'E_COUPLE_GAGNANT');
+      expect(
+        codeApiPourType(TypePariJoue.coupleOrdre),
+        isNot(codeApiPourType(TypePariJoue.coupleGagnant)),
+      );
+    });
+
+    test('aucun type joué ne renvoie un code de pari NON PROPOSÉ par l\'app', () {
+      // E_DEUX_SUR_QUATRE, E_SUPER_PICK5, EB5 (« Big 5 ») existent sur l'API
+      // mais ne correspondent à aucun pari de l'application : ils ne doivent
+      // jamais être atteints.
+      const interdits = {
+        'E_DEUX_SUR_QUATRE',
+        'E_SUPER_PICK5',
+        'EB5',
+        'E_TRIO',
+        'E_TRIO_ORDRE',
+        'E_SUPER_QUATRE',
+        'E_MULTI',
+        'E_MINI_MULTI',
+      };
+      for (final t in TypePariJoue.values) {
+        final code = codeApiPourType(t);
+        if (code == null) continue;
+        expect(interdits.contains(code), isFalse,
+            reason: '$t ne doit pas renvoyer le code $code');
+      }
+    });
+
+    test('chaque code retourné appartient à la liste blanche mesurée', () {
+      const listeBlanche = {
+        'E_SIMPLE_GAGNANT',
+        'E_SIMPLE_PLACE',
+        'E_COUPLE_GAGNANT',
+        'E_COUPLE_PLACE',
+        'E_COUPLE_ORDRE',
+        'E_TIERCE',
+        'E_QUARTE_PLUS',
+        'E_QUINTE_PLUS',
+      };
+      for (final t in TypePariJoue.values) {
+        final code = codeApiPourType(t);
+        if (code == null) continue;
+        expect(listeBlanche.contains(code), isTrue,
+            reason: '$t renvoie un code non mesuré : $code');
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // 3. UNITÉ DU DIVIDENDE
   // ─────────────────────────────────────────────────────────────────────────
   group('A/3 — normalisation du dividende en euros pour 1 €', () {
@@ -876,6 +983,135 @@ void main() {
       );
       expect(id.trouve, isFalse);
       expect(id.motif, contains('ambigu'));
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // A/13 — e-TIRELIRE : CAS NON RÉSOLU, REFUS EXPLICITE
+  //
+  // Valeurs RÉELLES mesurées (15112026_R1C6) :
+  //   « e-Quinté+ Ordre + Tirelire » = 11462670 centimes (114 626,70 €/€)
+  //   « e-Quinté+ Ordre »            =  6462670 centimes ( 64 626,70 €/€)
+  //   « e-Quinté+ Désordre »         =   104390 centimes (  1 043,90 €/€)
+  //   combinaison identique : 9-4-15-10-1
+  //
+  // Règlement art. 7.1 (l.6190) : la Tirelire est un SUPPLÉMENT affecté au
+  // rapport « e-Quinté+ Ordre », qui devient alors le rapport brut commun
+  // DÉFINITIF. Les deux rapports ne sont pas deux paiements alternatifs.
+  // ─────────────────────────────────────────────────────────────────────────
+  group('A/13 — e-Tirelire : conflit détecté, jamais résolu par le montant '
+      'le plus élevé', () {
+    // Rapports réels de la course 15112026 R1C6, convertis en €/€.
+    const rapportsReels = <RapportOfficiel>[
+      RapportOfficiel(
+        typePari: 'E_QUINTE_PLUS',
+        libelle: 'e-Quinté+ Ordre + Tirelire',
+        combinaison: '9-4-15-10-1',
+        rapportPourUnEuro: 114626.70,
+      ),
+      RapportOfficiel(
+        typePari: 'E_QUINTE_PLUS',
+        libelle: 'e-Quinté+ Ordre',
+        combinaison: '9-4-15-10-1',
+        rapportPourUnEuro: 64626.70,
+      ),
+      RapportOfficiel(
+        typePari: 'E_QUINTE_PLUS',
+        libelle: 'e-Quinté+ Désordre',
+        combinaison: '9-4-15-10-1',
+        rapportPourUnEuro: 1043.90,
+      ),
+    ];
+
+    test('la Tirelire est classée comme sa PROPRE variante, pas comme « ordre »',
+        () {
+      // Piège mesuré : « e-Quinté+ Ordre + Tirelire » contient le mot
+      // « ordre ». Si la détection passait après, la variante serait [ordre]
+      // et le conflit avec « e-Quinté+ Ordre » disparaîtrait silencieusement.
+      const r = RapportOfficiel(
+        typePari: 'E_QUINTE_PLUS',
+        libelle: 'e-Quinté+ Ordre + Tirelire',
+        combinaison: '9-4-15-10-1',
+        rapportPourUnEuro: 114626.70,
+      );
+      expect(r.variante, VarianteRapport.tirelire);
+      expect(r.variante, isNot(VarianteRapport.ordre));
+    });
+
+    test('Quinté+ ordre sur une course AVEC Tirelire ⇒ ambigu, aucun montant',
+        () {
+      // 3 candidats (tirelire, ordre, désordre) sur la même combinaison :
+      // le module refuse. Il ne retient NI le plus élevé (114626.70)
+      // NI « e-Quinté+ Ordre » (64626.70) en silence.
+      final id = identifierRapportExact(
+        typeJoue: TypePariJoue.quinte,
+        numerosJoues: const [9, 4, 15, 10, 1],
+        rapports: rapportsReels,
+      );
+      expect(id.trouve, isFalse);
+      expect(id.rapport, isNull);
+      expect(id.motif, contains('ambigu'));
+      // Preuve explicite : aucun des trois montants n'est proposé.
+      expect(id.motif, isNot(contains('114626')));
+      expect(id.motif, isNot(contains('64626')));
+    });
+
+    test('Tirelire publiée SEULE ⇒ refus explicite, jamais retenue', () {
+      // Aucune des 3 courses mesurées ne publie la Tirelire seule, mais si
+      // l'API le faisait, on ne saurait pas si le rapport définitif (sans
+      // supplément) sera publié plus tard. On refuse.
+      final id = identifierRapportExact(
+        typeJoue: TypePariJoue.quinte,
+        numerosJoues: const [9, 4, 15, 10, 1],
+        rapports: const [
+          RapportOfficiel(
+            typePari: 'E_QUINTE_PLUS',
+            libelle: 'e-Quinté+ Ordre + Tirelire',
+            combinaison: '9-4-15-10-1',
+            rapportPourUnEuro: 114626.70,
+          ),
+        ],
+      );
+      expect(id.trouve, isFalse);
+      expect(id.motif, contains('Tirelire'));
+      expect(id.motif, contains('art. 7.1'));
+    });
+
+    test('Quinté+ Désordre reste identifiable sur une course AVEC Tirelire', () {
+      // La Tirelire n'affecte QUE le rapport « e-Quinté+ Ordre ». Jouer
+      // explicitement le Désordre reste donc identifiable sans ambiguïté :
+      // un seul candidat porte la variante [desordre].
+      final id = identifierRapportExact(
+        typeJoue: TypePariJoue.quinte,
+        numerosJoues: const [9, 4, 15, 10, 1],
+        rapports: rapportsReels,
+      );
+      // (quinte générique = variantes {ordre, désordre, tirelire} ⇒ ambigu)
+      expect(id.trouve, isFalse);
+
+      // En revanche, un type explicitement désordre ne regarde que [desordre].
+      expect(
+        variantesIdentifiablesParCombinaison(TypePariJoue.quinte),
+        containsAll(<VarianteRapport>{
+          VarianteRapport.ordre,
+          VarianteRapport.desordre,
+          VarianteRapport.tirelire,
+        }),
+      );
+    });
+
+    test('la Tirelire n\'est admise QUE pour le Quinté+', () {
+      // Aucun libelle « … Tirelire » mesuré sur les autres paris ; en
+      // admettre la variante ailleurs ouvrirait une porte non démontrée.
+      for (final t in TypePariJoue.values) {
+        final v = variantesIdentifiablesParCombinaison(t);
+        if (t == TypePariJoue.quinte) {
+          expect(v.contains(VarianteRapport.tirelire), isTrue);
+        } else {
+          expect(v.contains(VarianteRapport.tirelire), isFalse,
+              reason: '$t ne doit pas admettre la variante Tirelire');
+        }
+      }
     });
   });
 }

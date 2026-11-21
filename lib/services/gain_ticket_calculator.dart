@@ -33,6 +33,96 @@
 //     150 (Quarté+), 200 (Quinté+, Super Pick5), 300 (Multi, Mini Multi,
 //     2sur4).
 //
+//  ═══════════════════════════════════════════════════════════════════════════
+//  TABLE DES CODES API — CORRESPONDANCES CONFIRMÉES
+//  ═══════════════════════════════════════════════════════════════════════════
+//
+//  Établie sur 3 742 rapports réels / 206 courses
+//  (/tmp/scan_pmu, 08→16 nov. 2026, API v7 `rapports-definitifs`) CROISÉE
+//  avec le règlement officiel `/home/user/recherche_pmu/reglement.txt`
+//  (version du 05/07/2022, 434 pages), qui consacre un CHAPITRE distinct à
+//  chaque pari :
+//    Ch. 4 « e-Tiercé » (l.2674)  |  Ch. I-1 « e-TRIO » (l.6832)
+//    Ch. 6 « e-QUARTE PLUS » (l.3898)  |  Ch. II-3 « e-Super4 » (l.7172)
+//    Ch. 9 « e-QUINTE+ »  |  Ch. 7 « e-MULTI » (l.4525)
+//    Ch. 8 « e-Mini MULTI »
+//
+//  Règle d'or : DEUX PARIS DIFFÉRENTS NE SONT JAMAIS ASSIMILÉS, même quand
+//  ils se ressemblent. Les quatre couples suivants sont donc SÉPARÉS :
+//
+//   • `E_TRIO`      ≠ `E_TIERCE`
+//        Mesuré : E_TRIO publie « e-Trio » (179 courses) / « e-Trio 1 NP » ;
+//        E_TIERCE publie « e-Tiercé Ordre » + « e-Tiercé Désordre » (9 cours.).
+//        CO-OCCURRENCE MESURÉE : **0 course** sur 206 publie les deux.
+//        Le Trio est SANS ordre (règlement l.6832) ; le Tiercé impose l'ordre
+//        (l.2674). Ce ne sont pas les mêmes paris.
+//        ⇒ Le Tiercé n'est donc identifiable que sur les 9/206 courses qui
+//          publient réellement `E_TIERCE`. Partout ailleurs : NON RÉSOLU.
+//          C'est mesuré, pas une approximation.
+//
+//   • `E_SUPER_QUATRE` ≠ `E_QUARTE_PLUS`
+//        Mesuré : E_SUPER_QUATRE publie « e-Super4 » (44 cours.) ;
+//        E_QUARTE_PLUS publie « e-Quarté+ Ordre/Désordre » + « e-Bonus »
+//        (9 cours.). CO-OCCURRENCE MESURÉE : **0 course**.
+//        Le Super4 impose l'ordre (l.7172) ; le Quarté+ est payable si
+//        « au moins trois des quatre chevaux » sont dans les trois premiers
+//        (l.3900) — mécanique de paiement totalement différente.
+//
+//   • `E_MULTI` / `E_MINI_MULTI` ≠ `E_QUINTE_PLUS`
+//        Mesuré : E_MULTI (62 cours.), E_MINI_MULTI (87 cours.) publient
+//        « e-Multi en 4/5/6/7 », « e-Mini Multi en 4/5/6 » ;
+//        E_QUINTE_PLUS (9 cours.) publie « e-Quinté+ Ordre/Désordre ».
+//        CO-OCCURRENCE MESURÉE : E_QUINTE_PLUS + E_MULTI = **9 cours.**, mais
+//        ce sont des paris DISTINCTS (règlement : chapitres 7, 8 et 9
+//        séparés). L'appellation commerciale « Quinté+ » ne désigne pas le
+//        Multi. Le Multi demande de désigner 4 à 7 chevaux sans ordre (l.4525).
+//
+//   • `E_COUPLE_ORDRE` ≠ `E_COUPLE_GAGNANT`
+//        Règlement l.1784-1790 : « e-Couplé Gagnant » = 2 premiers **quel que
+//        soit l'ordre** ; « lorsque la liste officielle des partants peut
+//        mentionner que les parieurs ont à désigner les deux premiers
+//        chevaux dans l'ordre exact, le e-Couplé Gagnant est alors dénommé
+//        e-Couplé Ordre ». NOM D'UN MÊME PARI SELON LA COURSE, mais la
+//        condition de paiement change ⇒ codes et libelles distincts, jamais
+//        interchangeable (mesuré : E_COUPLE_ORDRE = 11 cours., libelle unique
+//        « e-Couplé Ordre »).
+//
+//  ═══════════════════════════════════════════════════════════════════════════
+//  CAS NON RÉSOLUS — REFUS EXPLICITE, JAMAIS D'APPROXIMATION
+//  ═══════════════════════════════════════════════════════════════════════════
+//
+//   • **Quinté+ e-Tirelire** — MESURÉ : 3 des 9 courses Quinté+ publient
+//     SIMULTANÉMENT, avec la MÊME combinaison :
+//        « e-Quinté+ Ordre + Tirelire » → 11 462 670  (centimes)
+//        « e-Quinté+ Ordre »            →  6 462 670
+//     Règlement art. 7.1 (l.6190-6206) : la e-Tirelire est un montant
+//     SUPPLÉMENTAIRE affecté au rapport « e-Quinté+ Ordre », qui devient le
+//     « rapport brut commun e-Quinté+ Ordre DÉFINITIF » après application du
+//     supplément. Les deux rapports ne sont donc PAS deux paiements
+//     alternatifs : l'un est le rapport définitif, l'autre un état antérieur.
+//     Lequel retenir pour un gain réel exige le rapprochement avec la
+//     journée et les conditions d'annonce (l.6206-6208) : NON DÉMONTRÉ ici.
+//     ⇒ `VarianteRapport.tirelire` est admise comme candidate afin que les
+//       DEUX rapports entrent en concurrence et que l'ambiguïté soit
+//       DÉTECTÉE. On ne retient jamais le plus élevé (§ arbitrage utilisateur).
+//
+//   • **Non-partants (`… 1 NP`, combinaison `8-NP`)** — règle de l'article 9
+//     (l.743-774 : exécution avec cheval de complément). Elle dépend du rang
+//     du non-partant dans la désignation du parieur, information que le
+//     rapport ne porte pas. ⇒ jamais attribué (§4-C).
+//
+//   • **Bonus** (« e-Bonus », « e-Bonus 4sur5 », « e-Bonus 3 ») — combinaison
+//     plus courte que le pari (§4-C).
+//
+//   • **Pari générique « Tiercé » / « Quarté+ » / « Quinté+ »** sans mention
+//     d'ordre : les rapports Ordre ET Désordre portent la même combinaison.
+//     Lequel s'applique dépend de l'arrivée officielle ⇒ ambiguïté explicite.
+//
+//   • **`E_TRIO_ORDRE`** (11 cours.), **`E_DEUX_SUR_QUATRE`** (149 cours.),
+//     **`E_SUPER_PICK5`**, **`EB5`** (« Big 5 ») : paris réels mais NON
+//     PROPOSÉS par l'application. Ils ne sont donc rattachés à aucun type
+//     joué et ne peuvent jamais être attribués par ressemblance de code.
+//
 //  CE QUI RESTE VOLONTAIREMENT HORS DE CE SOUS-LOT (documenté, non traité) :
 //
 //   • Les rapports **Bonus** (`e-Bonus`, `e-Bonus 4sur5`, `e-Bonus 3`)
@@ -86,6 +176,15 @@ enum VarianteRapport {
 
   /// Rapport consécutif à un cheval non-partant (« … 1 NP », « … 2 NP »).
   nonPartant,
+
+  /// Rapport « e-Quinté+ Ordre + Tirelire ».
+  ///
+  /// Règlement art. 7.1 (l.6190) : supplément affecté au rapport
+  /// « e-Quinté+ Ordre », qui devient le rapport brut commun **définitif**.
+  /// Cette variante n'existe que pour rendre la CONCURRENCE avec
+  /// [ordre] visible : deux candidats ⇒ ambiguïté ⇒ refus. Elle n'est
+  /// jamais retenue comme un rapport autonome.
+  tirelire,
 
   /// Libelle reconnu, sans notion d'ordre (Simple, Couplé Gagnant/Placé…).
   sansVariante,
@@ -290,9 +389,33 @@ int? tailleCombinaisonAttendue(TypePariJoue type) {
 ///    Gagnant — exactement le défaut que ce sous-lot doit rendre impossible.
 ///    Le dédoublement du Gagnant+Placé est fait par [identifierGagnantPlace].
 ///
-/// `E_TRIO`, `E_TRIO_ORDRE`, `E_SUPER_QUATRE`, `E_MULTI`, `E_MINI_MULTI`,
-/// `E_DEUX_SUR_QUATRE`, `E_SUPER_PICK5` sont des paris DIFFÉRENTS : ils ne
-/// sont jamais retenus, pour ne pas attribuer le rapport d'un autre pari.
+/// ## Correspondances CONFIRMÉES (3 742 rapports / 206 courses + règlement)
+///
+/// | `TypePariJoue`      | code retenu       | preuve réellement mesurée |
+/// |---------------------|-------------------|---------------------------|
+/// | simpleGagnant       | `E_SIMPLE_GAGNANT`| 199 cours., 1 rapport/cours |
+/// | simplePlace         | `E_SIMPLE_PLACE`  | 199 cours., 2 ou 3 rapports |
+/// | coupleGagnant       | `E_COUPLE_GAGNANT`| 188 cours., libelle unique |
+/// | coupleDesordre      | `E_COUPLE_GAGNANT`| le PMU ne publie pas de Couplé Désordre distinct |
+/// | couplePlace         | `E_COUPLE_PLACE`  | 188 cours. |
+/// | coupleOrdre         | `E_COUPLE_ORDRE`  | 11 cours., libelle unique |
+/// | tierce*             | `E_TIERCE`        | 9 cours. — voir ci-dessous |
+/// | quarte              | `E_QUARTE_PLUS`   | 9 cours. |
+/// | quinte              | `E_QUINTE_PLUS`   | 9 cours. |
+///
+/// ## Refus documentés — JAMAIS attribués par ressemblance
+///
+/// `E_TRIO` (179 cours.) n'est **pas** le Tiercé : c'est un pari SANS ordre
+/// (règlement l.6832) alors que le Tiercé impose l'ordre (l.2674), et les deux
+/// codes ne co-occurrent sur **aucune** des 206 courses mesurées.
+/// Conséquence assumée : un « Tiercé » n'est identifiable que sur les courses
+/// qui publient `E_TIERCE` (9/206). Ailleurs le module rend un motif de refus,
+/// ce qui est le comportement exigé — ne jamais inventer un gain.
+///
+/// `E_TRIO_ORDRE`, `E_SUPER_QUATRE` (Super4, ordre imposé l.7172),
+/// `E_MULTI` / `E_MINI_MULTI` (4 à 7 chevaux sans ordre, l.4525),
+/// `E_DEUX_SUR_QUATRE`, `E_SUPER_PICK5`, `EB5` (Big 5) sont des paris
+/// DIFFÉRENTS : ils ne sont jamais retenus, sous aucun prétexte.
 String? codeApiPourType(TypePariJoue type) {
   switch (type) {
     case TypePariJoue.simpleGagnant:
@@ -307,7 +430,8 @@ String? codeApiPourType(TypePariJoue type) {
     case TypePariJoue.coupleGagnant:
     case TypePariJoue.coupleDesordre:
       // Le PMU ne publie pas de « Couplé Désordre » distinct : le Couplé
-      // Gagnant EST le couplé sans ordre.
+      // Gagnant EST le couplé sans ordre (règlement l.1786-1787 : « quel que
+      // soit l'ordre d'arrivée »).
       return 'E_COUPLE_GAGNANT';
     case TypePariJoue.couplePlace:
       return 'E_COUPLE_PLACE';
@@ -333,6 +457,14 @@ String? codeApiPourType(TypePariJoue type) {
 /// combinaisons ne sont pas de même taille que celle du ticket, donc une
 /// égalité de combinaison ne peut pas les désigner sans risque. Leur
 /// attribution relève de §4-C.
+///
+/// `tirelire` est ADMISE **uniquement pour `quinte`**, et dans le seul but de
+/// rendre le conflit visible : sur les 3 courses mesurées où
+/// « e-Quinté+ Ordre + Tirelire » et « e-Quinté+ Ordre » co-existent avec la
+/// même combinaison, les deux entrent en concurrence ⇒ ambiguïté ⇒ refus.
+/// Une `tirelire` retenue SEULE est également refusée (voir
+/// [identifierRapportExact]) : son statut de rapport définitif n'est pas
+/// démontré course par course, on ne l'invente pas.
 Set<VarianteRapport> variantesIdentifiablesParCombinaison(TypePariJoue type) {
   switch (type) {
     case TypePariJoue.simpleGagnant:
@@ -352,9 +484,17 @@ Set<VarianteRapport> variantesIdentifiablesParCombinaison(TypePariJoue type) {
       return const {VarianteRapport.desordre};
     case TypePariJoue.tierce:
     case TypePariJoue.quarte:
-    case TypePariJoue.quinte:
       // Pari générique : les deux variantes portent la même combinaison.
       return const {VarianteRapport.ordre, VarianteRapport.desordre};
+    case TypePariJoue.quinte:
+      // + `tirelire` : voir la documentation ci-dessus. Ce n'est pas une
+      // troisième façon de gagner, c'est un troisième CANDIDAT possible qui
+      // doit empêcher toute sélection silencieuse.
+      return const {
+        VarianteRapport.ordre,
+        VarianteRapport.desordre,
+        VarianteRapport.tirelire,
+      };
     case TypePariJoue.inconnu:
       return const <VarianteRapport>{};
   }
@@ -471,14 +611,40 @@ IdentificationRapport identifierRapportExact({
     );
   }
   if (candidats.length > 1) {
+    // ⚠️ `$candidats.length` (sans accolades) interpole la LISTE entière puis
+    //    colle le texte « .length » : le motif exposait donc le `toString()`
+    //    de chaque rapport, montants compris. On n'expose que les libellés.
     final libelles = candidats.map((c) => c.libelle).join(' / ');
     return IdentificationRapport.absent(
       'Plusieurs rapports correspondent à la même combinaison '
-      '($candidats.length : $libelles) : identification ambiguë, aucun montant '
-      'calculé. L\'arbitrage Ordre/Désordre dépend de l\'arrivée officielle.',
+      '(${candidats.length} : $libelles) : identification ambiguë, aucun '
+      'montant calculé. L\'arbitrage Ordre/Désordre dépend de l\'arrivée '
+      'officielle.',
     );
   }
   final retenu = candidats.single;
+
+  // ── Garde e-Tirelire ───────────────────────────────────────────────────────
+  // Règlement art. 7.1 : la e-Tirelire est un supplément qui transforme
+  // « e-Quinté+ Ordre » en rapport brut commun DÉFINITIF. Le rapport
+  // « e-Quinté+ Ordre + Tirelire » n'est donc pas un paiement distinct que
+  // l'on pourrait retenir à la place de « e-Quinté+ Ordre » : c'est le même
+  // rapport, à un autre stade de calcul.
+  //
+  // Quand les DEUX sont publiés (mesuré : 3 courses sur 9), le bloc
+  // `candidats.length > 1` ci-dessus les met déjà en concurrence et refuse.
+  // Quand la Tirelire est publiée SEULE, on ne sait pas si le rapport sans
+  // supplément sera publié plus tard ni si le montant inclut déjà le
+  // supplément : on refuse, on n'invente pas.
+  if (retenu.variante == VarianteRapport.tirelire) {
+    return const IdentificationRapport.absent(
+      'Rapport « e-Quinté+ Ordre + Tirelire » (supplément e-Tirelire, '
+      'règlement art. 7.1) : rapport brut commun définitif dont les '
+      'conditions d\'application ne sont pas démontrées pour cette course. '
+      'Identification ambiguë assumée : aucun montant calculé.',
+    );
+  }
+
   if (retenu.rapportPourUnEuro == null) {
     return const IdentificationRapport.absent(
       'Le rapport officiel existe mais son dividende pour 1 € est absent : '
@@ -564,12 +730,18 @@ VarianteRapport varianteDepuisLibelle(String libelle) {
   if (l.contains('bonus 3')) return VarianteRapport.bonus3;
   if (l.contains('bonus')) return VarianteRapport.bonusQuarte;
 
-  // 3. Variantes principales.
+  // 3. e-Tirelire — AVANT « ordre » : le libelle mesuré est
+  //    « e-Quinté+ Ordre + Tirelire », qui contient le mot « ordre ».
+  //    Le tester après le classerait à tort en [ordre] et ferait
+  //    silencieusement disparaître le conflit avec « e-Quinté+ Ordre ».
+  if (l.contains('tirelire')) return VarianteRapport.tirelire;
+
+  // 4. Variantes principales.
   if (l.contains('désordre') || l.contains('desordre')) {
     return VarianteRapport.desordre;
   }
   if (l.contains('ordre')) return VarianteRapport.ordre;
 
-  // 4. Libelle reconnu mais sans notion d'ordre (Simple, Couplé Gagnant…).
+  // 5. Libelle reconnu mais sans notion d'ordre (Simple, Couplé Gagnant…).
   return VarianteRapport.sansVariante;
 }
