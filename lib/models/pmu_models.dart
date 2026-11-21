@@ -27,6 +27,15 @@ import '../services/gain_ticket_calculator.dart'
         typePariDepuisLibelle,
         tailleCombinaisonAttendue,
         exigeOrdreExact;
+// ★ LOT B-1 — types purs des gains PMU structurés.
+//   `gain_pmu_types.dart` n'importe que `gain_ticket_calculator.dart` (0
+//   import) : la chaîne est fermée, aucun cycle possible.
+import '../services/gain_pmu_types.dart'
+    show
+        EtatGain,
+        EtatTirelire,
+        MotifNonDetermination,
+        RapportAttribue;
 import '../utils/type_pari_utils.dart' show estTypeGagnantPlace;
 
 // ─── Réunion ────────────────────────────────────────────────────────────────
@@ -498,6 +507,56 @@ class UserPrediction {
   /// soit nécessaire lorsqu'ils le seront.
   final String? formulePari;
 
+  // ═════════════════════════════════════════════════════════════════════════
+  //  ★ LOT B-1 — GAINS PMU STRUCTURÉS (tous facultatifs)
+  //
+  //  POURQUOI CES CHAMPS EXISTENT
+  //  Un ticket ne stockait qu'UN seul `dividendePmuReel` et qu'UNE seule mise
+  //  agrégée, alors que le PMU paie PAR RANG DE RAPPORT et PAR COMPOSANTE.
+  //  Mesuré (R1C6_15112026) : la MÊME combinaison `9-4-15-10-1` porte DEUX
+  //  rapports au MÊME rang 1 (« Ordre + Tirelire » 11 462 670 et « Ordre »
+  //  6 462 670). Un scalaire unique ne peut pas représenter ce réel.
+  //
+  //  RÈGLE DE COMPATIBILITÉ — ABSOLUE
+  //   • `null` = ticket HISTORIQUE : le chemin de calcul actuel s'applique,
+  //     strictement inchangé. Aucun recalcul rétroactif.
+  //   • Les clés JSON ne sont écrites QUE si `etatGain != null`. Un ticket
+  //     historique relu puis réécrit garde donc EXACTEMENT la même forme
+  //     (verrou mesuré : 26 clés pour UserPrediction, 28 pour TrackedCourse).
+  //   • `dividendePmuReel` est CONSERVÉ et reste lu par tous les écrans
+  //     existants. Il n'est plus alimenté par le nouveau moteur, mais il n'est
+  //     ni supprimé, ni réinterprété.
+  //
+  //  ⚠️ Ces champs ne sont PAS touchés par les calculs IA, les poids, les
+  //     seuils, le gradient descent, le TOP3 learning ni le ROI.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /// État du gain, ou `null` pour un ticket historique (chemin legacy).
+  final EtatGain? etatGain;
+
+  /// Rapports officiels RÉELLEMENT attribués au ticket.
+  ///
+  /// `null` = jamais résolu par le nouveau moteur. Une liste vide n'a pas le
+  /// même sens : elle signifierait « résolu, aucun rapport attribué ».
+  final List<RapportAttribue>? rapportsAttribues;
+
+  /// État de la Tirelire, INDÉPENDANT du rapport Ordre.
+  final EtatTirelire? etatTirelire;
+
+  /// Dividende de la composante Gagnant d'un Gagnant+Placé, pour 1 €.
+  /// `null` hors G+P ou si la composante n'est pas résolue.
+  final double? dividendeGagnant;
+
+  /// Dividende de la composante Placé d'un Gagnant+Placé, pour 1 €.
+  final double? dividendePlace;
+
+  /// `miseBase` du bloc PMU employé, en centimes — AUDIT UNIQUEMENT.
+  /// Voir R17 : n'entrer dans aucun calcul.
+  final int? miseBaseCentimesUtilisee;
+
+  /// Motif fermé expliquant un `etatGain == nonDetermine`.
+  final MotifNonDetermination? motifNonDetermination;
+
   /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
   /// CONTRAT CORRIGÉ. L'ancienne version rendait `true` dès que le code PMU
@@ -677,6 +736,14 @@ class UserPrediction {
     this.varianteChoisie,
     this.numerosDansOrdre,
     this.formulePari,
+    // ★ LOT B-1 — gains PMU structurés (tous facultatifs, null par défaut)
+    this.etatGain,
+    this.rapportsAttribues,
+    this.etatTirelire,
+    this.dividendeGagnant,
+    this.dividendePlace,
+    this.miseBaseCentimesUtilisee,
+    this.motifNonDetermination,
   });
 
   /// Gain net calculé :
@@ -798,6 +865,30 @@ class UserPrediction {
     'varianteChoisie': varianteChoisie,
     'numerosDansOrdre': numerosDansOrdre,
     'formulePari': formulePari,
+    // ★ LOT B-1 — gains PMU structurés.
+    //
+    //   ⚠️ ÉCRITURE CONDITIONNELLE, ET C'EST VOLONTAIRE.
+    //   Les quatre clés 4-F ci-dessus sont inconditionnelles : un ticket
+    //   historique relu puis réécrit conserve donc 26 clés exactement.
+    //   Ajouter sept clés inconditionnelles ferait passer ce même ticket à 33
+    //   clés, ce qui romprait le verrou mesuré `expect(json.length, 26)` et,
+    //   plus grave, modifierait la FORME des sauvegardes historiques.
+    //
+    //   On écrit donc les gains structurés SEULEMENT si le ticket a été résolu
+    //   par le nouveau moteur (`etatGain != null`). Un ticket historique garde
+    //   sa forme d'origine, à l'octet près.
+    ...?etatGain == null
+        ? null
+        : <String, dynamic>{
+            'etatGain': etatGain!.toJson(),
+            'rapportsAttribues':
+                rapportsAttribues?.map((a) => a.toJson()).toList(),
+            'etatTirelire': etatTirelire?.toJson(),
+            'dividendeGagnant': dividendeGagnant,
+            'dividendePlace': dividendePlace,
+            'miseBaseCentimesUtilisee': miseBaseCentimesUtilisee,
+            'motifNonDetermination': motifNonDetermination?.toJson(),
+          },
   };
 
   factory UserPrediction.fromJson(Map<String, dynamic> json) {
@@ -844,6 +935,39 @@ class UserPrediction {
           ?.map((e) => (e as num).toInt())
           .toList(),
       formulePari: json['formulePari'] as String?,
+      // ★ LOT B-1 — lecture TOLÉRANTE des gains structurés.
+      //   Clé absente ⇒ `null` ⇒ chemin legacy. Aucun état déduit, aucun
+      //   rapport reconstruit, aucun montant complété.
+      etatGain: EtatGain.fromJson(json['etatGain']),
+      rapportsAttribues: _lireRapportsAttribues(json['rapportsAttribues']),
+      etatTirelire: EtatTirelire.fromJson(json['etatTirelire']),
+      dividendeGagnant: (json['dividendeGagnant'] as num?)?.toDouble(),
+      dividendePlace: (json['dividendePlace'] as num?)?.toDouble(),
+      miseBaseCentimesUtilisee:
+          (json['miseBaseCentimesUtilisee'] as num?)?.toInt(),
+      motifNonDetermination:
+          MotifNonDetermination.fromJson(json['motifNonDetermination']),
     );
+  }
+
+  /// Relecture tolérante d'une liste de rapports attribués.
+  ///
+  /// Rend `null` — et non une liste vide — quand la clé est absente ou n'est
+  /// pas une liste : « non résolu » et « résolu sans rapport » sont deux états
+  /// différents. Un élément illisible est IGNORÉ plutôt que fabriqué ; s'il
+  /// n'en reste aucun, on rend `null` pour ne pas affirmer une résolution.
+  static List<RapportAttribue>? _lireRapportsAttribues(dynamic valeur) {
+    if (valeur is! List) return null;
+    final out = <RapportAttribue>[];
+    for (final item in valeur) {
+      if (item is! Map) continue;
+      try {
+        out.add(RapportAttribue.fromJson(Map<String, dynamic>.from(item)));
+      } on FormatException {
+        // Élément illisible : ignoré, jamais deviné.
+        continue;
+      }
+    }
+    return out.isEmpty ? null : out;
   }
 }

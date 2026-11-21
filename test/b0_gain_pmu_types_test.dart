@@ -95,10 +95,26 @@ void main() {
           reason: 'gain_ticket_calculator doit rester à 0 import');
     });
 
-    test('aucun fichier existant de lib/ n\'importe encore le socle', () {
-      // B-0 est une FONDATION : si un écran l'importait déjà, le lot ne serait
-      // plus additif. Ce test échouera volontairement au lot B-4/B-5, quand le
-      // branchement sera fait, et devra alors être mis à jour explicitement.
+    test('seuls les deux porteurs de données importent le socle', () {
+      // ★ LOT B-1 — MISE À JOUR DÉLIBÉRÉE DE CE TEST.
+      //
+      // Le contrat d'origine était : « aucun fichier de lib/ n'importe le
+      // socle » (B-0 = fondation pure, zéro branchement). B-1 ajoute les sept
+      // champs facultatifs à UserPrediction et TrackedCourse : ces deux
+      // porteurs de données DOIVENT donc importer le socle pour typer leurs
+      // champs. L'assertion d'origine était devenue fausse PAR CONSTRUCTION,
+      // et non par régression.
+      //
+      // Le contrat est RESSERRÉ, pas supprimé : la liste des importateurs est
+      // désormais FERMÉE et nominative. Tout troisième importateur — donc tout
+      // écran, tout service de calcul, tout branchement — fait échouer ce
+      // test. Le branchement effectif reste ainsi interdit jusqu'à ce qu'un
+      // lot l'autorise explicitement.
+      final importateursAttendus = <String>[
+        'lib/models/pmu_models.dart',
+        'lib/services/alert_service.dart',
+      ];
+
       final racine = Directory('lib');
       final coupables = <String>[];
       for (final f in racine.listSync(recursive: true)) {
@@ -107,8 +123,32 @@ void main() {
         final contenu = f.readAsStringSync();
         if (contenu.contains('gain_pmu_types.dart')) coupables.add(f.path);
       }
-      expect(coupables, isEmpty,
-          reason: 'B-0 doit rester non branché ; importé par : $coupables');
+      coupables.sort();
+      expect(coupables, equals(importateursAttendus),
+          reason: 'liste des importateurs du socle : $coupables');
+    });
+
+    test('aucun calcul du socle n\'est encore invoqué (B-1 = stockage seul)', () {
+      // ★ LOT B-1 — la seconde moitié du contrat d'origine reste INTOUCHÉE :
+      // B-1 est un lot de PERSISTANCE. Si un importateur appelait déjà
+      // RapportAttribue.calculer ou totalDesMontantsRetour, un montant serait
+      // produit dès B-1, ce qui est interdit (aucune modification des calculs
+      // financiers dans B-1).
+      const calculsDuSocle = <String>[
+        'RapportAttribue.calculer',
+        'totalDesMontantsRetour',
+      ];
+      for (final chemin in <String>[
+        'lib/models/pmu_models.dart',
+        'lib/services/alert_service.dart',
+      ]) {
+        final contenu = File(chemin).readAsStringSync();
+        for (final calcul in calculsDuSocle) {
+          expect(contenu.contains(calcul), isFalse,
+              reason: 'B-1 ne doit produire aucun montant : $calcul '
+                  'trouvé dans $chemin');
+        }
+      }
     });
   });
 

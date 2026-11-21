@@ -719,6 +719,24 @@ class ProfileHistoriqueCard extends StatelessWidget {
       varianteChoisie: pred.varianteChoisie,
       numerosDansOrdre: pred.numerosDansOrdre,
       formulePari: pred.formulePari,
+      // ★ LOT B-1 : cette carte est construite depuis un `UserPrediction`, qui
+      //   porte désormais les mêmes sept champs de gain. Les recopier évite
+      //   qu'une carte de partage devienne, demain, plus pauvre que le ticket
+      //   qu'elle prétend représenter — même raisonnement que pour la capture
+      //   4-F juste au-dessus.
+      //   ATTENTION, mesuré : le montant affiché par la carte ne vient PAS
+      //   d'ici. Il est passé séparément en `gainTotal:` depuis
+      //   `pred.gainNet`, sous la garde G+P `pred.gainGagnantPlaceEtabli`
+      //   (voir la ligne `final gain = ...` juste après). Ces sept champs sont
+      //   donc, en l'état, inertes pour l'affichage : ils ne créent aucune
+      //   seconde source de vérité pour le montant.
+      etatGain: pred.etatGain,
+      rapportsAttribues: pred.rapportsAttribues,
+      etatTirelire: pred.etatTirelire,
+      dividendeGagnant: pred.dividendeGagnant,
+      dividendePlace: pred.dividendePlace,
+      miseBaseCentimesUtilisee: pred.miseBaseCentimesUtilisee,
+      motifNonDetermination: pred.motifNonDetermination,
     );
 
     // ★ LOT G+P / AFFICHAGE : la carte partagée ne doit pas annoncer un gain

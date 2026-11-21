@@ -24,6 +24,15 @@ import 'referentiel_paris_pmu.dart';
 // ★ R10 : source UNIQUE du nombre de chevaux attendu. Fichier pur (0 import).
 import 'gain_ticket_calculator.dart'
     show TypePariJoue, typePariDepuisLibelle, tailleCombinaisonAttendue, exigeOrdreExact;
+// ★ LOT B-1 — types purs des gains PMU structurés (modèle jumeau de
+//   `UserPrediction`). `gain_pmu_types.dart` n'importe que
+//   `gain_ticket_calculator.dart` (0 import) : chaîne fermée, aucun cycle.
+import 'gain_pmu_types.dart'
+    show
+        EtatGain,
+        EtatTirelire,
+        MotifNonDetermination,
+        RapportAttribue;
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// AlertService — Gestion complète des alertes Pronostic Hippique v3.0 (Lot 2)
@@ -761,6 +770,24 @@ class AlertService extends ChangeNotifier {
       varianteChoisie: course.varianteChoisie,
       numerosDansOrdre: course.numerosDansOrdre,
       formulePari: course.formulePari,
+      // ★ LOT B-1 : MÊME PIÈGE, CINQUIÈME OCCURRENCE. Cette reconstruction
+      //   champ-par-champ oublierait les sept champs de gain PMU exactement
+      //   comme elle oubliait `storageKey` (R1), la ventilation G+P (B2-C) et
+      //   la capture 4-F. Les sept lignes ci-dessous ferment ce point de
+      //   perte AVANT qu'un gain existe : aujourd'hui les deux seuls
+      //   appelants de `ajouterSuivi` (mes_paris_screen.dart:3083 et
+      //   bet_bottom_sheet.dart:3116) créent des tickets neufs, donc sans
+      //   gain. Le jour où un ticket déjà résolu sera ré-ajouté (reprise,
+      //   duplication, resynchronisation), il perdrait son gain sans ces
+      //   lignes — et un ticket sans état de gain est un ticket dont le
+      //   « Gain gagné » retomberait silencieusement à néant.
+      etatGain: course.etatGain,
+      rapportsAttribues: course.rapportsAttribues,
+      etatTirelire: course.etatTirelire,
+      dividendeGagnant: course.dividendeGagnant,
+      dividendePlace: course.dividendePlace,
+      miseBaseCentimesUtilisee: course.miseBaseCentimesUtilisee,
+      motifNonDetermination: course.motifNonDetermination,
       storageKey: storageKey,
     );
     _trackedCourses[storageKey] = courseAvecKey;
@@ -3030,6 +3057,43 @@ class TrackedCourse {
   /// Formule Multi / Mini Multi (`'en4'`…`'en7'`). Toujours `null` dans ce lot.
   final String? formulePari;
 
+  // ═════════════════════════════════════════════════════════════════════════
+  //  ★ LOT B-1 — GAINS PMU STRUCTURÉS (tous facultatifs)
+  //
+  //  Modèle JUMEAU de `UserPrediction` : contrat strictement identique, pour
+  //  qu'aucune des deux représentations du même ticket ne puisse diverger.
+  //
+  //  RÈGLE DE COMPATIBILITÉ — ABSOLUE
+  //   • `null` = ticket HISTORIQUE : le chemin de calcul actuel s'applique,
+  //     strictement inchangé. Aucun recalcul rétroactif.
+  //   • Les clés JSON ne sont écrites QUE si `etatGain != null` : un ticket
+  //     historique relu puis réécrit garde EXACTEMENT 28 clés (verrou mesuré).
+  //   • `dividendePmuReel` est CONSERVÉ et reste lu partout. Il n'est plus
+  //     alimenté par le nouveau moteur, mais il n'est ni supprimé ni
+  //     réinterprété.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /// État du gain, ou `null` pour un ticket historique (chemin legacy).
+  final EtatGain? etatGain;
+
+  /// Rapports officiels RÉELLEMENT attribués. `null` = jamais résolu.
+  final List<RapportAttribue>? rapportsAttribues;
+
+  /// État de la Tirelire, INDÉPENDANT du rapport Ordre.
+  final EtatTirelire? etatTirelire;
+
+  /// Dividende de la composante Gagnant d'un Gagnant+Placé, pour 1 €.
+  final double? dividendeGagnant;
+
+  /// Dividende de la composante Placé d'un Gagnant+Placé, pour 1 €.
+  final double? dividendePlace;
+
+  /// `miseBase` du bloc PMU employé, en centimes — AUDIT UNIQUEMENT (R17).
+  final int? miseBaseCentimesUtilisee;
+
+  /// Motif fermé expliquant un `etatGain == nonDetermine`.
+  final MotifNonDetermination? motifNonDetermination;
+
   /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
   /// CONTRAT STRICTEMENT IDENTIQUE à `UserPrediction.capturePariComplete`
@@ -3155,6 +3219,14 @@ class TrackedCourse {
     this.varianteChoisie,
     this.numerosDansOrdre,
     this.formulePari,
+    // ★ LOT B-1 — gains PMU structurés (tous facultatifs, null par défaut)
+    this.etatGain,
+    this.rapportsAttribues,
+    this.etatTirelire,
+    this.dividendeGagnant,
+    this.dividendePlace,
+    this.miseBaseCentimesUtilisee,
+    this.motifNonDetermination,
   }) : addedAt = addedAt ?? DateTime.now();
 
   /// Crée une copie avec résultat mis à jour (pour persister sans muter)
@@ -3195,6 +3267,17 @@ class TrackedCourse {
     varianteChoisie: varianteChoisie,
     numerosDansOrdre: numerosDansOrdre,
     formulePari: formulePari,
+    // ★ LOT B-1 : les gains structurés DOIVENT survivre à la copie.
+    //   Sans ces sept lignes, une mise à jour de résultat effacerait les
+    //   rapports attribués — exactement le défaut corrigé en 4-F pour les
+    //   quatre champs de capture.
+    etatGain: etatGain,
+    rapportsAttribues: rapportsAttribues,
+    etatTirelire: etatTirelire,
+    dividendeGagnant: dividendeGagnant,
+    dividendePlace: dividendePlace,
+    miseBaseCentimesUtilisee: miseBaseCentimesUtilisee,
+    motifNonDetermination: motifNonDetermination,
     // ★ LOT R1 : `storageKey` DOIT être propagée.
     //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
     //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
@@ -3239,9 +3322,16 @@ class TrackedCourse {
     messageResultat: messageResultat,
     dividendePmuReel: dividende,
     combinaisonPmu: combinaison,
-    // ★ ÉTAPE 4-F : capture du pari propagée. Le dividende est renseigné APRÈS
-    //   la course ; c'est justement le moment où l'on a besoin de savoir quelle
-    //   variante avait été jouée pour choisir le bon rapport officiel.
+    // ★ LOT B-1 : les gains structurés survivent aussi à `withDividende`.
+    //   Ce chemin est utilisé par l'ancien moteur (`enregistrerDividendePmu`) ;
+    //   il ne doit ni perdre ni écraser les rapports attribués par le nouveau.
+    etatGain: etatGain,
+    rapportsAttribues: rapportsAttribues,
+    etatTirelire: etatTirelire,
+    dividendeGagnant: dividendeGagnant,
+    dividendePlace: dividendePlace,
+    miseBaseCentimesUtilisee: miseBaseCentimesUtilisee,
+    motifNonDetermination: motifNonDetermination,
     codePmuOfficiel: codePmuOfficiel,
     varianteChoisie: varianteChoisie,
     numerosDansOrdre: numerosDansOrdre,
@@ -3312,6 +3402,26 @@ class TrackedCourse {
     'varianteChoisie': varianteChoisie,
     'numerosDansOrdre': numerosDansOrdre,
     'formulePari': formulePari,
+    // ★ LOT B-1 — gains PMU structurés.
+    //
+    //   ⚠️ ÉCRITURE CONDITIONNELLE, ET C'EST VOLONTAIRE.
+    //   Les quatre clés 4-F ci-dessus sont inconditionnelles : un ticket
+    //   historique relu puis réécrit conserve donc 28 clés exactement.
+    //   Écrire ici sept clés inconditionnelles ferait passer ce même ticket à
+    //   35 clés, romprait le verrou mesuré `expect(json.length, 28)` et
+    //   modifierait la FORME des sauvegardes historiques.
+    ...?etatGain == null
+        ? null
+        : <String, dynamic>{
+            'etatGain': etatGain!.toJson(),
+            'rapportsAttribues':
+                rapportsAttribues?.map((a) => a.toJson()).toList(),
+            'etatTirelire': etatTirelire?.toJson(),
+            'dividendeGagnant': dividendeGagnant,
+            'dividendePlace': dividendePlace,
+            'miseBaseCentimesUtilisee': miseBaseCentimesUtilisee,
+            'motifNonDetermination': motifNonDetermination?.toJson(),
+          },
   };
 
   factory TrackedCourse.fromJson(Map<String, dynamic> j) => TrackedCourse(
@@ -3355,5 +3465,36 @@ class TrackedCourse {
     numerosDansOrdre: (j['numerosDansOrdre'] as List<dynamic>?)
                           ?.map((e) => (e as num).toInt()).toList(),
     formulePari:      j['formulePari'] as String?,
+    // ★ LOT B-1 — lecture TOLÉRANTE des gains structurés.
+    //   Clé absente ⇒ `null` ⇒ chemin legacy inchangé. Aucun état déduit,
+    //   aucun rapport reconstruit, aucun montant complété.
+    etatGain: EtatGain.fromJson(j['etatGain']),
+    rapportsAttribues: _lireRapportsAttribuesJ(j['rapportsAttribues']),
+    etatTirelire: EtatTirelire.fromJson(j['etatTirelire']),
+    dividendeGagnant: (j['dividendeGagnant'] as num?)?.toDouble(),
+    dividendePlace: (j['dividendePlace'] as num?)?.toDouble(),
+    miseBaseCentimesUtilisee: (j['miseBaseCentimesUtilisee'] as num?)?.toInt(),
+    motifNonDetermination:
+        MotifNonDetermination.fromJson(j['motifNonDetermination']),
   );
+
+  /// Relecture tolérante d'une liste de rapports attribués.
+  ///
+  /// Rend `null` — et non une liste vide — quand la clé est absente ou n'est
+  /// pas une liste : « non résolu » et « résolu sans rapport » ne sont pas le
+  /// même état. Un élément illisible est IGNORÉ, jamais fabriqué ; s'il n'en
+  /// reste aucun, on rend `null` pour ne pas affirmer une résolution.
+  static List<RapportAttribue>? _lireRapportsAttribuesJ(dynamic valeur) {
+    if (valeur is! List) return null;
+    final out = <RapportAttribue>[];
+    for (final item in valeur) {
+      if (item is! Map) continue;
+      try {
+        out.add(RapportAttribue.fromJson(Map<String, dynamic>.from(item)));
+      } on FormatException {
+        continue; // élément illisible : ignoré, jamais deviné
+      }
+    }
+    return out.isEmpty ? null : out;
+  }
 }
