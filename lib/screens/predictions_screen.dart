@@ -358,18 +358,26 @@ class _PredCard extends StatelessWidget {
                   const Icon(Icons.watch_later_outlined, color: Color(0xFFFFB74D), size: 26),
                 const SizedBox(height: 4),
                 // Gains nets affichés si mise définie
-                if (pred.montantMise > 0)
+                //   ★ LOT G+P / AFFICHAGE : un gain G+P non établi (produit
+                //   cote × mise d'une seule composante) n'est pas présenté
+                //   comme un montant : on affiche « gain non établi ».
+                //   Le résultat sportif reste affiché par l'icône ci-dessus.
+                if (pred.montantMise > 0 || pred.miseTotaleEngagee != null)
                   Text(
                     isCorrect == null
                         ? '${fmtEuros(pred.montantMise)}€ misé'
-                        : '${pred.gainNet >= 0 ? '+' : ''}${fmtEuros(pred.gainNet)}€',
+                        : !pred.gainGagnantPlaceEtabli
+                            ? 'gain non établi'
+                            : '${pred.gainNet >= 0 ? '+' : ''}${fmtEuros(pred.gainNet)}€',
                     style: TextStyle(
                       color: isCorrect == null
                           ? Colors.white38
-                          : pred.gainNet >= 0
-                              ? const Color(0xFF69F0AE)
-                              : const Color(0xFFEF5350),
-                      fontSize: 14,
+                          : !pred.gainGagnantPlaceEtabli
+                              ? const Color(0xFFFFB74D)
+                              : pred.gainNet >= 0
+                                  ? const Color(0xFF69F0AE)
+                                  : const Color(0xFFEF5350),
+                      fontSize: pred.gainGagnantPlaceEtabli ? 14 : 11,
                       fontWeight: FontWeight.bold,
                     ),
                   ),

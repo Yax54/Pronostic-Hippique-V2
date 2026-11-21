@@ -101,11 +101,18 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
 
   // ── ★ v9.85 : Bankroll ────────────────────────────────────────────────────
   Widget _buildSectionBankroll(List<UserPrediction> preds) {
-    final resolus = preds.where((p) => p.isCorrect != null && p.montantMise > 0).toList()
+    // ★ LOT G+P / AFFICHAGE : un gain G+P non établi ne déplace pas le
+    //   capital. La mise du ticket reste comptée par ailleurs (elle est
+    //   réellement engagée) ; seul le gain non prouvé est écarté.
+    final resolus = preds
+        .where((p) => p.isCorrect != null && p.montantMise > 0)
+        .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     double capital = _capitalDepart;
-    for (final p in resolus) capital += p.gainNet;
+    for (final p in resolus) {
+      capital += p.gainGagnantPlaceEtabli ? p.gainNet : 0.0;
+    }
 
     final gain      = capital - _capitalDepart;
     final gainColor = gain >= 0 ? _green : const Color(0xFFEF5350);
@@ -289,8 +296,13 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
 
   Widget _buildGraphiqueGains(List<UserPrediction> preds) {
     // Construire les points du graphique : gain cumulé après chaque pari
+    //   ★ LOT G+P / AFFICHAGE : un gain G+P non établi n'entre pas dans un
+    //   cumul affiché. Le montant n'est pas recalculé, il est écarté.
     final sortedPreds = preds
-        .where((p) => p.isCorrect != null && p.montantMise > 0)
+        .where((p) =>
+            p.isCorrect != null &&
+            p.montantMise > 0 &&
+            p.gainGagnantPlaceEtabli)
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
@@ -374,17 +386,24 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
   // ── Graphique 2 : Taux par type de pari ───────────────────────────────────
   Widget _buildGraphiqueTauxParType(List<UserPrediction> preds) {
     // Grouper par type de pari
+    //   ★ LOT G+P / AFFICHAGE : le gain agrégé par type écarte les gains G+P
+    //   non établis (même prédicat que les totaux du provider).
     final statsParType = <String, ({int nb, int gagnes, double gainNet})>{};
     for (final p in preds.where((p) => p.isCorrect != null)) {
       final t = p.typePari;
+      final gain = p.gainGagnantPlaceEtabli ? p.gainNet : 0.0;
       final s = statsParType[t];
       if (s == null) {
-        statsParType[t] = (nb: 1, gagnes: p.isCorrect == true ? 1 : 0, gainNet: p.gainNet);
+        statsParType[t] = (
+          nb: 1,
+          gagnes: p.isCorrect == true ? 1 : 0,
+          gainNet: gain
+        );
       } else {
         statsParType[t] = (
           nb:      s.nb + 1,
           gagnes:  s.gagnes + (p.isCorrect == true ? 1 : 0),
-          gainNet: s.gainNet + p.gainNet,
+          gainNet: s.gainNet + gain,
         );
       }
     }

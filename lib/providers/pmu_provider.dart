@@ -96,28 +96,60 @@ class PmuProvider extends ChangeNotifier {
       totalPredictions > 0 ? (correctPredictions / totalPredictions) * 100 : 0;
 
   /// Total des gains nets (gains - pertes) depuis le début
+  ///
+  /// ★ LOT G+P / AFFICHAGE : un gain G+P NON ÉTABLI n'est pas additionné.
+  ///
+  ///   La formule de `gainNet` est inchangée ; c'est la CONTRIBUTION d'un
+  ///   ticket à un total affiché qui est filtrée. Le montant exclu est
+  ///   exactement celui qui n'est pas prouvé (produit d'une seule cote sur
+  ///   une mise à deux composantes). Les pertes G+P (`-montantMise`), les
+  ///   gains G+P officiels et TOUS les autres types de paris restent comptés
+  ///   à l'identique : le prédicat rend `true` hors G+P et sur un `-mise`.
   double get totalGainsNet {
-    return _predictions.fold(0.0, (sum, p) => sum + p.gainNet);
+    return _predictions.fold(
+        0.0, (sum, p) => sum + (p.gainGagnantPlaceEtabli ? p.gainNet : 0.0));
   }
 
   /// Total misé (toutes les prédictions avec une mise définie)
+  ///
+  /// ★ LOT G+P : la mise réellement engagée d'un G+P est la SOMME de ses deux
+  ///   composantes (`miseTotaleEngagee`), jamais `montantMise` qui n'en
+  ///   porte qu'une. Hors G+P, la valeur est strictement identique.
   double get totalMise {
-    return _predictions.fold(0.0, (sum, p) => sum + p.montantMise);
+    return _predictions.fold(0.0, (sum, p) => sum + _miseEngageeDe(p));
   }
+
+  /// Mise réellement engagée d'un ticket, telle qu'elle doit être totalisée.
+  ///
+  /// Le seul cas où ce n'est pas `montantMise` est le Gagnant + Placé dont les
+  /// DEUX composantes sont renseignées. Si elles sont incomplètes,
+  /// `miseTotaleEngagee` vaut `null` : on retombe alors sur `montantMise`
+  /// (comportement historique), sans jamais inventer de montant.
+  double _miseEngageeDe(UserPrediction p) =>
+      p.miseTotaleEngagee ?? p.montantMise;
 
   /// Total gagné — Option A : retour total encaissé (mise × cote)
   /// Ex: 2 € misés à cote ×1.9 → retour = 3.80 € (pas le profit net 1.80 €)
+  ///
+  /// ★ LOT G+P / AFFICHAGE : un gain G+P non établi ne produit pas de retour
+  ///   affichable. `retourTotal` n'est pas modifié ; sa contribution à un
+  ///   total est filtrée par le même prédicat que `totalGainsNet`.
   double get totalGagnes {
     return _predictions
         .where((p) => p.isCorrect == true)
-        .fold(0.0, (sum, p) => sum + p.retourTotal);
+        .fold(
+            0.0,
+            (sum, p) =>
+                sum + (p.gainGagnantPlaceEtabli ? p.retourTotal : 0.0));
   }
 
   /// Total perdu
+  ///
+  /// ★ LOT G+P : la perte d'un G+P est la mise engagée des DEUX composantes.
   double get totalPerdu {
     return _predictions
         .where((p) => p.isCorrect == false)
-        .fold(0.0, (sum, p) => sum + p.montantMise);
+        .fold(0.0, (sum, p) => sum + _miseEngageeDe(p));
   }
 
   /// Prédictions filtrées par plage de dates
@@ -130,9 +162,12 @@ class PmuProvider extends ChangeNotifier {
   }
 
   /// Gains nets sur une plage de dates
+  ///
+  /// ★ LOT G+P / AFFICHAGE : même prédicat que `totalGainsNet` — un gain G+P
+  ///   non établi n'entre pas dans un total affiché.
   double getGainsNetByDateRange(DateTime? debut, DateTime? fin) {
-    return getPredictionsByDateRange(debut, fin)
-        .fold(0.0, (sum, p) => sum + p.gainNet);
+    return getPredictionsByDateRange(debut, fin).fold(
+        0.0, (sum, p) => sum + (p.gainGagnantPlaceEtabli ? p.gainNet : 0.0));
   }
 
   PmuReunion? getReunionByNum(int num) {

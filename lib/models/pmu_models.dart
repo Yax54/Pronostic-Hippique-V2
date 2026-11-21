@@ -10,8 +10,15 @@
 //      pmu_models.dart  ──►  services/referentiel_paris_pmu.dart
 //  Le référentiel n'importe rien (mesuré : 0 directive `import`), il ne peut
 //  donc pas y avoir de cycle.
+//
+//  ★ LOT G+P / AFFICHAGE : une SECONDE dépendance a été ajoutée, également
+//  sans cycle — `utils/type_pari_utils.dart` n'importe RIEN (mesuré : 0
+//  directive `import`, il ne contient que la garde A-0). Elle sert au seul
+//  getter `gainGagnantPlaceEtabli`, afin que « qu'est-ce qu'un Gagnant +
+//  Placé ? » ait UNE seule autorité et ne soit jamais redéfini localement.
 // ═══════════════════════════════════════════════════════════════════════════
 import '../services/referentiel_paris_pmu.dart';
+import '../utils/type_pari_utils.dart' show estTypeGagnantPlace;
 
 // ─── Réunion ────────────────────────────────────────────────────────────────
 
@@ -588,6 +595,53 @@ class UserPrediction {
     if (isCorrect == null) return 'En attente';
     if (isCorrect == true) return 'Gagné ✅';
     return 'Perdu ❌';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  LOT G+P / AFFICHAGE — LE GAIN D'UN GAGNANT + PLACÉ EST-IL ÉTABLI ?
+  //
+  //  ── LE DÉFAUT MESURÉ ───────────────────────────────────────────────────
+  //  `gainNet` ci-dessus applique UNE cote à UNE mise. Pour un G+P, `cote`
+  //  est la cote du GAGNANT SEUL et `montantMise` la mise PAR COMPOSANTE :
+  //  ce produit ne vaut rien de réel, et la composante Placé n'y entre
+  //  jamais. Les chemins d'affichage présentaient pourtant ce montant
+  //  comme un « Gain net » / « Gain gagné » / un gain partageable.
+  //
+  //  ── CE QUE CE GETTER AJOUTE, ET RIEN DE PLUS ───────────────────────────
+  //  Un seul fait DÉRIVÉ : « le gain de ce ticket est-il établi ? ».
+  //  Il ne calcule aucun montant, ne modifie aucun champ, n'écrit rien.
+  //  `gainNet`, `retourTotal` et leurs formules sont STRICTEMENT INCHANGÉS :
+  //  un compteur ou une agrégation qui lit `gainNet` obtient toujours la
+  //  même valeur qu'avant.
+  //
+  //  ── POURQUOI LA REGLE EST CELLE-CI ─────────────────────────────────────
+  //  Pour un G+P, un gain n'est établi que si les DEUX composantes sont
+  //  ventilées ET si le résultat financier vient d'un rapport officiel
+  //  (`gainRealise` écrit par `enregistrerDividendePmu`, dont la formule
+  //  est protégée). Dans TOUT autre cas — gain déduit d'une cote, d'un
+  //  dividende mono-combinaison, ou composantes incomplètes — le gain
+  //  n'est pas établi.
+  //
+  //  Aucun autre type de pari n'est concerné : la règle ne s'applique
+  //  jamais hors Gagnant + Placé.
+  //
+  //  ⚠️ Ne PAS déduire de `true` que le montant est exact : cet indicateur
+  //     dit seulement qu'il n'est pas un produit cote × mise d'une seule
+  //     composante. Le montant reste celui des formules existantes.
+  bool get gainGagnantPlaceEtabli {
+    if (!estTypeGagnantPlace(typePari)) return true; // hors G+P : inchangé
+    if (miseGagnant == null || misePlace == null) return false;
+
+    // Perdu : `-montantMise` n'est pas une cote appliquée à une mise.
+    if (isCorrect == false) return true;
+
+    // Gagné : il faut un résultat financier OFFICIEL (ou une saisie
+    // explicite), et non le repli cote × mise.
+    if (isCorrect == true) return gainRealise != null;
+
+    // En attente : aucun gain n'est établi, mais aucun n'est affiché non
+    // plus — la valeur est sans effet. On reste conservateur.
+    return false;
   }
 
   /// Sérialisation pour shared_preferences

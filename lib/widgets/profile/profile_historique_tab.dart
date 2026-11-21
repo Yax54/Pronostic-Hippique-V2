@@ -148,6 +148,11 @@ class ProfileHistoriqueCard extends StatelessWidget {
     }
 
     final gain = pred.gainNet;
+    // ★ LOT G+P / AFFICHAGE : un gain G+P non établi ne doit pas être
+    //   présenté comme un montant. `gain` reste la valeur de la formule
+    //   existante (inchangée) ; c'est ici que l'on décide de ne pas
+    //   l'AFFICHER comme un gain confirmé.
+    final bool gainAffiche = pred.gainGagnantPlaceEtabli;
     final dateStr = _fmtDate(pred.createdAt);
 
     return Container(
@@ -207,23 +212,29 @@ class ProfileHistoriqueCard extends StatelessWidget {
               else
                 const Icon(Icons.watch_later_outlined, color: Color(0xFFFFB74D), size: 24),
               const SizedBox(height: 4),
-              if (pred.montantMise > 0) ...[
+              if (pred.montantMise > 0 || pred.miseTotaleEngagee != null) ...[
                 Text(
                   isCorrect == null
                       ? 'Mise : ${fmtEuros(pred.montantMise)}€'
-                      : '${gain >= 0 ? '+' : ''}${fmtEuros(gain)}€',
+                      : !gainAffiche
+                          ? 'Gain non établi (G+P)'
+                          : '${gain >= 0 ? '+' : ''}${fmtEuros(gain)}€',
                   style: TextStyle(
                     color: isCorrect == null
                         ? Colors.white54
-                        : gain >= 0
-                            ? const Color(0xFF69F0AE)
-                            : const Color(0xFFEF5350),
-                    fontSize: 13,
+                        : !gainAffiche
+                            ? const Color(0xFFFFB74D)
+                            : gain >= 0
+                                ? const Color(0xFF69F0AE)
+                                : const Color(0xFFEF5350),
+                    fontSize: gainAffiche ? 13 : 10,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 // Badge "PMU officiel" si dividende réel récupéré
-                if (pred.dividendeRecupere && isCorrect == true)
+                //   ★ G+P : le badge n'est pas affiché si le gain n'est pas
+                //   établi — un dividende mono-combinaison ne vaut pas gain.
+                if (pred.dividendeRecupere && isCorrect == true && gainAffiche)
                   Container(
                     margin: const EdgeInsets.only(top: 2),
                     padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
@@ -702,7 +713,11 @@ class ProfileHistoriqueCard extends StatelessWidget {
       scoreIA: pred.scoreIA,
     );
 
-    final gain = pred.isCorrect == true ? pred.gainNet : null;
+    // ★ LOT G+P / AFFICHAGE : la carte partagée ne doit pas annoncer un gain
+    //   G+P non établi comme un gain confirmé. Le résultat sportif
+    //   (`estGagnant`) est conservé tel quel ; seul le montant est retiré.
+    final gain =
+        pred.isCorrect == true && pred.gainGagnantPlaceEtabli ? pred.gainNet : null;
 
     ShareCardService.partagerCourse(
       context,
