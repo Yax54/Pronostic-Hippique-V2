@@ -22,6 +22,11 @@ import '../services/gain_mise_calculator.dart'; // ★ SOUS-LOT B : mises et gai
 import '../services/data_refresh_service.dart'; // ★ Lot 4 : fix écran gris
 import '../services/ia_memory_service.dart';
 import '../services/ia_pronostic_engine.dart';
+// ★ ÉTAPE 4-F (2/5) : référentiel canonique en LECTURE SEULE, uniquement pour
+//   traduire un libellé de pari en code API PMU. Ce fichier n'a aucun import :
+//   il est pur, et l'importer n'introduit aucun effet de bord.
+import '../services/referentiel_paris_pmu.dart'
+    show typePmuDepuisLibelleHistorique, codeApiPourTypePmu;
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart'; // ★ B2-A : détection Gagnant+Placé
 import 'type_pari_badge.dart'; // ★ v10.32
@@ -199,6 +204,26 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
   bool get _estCouple {
     final t = _typesPari[_typePariIndex];
     return t == 'Couplé Gagnant' || t == 'Couplé Placé';
+  }
+
+  /// ★ ÉTAPE 4-F (2/5) — Code API PMU du pari actuellement sélectionné.
+  ///
+  /// Traduit le libellé affiché en code officiel via le RÉFÉRENTIEL canonique
+  /// ([typePmuDepuisLibelleHistorique] puis [codeApiPourTypePmu]), plutôt que
+  /// par une table recopiée à la main ici : si une correspondance évolue, elle
+  /// évolue à un seul endroit.
+  ///
+  /// Rend `null` dans trois cas, et c'est VOLONTAIRE — on n'invente jamais :
+  ///   • type non répertorié (libellé inconnu du référentiel) ;
+  ///   • « Gagnant+Placé » : ce n'est PAS un pari PMU mais un ticket
+  ///     applicatif à DEUX composantes (un Simple Gagnant + un Simple Placé).
+  ///     Lui attribuer un code unique serait exactement l'assimilation
+  ///     interdite ; le référentiel le laisse hors table pour cette raison ;
+  ///   • type dont le référentiel ne publie pas de code.
+  String? get _codePmuDuTypeChoisi {
+    final type = typePmuDepuisLibelleHistorique(_typesPari[_typePariIndex]);
+    if (type == null) return null;
+    return codeApiPourTypePmu(type);
   }
 
   /// Nombre de chevaux requis selon le type de pari
@@ -2902,13 +2927,25 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       misePlace: estGP ? _mise : null,
       coteGagnant: estGP && _coteGagnant > 1 ? _coteGagnant : null,
       cotePlace: estGP && _cotePlacee > 1 ? _cotePlacee : null,
-      // ★ ÉTAPE 4-F : la capture du pari réellement joué est transmise.
-      //   À ce stade (étape 1) les valeurs restent `null` : c'est l'état
-      //   attendu d'un ticket non capturé. Les étapes 2 à 4 alimenteront la
-      //   variante et l'ordre. La propagation est écrite ICI dès maintenant
-      //   car ce champ traverse ensuite `ajouterSuivi`, qui RECONSTRUIT le
-      //   ticket champ par champ — le point de perte identifié en 4-F.
-      codePmuOfficiel: null,
+      // ★ ÉTAPE 4-F (2/5) : capture du code PMU RÉELLEMENT attribué au type
+      //   sélectionné. Les trois autres champs restent `null`, et c'est
+      //   l'état CORRECT de ce sélecteur :
+      //   • `varianteChoisie` : aucun des huit types proposés ici n'offre un
+      //     choix Ordre/Désordre explicite (« Tiercé » est générique, payable
+      //     dans les deux variantes ; Quarté+ et Quinté+ voient leur variante
+      //     décidée par le rapport officiel, pas par le parieur). Écrire
+      //     'ordre' serait une invention de choix utilisateur.
+      //   • `numerosDansOrdre` : reste `null` ici, MAIS PAS parce que l'ordre
+      //     serait sans objet. Mesuré : `exigeOrdreExactSaisie` rend `true`
+      //     pour Tiercé, Quarté+ ET Quinté+ — le règlement impose de désigner
+      //     les chevaux « dans l'ordre de classement », et c'est cet ordre qui
+      //     décide du paiement en Ordre ou en Désordre. Le champ reste `null`
+      //     uniquement parce que ce sélecteur NE CONNAÎT PAS cet ordre :
+      //     `_numerosManuelsSel` est un ensemble et `_numerosFinaux` le trie.
+      //     Renseigner ici la liste triée laisserait croire à un ordre
+      //     signifiant alors qu'il n'en est rien. Capturer l'ordre réel suppose
+      //     que la saisie le conserve (registre R3).
+      codePmuOfficiel: _codePmuDuTypeChoisi,
       varianteChoisie: null,
       numerosDansOrdre: null,
       formulePari: null,
@@ -2970,9 +3007,11 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         misePlace: estGagnantPlace ? _mise : null,
         coteGagnant: estGagnantPlace ? _coteGagnant : null,
         cotePlace: estGagnantPlace ? _cotePlacee : null,
-        // ★ ÉTAPE 4-F : capture du pari réellement joué. `null` à l'étape 1 ;
-        //   renseigné par les étapes 2 à 4 (sélecteurs).
-        codePmuOfficiel: null,
+        // ★ ÉTAPE 4-F (2/5) : même capture pour le ticket de profil
+        //   utilisateur. Les deux points de création de ce fichier doivent
+        //   porter exactement les mêmes valeurs, sinon le suivi et le profil
+        //   décriraient deux paris différents.
+        codePmuOfficiel: _codePmuDuTypeChoisi,
         varianteChoisie: null,
         numerosDansOrdre: null,
         formulePari: null,
