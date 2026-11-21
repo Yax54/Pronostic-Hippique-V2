@@ -711,6 +711,14 @@ class ProfileHistoriqueCard extends StatelessWidget {
       typePari: pred.typePari,
       numerosJoues: pred.numeroCheval > 0 ? [pred.numeroCheval] : [],
       scoreIA: pred.scoreIA,
+      // ★ ÉTAPE 4-F : la carte partagée doit refléter le pari TEL QU'IL A ÉTÉ
+      //   JOUÉ. Sans ces quatre lignes, un Tiercé Ordre partagé afficherait un
+      //   pari dont la variante et l'ordre ont disparu — la carte serait alors
+      //   plus pauvre que le ticket d'origine qu'elle prétend représenter.
+      codePmuOfficiel: pred.codePmuOfficiel,
+      varianteChoisie: pred.varianteChoisie,
+      numerosDansOrdre: pred.numerosDansOrdre,
+      formulePari: pred.formulePari,
     );
 
     // ★ LOT G+P / AFFICHAGE : la carte partagée ne doit pas annoncer un gain

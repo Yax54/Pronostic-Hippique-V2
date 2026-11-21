@@ -170,10 +170,19 @@ void main() {
         'dividendePmuReel',
         'combinaisonPmu',
         'storageKey',
+        // ★ ÉTAPE 4-F — capture du pari réellement joué (4 clés ajoutées).
+        //   Les 24 clés historiques ci-dessus restent toutes vérifiées.
+        'codePmuOfficiel',
+        'varianteChoisie',
+        'numerosDansOrdre',
+        'formulePari',
       ]) {
         expect(json.containsKey(cle), isTrue, reason: 'clé perdue : $cle');
       }
-      expect(json.length, 24, reason: 'aucune clé ajoutée ni retirée');
+      // ★ ÉTAPE 4-F : 24 clés historiques + 4 clés de capture = 28.
+      //   Le compte reste vérifié pour qu'aucune clé ne soit ajoutée ni
+      //   retirée par inadvertance lors des étapes suivantes.
+      expect(json.length, 28, reason: 'aucune clé ajoutée ni retirée');
     });
   });
 

@@ -3106,6 +3106,18 @@ class _AjouterCourseSheetState extends State<_AjouterCourseSheet> {
                           //   le « Gain potentiel » restera « non calculable ».
                           coteGagnant: null,
                           cotePlace: null,
+                          // ★ ÉTAPE 4-F : la capture du pari réellement joué est
+                          //   transmise au ticket. À ce stade (étape 1) les
+                          //   sélecteurs ne renseignent pas encore ces valeurs :
+                          //   elles restent `null`, ce qui est l'état attendu
+                          //   d'un ticket non capturé. Les étapes 2 à 4 les
+                          //   alimenteront. Les écrire ICI dès maintenant évite
+                          //   d'oublier cette propagation, qui est le point de
+                          //   perte identifié par le diagnostic 4-F.
+                          codePmuOfficiel: null,
+                          varianteChoisie: null,
+                          numerosDansOrdre: null,
+                          formulePari: null,
                         ));
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(

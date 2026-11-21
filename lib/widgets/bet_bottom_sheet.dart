@@ -2902,6 +2902,16 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       misePlace: estGP ? _mise : null,
       coteGagnant: estGP && _coteGagnant > 1 ? _coteGagnant : null,
       cotePlace: estGP && _cotePlacee > 1 ? _cotePlacee : null,
+      // ★ ÉTAPE 4-F : la capture du pari réellement joué est transmise.
+      //   À ce stade (étape 1) les valeurs restent `null` : c'est l'état
+      //   attendu d'un ticket non capturé. Les étapes 2 à 4 alimenteront la
+      //   variante et l'ordre. La propagation est écrite ICI dès maintenant
+      //   car ce champ traverse ensuite `ajouterSuivi`, qui RECONSTRUIT le
+      //   ticket champ par champ — le point de perte identifié en 4-F.
+      codePmuOfficiel: null,
+      varianteChoisie: null,
+      numerosDansOrdre: null,
+      formulePari: null,
     );
 
     widget.alertService.ajouterSuivi(tracked, overrideKey: widget.overrideKey);
@@ -2960,6 +2970,12 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         misePlace: estGagnantPlace ? _mise : null,
         coteGagnant: estGagnantPlace ? _coteGagnant : null,
         cotePlace: estGagnantPlace ? _cotePlacee : null,
+        // ★ ÉTAPE 4-F : capture du pari réellement joué. `null` à l'étape 1 ;
+        //   renseigné par les étapes 2 à 4 (sélecteurs).
+        codePmuOfficiel: null,
+        varianteChoisie: null,
+        numerosDansOrdre: null,
+        formulePari: null,
       );
 
       // ignore: use_build_context_synchronously

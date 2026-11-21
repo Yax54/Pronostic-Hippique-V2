@@ -749,6 +749,15 @@ class AlertService extends ChangeNotifier {
       messageResultat: course.messageResultat,
       dividendePmuReel: course.dividendePmuReel,
       combinaisonPmu: course.combinaisonPmu,
+      // ★ ÉTAPE 4-F : les quatre champs de capture DOIVENT survivre à cette
+      //   reconstruction. Sans ces lignes, tout ticket tiercé/couplé ordre
+      //   perdrait sa variante et son ordre dès l'appel à `ajouterSuivi`,
+      //   c'est-à-dire AVANT même la première sauvegarde — même piège que
+      //   `storageKey` (R1) et que la ventilation G+P (B2-C).
+      codePmuOfficiel: course.codePmuOfficiel,
+      varianteChoisie: course.varianteChoisie,
+      numerosDansOrdre: course.numerosDansOrdre,
+      formulePari: course.formulePari,
       storageKey: storageKey,
     );
     _trackedCourses[storageKey] = courseAvecKey;
@@ -2986,6 +2995,48 @@ class TrackedCourse {
   final double? dividendePmuReel;  // ex: 45.2 → retour pour 1€ misé (null = pas encore récupéré)
   final String? combinaisonPmu;    // ex: "5-12-3" → numéros gagnants PMU officiels
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ ÉTAPE 4-F — CAPTURE DU PARI RÉELLEMENT JOUÉ (4 champs FACULTATIFS)
+  //
+  //  Contrat STRICTEMENT identique à celui de `UserPrediction` :
+  //   • les QUATRE champs sont `null` pour tout ticket antérieur à 4-F ;
+  //   • aucune valeur n'est jamais déduite, devinée ni reconstituée ;
+  //   • `numerosJoues` GARDE sa signification historique (ensemble trié) ;
+  //   • `typePari` reste inchangé : la variante vit dans [varianteChoisie].
+  //
+  //  ⚠️ CES CHAMPS DOIVENT ÊTRE PROPAGÉS PAR TOUTES LES RECONSTRUCTIONS.
+  //     Ce fichier reconstruit `TrackedCourse` champ par champ à trois endroits
+  //     (`ajouterSuivi`, `withResultat`, `withDividende`). Oublier une ligne
+  //     ici perd la donnée en silence — exactement le défaut déjà rencontré
+  //     sur `storageKey` (lot R1) puis sur la ventilation G+P (lot B2-C).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Code API PMU réellement visé (`'E_TIERCE'`, `'E_QUARTE_PLUS'`…).
+  /// `null` = non capturé. Aucune valeur par défaut.
+  final String? codePmuOfficiel;
+
+  /// Variante **choisie par le parieur** : `'ordre'` ou `'desordre'`.
+  /// Renseignée uniquement pour Tiercé Ordre/Désordre et Couplé Ordre.
+  /// Reste `null` pour Quarté+/Quinté+ (le rapport officiel tranche).
+  final String? varianteChoisie;
+
+  /// Ordre des chevaux tel que saisi, lorsque le pari exige l'ordre.
+  /// Invariant : le tri de ce champ doit être égal à [numerosJoues].
+  final List<int>? numerosDansOrdre;
+
+  /// Formule Multi / Mini Multi (`'en4'`…`'en7'`). Toujours `null` dans ce lot.
+  final String? formulePari;
+
+  /// Le ticket porte-t-il de quoi identifier sa variante sans deviner ?
+  /// Getter DÉRIVÉ : jamais persisté.
+  bool get capturePariComplete {
+    if (codePmuOfficiel == null) return false;
+    final exigeVariante = typePari == 'Tiercé Ordre' ||
+        typePari == 'Tiercé Désordre' ||
+        typePari == 'Couplé Ordre';
+    return exigeVariante ? varianteChoisie != null : true;
+  }
+
   /// ★ LOT B2-C — Mise totale réellement engagée (contrat B1) :
   /// - les deux composantes nulles → `miseEngagee` (pari historique mono-composante)
   /// - une seule nulle → `null` (état incomplet : aucun total inventé)
@@ -3063,6 +3114,11 @@ class TrackedCourse {
     this.messageResultat,
     this.dividendePmuReel,
     this.combinaisonPmu,
+    // ★ ÉTAPE 4-F — capture du pari réellement joué (tous facultatifs)
+    this.codePmuOfficiel,
+    this.varianteChoisie,
+    this.numerosDansOrdre,
+    this.formulePari,
   }) : addedAt = addedAt ?? DateTime.now();
 
   /// Crée une copie avec résultat mis à jour (pour persister sans muter)
@@ -3096,6 +3152,13 @@ class TrackedCourse {
     messageResultat: message,
     dividendePmuReel: dividendePmuReel,
     combinaisonPmu: combinaisonPmu,
+    // ★ ÉTAPE 4-F : capture du pari propagée. Un ticket Tiercé Ordre dont le
+    //   résultat est enregistré doit conserver son ordre saisi et sa variante,
+    //   sinon l'information disparaît à la première mise à jour de résultat.
+    codePmuOfficiel: codePmuOfficiel,
+    varianteChoisie: varianteChoisie,
+    numerosDansOrdre: numerosDansOrdre,
+    formulePari: formulePari,
     // ★ LOT R1 : `storageKey` DOIT être propagée.
     //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
     //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
@@ -3140,6 +3203,13 @@ class TrackedCourse {
     messageResultat: messageResultat,
     dividendePmuReel: dividende,
     combinaisonPmu: combinaison,
+    // ★ ÉTAPE 4-F : capture du pari propagée. Le dividende est renseigné APRÈS
+    //   la course ; c'est justement le moment où l'on a besoin de savoir quelle
+    //   variante avait été jouée pour choisir le bon rapport officiel.
+    codePmuOfficiel: codePmuOfficiel,
+    varianteChoisie: varianteChoisie,
+    numerosDansOrdre: numerosDansOrdre,
+    formulePari: formulePari,
     storageKey: storageKey,
   );
 
@@ -3200,6 +3270,12 @@ class TrackedCourse {
     'combinaisonPmu': combinaisonPmu,
     // ★ Clé de stockage unique — persiste le timestamp entre redémarrages
     'storageKey': storageKey,
+    // ★ ÉTAPE 4-F — capture du pari réellement joué.
+    //   Toujours écrites, y compris à `null`, comme les clés B2-C ci-dessus.
+    'codePmuOfficiel': codePmuOfficiel,
+    'varianteChoisie': varianteChoisie,
+    'numerosDansOrdre': numerosDansOrdre,
+    'formulePari': formulePari,
   };
 
   factory TrackedCourse.fromJson(Map<String, dynamic> j) => TrackedCourse(
@@ -3234,5 +3310,14 @@ class TrackedCourse {
     // ★ Dividende PMU réel (rétrocompatible)
     dividendePmuReel: (j['dividendePmuReel'] as num?)?.toDouble(),
     combinaisonPmu:   j['combinaisonPmu'] as String?,
+    // ★ ÉTAPE 4-F — lecture TOLÉRANTE : clé absente ⇒ `null`.
+    //   Aucune variante, aucun ordre et aucune formule ne sont inventés.
+    //   `numerosDansOrdre` reste `null` (et non `[]`) si la clé manque :
+    //   « non capturé » ≠ « aucun cheval dans l'ordre ».
+    codePmuOfficiel:  j['codePmuOfficiel'] as String?,
+    varianteChoisie:  j['varianteChoisie'] as String?,
+    numerosDansOrdre: (j['numerosDansOrdre'] as List<dynamic>?)
+                          ?.map((e) => (e as num).toInt()).toList(),
+    formulePari:      j['formulePari'] as String?,
   );
 }

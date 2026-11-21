@@ -436,6 +436,77 @@ class UserPrediction {
   /// Combinaison gagnante PMU (ex: "5-12-3")
   String? combinaisonPmu;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ ÉTAPE 4-F — CAPTURE DU PARI RÉELLEMENT JOUÉ (4 champs FACULTATIFS)
+  //
+  //  CONTRAT STRICT, identique dans `TrackedCourse` :
+  //   • les QUATRE champs sont `null` pour tout ticket antérieur à 4-F ;
+  //   • aucune valeur n'est JAMAIS déduite, devinée ni reconstituée ;
+  //   • `numerosJoues` GARDE sa signification historique (ensemble trié) et
+  //     n'est pas modifié : les formules financières qui le lisent ne voient
+  //     aucune différence ;
+  //   • `typePari` n'est pas modifié non plus : la variante vit dans
+  //     [varianteChoisie], pas dans la chaîne.
+  //
+  //  Ces quatre champs sont PERSISTÉS (contrairement aux getters dérivés
+  //  `typePmu`, `typePariReconnu`…) car ce sont des données de saisie que
+  //  rien ne permet de recalculer après coup.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Code API PMU réellement visé par le ticket (`'E_TIERCE'`,
+  /// `'E_QUARTE_PLUS'`, `'E_QUINTE_PLUS'`, `'E_TRIO'`…).
+  ///
+  /// `null` = non capturé (tout ticket antérieur à 4-F, ou type non répertorié).
+  /// Aucune valeur par défaut : on ne suppose jamais « E_SIMPLE_GAGNANT ».
+  final String? codePmuOfficiel;
+
+  /// Variante **choisie par le parieur** : `'ordre'` ou `'desordre'`.
+  ///
+  /// Renseignée UNIQUEMENT pour les paris où ce choix existe réellement :
+  /// Tiercé Ordre / Tiercé Désordre et Couplé Ordre.
+  ///
+  /// ⚠️ Reste `null` pour Quarté+ et Quinté+ : au PMU le parieur n'y choisit
+  ///    pas Ordre/Désordre, il désigne 4 ou 5 chevaux et c'est le rapprochement
+  ///    avec le rapport officiel qui détermine la variante payable. Écrire
+  ///    `'ordre'` ici serait une invention de choix utilisateur.
+  final String? varianteChoisie;
+
+  /// Ordre des chevaux **tel que saisi**, lorsque le pari exige l'ordre.
+  ///
+  /// Renseigné uniquement pour Tiercé Ordre et Couplé Ordre (`exigeOrdreExact`
+  /// vaut `true` pour eux). `null` partout ailleurs.
+  ///
+  /// Invariant : le tri de ce champ doit toujours être égal à [numerosJoues].
+  /// Les deux champs ne peuvent donc pas désigner des chevaux différents.
+  final List<int>? numerosDansOrdre;
+
+  /// Formule du pari, pour Multi / Mini Multi : `'en4'`, `'en5'`, `'en6'`,
+  /// `'en7'` (et `'en4'`..`'en6'` pour Mini Multi).
+  ///
+  /// Champ PRÉVU mais toujours `null` dans ce lot : Multi et Mini Multi ne
+  /// sont pas exposés à la saisie. Il est déclaré maintenant pour que le
+  /// contrat soit complet et qu'aucune seconde évolution du format JSON ne
+  /// soit nécessaire lorsqu'ils le seront.
+  final String? formulePari;
+
+  /// Le ticket porte-t-il de quoi identifier sa variante **sans deviner** ?
+  ///
+  /// `true` si le code PMU est connu ET qu'aucun choix de variante n'était
+  /// requis (Quarté+/Quinté+ : c'est le rapport officiel qui tranche), ou si
+  /// le choix requis a bien été capturé. `false` sinon.
+  ///
+  /// Getter DÉRIVÉ : jamais persisté (voir le test `etape2` qui interdit les
+  /// getters dans le JSON).
+  bool get capturePariComplete {
+    if (codePmuOfficiel == null) return false;
+    // Le choix de variante n'est requis que pour Tiercé Ordre/Désordre et
+    // Couplé Ordre — soit exactement les types où `varianteChoisie` a un sens.
+    final exigeVariante = typePari == 'Tiercé Ordre' ||
+        typePari == 'Tiercé Désordre' ||
+        typePari == 'Couplé Ordre';
+    return exigeVariante ? varianteChoisie != null : true;
+  }
+
   // ★ LOT B1 — Représentation des DEUX composantes d'un pari Gagnant + Placé.
   //
   //  Règle métier impérative : la mise saisie s'applique SÉPARÉMENT à chaque
@@ -556,6 +627,11 @@ class UserPrediction {
     this.misePlace,
     this.coteGagnant,
     this.cotePlace,
+    // ★ ÉTAPE 4-F — capture du pari réellement joué (tous facultatifs)
+    this.codePmuOfficiel,
+    this.varianteChoisie,
+    this.numerosDansOrdre,
+    this.formulePari,
   });
 
   /// Gain net calculé :
@@ -668,6 +744,15 @@ class UserPrediction {
     'misePlace': misePlace,
     'coteGagnant': coteGagnant,
     'cotePlace': cotePlace,
+    // ★ ÉTAPE 4-F — capture du pari réellement joué.
+    //   Ces quatre clés sont TOUJOURS écrites, y compris à `null` : c'est le
+    //   choix déjà fait pour `miseGagnant`, `cotePlace`, etc. Un ticket ancien
+    //   relu puis réécrit conserve donc la MÊME forme, et `fromJson` tolère
+    //   l'absence des clés (→ `null`, jamais une valeur inventée).
+    'codePmuOfficiel': codePmuOfficiel,
+    'varianteChoisie': varianteChoisie,
+    'numerosDansOrdre': numerosDansOrdre,
+    'formulePari': formulePari,
   };
 
   factory UserPrediction.fromJson(Map<String, dynamic> json) {
@@ -702,6 +787,18 @@ class UserPrediction {
       misePlace: (json['misePlace'] as num?)?.toDouble(),
       coteGagnant: (json['coteGagnant'] as num?)?.toDouble(),
       cotePlace: (json['cotePlace'] as num?)?.toDouble(),
+      // ★ ÉTAPE 4-F — lecture TOLÉRANTE : clé absente ⇒ `null`.
+      //   Aucune valeur de repli, aucun ordre fabriqué, aucune variante devinée.
+      //   `numerosDansOrdre` reste `null` (et non `[]`) quand la clé manque :
+      //   « non capturé » et « liste vide » sont deux états différents, et
+      //   confondre les deux reviendrait à affirmer qu'aucun cheval n'était
+      //   joué dans l'ordre.
+      codePmuOfficiel: json['codePmuOfficiel'] as String?,
+      varianteChoisie: json['varianteChoisie'] as String?,
+      numerosDansOrdre: (json['numerosDansOrdre'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toList(),
+      formulePari: json['formulePari'] as String?,
     );
   }
 }
