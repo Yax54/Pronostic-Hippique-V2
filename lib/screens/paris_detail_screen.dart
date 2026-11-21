@@ -21,6 +21,7 @@ import '../services/pmu_api_service.dart';
 import '../services/gain_calculator.dart';
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
+import '../services/referentiel_paris_pmu.dart'; // ★ ÉTAPE 3 — codes API centraux
 import '../services/ia_pronostic_engine.dart';
 import '../services/bookmaker_service.dart';
 import '../widgets/bet_bottom_sheet.dart';
@@ -660,19 +661,24 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
       if (typePariLower.contains('gagnant+placé') || typePariLower.contains('gagnant + placé') || typePariLower.contains('gagnant+place')) {
         codesPmu = ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
       } else if (typePariLower.contains('couplé gagnant')) {
-        codesPmu = ['E_COUPLE_GAGNANT'];
+        // ★ ÉTAPE 3 — équivalence démontrée, code identique au référentiel.
+        codesPmu = _codeUnique(TypePariPmu.coupleGagnant, ['E_COUPLE_GAGNANT']);
       } else if (typePariLower.contains('couplé placé')) {
-        codesPmu = ['E_COUPLE_PLACE'];
+        codesPmu = _codeUnique(TypePariPmu.couplePlace, ['E_COUPLE_PLACE']);
       } else if (typePariLower.contains('quinté')) {
+        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUINTE_PLUS.
+        //    Remplacer changerait le montant retenu par reduce(MAX) au-dessus.
         codesPmu = ['E_MULTI', 'E_MINI_MULTI'];
       } else if (typePariLower.contains('quarté')) {
+        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUARTE_PLUS.
         codesPmu = ['E_SUPER_QUATRE'];
       } else if (typePariLower.contains('tiercé')) {
+        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_TIERCE, E_TRIO = Trio.
         codesPmu = ['E_TRIO'];
       } else if (typePariLower.contains('simple gagnant')) {
-        codesPmu = ['E_SIMPLE_GAGNANT'];
+        codesPmu = _codeUnique(TypePariPmu.simpleGagnant, ['E_SIMPLE_GAGNANT']);
       } else if (typePariLower.contains('simple placé')) {
-        codesPmu = ['E_SIMPLE_PLACE'];
+        codesPmu = _codeUnique(TypePariPmu.simplePlace, ['E_SIMPLE_PLACE']);
       } else if (typePariLower.contains('gagnant')) {
         codesPmu = ['E_SIMPLE_GAGNANT'];
       } else if (typePariLower.contains('placé')) {
@@ -723,19 +729,22 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
     if (typePariLower.contains('gagnant+placé') || typePariLower.contains('gagnant + placé') || typePariLower.contains('gagnant+place')) {
       codesPmuRecherche = ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
     } else if (typePariLower.contains('couplé gagnant')) {
-      codesPmuRecherche = ['E_COUPLE_GAGNANT'];
+      codesPmuRecherche = _codeUnique(TypePariPmu.coupleGagnant, ['E_COUPLE_GAGNANT']);
     } else if (typePariLower.contains('couplé placé')) {
-      codesPmuRecherche = ['E_COUPLE_PLACE'];
+      codesPmuRecherche = _codeUnique(TypePariPmu.couplePlace, ['E_COUPLE_PLACE']);
     } else if (typePariLower.contains('quinté')) {
+      // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUINTE_PLUS.
       codesPmuRecherche = ['E_MULTI', 'E_MINI_MULTI'];
     } else if (typePariLower.contains('quarté')) {
+      // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUARTE_PLUS.
       codesPmuRecherche = ['E_SUPER_QUATRE'];
     } else if (typePariLower.contains('tiercé')) {
+      // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_TIERCE, E_TRIO = Trio.
       codesPmuRecherche = ['E_TRIO'];
     } else if (typePariLower.contains('simple gagnant')) {
-      codesPmuRecherche = ['E_SIMPLE_GAGNANT'];
+      codesPmuRecherche = _codeUnique(TypePariPmu.simpleGagnant, ['E_SIMPLE_GAGNANT']);
     } else if (typePariLower.contains('simple placé')) {
-      codesPmuRecherche = ['E_SIMPLE_PLACE'];
+      codesPmuRecherche = _codeUnique(TypePariPmu.simplePlace, ['E_SIMPLE_PLACE']);
     } else if (typePariLower.contains('gagnant')) {
       codesPmuRecherche = ['E_SIMPLE_GAGNANT'];
     } else if (typePariLower.contains('placé')) {
@@ -919,6 +928,26 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
         ],
       ]),
     );
+  }
+
+  // ★ ÉTAPE 3 — DÉLÉGATION AU RÉFÉRENTIEL, SOUS CONTRAT D'ÉQUIVALENCE.
+  //
+  //  Identique à la même fonction de `mes_paris_screen.dart`. Le code rendu
+  //  par le référentiel n'est utilisé que s'il est EXACTEMENT égal au code
+  //  historique ; sinon on conserve l'historique et on signale en debug.
+  //  Cette délégation ne peut donc pas modifier un montant, par construction.
+  List<String> _codeUnique(TypePariPmu type, List<String> codeHistorique) {
+    final duReferentiel = codeApiPourTypePmu(type);
+    if (duReferentiel == null ||
+        codeHistorique.length != 1 ||
+        duReferentiel != codeHistorique.first) {
+      if (kDebugMode) {
+        debugPrint('[Étape 3] DIVERGENCE sur $type : référentiel='
+            '$duReferentiel, historique=$codeHistorique — historique conservé');
+      }
+      return codeHistorique;
+    }
+    return [duReferentiel];
   }
 
   /// Libellé lisible pour un type de pari PMU + ordre/désordre
