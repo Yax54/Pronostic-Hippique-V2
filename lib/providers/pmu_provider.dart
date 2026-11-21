@@ -4,7 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pmu_models.dart';
 import '../services/pmu_api_service.dart';
 import '../services/ia_memory_service.dart';
-import '../utils/type_pari_utils.dart' show estEtatSansPariRecommande;
+import '../utils/type_pari_utils.dart'
+    show estEtatSansPariRecommande, estTypeGagnantPlace;
 
 enum LoadingState { idle, loading, success, error }
 
@@ -347,10 +348,34 @@ class PmuProvider extends ChangeNotifier {
     }
 
     final mise = montantMise ?? old.montantMise;
+
+    // ★ LOT G+P — AUCUN GAIN DÉDUIT D'UNE COTE POUR UN GAGNANT + PLACÉ.
+    //
+    //   Le repli ci-dessous (`(cote × mise) − mise`) n'a de sens que pour un
+    //   pari MONO-COMPOSANTE : il applique la cote à la mise totale. Sur un
+    //   Gagnant+Placé, `cote` est la cote du GAGNANT SEUL et la mise est la
+    //   somme des DEUX composantes : ce produit ne vaut rien de réel. Il est
+    //   exactement le montant fictif que la garde A-0 empêche déjà sur les
+    //   trois voies automatiques (`alert_service.dart:2712`,
+    //   `profile_profil_tab.dart:1652`, `mes_paris_screen.dart:1453`).
+    //
+    //   On n'invente donc RIEN : on n'écrit pas de gain (`gainRealise` reste
+    //   `null`), et le gain officiel reste à établir par
+    //   `enregistrerDividendePmu` à partir des rapports PMU.
+    //   Point 6 du mandat : un dividende ambigu ne décide jamais d'un
+    //   gagnant/perdant — a fortiori une cote Gagnant seule.
+    //
+    //   ⚠️ La formule elle-même est INCHANGÉE : c'est un aiguillage placé
+    //   devant, exactement comme la garde C3 ci-dessus. `isCorrect` est
+    //   toujours enregistré (résultat sportif), et le chemin « Perdu »
+    //   (`gainRealise: -mise`, explicite) n'est pas concerné.
+    final bool estGagnantPlace = estTypeGagnantPlace(old.typePari);
     final gain = gainRealise ??
-        (isCorrect && mise > 0 && old.cote > 0
-            ? (old.cote * mise) - mise
-            : (!isCorrect && mise > 0 ? -mise : null));
+        (estGagnantPlace
+            ? null
+            : (isCorrect && mise > 0 && old.cote > 0
+                ? (old.cote * mise) - mise
+                : (!isCorrect && mise > 0 ? -mise : null)));
     _predictions[idx]
       ..isCorrect = isCorrect
       ..montantMise = mise

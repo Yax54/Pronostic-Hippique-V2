@@ -4,6 +4,7 @@ import '../../models/pmu_models.dart';
 import '../../services/alert_service.dart' show TrackedCourse;
 import '../../utils/format_euros.dart';
 import '../../utils/type_pari_utils.dart' show estEtatSansPariRecommande;
+import '../../utils/validation_manuelle_ticket.dart';
 import '../../widgets/share_card_generator.dart';
 
 import 'profile_common_widgets.dart';
@@ -349,7 +350,29 @@ class ProfileHistoriqueCard extends StatelessWidget {
       _afficherAucunPariRecommande(context);
       return;
     }
-    double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;
+
+    // ★ LOT G+P — LA MISE N'EST PLUS INVENTÉE (même correction que
+    //   `predictions_screen._validerDialog`).
+    //
+    //   Avant : `double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;`
+    //   Pour un Gagnant+Placé dont `montantMise` vaut 0, c'était 10 €
+    //   inventés alors que le pari engage DEUX composantes déjà enregistrées.
+    //
+    //   La décision est prise par le module pur `validation_manuelle_ticket`,
+    //   qui réutilise le calculateur B et la garde A-0. Si les deux
+    //   composantes ne sont pas établies, on refuse sans fabriquer de montant.
+    final decision = deciderValidationManuelle(pred);
+    if (decision is! ValidationManuelleAutorisee) {
+      _afficherValidationRefusee(
+          context, (decision as ValidationManuelleRefusee).motif);
+      return;
+    }
+    // `mise` reste mutable : le curseur la modifie pour un pari mono-
+    // composante. Pour un Gagnant+Placé, les contrôles sont DÉSACTIVÉS
+    // (voir plus bas) : les deux mises sont déjà enregistrées sur le ticket
+    // et laisser l'utilisateur réécrire un total reviendrait à en inventer un.
+    double mise = decision.miseTotale;
+    final bool estDeuxComposantes = decision.deuxComposantes;
     final estCombine = pred.estPariCombine;
 
     showDialog(
@@ -358,9 +381,19 @@ class ProfileHistoriqueCard extends StatelessWidget {
         builder: (ctx, setInnerState) {
           // Pour les simples → calcul via cote réelle PMU
           // Pour les combinés → gain saisi manuellement (dividende PMU réel)
-          final gainEstime = estCombine
-              ? 0.0  // pour les combinés, on ne peut pas estimer avant la course
-              : (pred.cote > 1.0 ? (pred.cote * mise) - mise : mise * 1.5);
+          //
+          // ★ LOT G+P — point 6 : plus AUCUNE valeur de repli inventée.
+          //   Avant, `pred.cote <= 1.0` produisait `mise * 1.5`, un gain
+          //   fabriqué de toutes pièces. On rend `null` : pas de cote réelle
+          //   ⇒ pas de gain estimable, plutôt qu'un chiffre faux.
+          //   Pour un Gagnant+Placé, aucun gain n'est affiché : la cote
+          //   enregistrée est celle du Gagnant seul et ne permet pas de
+          //   calculer les deux composantes (c'est exactement le motif A-0).
+          final double? gainEstime = estCombine
+              ? null // combiné : dividende PMU après la course
+              : (estDeuxComposantes
+                  ? null // G+P : deux composantes, gain non estimable ici
+                  : (pred.cote > 1.0 ? (pred.cote * mise) - mise : null));
 
           return AlertDialog(
             backgroundColor: const Color(0xFF0A1628),
@@ -416,7 +449,9 @@ class ProfileHistoriqueCard extends StatelessWidget {
                 ...[2.0, 5.0, 10.0, 20.0, 50.0].map((v) {
                   final sel = (mise - v).abs() < 0.01;
                   return GestureDetector(
-                    onTap: () => setInnerState(() => mise = v),
+                    onTap: estDeuxComposantes
+                        ? null // ★ G+P : mises déjà enregistrées, non modifiables
+                        : () => setInnerState(() => mise = v),
                     child: Container(
                       margin: const EdgeInsets.only(right: 6),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -440,17 +475,37 @@ class ProfileHistoriqueCard extends StatelessWidget {
                 divisions: 199,
                 activeColor: const Color(0xFF4CAF7D),
                 inactiveColor: const Color(0xFF1E3A5C).withValues(alpha: 0.3),
-                onChanged: (v) => setInnerState(() => mise = v.roundToDouble()),
+                // ★ G+P : mises déjà enregistrées, non modifiables ici.
+                onChanged: estDeuxComposantes
+                    ? null
+                    : (v) => setInnerState(() => mise = v.roundToDouble()),
               ),
               Text('Mise : ${mise.toStringAsFixed(0)} €',
                   style: const TextStyle(color: Color(0xFF4CAF7D), fontWeight: FontWeight.bold)),
+              // ★ LOT G+P : un Gagnant+Placé engage DEUX composantes ; la mise
+              //   affichée est leur SOMME réelle (10 + 10 = 20 €), jamais 10 €.
+              if (estDeuxComposantes)
+                Text(
+                  'Gagnant + Placé : '
+                  '${pred.miseGagnant!.toStringAsFixed(0)} € + '
+                  '${pred.misePlace!.toStringAsFixed(0)} € = '
+                  '${mise.toStringAsFixed(0)} € engagés',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  textAlign: TextAlign.center,
+                ),
               const SizedBox(height: 12),
               // Gain estimé — adapté selon type de pari
               if (!estCombine)
                 Text(
-                  pred.cote > 1.0
+                  // ★ LOT G+P : plus de valeur de repli inventée. Sans gain
+                  //   réellement calculable, on l'annonce au lieu d'afficher
+                  //   un chiffre fabriqué (`mise * 1.5` a été supprimé).
+                  gainEstime != null
                       ? 'Gain estimé si gagnant : +${fmtEuros(gainEstime)} €'
-                      : 'Gain calculé après la course',
+                      : estDeuxComposantes
+                          ? 'Gain Gagnant + Placé : non calculé ici '
+                              '(deux composantes distinctes)'
+                          : 'Gain calculé après la course',
                   style: const TextStyle(color: Color(0xFFFFD700), fontSize: 14),
                 )
               else if (pred.dividendeRecupere)
@@ -479,21 +534,36 @@ class ProfileHistoriqueCard extends StatelessWidget {
                     ),
                     onPressed: () {
                       // Pour les combinés avec dividende récupéré → utiliser le vrai gain
-                      // Pour les simples → calculer via cote réelle
-                      // Pour les combinés sans dividende → marquer gagné, gain récupéré plus tard
-                      final gainFinal = pred.dividendeRecupere
-                          ? pred.gainNet
-                          : estCombine ? null : gainEstime;
+                      // Pour les simples → calcul via cote réelle
+                      // Pour les combinés/G+P sans dividende → marquer gagné,
+                      //   le gain officiel sera récupéré après la course.
+                      // ★ LOT G+P — point 6 : `gainRealise` reste `null` si
+                      //   aucun gain n'est réellement calculable. On n'écrit
+                      //   jamais un montant déduit d'un dividende ambigu.
+                      //   Pour un Gagnant+Placé, on n'écrit AUCUN gain : même le
+                      //   `dividendePmuReel` du ticket est écarté, car il a été
+                      //   obtenu pour une seule combinaison et les deux
+                      //   composantes G+P ne sont pas ventilées.
+                      //
+                      //   `montantMise` n'est PAS réécrit pour un G+P : il y
+                      //   porte la mise PAR COMPOSANTE (contrat B2-A :
+                      //   `miseTotaleEngagee == montantMise × 2`). Écrire la
+                      //   somme (20 €) doublerait la mise affichée (40 €).
+                      final double? gainFinal = estDeuxComposantes
+                          ? null
+                          : (pred.dividendeRecupere ? pred.gainNet : gainEstime);
                       provider.validatePrediction(pred.id,
                           isCorrect: true,
-                          montantMise: mise,
+                          montantMise: estDeuxComposantes ? null : mise,
                           gainRealise: gainFinal);
                       Navigator.pop(ctx);
-                      final gainMsg = pred.dividendeRecupere
+                      final String gainMsg = pred.dividendeRecupere && !estDeuxComposantes
                           ? '+${fmtEuros(pred.gainNet)} € (PMU officiel)'
-                          : estCombine
-                              ? 'dividende récupéré après la course'
-                              : '+${gainEstime.toStringAsFixed(2)} €';
+                          : estDeuxComposantes
+                              ? 'gain non calculé (deux composantes distinctes)'
+                              : gainEstime != null
+                                  ? '+${gainEstime.toStringAsFixed(2)} €'
+                                  : 'gain calculé après la course';
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('🏆 ${pred.typePari} gagné ! $gainMsg'),
@@ -513,9 +583,13 @@ class ProfileHistoriqueCard extends StatelessWidget {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: () {
+                      // « Perdu » est un FAIT constaté : la perte écrite est la
+                      // mise réellement engagée, y compris pour un G+P (A-0 ne
+                      // neutralise que les gains G+P). `montantMise` n'est pas
+                      // réécrit pour un G+P (il porte la mise par composante).
                       provider.validatePrediction(pred.id,
                           isCorrect: false,
-                          montantMise: mise,
+                          montantMise: estDeuxComposantes ? null : mise,
                           gainRealise: -mise);
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -537,6 +611,40 @@ class ProfileHistoriqueCard extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Motif affiché lorsque la validation financière est refusée faute de
+  /// pouvoir établir la mise réellement engagée.
+  ///
+  /// ❗Aucun montant n'est affiché — il n'y a rien de connu à montrer.
+  void _afficherValidationRefusee(BuildContext context, String motif) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0A1628),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.report_problem, color: Color(0xFFFFB74D)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text('Validation impossible',
+                style: TextStyle(color: Colors.white, fontSize: 15)),
+          ),
+        ]),
+        content: Text(
+          '$motif\n\n'
+          'Renseignez la ou les mises réellement engagées pour pouvoir '
+          'valider ce ticket. Rien n\'a été enregistré.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
+          ),
+        ],
       ),
     );
   }

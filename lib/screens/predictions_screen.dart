@@ -6,6 +6,7 @@ import '../models/pmu_models.dart';
 import '../services/bookmaker_service.dart';
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart' show estEtatSansPariRecommande;
+import '../utils/validation_manuelle_ticket.dart';
 
 class PredictionsScreen extends StatelessWidget {
   const PredictionsScreen({super.key});
@@ -475,7 +476,27 @@ class _PredCard extends StatelessWidget {
       _afficherAucunPariRecommande(context);
       return;
     }
-    double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;
+
+    // ★ LOT G+P — LA MISE N'EST PLUS INVENTÉE.
+    //
+    //   Avant : `double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;`
+    //   Pour un Gagnant+Placé, `montantMise` vaut 0 (le ticket créé par
+    //   `race_detail_screen.dart:348` ne passe pas ce champ) : la formule
+    //   engageait donc 10 € INVENTÉS, alors que le pari engage DEUX
+    //   composantes déjà enregistrées dans `miseGagnant` / `misePlace`.
+    //
+    //   Désormais la décision est prise par un module pur qui réutilise le
+    //   calculateur B (`gain_mise_calculator.dart`) et la garde A-0. Si les
+    //   deux composantes ne sont pas établies, la validation est REFUSÉE avec
+    //   un motif : aucun montant n'est fabriqué.
+    final decision = deciderValidationManuelle(pred);
+    if (decision is! ValidationManuelleAutorisee) {
+      _afficherValidationRefusee(
+          context, (decision as ValidationManuelleRefusee).motif);
+      return;
+    }
+    double mise = decision.miseTotale;
+    final bool estDeuxComposantes = decision.deuxComposantes;
 
     showDialog(
       context: context,
@@ -501,7 +522,12 @@ class _PredCard extends StatelessWidget {
                 children: [2.0, 5.0, 10.0, 20.0, 50.0].map((v) {
                   final sel = (mise - v).abs() < 0.01;
                   return GestureDetector(
-                    onTap: () => setInnerState(() => mise = v),
+                    // ★ G+P : les deux mises sont DÉJÀ enregistrées sur le
+                    //   ticket. Les rendre modifiables ici reviendrait à
+                    //   réécrire une des deux composantes sans la montrer.
+                    onTap: estDeuxComposantes
+                        ? null
+                        : () => setInnerState(() => mise = v),
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 6),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -524,10 +550,23 @@ class _PredCard extends StatelessWidget {
                 divisions: 199,
                 activeColor: const Color(0xFF4CAF7D),
                 inactiveColor: const Color(0xFF2E7D52).withValues(alpha: 0.3),
-                onChanged: (v) => setInnerState(() => mise = v.roundToDouble()),
+                onChanged: estDeuxComposantes
+                    ? null
+                    : (v) => setInnerState(() => mise = v.roundToDouble()),
               ),
               Text('Mise : ${mise.toStringAsFixed(0)} €',
                   style: const TextStyle(color: Color(0xFF4CAF7D), fontWeight: FontWeight.bold, fontSize: 13)),
+              // ★ LOT G+P : un Gagnant+Placé engage DEUX composantes ; la mise
+              //   affichée est leur SOMME réelle (10 + 10 = 20 €), jamais 10 €.
+              if (estDeuxComposantes)
+                Text(
+                  'Gagnant + Placé : '
+                  '${pred.miseGagnant!.toStringAsFixed(0)} € + '
+                  '${pred.misePlace!.toStringAsFixed(0)} € = '
+                  '${mise.toStringAsFixed(0)} € engagés',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  textAlign: TextAlign.center,
+                ),
               const SizedBox(height: 8),
               Text('Gain estimé si gagnant : +${gainEstime.toStringAsFixed(2)} €',
                   style: const TextStyle(color: Color(0xFFFFD700), fontSize: 14)),
@@ -544,13 +583,26 @@ class _PredCard extends StatelessWidget {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: () {
+                      // ★ LOT G+P — point 6 du mandat : un dividende ambigu ne
+                      //   décide JAMAIS d'un gagnant. Pour un Gagnant+Placé,
+                      //   `gainRealise` reste `null` : le résultat financier
+                      //   sera établi plus tard à partir des rapports officiels
+                      //   (`enregistrerDividendePmu`).
+                      //
+                      //   `montantMise` n'est PAS réécrit pour un G+P : il y
+                      //   porte la mise PAR COMPOSANTE (contrat B2-A :
+                      //   `miseTotaleEngagee == montantMise × 2`). Écrire la
+                      //   somme (20 €) doublerait la mise affichée (40 €).
                       provider.validatePrediction(pred.id,
                           isCorrect: true,
-                          montantMise: mise,
-                          gainRealise: gainEstime);
+                          montantMise: estDeuxComposantes ? null : mise,
+                          gainRealise: estDeuxComposantes ? null : gainEstime);
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text('🏆 ${pred.nomCheval} gagné ! +${gainEstime.toStringAsFixed(2)} €'),
+                        content: Text(estDeuxComposantes
+                            ? '🏆 ${pred.nomCheval} gagné — gain Gagnant + Placé '
+                                'non calculé (deux composantes distinctes)'
+                            : '🏆 ${pred.nomCheval} gagné ! +${gainEstime.toStringAsFixed(2)} €'),
                         backgroundColor: const Color(0xFF1B5E20),
                       ));
                     },
@@ -566,9 +618,15 @@ class _PredCard extends StatelessWidget {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: () {
+                      // « Perdu » est un FAIT constaté, pas une déduction :
+                      // la perte est explicitement la mise engagée, et elle
+                      // reste écrite même pour un Gagnant+Placé (A-0 ne
+                      // neutralise que les gains G+P, jamais les pertes).
+                      // `montantMise` n'est pas réécrit s'il est déjà établi :
+                      // pour un G+P il porte la mise par composante (B2-A).
                       provider.validatePrediction(pred.id,
                           isCorrect: false,
-                          montantMise: mise,
+                          montantMise: estDeuxComposantes ? null : mise,
                           gainRealise: -mise);
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -588,6 +646,41 @@ class _PredCard extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Motif affiché lorsque la validation financière est refusée faute de
+  /// pouvoir établir la mise réellement engagée.
+  ///
+  /// ❗Aucun montant n'est affiché — il n'y a rien de connu à montrer, et
+  ///   afficher un montant serait précisément l'invention que ce lot supprime.
+  void _afficherValidationRefusee(BuildContext context, String motif) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0A1F12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.report_problem, color: Color(0xFFFFB74D)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text('Validation impossible',
+                style: TextStyle(color: Colors.white, fontSize: 15)),
+          ),
+        ]),
+        content: Text(
+          '$motif\n\n'
+          'Renseignez la ou les mises réellement engagées pour pouvoir '
+          'valider ce ticket. Rien n\'a été enregistré.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
+          ),
+        ],
       ),
     );
   }
