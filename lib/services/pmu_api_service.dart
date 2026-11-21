@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/pmu_models.dart';
 import '../services/gain_calculator.dart';
+import '../services/gain_ticket_calculator.dart' show RapportOfficiel;
 
 /// Service API PMU — 100% données réelles, zéro démo
 /// Toutes les méthodes retournent des données réelles depuis l'API officielle PMU.
@@ -144,50 +145,12 @@ class PmuApiService {
         if (kDebugMode) debugPrint('⏳ Rapports non disponibles R${numR}C$numC: HTTP ${resp.statusCode}');
         return [];
       }
-      final data = jsonDecode(resp.body);
-      if (data is! List) return [];
-
-      final rapports = <RapportPmu>[];
-      for (final item in data) {
-        final typePari = item['typePari'] as String? ?? '';
-        final listeRapports = item['rapports'] as List<dynamic>? ?? [];
-        for (final r in listeRapports) {
-          final combinaison = r['combinaison'] as String? ?? '';
-
-          // ── Parsing dividende unifié ──────────────────────────────────────
-          // L'API PMU renvoie TOUJOURS le dividende en centimes d'euro
-          // dans 'dividendePourUnEuro' (ex: 210 = 2,10€ pour 1€ misé).
-          // Le champ 'dividende' (s'il existe) est parfois en centimes aussi.
-          // Règle : priorité à 'dividendePourUnEuro' / 100, sinon 'dividende' / 100.
-          // ⚠️ Ne JAMAIS lire le champ brut sans diviser par 100.
-          final rawDivPourUnEuro = r['dividendePourUnEuro'];
-          final rawDivLegacy     = r['dividende'];
-
-          double dividendeNormalise = 0.0;
-          if (rawDivPourUnEuro != null) {
-            // Champ officiel PMU : valeur en centimes → /100
-            dividendeNormalise = (rawDivPourUnEuro as num).toDouble() / 100.0;
-          } else if (rawDivLegacy != null) {
-            // Champ alternatif : également en centimes → /100
-            dividendeNormalise = (rawDivLegacy as num).toDouble() / 100.0;
-          }
-
-          if (dividendeNormalise > 0) {
-            rapports.add(RapportPmu(
-              typePari: typePari,
-              combinaison: combinaison,
-              dividende: dividendeNormalise,
-              // NP = "N'importe quelle Position" = Désordre (API PMU réelle)
-              estOrdre: !combinaison.contains('NP') && !combinaison.contains('D') && !combinaison.contains('d'),
-            ));
-          }
-        }
-      }
+      final rapports = decoderRapportsDefinitifs(resp.body);
 
       if (kDebugMode) {
         debugPrint('✅ Rapports définitifs R${numR}C$numC: ${rapports.length} rapports');
         for (final r in rapports) {
-          debugPrint('  ${r.typePari} | ${r.combinaison} | ×${r.dividende.toStringAsFixed(2)}');
+          debugPrint('  $r');
         }
       }
       return rapports;
@@ -195,6 +158,154 @@ class PmuApiService {
       if (kDebugMode) debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC error: $e');
       return [];
     }
+  }
+
+  /// ★ ÉTAPE 4-C — DÉCODAGE PUR, SANS RÉSEAU.
+  ///
+  /// Extrait du corps de [fetchRapportsDefinitifs] pour être **testable sans
+  /// HTTP**. Le comportement est celui d'avant, à l'identique, sur les quatre
+  /// champs historiques :
+  ///
+  ///   • `typePari`      ← `item['typePari']` du BLOC
+  ///   • `combinaison`   ← `r['combinaison']`
+  ///   • `dividende`     ← `dividendePourUnEuro` / 100, à défaut `dividende` / 100
+  ///   • `estOrdre`      ← heuristique historique, reproduite telle quelle
+  ///   • un rapport dont le dividende normalisé n'est pas > 0 est ÉCARTÉ
+  ///
+  /// S'y ajoutent désormais, **sans rien retirer**, les informations
+  /// officielles que le format réel publie et qui étaient jetées :
+  /// `libelle` (par rapport), `rangCombinaisonPayable` (par rapport),
+  /// `rembourse` / `miseBase` / `dividendeUnite` (par bloc), et le code du
+  /// bloc lui-même ([RapportPmu.codePariOfficiel]).
+  ///
+  /// Aucune de ces additions n'entre dans un calcul de montant : les
+  /// consommateurs actuels lisent `dividende`, qui est inchangé.
+  ///
+  /// Retourne une liste vide (jamais une exception) si le corps n'est pas une
+  /// liste JSON : c'est le comportement d'avant.
+  @visibleForTesting
+  static List<RapportPmu> decoderRapportsDefinitifs(String corps) {
+    final data = jsonDecode(corps);
+    if (data is! List) return [];
+
+    final rapports = <RapportPmu>[];
+    for (final item in data) {
+      if (item is! Map) {
+        continue;
+      }
+
+      final typePari = item['typePari'] as String? ?? '';
+      final listeRapports = item['rapports'] as List<dynamic>? ?? [];
+
+      // ── Informations portées par le BLOC (jamais par le rapport) ────────
+      final rembourseBloc = item['rembourse'] == true;
+      final miseBaseBrute = item['miseBase'];
+      final miseBase =
+          miseBaseBrute is num ? miseBaseBrute.toInt() : null;
+      final uniteBloc = item['dividendeUnite']?.toString() ?? '';
+
+      for (final r in listeRapports) {
+        if (r is! Map) {
+          continue;
+        }
+        final combinaison = r['combinaison'] as String? ?? '';
+
+        // ── Parsing dividende unifié ──────────────────────────────────────
+        // L'API PMU renvoie TOUJOURS le dividende en centimes d'euro
+        // dans 'dividendePourUnEuro' (ex: 210 = 2,10€ pour 1€ misé).
+        // Le champ 'dividende' (s'il existe) est parfois en centimes aussi.
+        // Règle : priorité à 'dividendePourUnEuro' / 100, sinon 'dividende' / 100.
+        // ⚠️ Ne JAMAIS lire le champ brut sans diviser par 100.
+        final rawDivPourUnEuro = r['dividendePourUnEuro'];
+        final rawDivLegacy     = r['dividende'];
+
+        double dividendeNormalise = 0.0;
+        if (rawDivPourUnEuro != null) {
+          // Champ officiel PMU : valeur en centimes → /100
+          dividendeNormalise = (rawDivPourUnEuro as num).toDouble() / 100.0;
+        } else if (rawDivLegacy != null) {
+          // Champ alternatif : également en centimes → /100
+          dividendeNormalise = (rawDivLegacy as num).toDouble() / 100.0;
+        }
+
+        if (dividendeNormalise > 0) {
+          // ── Rang payable : conservé tel quel, sans interprétation ───────
+          final rangBrut = r['rangCombinaisonPayable'];
+          final rang = rangBrut is num ? rangBrut.toInt() : null;
+
+          rapports.add(RapportPmu(
+            // ── Les 4 champs historiques : VALEURS INCHANGÉES ────────────
+            typePari: typePari,
+            combinaison: combinaison,
+            dividende: dividendeNormalise,
+            // NP = "N'importe quelle Position" = Désordre (API PMU réelle)
+            estOrdre: !combinaison.contains('NP') && !combinaison.contains('D') && !combinaison.contains('d'),
+            // ── Informations officielles désormais PRÉSERVÉES ────────────
+            libelleOfficiel: r['libelle']?.toString() ?? '',
+            codePariOfficiel: typePari,
+            rangCombinaisonPayable: rang,
+            rembourse: rembourseBloc,
+            miseBaseCentimes: miseBase,
+            dividendeUnite: r['dividendeUnite']?.toString().isNotEmpty == true
+                ? r['dividendeUnite'].toString()
+                : uniteBloc,
+          ));
+        }
+      }
+    }
+
+    return rapports;
+  }
+
+  /// Construit les [RapportOfficiel] attendus par le résolveur de rapports
+  /// à partir d'une réponse brute.
+  ///
+  /// ★ ÉTAPE 4-C — PONT DE COMPATIBILITÉ, **PAS ENCORE RACCORDÉ**.
+  ///
+  /// Cette méthode n'est appelée par AUCUNE écriture financière : elle sert à
+  /// vérifier, par test, que `RapportOfficiel.depuisJson` — qui n'avait
+  /// jusqu'ici aucun appelant — accepte bien une réponse au format réel et que
+  /// le résolveur en tire des verdicts distincts (Ordre / Désordre / Bonus).
+  ///
+  /// Elle ne remplace ni ne réordonne rien : elle parcourt les blocs dans
+  /// l'ordre publié et conserve chaque rapport tel quel.
+  @visibleForTesting
+  static List<RapportOfficiel> decoderRapportsOfficiels(String corps) {
+    final data = jsonDecode(corps);
+    if (data is! List) return const <RapportOfficiel>[];
+
+    final out = <RapportOfficiel>[];
+    for (final item in data) {
+      if (item is! Map) {
+        continue;
+      }
+      final typePari = item['typePari'] as String? ?? '';
+      final miseBaseBrute = item['miseBase'];
+      final miseBase = miseBaseBrute is num ? miseBaseBrute.toInt() : null;
+      final liste = item['rapports'] as List<dynamic>? ?? [];
+
+      for (final r in liste) {
+        if (r is! Map) {
+          continue;
+        }
+        // ⚠️ `RapportOfficiel.depuisJson` lit `rembourse` SUR LE RAPPORT, alors
+        // que l'API le publie SUR LE BLOC (mesuré : clé de bloc uniquement).
+        // On rétablit donc l'information du bloc, sans rien inventer : si le
+        // bloc ne la porte pas, `depuisJson` garde son défaut `false`.
+        final json = Map<String, dynamic>.from(r);
+        json.putIfAbsent('rembourse', () => item['rembourse']);
+
+        final rapport = RapportOfficiel.depuisJson(
+          json,
+          typePari: typePari,
+          miseBaseCentimes: miseBase,
+        );
+        // `depuisJson` rend `null` pour un rapport sans libelle NI combinaison :
+        // ce refus est conservé tel quel, jamais contourné.
+        if (rapport != null) out.add(rapport);
+      }
+    }
+    return out;
   }
 
   /// Retourne le dividende PMU réel pour un type de pari donné et une

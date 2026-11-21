@@ -506,17 +506,77 @@ class GainResult {
 // ─── Rapport PMU réel (après course) ─────────────────────────────────────────
 
 /// Dividende réel reçu depuis l'API PMU rapports-definitifs
+///
+/// ★ ÉTAPE 4-C — PRÉSERVATION DES INFORMATIONS OFFICIELLES.
+///
+/// Les quatre champs HISTORIQUES (`typePari`, `combinaison`, `dividende`,
+/// `estOrdre`) sont **inchangés**, en nom comme en type : les écrans
+/// (`mes_paris_screen`, `paris_detail_screen`), le provider et les tests
+/// existants continuent de lire exactement la même chose.
+///
+/// Les champs ajoutés ci-dessous étaient **publiés par l'API mais jetés** à la
+/// lecture (mesuré le 2026-11-21 : `libelle` présent sur 56/56 rapports). Ils
+/// sont **facultatifs et neutres** : leur valeur par défaut est vide, donc une
+/// réponse qui ne les contient pas — c'est le cas des fixtures de
+/// `z1_reproduction_d4_dividende_test.dart` et `a0_04_...` — produit
+/// exactement l'objet d'avant.
+///
+/// ⚠️ `estOrdre` reste l'heuristique HISTORIQUE
+/// (`!combinaison.contains('NP') && !combinaison.contains('D')`). Elle est
+/// **fausse** pour « e-Tiercé Ordre » et « e-Tiercé Désordre », qui portent la
+/// même combinaison : le seul discriminant fiable est [libelleOfficiel]. La
+/// correction de cette heuristique et le remplacement des codes historiques
+/// dans les écrans relèvent de lots distincts — ils ne sont PAS faits ici.
 class RapportPmu {
   final String typePari;       // ex: "E_TIERCE", "E_QUARTE_PLUS", "E_QUINTE_PLUS"
   final String combinaison;    // ex: "5-12-3" (numéros des chevaux gagnants)
   final double dividende;      // ex: 452.0 (pour 1€ misé)
   final bool estOrdre;         // true = ordre, false = désordre
 
+  /// Libellé officiel EXACT tel que publié (« e-Tiercé Ordre »,
+  /// « e-Bonus 4sur5 », « e-Multi en 6 », « Remboursement e-Trio »…).
+  ///
+  /// C'est le SEUL champ qui distingue de façon fiable l'Ordre du Désordre
+  /// lorsqu'une même combinaison porte les deux rapports. `''` si l'API ne
+  /// l'a pas fourni.
+  final String libelleOfficiel;
+
+  /// Code API du bloc d'origine (`E_TIERCE`, `E_QUINTE_PLUS`…).
+  ///
+  /// Recopié ici parce que l'aplatissement bloc → rapport fait perdre le
+  /// rattachement : `typePari` seul ne dit pas de quel bloc le rapport vient.
+  /// `''` si non fourni.
+  final String codePariOfficiel;
+
+  /// Rang de la combinaison dans la grille de paiement du bloc
+  /// (`1` = ordre, `2` = désordre, `3` = Bonus 4sur5, `4` = Bonus 3…).
+  /// `null` si absent.
+  final int? rangCombinaisonPayable;
+
+  /// `true` si le BLOC d'origine est explicitement marqué remboursé par l'API.
+  /// Mesuré : la clé `rembourse` est portée par le bloc, jamais par le rapport.
+  final bool rembourse;
+
+  /// Mise de base du bloc, en centimes (`100`, `150`, `200`, `300`…).
+  /// Nécessaire à une reconstitution exacte via
+  /// `dividendePourUneMiseDeBase` — reconstitution qui n'est jamais tentée ici.
+  /// `null` si absent.
+  final int? miseBaseCentimes;
+
+  /// Unité déclarée du dividende (`PourUnEuro`, …). `''` si absente.
+  final String dividendeUnite;
+
   const RapportPmu({
     required this.typePari,
     required this.combinaison,
     required this.dividende,
     required this.estOrdre,
+    this.libelleOfficiel = '',
+    this.codePariOfficiel = '',
+    this.rangCombinaisonPayable,
+    this.rembourse = false,
+    this.miseBaseCentimes,
+    this.dividendeUnite = '',
   });
 
   factory RapportPmu.fromJson(Map<String, dynamic> json, {bool estOrdre = false}) {
@@ -528,9 +588,20 @@ class RapportPmu {
     );
   }
 
+  /// `true` si ce rapport porte un libellé exploitable.
+  bool get aUnLibelleOfficiel => libelleOfficiel.isNotEmpty;
+
   /// Gain net pour une mise donnée (dividende PMU = retour pour 1€)
   double gainNetPourMise(double mise) => (dividende * mise) - mise;
   double retourPourMise(double mise) => dividende * mise;
+
+  /// Trace lisible — utilisée par les diagnostics, jamais par un calcul.
+  @override
+  String toString() =>
+      'RapportPmu($typePari | "${libelleOfficiel.isEmpty ? "?" : libelleOfficiel}"'
+      ' | "$combinaison" | ×${dividende.toStringAsFixed(2)}'
+      '${rangCombinaisonPayable == null ? "" : " | rang $rangCombinaisonPayable"}'
+      '${rembourse ? " | REMBOURSE" : ""})';
 }
 
 // ─── Préréglages de mises rapides ────────────────────────────────────────────
