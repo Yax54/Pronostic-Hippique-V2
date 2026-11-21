@@ -3,6 +3,7 @@ import '../../providers/pmu_provider.dart';
 import '../../models/pmu_models.dart';
 import '../../services/alert_service.dart' show TrackedCourse;
 import '../../utils/format_euros.dart';
+import '../../utils/type_pari_utils.dart' show estEtatSansPariRecommande;
 import '../../widgets/share_card_generator.dart';
 
 import 'profile_common_widgets.dart';
@@ -250,7 +251,9 @@ class ProfileHistoriqueCard extends StatelessWidget {
           ),
           child: Row(children: [
             // Bouton Valider (si pas encore validé)
-            if (isCorrect == null)
+            //   ★ LOT C2 : jamais proposé pour un ticket sans pari recommandé.
+            //   Le dialogue porte sa propre garde (voir _validerDialog).
+            if (isCorrect == null && !estEtatSansPariRecommande(pred.typePari))
               Expanded(
                 child: InkWell(
                   onTap: () => _validerDialog(context, pred, provider),
@@ -337,6 +340,15 @@ class ProfileHistoriqueCard extends StatelessWidget {
 
   // ─── Dialogue de validation du résultat ───────────────────────────────────
   void _validerDialog(BuildContext context, UserPrediction pred, PmuProvider provider) {
+    // ★ LOT C1/C2 — Deuxième des deux endroits qui inventaient une mise
+    //   (`pred.montantMise > 0 ? … : 10.0`) avant d'appeler
+    //   `validatePrediction`. Un ticket sans pari recommandé ne porte ni
+    //   mise, ni gain, ni perte : on s'arrête AVANT tout calcul.
+    //   Rien n'est écrit : le ticket reste tel quel, « En attente ».
+    if (estEtatSansPariRecommande(pred.typePari)) {
+      _afficherAucunPariRecommande(context);
+      return;
+    }
     double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;
     final estCombine = pred.estPariCombine;
 
@@ -525,6 +537,43 @@ class ProfileHistoriqueCard extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Motif affiché lorsqu'un ticket ne porte aucun pari recommandé.
+  ///
+  /// Aucune écriture financière n'est proposée : le ticket n'a jamais été un
+  /// pari, il n'y a donc rien à valider. Message aligné sur
+  /// `predictions_screen.dart` et sur le sens métier de
+  /// `conseils_screen.dart:1284` (« passer »).
+  void _afficherAucunPariRecommande(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0A1628),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.block, color: Color(0xFF78909C)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text('Aucun pari recommandé',
+                style: TextStyle(color: Colors.white, fontSize: 15)),
+          ),
+        ]),
+        content: const Text(
+          'Ce ticket ne correspond à aucun pari recommandé : l\'IA avait '
+          'conseillé de passer cette course.\n\n'
+          'Il ne peut donc porter ni mise, ni gain, ni perte. '
+          'Aucun montant ne sera enregistré.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
+          ),
+        ],
       ),
     );
   }

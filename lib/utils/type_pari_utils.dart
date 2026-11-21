@@ -71,3 +71,83 @@ bool estTypeGagnantPlace(String? typePari) {
   if (normalise.isEmpty) return false;
   return kLibellesGagnantPlace.contains(normalise);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  LOT C1 — Reconnaissance de l'ÉTAT SANS PARI RECOMMANDÉ
+//
+//  ⚠️  PORTÉE STRICTEMENT LIMITÉE.
+//      Ce prédicat ne normalise RIEN, ne convertit RIEN, ne réécrit RIEN.
+//      Il répond à une seule question : ce libellé désigne-t-il un ticket
+//      pour lequel AUCUN pari n'a été recommandé — donc un ticket sur lequel
+//      aucune écriture financière n'a de sens ?
+//
+//  ── POURQUOI CE PRÉDICAT EXISTE ───────────────────────────────────────────
+//  Deux valeurs de `UserPrediction.typePari` ne désignent pas un pari :
+//
+//    • `'À surveiller'` — abstention explicite de l'IA. Sens métier prouvé
+//      par `conseils_screen.dart:1284` :
+//        `typePari = 'À surveiller'; sousTitrePari = 'Scores insuffisants
+//         — passer';`
+//      L'application elle-même demande de NE PAS parier.
+//
+//    • `''` — type absent. Produit par `pmu_models.dart:630`
+//      (`json['typePari'] as String? ?? ''`) sur un ticket restauré dont le
+//      champ manque. Un type absent ne désigne aucun pari connu.
+//
+//  ── MESURES QUI FONDENT CES DEUX VALEURS (et excluent les autres) ─────────
+//  • `grep -rn "typePari: 'À surveiller'\|typePari = 'À surveiller'" lib/`
+//    → 0 écriture directe dans `UserPrediction` ; la valeur n'arrive que par
+//      `race_detail_screen.dart:59` (`_betType = pred.typePari`) ;
+//  • `grep "UserPrediction(" -A 12 lib/ test/ | grep "À surveiller"`
+//    → AUCUNE occurrence (aucun test n'exerce ce cas) ;
+//  • `'Inconnu'` n'est JAMAIS écrit dans `UserPrediction` : c'est seulement
+//    un défaut de LECTURE (`ia_memory_service.dart:5488`) et il désigne, lui,
+//    un pari dont le type n'a pas pu être identifié — pas une abstention ;
+//  • `'Placé'` n'apparaît qu'une fois dans tout `lib/`
+//    (`ia_memory_service.dart:7259`, un emoji) : entrée d'affichage morte,
+//    jamais une valeur écrite.
+//
+//  ── CE QUE CE FICHIER NE FAIT PAS ─────────────────────────────────────────
+//    - il ne classe PAS `'Inconnu'` comme « sans pari » : un type inconnu
+//      n'est pas une abstention, et le confondre reviendrait à effacer un
+//      pari réel dont on ignore seulement l'étiquette ;
+//    - il ne reconnaît PAS les libellés de `Gagnant + Placé`, traités
+//      séparément par [estTypeGagnantPlace] (Lot A-0) ;
+//    - il n'écrit rien, ne migre rien, ne supprime rien : les tickets
+//      historiques restent STRICTEMENT intacts ;
+//    - il ne décide d'aucune règle métier : les appelants décident du sort
+//      de l'écriture financière, ce helper ne fait que nommer la catégorie.
+//
+//  Aucune dépendance : fichier pur, testable sans Flutter.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Le libellé d'abstention produit par l'IA, avec son accent exact.
+///
+/// `À` = U+00C0. Une variante sans accent (`'A surveiller'`) ne correspond à
+/// AUCUNE donnée réellement produite — mesuré par
+/// `test/v41_a44_abstention_stats_test.dart:504`.
+const String kLibelleSansPariRecommande = 'À surveiller';
+
+/// Vrai si [typePari] désigne un ticket sur lequel **aucun pari n'a été
+/// recommandé**, et qui ne peut donc porter ni mise, ni gain, ni perte.
+///
+/// Renvoie `true` pour :
+///   • `'À surveiller'` (comparaison insensible à la casse et aux espaces) ;
+///   • la chaîne vide ou composée uniquement d'espaces (type absent).
+///
+/// Renvoie `false` pour `null` — un ticket dont le champ est `null` n'existe
+/// pas dans ce modèle (`fromJson` applique `?? ''`), et `null` ne doit pas
+/// être silencieusement assimilé à une abstention par un appelant qui aurait
+/// simplement oublié de renseigner l'argument.
+///
+/// Renvoie `false` pour TOUT autre libellé, y compris `'Inconnu'` : un type
+/// inconnu n'est pas une abstention (voir l'en-tête ci-dessus).
+///
+/// Cette fonction est PURE : aucun effet de bord, aucun accès disque,
+/// aucun accès réseau, aucune dépendance à l'heure courante.
+bool estEtatSansPariRecommande(String? typePari) {
+  if (typePari == null) return false;
+  final normalise = typePari.trim();
+  if (normalise.isEmpty) return true;
+  return normalise.toLowerCase() == kLibelleSansPariRecommande.toLowerCase();
+}

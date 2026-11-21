@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pmu_models.dart';
 import '../services/pmu_api_service.dart';
 import '../services/ia_memory_service.dart';
+import '../utils/type_pari_utils.dart' show estEtatSansPariRecommande;
 
 enum LoadingState { idle, loading, success, error }
 
@@ -315,6 +316,36 @@ class PmuProvider extends ChangeNotifier {
     final idx = _predictions.indexWhere((p) => p.id == id);
     if (idx == -1) return;
     final old = _predictions[idx];
+
+    // ★ LOT C3 — GARDE DÉFENSIVE « AUCUN PARI RECOMMANDÉ ».
+    //
+    //   Un ticket `'À surveiller'` (ou de type vide) n'est pas un pari :
+    //   il ne doit jamais recevoir de mise, de gain ni de perte, quelle que
+    //   soit la voie d'écriture qui l'atteint.
+    //
+    //   Cette garde ne REMPLACE aucune garde existante : elle s'ajoute.
+    //   Elle couvre notamment les voies qui ne passent par aucun dialogue
+    //   corrigé en C2 — restauration de sauvegarde, synchronisation
+    //   automatique après arrivée (`alert_service.dart:2723`), résolution
+    //   post-restauration (`profile_profil_tab.dart:1653`),
+    //   `mes_paris_screen.dart:1455`.
+    //
+    //   Elle n'altère AUCUNE formule : `gainNet`, `retourTotal`, les deux
+    //   formules T8b de `enregistrerDividendePmu` et la garde A-0 restent
+    //   strictement inchangés. Elle empêche seulement l'écriture : le ticket
+    //   garde `isCorrect == null` → « En attente » → exclu des statistiques
+    //   par la règle préexistante `ia_memory_service.dart:5493`.
+    //
+    //   Aucune migration, aucune suppression, aucune réécriture : le ticket
+    //   historique est laissé TEL QUEL.
+    if (estEtatSansPariRecommande(old.typePari)) {
+      if (kDebugMode) {
+        debugPrint('⛔ validatePrediction ignorée : ticket sans pari '
+            'recommandé (typePari="${old.typePari}", id=${old.id})');
+      }
+      return;
+    }
+
     final mise = montantMise ?? old.montantMise;
     final gain = gainRealise ??
         (isCorrect && mise > 0 && old.cote > 0
@@ -339,6 +370,27 @@ class PmuProvider extends ChangeNotifier {
     final idx = _predictions.indexWhere((p) => p.id == id);
     if (idx == -1) return;
     final old = _predictions[idx];
+
+    // ★ LOT C1/C3 — GARDE DÉFENSIVE « AUCUN PARI RECOMMANDÉ ».
+    //
+    //   Cette méthode déclare un gagnant/perdant à partir de la SEULE valeur
+    //   du dividende (`estGagnant = dividende > 0`), sans regarder le type de
+    //   pari. Sur un ticket `'À surveiller'` (mise 0 €), elle écrirait un
+    //   résultat financier sur un ticket qui n'a jamais été un pari.
+    //
+    //   On n'écrit donc RIEN : ni `dividendePmuReel`, ni `combinaisonPmu`,
+    //   ni `isCorrect`, ni `gainRealise`. Le ticket reste « En attente ».
+    //
+    //   Les deux formules ci-dessous sont INCHANGÉES : la garde est un
+    //   aiguillage placé AVANT elles, pas une réécriture.
+    if (estEtatSansPariRecommande(old.typePari)) {
+      if (kDebugMode) {
+        debugPrint('⛔ enregistrerDividendePmu ignorée : ticket sans pari '
+            'recommandé (typePari="${old.typePari}", id=${old.id})');
+      }
+      return;
+    }
+
     // ✅ Fix: un dividende > 0 = pari gagnant, dividende = 0 = pari perdu
     final bool estGagnant = dividendePmuReel > 0;
     final gainNet = estGagnant
