@@ -2518,13 +2518,23 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
         children: [
           Icon(icon, color: statutColor, size: 16),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: statutColor,
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.3,
+          // ★ FIX A6 : `Flexible` + `softWrap`.
+          //   À 320 dp, le libellé « À venir dans 5h30min » dépassait la
+          //   largeur utile de la carte (`RenderFlex overflowed`). Le texte
+          //   passe désormais à la ligne au lieu de déborder.
+          //   ❗Aucun `ellipsis`, aucune information retirée : le libellé
+          //   complet reste affiché, simplement sur deux lignes si besoin.
+          Flexible(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              softWrap: true,
+              style: TextStyle(
+                color: statutColor,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
         ],
@@ -2659,11 +2669,18 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icone, color: couleur, size: 14),
         const SizedBox(width: 5),
-        Text(
-          score <= 0
-              ? 'Confiance IA : —'
-              : 'Confiance IA : ${score.round()}/100 — $label',
-          style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w600),
+        // ★ FIX A6 : `Flexible` + `softWrap`.
+        //   À 320 dp, « Confiance IA : 78/100 — Élevée » dépassait la largeur
+        //   de la carte. Le texte passe désormais à la ligne.
+        //   ❗Aucun `ellipsis`, aucun retrait du score ni du qualificatif.
+        Flexible(
+          child: Text(
+            score <= 0
+                ? 'Confiance IA : —'
+                : 'Confiance IA : ${score.round()}/100 — $label',
+            softWrap: true,
+            style: TextStyle(color: couleur, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
         ),
       ]),
     );
