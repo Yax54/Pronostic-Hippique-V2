@@ -251,6 +251,23 @@ extension TrackedCourseCopy on TrackedCourse {
           : idTicketLie as String?,
     );
   }
+
+  /// ★ B1-T12 / étape 1 (complément) — Copie DÉLIÉE, prête à être persistée.
+  ///
+  /// RAISON D'ÊTRE, MESURÉE : la création d'un pari fait DEUX écritures non
+  /// transactionnelles (`ajouterSuivi` puis `addPrediction`). Si la seconde
+  /// échoue, le suivi survivrait en prétendant être lié à un profil inexistant.
+  /// Il faut alors publier « non lié ».
+  ///
+  /// POURQUOI ICI ET NON DANS `alert_service.dart` : le test B4.4/12.3
+  /// verrouille le fait que `alert_service.dart` ne contient AUCUN `copyWith`
+  /// de `TrackedCourse` (une seule occurrence, `AlertConfig.copyWith`). C'est
+  /// ce même contrat qui impose que la copie vive dans cette extension. Le
+  /// test n'a pas été modifié : c'est le code qui respecte le contrat.
+  ///
+  /// Ne touche RIEN d'autre : ni verdict, ni rapports, ni les sept champs B-1,
+  /// ni `dividendePmuReel`. Un ticket délié conserve son gain manuel.
+  TrackedCourse copieDeliee() => copyWith(idTicketLie: null);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -3098,14 +3098,28 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     //  LIMITE ASSUMÉE : seuls les paris créés À PARTIR DE MAINTENANT sont
     //  liés. Un ticket historique reste `idTicketLie == null` — non lié, et
     //  on ne prétend pas le contraire. Aucune migration, aucune heuristique.
+    //
+    //  ★ COMPLÉMENT APRÈS MESURE — CE COMMENTAIRE DÉCRIVAIT UNE INTENTION QUI
+    //  N'ÉTAIT QUE PARTIELLEMENT RÉALISÉE. `ajouterSuivi` ajoutait ENCORE son
+    //  propre horodatage par-dessus `overrideKey`, si bien que la clé
+    //  réellement persistée valait `<clé>_<ts2>` tandis que le pari de profil
+    //  pointait sur `<clé>` : le lien retour était PENDANT (mesuré, corrigé
+    //  dans `alert_service.ajouterSuivi`). Désormais l'identifiant est publié
+    //  ICI, une seule fois, et les deux écritures le reçoivent tel quel.
+    //
+    //  UNICITÉ : c'est `genererIdentifiantTicket` qui la garantit (résolution
+    //  microseconde + monotonie + vérification contre les deux magasins).
+    //  Le widget n'invente plus d'horodatage, il DEMANDE un identifiant.
     // ══════════════════════════════════════════════════════════════════════
-    final int horodatageLiaison = DateTime.now().millisecondsSinceEpoch;
-    final String predId = '${_courseKey}_$horodatageLiaison';
-    // La clé de suivi DOIT être préfixée par la base pour qu'`estDejaEnSuivi`
-    // (qui teste `k == baseKey || k.startsWith('${baseKey}_')`) continue de
-    // fonctionner à l'identique : on ne change donc pas le format, seulement
-    // la SOURCE de l'horodatage.
-    final String storageKeyLiee = '${_courseKey}_$horodatageLiaison';
+    final String predId = widget.alertService.genererIdentifiantTicket(
+      _courseKey,
+      idsProfil: ctx.read<PmuProvider>().predictions.map((p) => p.id).toSet(),
+    );
+    // La clé de suivi est EXACTEMENT le même identifiant : c'est ce qui rend
+    // la liaison certaine dans LES DEUX SENS. Elle reste préfixée par la base
+    // `R<n>C<n>_<ddmmyyyy>`, donc `estDejaEnSuivi` et la purge au chargement
+    // continuent de fonctionner à l'identique.
+    final String storageKeyLiee = predId;
 
     final estGP = typePariLabel == 'Gagnant+Placé';
     final tracked = TrackedCourse(
@@ -3239,6 +3253,19 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     } catch (e) {
       // Ne pas bloquer si la sauvegarde échoue
       if (kDebugMode) debugPrint('Erreur sauvegarde UserPrediction: $e');
+      // ★ B1-T12 / étape 1 (complément) — DÉFAILLANCE ENTRE LES DEUX ÉCRITURES.
+      //
+      //  Le suivi est déjà enregistré, le profil ne l'est pas. Il NE FAUT PAS
+      //  laisser une liaison pendante qui prétendrait le contraire :
+      //   • on libère l'identifiant réservé (sinon la réserve grossirait à
+      //     chaque échec, sans jamais rien désigner) ;
+      //   • et on EFFACE la liaison du suivi, pour que le ticket restant soit
+      //     explicitement NON LIÉ plutôt que faussement lié.
+      //  Aucune association erronée n'est donc possible : soit les deux
+      //  pointent l'un vers l'autre, soit `idTicketLie` est `null` des deux
+      //  côtés, ce qui est une information honnête et non un mensonge.
+      widget.alertService.libererIdentifiantTicket(predId);
+      widget.alertService.delierSuivi(storageKeyLiee);
     }
 
     Navigator.pop(ctx);

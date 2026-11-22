@@ -33,6 +33,13 @@ import 'gain_pmu_types.dart'
         EtatTirelire,
         MotifNonDetermination,
         RapportAttribue;
+// ★ B1-T12 / étape 1 (complément) — la copie déliée de `TrackedCourse` est
+//   une EXTENSION déclarée dans ce fichier (classe `TrackedCourseCopy`), pas
+//   une méthode de la classe. Sans cet import, `delierSuivi` ne compile pas :
+//   mesuré — « The method 'copieDeliee' isn't defined for the type
+//   'TrackedCourse' ». Cet import est le SEUL motif de la dépendance, et il
+//   ne touche aucune logique de verdict de ce fichier.
+import 'enregistreur_verdict_gain_suivi.dart' show TrackedCourseCopy;
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// AlertService — Gestion complète des alertes Pronostic Hippique v3.0 (Lot 2)
@@ -401,7 +408,155 @@ class AlertService extends ChangeNotifier {
   final List<AppAlert> _alerts = [];
   // Courses suivies : key = "R${numR}C${numC}", value = DateHeure départ
   final Map<String, TrackedCourse> _trackedCourses = {};
-  // Alertes déjà envoyées pour éviter les doublons
+  // ─────────────────────────────────────────────────────────────────────────
+  //  ★ B1-T12 / étape 1 (complément) — GÉNÉRATEUR D'IDENTIFIANTS UNIQUES
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  //  DÉFAUT MESURÉ AVANT D'ÉCRIRE : `UserPrediction.id` et la `storageKey`
+  //  étaient fabriqués à partir de `DateTime.now().millisecondsSinceEpoch`.
+  //  Deux tickets créés dans la MÊME milliseconde recevaient donc le même
+  //  identifiant. Conséquence sur `UserPrediction` (identité de première
+  //  classe — 5 usages de production : `validatePrediction`, `updateMise`,
+  //  `enregistrerDividendePmu`, `appliquerVerdictGainPrediction` via
+  //  `indexWhere((p) => p.id == id)`, et `removePrediction` via `removeWhere`) :
+  //  un gain saisi pour l'un s'appliquait au PREMIER trouvé, et une
+  //  suppression en emportait DEUX. C'est la confusion de gains interdite.
+  //
+  //  POURQUOI LE COMPTEUR PROPOSÉ N'EST PAS RETENU : un compteur incrémental
+  //  doit, au redémarrage, retrouver sa dernière valeur. Or les tickets
+  //  purgés au chargement (`_load`, purge > 24 h et clés sans date) ne sont
+  //  plus lisibles : le compteur redémarrerait plus bas et RÉÉMETTRAIT des
+  //  identifiants déjà utilisés — exactement la collision qu'on veut éviter.
+  //  Il ne garantirait donc pas l'unicité « y compris après redémarrage ».
+  //
+  //  SOLUTION RETENUE — unicité SANS ÉTAT, donc valable à travers les
+  //  redémarrages : horodatage en RÉSOLUTION DE LA MICROSECONDE (`microsecondsSinceEpoch`,
+  //  1 000 fois plus fine) + désambiguïsation par compteur MONOTONE EN MÉMOIRE
+  //  qui n'est JAMAIS persisté et ne conditionne pas l'unicité de la première
+  //  occurrence. Deux tickets consécutifs ne peuvent donc pas partager un
+  //  identifiant, et aucun état survivant n'est nécessaire.
+  //
+  //  GARANTIE ANTI-ÉCRASEMENT, structurelle et non probabiliste : avant de
+  //  publier un identifiant, on vérifie qu'il n'existe NI dans le store de
+  //  suivi (`_trackedCourses`) NI dans la réserve des identifiants de profil.
+  //  Si l'un des deux le détient, on passe au candidat suivant. Aucun suivi
+  //  existant ne peut être écrasé, aucun profil ne peut être confondu.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Dernier horodatage distribué. `0` = jamais utilisé dans ce processus.
+  /// ⚠️ VOLONTAIREMENT NON PERSISTÉ : il ne sert qu'à garantir que deux
+  /// appels consécutifs du même processus ne rendent pas la même valeur.
+  int _dernierHorodatageIdentifiant = 0;
+
+  /// Désambiguïsation monotone du dernier horodatage distribué.
+  int _compteurIdentifiant = 0;
+
+  /// Identifiants de profil déjà distribués mais peut-être pas encore
+  /// enregistrés (la création fait deux écritures distinctes, non
+  /// transactionnelles). Réserve **en mémoire uniquement**, jamais écrite
+  /// sur disque, donc elle ne peut pas grossir indéfiniment.
+  final Set<String> _idsPredictionReserves = {};
+  /// IDs de profil connus par l'appelant (`PmuProvider.predictions`), mis à
+  /// jour à chaque publication. Rend la transaction de `bet_bottom_sheet`
+  /// **rejouable** et donc vérifiable en test : la seconde écriture peut
+  /// échouer puis être retentée avec exactement le même identifiant.
+  final Set<String> _idsProfilConnus = {};
+
+  /// Source de l'horodatage des identifiants.
+  ///
+  /// ⚠️ POINT D'INJECTION POUR LES TESTS — ajouté parce qu'une GARDE
+  /// INATTEIGNABLE N'EST PAS UNE GARDE PROUVÉE. Mesuré : avec l'horloge
+  /// réelle, la monotonie rend le repli « candidat déjà pris » pratiquement
+  /// inaccessible, donc son test ne pouvait pas échouer — et une mutation
+  /// qui supprimait ce repli n'était détectée par AUCUN test. Exposer
+  /// l'horloge permet de FORCER un candidat déjà occupé et de vérifier que
+  /// le repli fonctionne réellement. En production, la valeur reste
+  /// `DateTime.now().microsecondsSinceEpoch` : comportement inchangé.
+  int Function() sourceHorodatageIdentifiant =
+      () => DateTime.now().microsecondsSinceEpoch;
+
+  /// Déclare les IDs de profil actuellement connus de l'appelant.
+  ///
+  /// Sans effet sur l'unicité (qui est garantie sans état) : c'est une
+  /// information de vérification, pour le repli anti-écrasement et pour
+  /// permettre une reprise après échec de la seconde écriture.
+  void declarerIdsProfil(Iterable<String> ids) {
+    _idsProfilConnus
+      ..clear()
+      ..addAll(ids);
+  }
+
+  /// Fabrique le candidat proposé à partir de l'horodatage courant.
+  ///
+  /// ⚠️ POINT D'INJECTION POUR LES TESTS, ET RAISON MESURÉE DE SON EMPLACEMENT :
+  /// ma première tentative exposait l'HORLOGE. Elle ne prouvait rien — deux
+  /// mutations successives supprimant le repli anti-écrasement n'étaient
+  /// détectées par AUCUN test, parce que la monotonie changeait la valeur
+  /// avant que la garde ne soit consultée. Exposer la FABRIQUE DU CANDIDAT
+  /// cible la garde elle-même, sans court-circuiter la procédure.
+  ///
+  /// En production, c'est la construction exacte d'origine. Le repli
+  /// anti-écrasement, lui, reste TOUJOURS dans la boucle et ne peut pas être
+  /// neutralisé par un test.
+  String Function(String baseKey, int horodatage, int compteur) fabriqueCandidat =
+      (baseKey, horodatage, compteur) =>
+          '${baseKey}_$horodatage${compteur == 0 ? '' : '-$compteur'}';
+
+  /// Publie un identifiant de ticket UNIQUE, pour le suivi ET le profil.
+  ///
+  /// [baseKey] doit être la clé de base `R<n>C<n>_<ddmmyyyy>` : elle est
+  /// conservée EN PRÉFIXE à l'identique, car deux mécanismes existants en
+  /// dépendent — `estDejaEnSuivi` (`k == baseKey || k.startsWith('${baseKey}_')`)
+  /// et la purge au chargement (`RegExp(r'R\d+C\d+_\d{8}')` sur la clé).
+  ///
+  /// Synchrone À DESSEIN : le seul appelant (`bet_bottom_sheet._valider`)
+  /// l'est, et le générateur ne doit rien attendre pour rester atomique du
+  /// point de vue de l'appelant.
+  String genererIdentifiantTicket(String baseKey, {Set<String>? idsProfil}) {
+    final reserve = idsProfil ?? const <String>{};
+    String candidat;
+    // Borne de sécurité : chaque tour consomme un horodatage PLUS GRAND, donc
+    // le repli progresse toujours. Sans cette borne, une source d'horodatage
+    // figée (test, horloge gelée) ferait tourner la boucle sans fin.
+    var tours = 0;
+    do {
+      if (tours++ > 100000) {
+        throw StateError(
+            'genererIdentifiantTicket : impossible de publier un identifiant '
+            'unique après $tours tentatives (base « $baseKey »)');
+      }
+      final maintenant = sourceHorodatageIdentifiant();
+      if (maintenant > _dernierHorodatageIdentifiant) {
+        _dernierHorodatageIdentifiant = maintenant;
+        _compteurIdentifiant = 0;
+      } else {
+        // Horloge revenue en arrière, ou même microseconde : on force la
+        // monotonie. L'identifiant reste unique même si l'horloge régresse.
+        _dernierHorodatageIdentifiant += 1;
+        _compteurIdentifiant += 1;
+      }
+      candidat = fabriqueCandidat(
+          baseKey, _dernierHorodatageIdentifiant, _compteurIdentifiant);
+    } while (_trackedCourses.containsKey(candidat) ||
+        _idsPredictionReserves.contains(candidat) ||
+        _idsProfilConnus.contains(candidat) ||
+        reserve.contains(candidat));
+
+    _idsPredictionReserves.add(candidat);
+    _idsProfilConnus.add(candidat);
+    return candidat;
+  }
+
+  /// Libère un identifiant de profil réservé mais finalement NON enregistré.
+  ///
+  /// Appelé quand la seconde écriture (profil) échoue : sans libération, la
+  /// réserve grossirait à chaque échec. Un identifiant libéré n'est PAS
+  /// réutilisé, il redevient simplement candidat-vérifiable comme les autres.
+  void libererIdentifiantTicket(String id) {
+    _idsPredictionReserves.remove(id);
+  }
+
+  /// Alertes déjà envoyées pour éviter les doublons
   final Set<String> _sentAlertIds = {};
   // Courses dont le résultat a déjà été récupéré automatiquement
   final Set<String> _resultatsVerifies = {};
@@ -732,7 +887,20 @@ class AlertService extends ChangeNotifier {
     // On ajoute un timestamp à la clé pour que chaque pari soit unique
     // Ex: R4C7_23042026 → R4C7_23042026_1745000000000
     final baseKey = overrideKey ?? course.key;
-    final storageKey = '${baseKey}_${DateTime.now().millisecondsSinceEpoch}';
+    // ★ B1-T12 / étape 1 (complément) — UNE SEULE GÉNÉRATION D'IDENTIFIANT.
+    //
+    //  DÉFAUT MESURÉ AVANT CETTE CORRECTION : cette ligne ajoutait TOUJOURS un
+    //  second horodatage, même quand l'appelant fournissait déjà une clé
+    //  complète via `overrideKey`. Depuis que `bet_bottom_sheet` fabrique la
+    //  clé de liaison, la valeur réellement persistée devenait donc
+    //  `<baseKey>_<ts1>_<ts2>`, alors que `UserPrediction.idTicketLie`
+    //  pointait sur `<baseKey>_<ts1>` : la LIAISON RETOUR ÉTAIT PENDANTE.
+    //  `tracked.idTicketLie` visait juste, mais `prediction.idTicketLie` non.
+    //
+    //  RÈGLE CORRIGÉE : un identifiant fourni par l'appelant est utilisé TEL
+    //  QUEL (il est déjà complet et unique) ; sinon on en génère un. Plus
+    //  aucune concaténation aveugle, donc plus de désalignement possible.
+    final storageKey = overrideKey ?? genererIdentifiantTicket(baseKey);
     // Créer une copie du course avec la storageKey intégrée pour la persistance
     final courseAvecKey = TrackedCourse(
       numReunion: course.numReunion,
@@ -827,6 +995,31 @@ class AlertService extends ChangeNotifier {
 
   Future<void> retirerSuivi(String key) async {
     _trackedCourses.remove(key);
+    notifyListeners();
+    await _save();
+  }
+
+  /// ★ B1-T12 / étape 1 (complément) — DÉLIE un suivi de son ticket de profil.
+  ///
+  /// RAISON D'ÊTRE : la création d'un pari fait DEUX écritures distinctes et
+  /// non transactionnelles (`ajouterSuivi` puis `addPrediction`). Si la
+  /// seconde échoue, le suivi survivrait en prétendant être lié à un ticket
+  /// de profil qui n'existe pas. Cette méthode remet `idTicketLie` à `null`
+  /// pour que l'état publié soit « non lié » — une information honnête,
+  /// jamais une association erronée.
+  ///
+  /// Ne touche À RIEN d'autre : ni le verdict, ni les rapports, ni les sept
+  /// champs B-1, ni `dividendePmuReel`. Un ticket non lié conserve donc
+  /// l'intégralité de son contenu et son propre gain manuel.
+  Future<void> delierSuivi(String storageKey) async {
+    final tc = _trackedCourses[storageKey];
+    if (tc == null) return;
+    if (tc.idTicketLie == null) return; // déjà non lié : rien à faire
+    // ⚠️ AUCUNE COPIE LOCALE ICI : le test B4.4/12.3 verrouille le fait que
+    //   ce fichier n'en contient aucune (une seule occurrence, AlertConfig).
+    //   La copie déliée est fournie par l'extension TrackedCourseCopy, dans
+    //   `enregistreur_verdict_gain_suivi.dart`, où elle a sa place.
+    _trackedCourses[storageKey] = tc.copieDeliee();
     notifyListeners();
     await _save();
   }
