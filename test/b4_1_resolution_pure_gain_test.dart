@@ -760,6 +760,108 @@ void main() {
           direct.composantes.single.categorie);
     });
   });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  B4.1/17 — CLÔTURE B-4.2 : intégrité du convertisseur
+  //
+  //  Deux propriétés n'étaient couvertes par AUCUN test B-4.1, alors qu'elles
+  //  conditionnent la justesse du branchement :
+  //
+  //  • la CARDINALITÉ : les convertisseurs existants comptent les rapports,
+  //    mais aucun test ne prouvait qu'une liste de 9 rapports en rend 9 — une
+  //    sélection silencieuse du plus élevé serait passée inaperçue ;
+  //  • l'ORIGINE DU CODE : le helper `api()` renseigne TOUJOURS
+  //    `codePariOfficiel`, si bien que la branche de repli sur `typePari`
+  //    n'était jamais exercée.
+  //
+  //  Ces tests ne modifient pas le convertisseur : ils constatent son
+  //  comportement. Aucun test neuf n'est ajouté ailleurs.
+  // ═════════════════════════════════════════════════════════════════════════
+  group('B4.1/17 — clôture B-4.2 : intégrité du convertisseur', () {
+    test('B4.1/17.1 les 9 rapports du Quinté+ réel sont TOUS conservés', () {
+      // Mesuré : 9 rapports en entrée, 9 en sortie, 0 écarté. Une sélection du
+      // plus élevé n'en laisserait qu'un.
+      final entree = quinteReel();
+      expect(entree, hasLength(9));
+
+      final c = convertirRapportsApi(entree);
+      expect(c.rapports, hasLength(9));
+      expect(c.nbEcartes, 0);
+
+      // Les montants survivent, chacun une fois, dans l'ordre publié.
+      expect(c.rapports.map((r) => r.pourUnEuro).toList(), <double>[
+        114626.70, 64626.70, 1043.90,
+        7.20, 7.20, 7.20, 7.20, 7.20,
+        5.10,
+      ]);
+    });
+
+    test('B4.1/17.2 aucun rapport fabriqué : une liste vide reste vide', () {
+      final c = convertirRapportsApi(const <RapportPmu>[]);
+      expect(c.rapports, isEmpty);
+      expect(c.nbEcartes, 0);
+    });
+
+    test('B4.1/17.3 que des rapports illisibles : rien n\'est inventé', () {
+      // Deux rapports, tous deux sans libellé officiel : 0 conservé, 2 écartés.
+      // Le convertisseur ne « fabrique » aucun rapport de remplacement.
+      final c = convertirRapportsApi(<RapportPmu>[
+        api('E_TIERCE', '', '9-4-15', 477.40),
+        api('E_TIERCE', '', '9-4-15', 80.30),
+      ]);
+      expect(c.rapports, isEmpty);
+      expect(c.nbEcartes, 2);
+    });
+
+    test('B4.1/17.4 code du bloc : repli sur typePari si codePariOfficiel est vide',
+        () {
+      // Branche jamais exercée jusqu'ici. Constat : le code du bloc est repris
+      // depuis `typePari`, et AUCUN code n'est inventé.
+      final p = rapportPublieDepuisApi(RapportPmu(
+        typePari: 'E_SIMPLE_GAGNANT',
+        combinaison: '4',
+        dividende: 3.10,
+        estOrdre: true,
+        libelleOfficiel: 'e-Simple Gagnant',
+        codePariOfficiel: '', // ← vide
+      ));
+      expect(p, isNotNull);
+      expect(p!.codePmu, 'E_SIMPLE_GAGNANT');
+    });
+
+    test('B4.1/17.5 ni typePari ni codePariOfficiel : le rapport est ÉCARTÉ',
+        () {
+      // Les deux codes vides ⇒ aucune provenance ⇒ on ne devine pas.
+      final p = rapportPublieDepuisApi(RapportPmu(
+        typePari: '',
+        combinaison: '4',
+        dividende: 3.10,
+        estOrdre: true,
+        libelleOfficiel: 'e-Simple Gagnant',
+        codePariOfficiel: '',
+      ));
+      expect(p, isNull);
+    });
+
+    test('B4.1/17.6 aucun double comptage : le total d\'un rapport élevé reste '
+        'celui de SON rapport, pas d\'une somme', () {
+      // Contrôle de non-superposition : sur les 9 rapports du Quinté+, un ticket
+      // joué DANS L'ORDRE officiel perçoit ×2 de 64626.70 (le rapport
+      // « e-Quinté+ Ordre ») et rien d'autre. Si le convertisseur avait dupliqué
+      // ou fusionné un rapport, ce total changerait.
+      //
+      // ⚠️ Le libellé du ticket est « Quinté+ », la SEULE forme répertoriée
+      // (`typePariDepuisLibelle`) : « Quinté+ Ordre » rendrait `typeNonRepertorie`
+      // et le test ne dirait plus rien du convertisseur.
+      final v = resoudreGainTicketDepuisDonnees(
+        ticket: t('Quinté+', const [9, 4, 15, 10, 1], 2),
+        resultat: res(quinteSansTirelire()),
+      );
+      expect(v.etat, EtatGain.attribue);
+      expect(v.total, closeTo(2 * 64626.70, 1e-9));
+      expect(v.total, isNot(closeTo(2 * 114626.70, 1e-9)));
+    });
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
