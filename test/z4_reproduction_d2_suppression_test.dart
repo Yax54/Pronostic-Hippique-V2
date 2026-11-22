@@ -1,36 +1,53 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  Z4 — REPRODUCTION DE D2 : SUPPRESSION D'UN SUIVI
+//  Z4 — NON-RÉGRESSION DE D2 : SUPPRESSION D'UN SUIVI
 //
 //  ⚠️  FICHIER DE TEST UNIQUEMENT. AUCUNE MODIFICATION DE lib/.
-//      Aucun commit. Aucun push. Aucune correction appliquée.
 //
-//  ── CE QUI EST REPRODUIT ─────────────────────────────────────────────────
-//  Le geste réel « Supprimer ce suivi » de l'écran de détail d'un pari :
+//  ── HISTORIQUE, ET CE QUI A CHANGÉ ───────────────────────────────────────
 //
-//      paris_detail_screen.dart:1294
-//        widget.alertSvc.retirerSuivi(tc.key);
+//  Ce fichier reproduisait à l'origine un défaut RÉEL, présent au commit
+//  `a305841`, où `paris_detail_screen.dart` appelait
 //
-//  et les deux méthodes réelles d'`AlertService` :
+//      widget.alertSvc.retirerSuivi(tc.key);
 //
-//      ajouterSuivi()  (alert_service.dart:709-771)
-//        → baseKey   = overrideKey ?? course.key     ('R1C10_20112026')
-//        → storageKey = '${baseKey}_${millisecondsSinceEpoch}'
-//        → _trackedCourses[storageKey] = copie portant storageKey
+//  alors que `_trackedCourses` est indexé par la `storageKey` horodatée
+//  (`'R1C10_22112026_1795371771345'`), et non par `tc.key`
+//  (`'R1C10_22112026'`). Le `remove` ne trouvait donc aucune entrée.
 //
-//      retirerSuivi()  (alert_service.dart:763-767)
-//        → _trackedCourses.remove(key)
+//  Le défaut a été corrigé par le commit `6b4e325`
+//  (« fix(D2): la suppression d'un suivi passe tc.storageKey ?? tc.key »).
+//  La version précédente de CE fichier continuait pourtant d'appeler
+//  `retirerSuivi(tc.key)` elle-même : elle mesurait donc sa propre erreur, et
+//  ne disait plus rien de la production. Elle est réécrite ici.
 //
-//  Le défaut : la clé qui INDEXE la map est la storageKey horodatée, mais le
-//  bouton lui passe `tc.key` (sans horodatage). Le `remove` ne trouve rien.
+//  ── MESURE QUI A DÉCIDÉ DE L'ABSENCE DE REPLI DANS `retirerSuivi` ────────
 //
-//  ── POURQUOI CE N'EST PAS UNE COPIE SIMPLIFIÉE ──────────────────────────
-//  Aucun accès aux champs privés : tout passe par `ajouterSuivi`,
-//  `retirerSuivi`, `recharger` et `trackedCourses` (API publique réelle).
-//  Les clés sont produites par le code de production, jamais recalculées ici.
+//  La consigne était : « n'ajouter un fallback que si un cas d'échec réel est
+//  reproduit ». Before d'ajouter quoi que ce soit, la clé de production
+//  `tc.storageKey ?? tc.key` a été confrontée à la clé d'index réelle dans
+//  les deux états persistés existants. Résultat mesuré :
 //
-//  ── STATUT ATTENDU : ROUGE ───────────────────────────────────────────────
-//  Rouge pour la BONNE raison : les TÉMOINS (deux paris coexistants, clés
-//  distinctes, chargement disque) passent AVANT l'assertion métier.
+//    ticket MODERNE  : index = « R1C10_22112026_1795371771345 »
+//                      storageKey = identique → pointe = true → 2 → 1 ✓
+//    ticket ANCIEN   : index = « R1C10_22112026 »
+//                      storageKey = null → repli tc.key = « R1C10_22112026 »
+//                      → pointe = true → 1 → 0 ✓
+//
+//  Aucune troisième forme n'existe : les quatre chemins qui réécrivent la map
+//  (`_load`, `ajouterSuivi`, `enregistrerResultatPari`, `enregistrerDividendePMU
+//  Tracked`, `appliquerVerdictGainSuivi`) conservent tous la clé d'index, et
+//  les deux reconstructeurs `withResultat` / `withDividende` propagent
+//  `storageKey`. Aucun échec réel n'étant reproduit, AUCUN repli n'a été
+//  ajouté à `retirerSuivi` : un repli sans cas d'échec serait un code mort qui
+//  masquerait un futur désalignement au lieu de le révéler.
+//
+//  ── CE QUE CE FICHIER PROUVE MAINTENANT ──────────────────────────────────
+//  Il utilise la MÊME expression de clé que la production
+//  (`tc.storageKey ?? tc.key`, `paris_detail_screen.dart:1400`), et vérifie :
+//    • que cette expression pointe TOUJOURS sur la clé d'index réelle ;
+//    • que la suppression retire exactement le pari visé, et lui seul ;
+//    • que la suppression survit à un rechargement disque ;
+//    • que le cas historique (sans `storageKey`) reste couvert.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
@@ -41,7 +58,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';
 
 // ───────────────────────────────────────────────────────────────────────────
-//  FABRIQUES
+//  1. L'EXPRESSION DE CLÉ DE LA PRODUCTION — recopiée à l'identique
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Exactement ce que fait `paris_detail_screen.dart:1400` :
+///
+///     widget.alertSvc.retirerSuivi(tc.storageKey ?? tc.key);
+///
+/// Si cette expression cesse de pointer sur la clé d'index, ce test doit
+/// échouer — c'est son unique raison d'être.
+String cleDeSuppression(TrackedCourse tc) => tc.storageKey ?? tc.key;
+
+// ───────────────────────────────────────────────────────────────────────────
+//  2. FABRIQUES
 // ───────────────────────────────────────────────────────────────────────────
 
 String _ddmmyyyy(DateTime d) =>
@@ -52,7 +81,7 @@ String _ddmmyyyy(DateTime d) =>
 /// Course suivie telle que la produit `bet_bottom_sheet` avant `ajouterSuivi`.
 ///
 /// `heureDepart` à −90 min : largement en deçà du seuil −20 min des écrans
-/// et sous la purge 24 h d'`AlertService._load()` (l.517-523).
+/// et sous la purge 24 h d'`AlertService._load()`.
 TrackedCourse _suivi(
   DateTime dep, {
   int numCourse = 10,
@@ -83,9 +112,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  Z4-A — LE BOUTON RÉEL (`tc.key`) NE SUPPRIME RIEN
+  //  Z4-A — LE PARI VISÉ DISPARAÎT, ET LUI SEUL
   // ═══════════════════════════════════════════════════════════════════════
-  test('Z4-A / D2 — « Supprimer ce suivi » doit retirer le pari choisi', () async {
+  test('Z4-A / D2 — la clé de production retire le pari choisi, et lui seul',
+      () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await AlertService.instance.recharger();
     expect(AlertService.instance.trackedCourses, isEmpty,
@@ -94,7 +124,7 @@ void main() {
     final dep = DateTime.now().subtract(const Duration(minutes: 90));
 
     // Deux paris RÉELS sur la MÊME course (n°16 puis n°7), comme le permet
-    // l'application (bet_bottom_sheet → ajouterSuivi, deux fois).
+    // l'application (`bet_bottom_sheet` → `ajouterSuivi`, deux fois).
     await AlertService.instance.ajouterSuivi(_suivi(dep, numeroCheval: 16));
     await Future<void>.delayed(const Duration(milliseconds: 5));
     await AlertService.instance.ajouterSuivi(_suivi(dep, numeroCheval: 7));
@@ -104,45 +134,41 @@ void main() {
         reason: 'TÉMOIN : deux paris sur la même course doivent coexister');
 
     final cles = apresAjout.keys.toList();
-    // ignore: avoid_print
-    print('─── MESURE Z4 / D2 ───────────────────────────────────────────');
-    // ignore: avoid_print
-    print('  clés réelles de stockage : $cles');
+    final vise = apresAjout[cles.first]!;
+    final autre = apresAjout[cles.last]!;
 
-    // Le pari que l'utilisateur a ouvert (paris_detail_screen reçoit
-    // `tracked: course` = la valeur de la map, donc porteuse de storageKey).
-    final tcOuvert = apresAjout[cles.first]!;
-    // ignore: avoid_print
-    print('  tc.key (utilisé par le bouton) : ${tcOuvert.key}');
-    // ignore: avoid_print
-    print('  tc.storageKey (clé d\'index)   : ${tcOuvert.storageKey}');
-    // ignore: avoid_print
-    print('  tc.key == storageKey ? ${tcOuvert.key == tcOuvert.storageKey}');
+    // TÉMOIN CENTRAL — la clé du bouton vise bien l'index réel.
+    expect(cleDeSuppression(vise), cles.first,
+        reason: 'TÉMOIN : `tc.storageKey ?? tc.key` doit être EXACTEMENT la '
+            'clé qui indexe la map. Mesuré : storageKey=« ${vise.storageKey} », '
+            'tc.key=« ${vise.key} », clé d\'index=« ${cles.first} ». Un '
+            'désalignement ici est le défaut D2 lui-même.');
+    expect(vise.storageKey, isNotNull,
+        reason: 'TÉMOIN : un ticket créé par `ajouterSuivi` porte sa '
+            '`storageKey` horodatée (alert_service.dart:734-736)');
+    expect(vise.key, isNot(vise.storageKey),
+        reason: 'TÉMOIN : `tc.key` est SANS horodatage, donc différent — '
+            'c\'est précisément ce qui rendait l\'ancien `tc.key` inopérant');
 
-    // GESTE RÉEL — paris_detail_screen.dart:1294
-    await AlertService.instance.retirerSuivi(tcOuvert.key);
+    // GESTE RÉEL — même expression que `paris_detail_screen.dart:1400`.
+    await AlertService.instance.retirerSuivi(cleDeSuppression(vise));
 
-    final apresSuppression = AlertService.instance.trackedCourses;
-    // ignore: avoid_print
-    print('  après retirerSuivi(tc.key)     : ${apresSuppression.length} entrée(s)');
-    // ignore: avoid_print
-    print('──────────────────────────────────────────────────────────────');
-
-    expect(apresSuppression.length, 1,
-        reason: 'D2 (paris_detail_screen.dart:1294) — le bouton passe `tc.key` '
-            '(« ${tcOuvert.key} ») alors que la map est indexée par '
-            '`storageKey` (« ${tcOuvert.storageKey} ») : `Map.remove()` ne '
-            'trouve aucune entrée, AUCUN suivi n\'est supprimé.');
+    final restants = AlertService.instance.trackedCourses;
+    expect(restants.length, 1,
+        reason: 'D2 — la suppression doit retirer UNE entrée (mesuré : 2 → 1)');
+    expect(restants.containsKey(cles.first), isFalse,
+        reason: 'le pari visé est bien absent');
+    expect(restants.containsKey(cles.last), isTrue,
+        reason: 'l\'AUTRE pari de la même course est conservé');
+    expect(restants[cles.last]!.numeroCheval, autre.numeroCheval,
+        reason: 'le survivant est bien l\'autre pari, pas une copie');
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  Z4-B — AVEC LA storageKey, LA BONNE ENTRÉE EST SUPPRIMÉE
-  //
-  //  Ce test est le CONTRÔLE du précédent : il montre que le défaut est bien
-  //  l'identifiant utilisé, et non la suppression elle-même. Il doit être
-  //  VERT dès aujourd'hui (aucune correction n'est appliquée).
+  //  Z4-B — CONTRÔLE : trois paris, un seul retiré
   // ═══════════════════════════════════════════════════════════════════════
-  test('Z4-B / D2 — avec la storageKey, seul le pari visé disparaît', () async {
+  test('Z4-B / D2 — avec trois paris, seul celui du milieu disparaît',
+      () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await AlertService.instance.recharger();
 
@@ -159,12 +185,12 @@ void main() {
     final cles = AlertService.instance.trackedCourses.keys.toList();
     final vise = AlertService.instance.trackedCourses[cles[1]]!;
 
-    await AlertService.instance.retirerSuivi(vise.storageKey!);
+    await AlertService.instance.retirerSuivi(cleDeSuppression(vise));
 
     final restants = AlertService.instance.trackedCourses;
     expect(restants.length, 2,
-        reason: 'avec la bonne clé, une seule entrée est retirée');
-    expect(restants.containsKey(vise.storageKey), isFalse,
+        reason: 'une seule entrée est retirée');
+    expect(restants.containsKey(cles[1]), isFalse,
         reason: 'le pari visé est bien absent');
     expect(restants.containsKey(cles[0]) && restants.containsKey(cles[2]), isTrue,
         reason: 'les deux AUTRES suivis sont conservés');
@@ -185,42 +211,28 @@ void main() {
     final cles = AlertService.instance.trackedCourses.keys.toList();
     final vise = AlertService.instance.trackedCourses[cles[0]]!;
 
-    // ✓ Avec la storageKey : suppression réelle, puis relecture disque.
-    await AlertService.instance.retirerSuivi(vise.storageKey!);
-    await AlertService.instance.recharger();
-    expect(AlertService.instance.trackedCourses.length, 1,
-        reason: 'TÉMOIN : la suppression par storageKey survit au rechargement');
-
-    // ✗ Avec la clé du bouton : aucune suppression, donc rien ne persiste
-    //   non plus. On repart d'un état à deux paris pour le mesurer.
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    await AlertService.instance.recharger();
-    await AlertService.instance.ajouterSuivi(_suivi(dep, numeroCheval: 16));
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    await AlertService.instance.ajouterSuivi(_suivi(dep, numeroCheval: 7));
-
-    final cles2 = AlertService.instance.trackedCourses.keys.toList();
-    final vise2 = AlertService.instance.trackedCourses[cles2[0]]!;
-    await AlertService.instance.retirerSuivi(vise2.key);
+    await AlertService.instance.retirerSuivi(cleDeSuppression(vise));
     await AlertService.instance.recharger();
 
-    // ignore: avoid_print
-    print('  Z4-C : après retirerSuivi(tc.key) + rechargement → '
-        '${AlertService.instance.trackedCourses.length} entrée(s)');
-    expect(AlertService.instance.trackedCourses.length, 1,
-        reason: 'D2 — aucune suppression n\'a eu lieu, donc le rechargement '
-            'restaure bien les DEUX paris.');
+    final apresReload = AlertService.instance.trackedCourses;
+    expect(apresReload.length, 1,
+        reason: 'TÉMOIN : la suppression par la clé de production survit au '
+            'rechargement (mesuré : 1 entrée restante)');
+    expect(apresReload.containsKey(cles[0]), isFalse,
+        reason: 'le pari supprimé ne doit pas revenir du disque');
+    expect(apresReload.containsKey(cles[1]), isTrue,
+        reason: 'le pari conservé est bien rechargé sous la même clé');
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  Z4-D — COMPATIBILITÉ ANCIENNES DONNÉES (sans storageKey)
+  //  Z4-D — COMPATIBILITÉ ANCIENNES DONNÉES (sans `storageKey`)
   //
-  //  Ce test explique POURQUOI le défaut est invisible sur les paris
-  //  anciens : `_load()` fait `loadKey = tc.storageKey ?? tc.key` (l.507).
-  //  Sans storageKey persistée, la clé d'index EST `tc.key`, donc le bouton
-  //  tombait juste. Le défaut n'apparaît que sur les paris récents.
+  //  Le repli `?? tc.key` n'est pas décoratif : c'est ce cas-là qu'il couvre.
+  //  `_load()` fait `loadKey = tc.storageKey ?? tc.key` ; sans `storageKey`
+  //  persistée, la clé d'index EST `tc.key`, et la suppression doit fonctionner.
   // ═══════════════════════════════════════════════════════════════════════
-  test('Z4-D / D2 — ancienne donnée sans storageKey : la clé du bouton suffit', () async {
+  test('Z4-D / D2 — ancienne donnée sans storageKey : la suppression aboutit',
+      () async {
     final dep = DateTime.now().subtract(const Duration(minutes: 90));
     final ancien = _suivi(dep, numeroCheval: 16);
     final jsonAncien = ancien.toJson()..remove('storageKey');
@@ -236,16 +248,25 @@ void main() {
         reason: 'TÉMOIN : l\'ancienne entrée est chargée');
 
     final cle = AlertService.instance.trackedCourses.keys.single;
-    // ignore: avoid_print
-    print('  Z4-D : clé d\'index d\'une ancienne donnée = « $cle »');
-
     final tc = AlertService.instance.trackedCourses[cle]!;
+
     expect(tc.storageKey, isNull,
         reason: 'TÉMOIN : aucune storageKey dans l\'ancienne donnée');
     expect(tc.key, cle,
         reason: 'sur une ancienne donnée, tc.key EST la clé d\'index '
-            '(alert_service.dart:507) — d\'où l\'absence de symptôme');
+            '(alert_service.dart:525), donc le repli `?? tc.key` tombe juste');
     expect(_ddmmyyyyFromJson(jsonAncien), _ddmmyyyy(dep),
         reason: 'TÉMOIN : date de départ relue correctement');
+
+    // La clé de production doit être celle de l'index, par le repli.
+    expect(cleDeSuppression(tc), cle,
+        reason: 'TÉMOIN : le repli `?? tc.key` doit pointer sur l\'index');
+
+    await AlertService.instance.retirerSuivi(cleDeSuppression(tc));
+    await AlertService.instance.recharger();
+
+    expect(AlertService.instance.trackedCourses, isEmpty,
+        reason: 'D2 — l\'ancienne donnée doit aussi pouvoir être supprimée '
+            '(mesuré : 1 → 0, et 0 après rechargement)');
   });
 }
