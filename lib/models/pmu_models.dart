@@ -420,6 +420,29 @@ class EquidiaPronostics {
 
 // ─── Pronostic utilisateur ───────────────────────────────────────────────────
 
+/// Sentinelle privée du `copyWith` de [UserPrediction].
+///
+/// ── POURQUOI ELLE EXISTE ──────────────────────────────────────────────────
+/// En Dart, un paramètre nommé `Object? x` ne permet pas de distinguer
+/// « l'appelant n'a rien dit » de « l'appelant veut explicitement `null` » :
+/// les deux arrivent sous la forme `null`. Or les 18 champs facultatifs de ce
+/// modèle portent une information métier dans leur `null` (`etatGain == null`
+/// signifie « ticket historique, chemin legacy »). Un `copyWith` naïf qui
+/// écraserait systématiquement par `null` détruirait donc silencieusement un
+/// verdict déjà enregistré.
+///
+/// La sentinelle rend les deux cas distincts :
+///   • argument OMIS          → la constante `_inchange` est reçue → on garde ;
+///   • argument `null` FOURNI → `null` est reçu              → on efface.
+///
+/// Elle est PRIVÉE au fichier : aucun appelant extérieur ne peut la nommer,
+/// donc aucun appelant ne peut la confondre avec une vraie valeur.
+class _Inchange {
+  const _Inchange();
+}
+
+const Object _inchange = _Inchange();
+
 class UserPrediction {
   final String id;
   final String dateStr;
@@ -969,5 +992,153 @@ class UserPrediction {
       }
     }
     return out.isEmpty ? null : out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ LOT B-4.3 — COPIE SÛRE
+  //
+  //  CRÉÉ POUR L'ENREGISTREMENT DU VERDICT (B-4.3), UTILISABLE PARTOUT.
+  //
+  //  CONTRAT — L'UN SEUL QUI COMPTE
+  //   • argument OMIS      → l'ancienne valeur est conservée ;
+  //   • argument `null`    → la valeur devient `null` (effacement explicite) ;
+  //   • aucune valeur par défaut n'est inventée : les `?? ` de `fromJson`
+  //     ne s'appliquent PAS ici ;
+  //   • aucune mutation : l'instance source n'est jamais modifiée ;
+  //   • `toJson` est INCHANGÉ : un ticket historique copié garde ses 26 clés.
+  //
+  //  Les collections sont recopiées (`List.of`) : la copie et l'original ne
+  //  partagent pas la même liste, donc modifier l'une ne peut pas altérer
+  //  l'autre. Les éléments eux-mêmes sont immuables (`int`) ou traités comme
+  //  tels (`RapportAttribue` n'a que des champs `final`).
+  // ══════════════════════════════════════════════════════════════════════════
+  UserPrediction copyWith({
+    String? id,
+    String? dateStr,
+    int? numReunion,
+    int? numCourse,
+    String? nomCourse,
+    String? hippodrome,
+    int? numeroCheval,
+    String? nomCheval,
+    double? cote,
+    String? typePari,
+    DateTime? createdAt,
+    // ── Champs MUTABLES du modèle historique : sentinelle obligatoire ───────
+    Object? isCorrect = _inchange,
+    double? scoreIA,
+    Object? montantMise = _inchange,
+    Object? gainRealise = _inchange,
+    Object? numerosJoues = _inchange,
+    Object? dividendePmuReel = _inchange,
+    Object? combinaisonPmu = _inchange,
+    // ── G+P / B2 ───────────────────────────────────────────────────────────
+    Object? miseGagnant = _inchange,
+    Object? misePlace = _inchange,
+    Object? coteGagnant = _inchange,
+    Object? cotePlace = _inchange,
+    // ── ÉTAPE 4-F — capture du pari joué ───────────────────────────────────
+    Object? codePmuOfficiel = _inchange,
+    Object? varianteChoisie = _inchange,
+    Object? numerosDansOrdre = _inchange,
+    Object? formulePari = _inchange,
+    // ── LOT B-1 — gains PMU structurés (les 7 champs, un par un) ───────────
+    Object? etatGain = _inchange,
+    Object? rapportsAttribues = _inchange,
+    Object? etatTirelire = _inchange,
+    Object? dividendeGagnant = _inchange,
+    Object? dividendePlace = _inchange,
+    Object? miseBaseCentimesUtilisee = _inchange,
+    Object? motifNonDetermination = _inchange,
+  }) {
+    return UserPrediction(
+      // Champs REQUIS : jamais nuls, donc `?? this.x` est sans ambiguïté.
+      id: id ?? this.id,
+      dateStr: dateStr ?? this.dateStr,
+      numReunion: numReunion ?? this.numReunion,
+      numCourse: numCourse ?? this.numCourse,
+      nomCourse: nomCourse ?? this.nomCourse,
+      hippodrome: hippodrome ?? this.hippodrome,
+      numeroCheval: numeroCheval ?? this.numeroCheval,
+      nomCheval: nomCheval ?? this.nomCheval,
+      cote: cote ?? this.cote,
+      typePari: typePari ?? this.typePari,
+      createdAt: createdAt ?? this.createdAt,
+      // Champs OPTIONNELS : la sentinelle fait foi.
+      isCorrect: identical(isCorrect, _inchange)
+          ? this.isCorrect
+          : isCorrect as bool?,
+      scoreIA: scoreIA ?? this.scoreIA,
+      montantMise: identical(montantMise, _inchange)
+          ? this.montantMise
+          : montantMise as double,
+      gainRealise: identical(gainRealise, _inchange)
+          ? this.gainRealise
+          : gainRealise as double?,
+      numerosJoues: identical(numerosJoues, _inchange)
+          ? List<int>.of(this.numerosJoues)
+          : List<int>.of(numerosJoues as List<int>),
+      dividendePmuReel: identical(dividendePmuReel, _inchange)
+          ? this.dividendePmuReel
+          : dividendePmuReel as double?,
+      combinaisonPmu: identical(combinaisonPmu, _inchange)
+          ? this.combinaisonPmu
+          : combinaisonPmu as String?,
+      miseGagnant: identical(miseGagnant, _inchange)
+          ? this.miseGagnant
+          : miseGagnant as double?,
+      misePlace: identical(misePlace, _inchange)
+          ? this.misePlace
+          : misePlace as double?,
+      coteGagnant: identical(coteGagnant, _inchange)
+          ? this.coteGagnant
+          : coteGagnant as double?,
+      cotePlace: identical(cotePlace, _inchange)
+          ? this.cotePlace
+          : cotePlace as double?,
+      codePmuOfficiel: identical(codePmuOfficiel, _inchange)
+          ? this.codePmuOfficiel
+          : codePmuOfficiel as String?,
+      varianteChoisie: identical(varianteChoisie, _inchange)
+          ? this.varianteChoisie
+          : varianteChoisie as String?,
+      numerosDansOrdre: identical(numerosDansOrdre, _inchange)
+          ? (this.numerosDansOrdre == null
+              ? null
+              : List<int>.of(this.numerosDansOrdre!))
+          : (numerosDansOrdre == null
+              ? null
+              : List<int>.of(numerosDansOrdre as List<int>)),
+      formulePari: identical(formulePari, _inchange)
+          ? this.formulePari
+          : formulePari as String?,
+      // ★ Les 7 champs B-1 : jamais fusionnés, jamais déduits les uns des autres.
+      etatGain: identical(etatGain, _inchange)
+          ? this.etatGain
+          : etatGain as EtatGain?,
+      rapportsAttribues: identical(rapportsAttribues, _inchange)
+          ? (this.rapportsAttribues == null
+              ? null
+              : List<RapportAttribue>.of(this.rapportsAttribues!))
+          : (rapportsAttribues == null
+              ? null
+              : List<RapportAttribue>.of(
+                  rapportsAttribues as List<RapportAttribue>)),
+      etatTirelire: identical(etatTirelire, _inchange)
+          ? this.etatTirelire
+          : etatTirelire as EtatTirelire?,
+      dividendeGagnant: identical(dividendeGagnant, _inchange)
+          ? this.dividendeGagnant
+          : dividendeGagnant as double?,
+      dividendePlace: identical(dividendePlace, _inchange)
+          ? this.dividendePlace
+          : dividendePlace as double?,
+      miseBaseCentimesUtilisee: identical(miseBaseCentimesUtilisee, _inchange)
+          ? this.miseBaseCentimesUtilisee
+          : miseBaseCentimesUtilisee as int?,
+      motifNonDetermination: identical(motifNonDetermination, _inchange)
+          ? this.motifNonDetermination
+          : motifNonDetermination as MotifNonDetermination?,
+    );
   }
 }

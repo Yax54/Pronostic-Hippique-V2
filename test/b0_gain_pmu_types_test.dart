@@ -130,10 +130,21 @@ void main() {
       // tout provider, tout branchement en production — échoue encore ici.
       // La liste est NOMINATIVE : elle est comparée par égalité, pas par
       // inclusion.
+      // ★ LOT B-4.3 — EXTENSION DÉLIBÉRÉE, UN SEUL FICHIER DE PLUS.
+      //
+      //   • enregistreur_verdict_gain_pmu.dart — l'enregistreur B-4.3 reçoit
+      //     un VerdictGain et écrit des RapportAttribue, donc il importe le
+      //     socle. C'est le SEUL ajout de B-4.3.
+      //
+      // Le contrat reste FERMÉ : un septième importateur — donc tout écran,
+      // tout provider, tout branchement en production — échoue encore ici.
+      // La liste est NOMINATIVE : elle est comparée par égalité, pas par
+      // inclusion.
       final importateursAttendus = <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/enregistreur_verdict_gain_pmu.dart',
         'lib/services/moteur_gain_pmu.dart',
         'lib/services/resolution_gain_ticket_pmu.dart',
       ];
@@ -177,6 +188,19 @@ void main() {
       // VerdictGain du moteur. Vérifié par grep avant d'écrire ce test : ni
       // `RapportAttribue.calculer` ni `totalDesMontantsRetour` n'apparaissent
       // dans ce fichier (grep vide, code de sortie 1).
+      // ★ LOT B-4.3 — l'enregistreur est DÉLIBÉRÉMENT ABSENT de ce périmètre.
+      //
+      // MESURE, ET RAISON DU CHOIX : `enregistreur_verdict_gain_pmu.dart`
+      // appelle `RapportAttribue.calculer` (l.428 de ce fichier) pour
+      // reconstruire la PREUVE d'attribution — un `RapportAttribue` ne peut
+      // pas être construit autrement, son constructeur `_()` étant privé. Il
+      // n'est donc PAS un « non-producteur de montant » et le garder ici
+      // exigerait d'ASS OUPLIR la garde, ce qui est interdit.
+      //
+      // CONTRÔLE COMPENSATOIRE : `test/b4_3_enregistreur_verdict_test.dart`
+      // vérifie qu'il n'appelle `RapportAttribue.calculer` QUE dans la branche
+      // d'écriture (section D), qu'il n'appelle JAMAIS le moteur B-3, et que
+      // tout écart de total provoque un REFUS sans mutation du ticket.
       for (final chemin in <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
