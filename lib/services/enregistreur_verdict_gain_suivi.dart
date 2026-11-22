@@ -127,6 +127,11 @@ extension TrackedCourseCopy on TrackedCourse {
     Object? dividendePlace = _inchangeSuivi,
     Object? miseBaseCentimesUtilisee = _inchangeSuivi,
     Object? motifNonDetermination = _inchangeSuivi,
+    // ── B1-T12 / étape 1 — gain manuel et liaison certaine ────────────────
+    //  Sentinelle obligatoire : `null` doit pouvoir être écrit explicitement
+    //  pour ANNULER un gain manuel (retour au calcul PMU) ou délier un ticket.
+    Object? montantGainManuel = _inchangeSuivi,
+    Object? idTicketLie = _inchangeSuivi,
   }) {
     return TrackedCourse(
       numReunion: numReunion ?? this.numReunion,
@@ -236,6 +241,14 @@ extension TrackedCourseCopy on TrackedCourse {
       motifNonDetermination: identical(motifNonDetermination, _inchangeSuivi)
           ? this.motifNonDetermination
           : motifNonDetermination as MotifNonDetermination?,
+      // ★ B1-T12 / étape 1 — propagés avec la sentinelle : `null` explicite
+      //   possible (annulation du gain manuel, déliaison du ticket).
+      montantGainManuel: identical(montantGainManuel, _inchangeSuivi)
+          ? this.montantGainManuel
+          : montantGainManuel as double?,
+      idTicketLie: identical(idTicketLie, _inchangeSuivi)
+          ? this.idTicketLie
+          : idTicketLie as String?,
     );
   }
 }

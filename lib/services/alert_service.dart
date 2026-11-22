@@ -794,6 +794,14 @@ class AlertService extends ChangeNotifier {
       dividendePlace: course.dividendePlace,
       miseBaseCentimesUtilisee: course.miseBaseCentimesUtilisee,
       motifNonDetermination: course.motifNonDetermination,
+      // ★ B1-T12 / étape 1 — SIXIÈME OCCURRENCE DU PIÈGE R1.
+      //   Cette reconstruction champ-par-champ oublierait le gain manuel et
+      //   la liaison exactement comme elle oubliait `storageKey` (R1), la
+      //   ventilation G+P (B2-C), la capture 4-F et les sept champs B-1.
+      //   Un ticket porteur d'un gain déclaré par l'utilisateur perdrait ce
+      //   gain dès le ré-ajout au suivi s'il n'était pas recopié ici.
+      montantGainManuel: course.montantGainManuel,
+      idTicketLie: course.idTicketLie,
       storageKey: storageKey,
     );
     _trackedCourses[storageKey] = courseAvecKey;
@@ -3197,6 +3205,28 @@ class TrackedCourse {
   /// Motif fermé expliquant un `etatGain == nonDetermine`.
   final MotifNonDetermination? motifNonDetermination;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B1-T12 / ÉTAPE 1 — GAIN MANUEL ET LIAISON CERTAINE (côté suivi)
+  //
+  //  Mêmes règles que sur `UserPrediction`, et mêmes raisons :
+  //    • `montantGainManuel` est le montant BRUT reçu, déclaré par
+  //      l'utilisateur. Il est DISTINCT de `dividendePmuReel` et des sept
+  //      champs B-1, qui restent les données OFFICIELLES du PMU. Aucune
+  //      saisie manuelle n'écrit dans les champs PMU.
+  //    • `null` = aucune saisie. `0.0` = l'utilisateur a déclaré 0 €.
+  //    • `idTicketLie` porte l'`id` du `UserPrediction` jumeau, et `null`
+  //      signifie « non lié » — jamais « à deviner ». Aucun rapprochement
+  //      par réunion/course/heure n'est autorisé.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Montant BRUT réellement reçu, déclaré par l'utilisateur, en euros.
+  /// `null` = aucune saisie → le PMU fait foi.
+  final double? montantGainManuel;
+
+  /// `id` du `UserPrediction` jumeau, si et seulement si la correspondance
+  /// a été établie au moment de la création du pari. `null` = non lié.
+  final String? idTicketLie;
+
   /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
   /// CONTRAT STRICTEMENT IDENTIQUE à `UserPrediction.capturePariComplete`
@@ -3254,6 +3284,80 @@ class TrackedCourse {
   /// ★ LOT B2-C — Vrai si une seule des deux composantes est renseignée.
   bool get misesGagnantPlaceIncompletes =>
       (miseGagnant == null) != (misePlace == null);
+
+  // ────────────────────────────────────────────────────────────────────────
+  //  ★ B1-T12 / ÉTAPE 1 — LE GAIN RETENU (côté suivi), MÊME RÈGLE QUE LE
+  //  MODÈLE `UserPrediction`, POUR QUE LES DEUX ÉCRANS NE DIVERGENT JAMAIS.
+  //
+  //  PRIORITÉ : ① gain manuel ② gain officiel PMU ③ indéterminé (`null`).
+  //
+  //  ⚠️ `dividendePmuReel` ET LES SEPT CHAMPS B-1 NE SONT PAS TOUCHÉS.
+  //  Ils gardent leur sens officiel, et `affichageGainSuivi` continue de les
+  //  lire comme avant. `gainRetenuBrut` est une VUE, pas une réécriture.
+  // ────────────────────────────────────────────────────────────────────────
+
+  /// Le montant BRUT retenu : manuel s'il existe, sinon celui établi par le
+  /// verdict PMU, sinon `null` (= indéterminé, on n'affirme rien).
+  double? get gainRetenuBrut {
+    // ① La déclaration de l'utilisateur est prioritaire. `0.0` est un montant.
+    final manuel = montantGainManuel;
+    if (manuel != null) return manuel;
+
+    // ② Le PMU fait foi quand l'utilisateur n'a rien déclaré.
+    //
+    //    ⚠️ MESURÉ AVANT D'ÉCRIRE : `EtatGain` est un ENUM d'ÉTATS
+    //    (nonDetermine / attribue / perdu / rembourse) — il NE PORTE AUCUN
+    //    MONTANT. Le montant brut officiel vit dans `rapportsAttribues[]`,
+    //    chaque `RapportAttribue` exposant `montantRetour` (déjà calculé à
+    //    sa construction comme `miseAppliquee × rapport.pourUnEuro`).
+    //
+    //    On se contente donc de SOMMER des montants DÉJÀ CALCULÉS. Aucune
+    //    formule PMU n'est réappliquée ici, aucun rapport n'est reconstruit.
+    //    On ne somme QUE si le verdict est `attribue` : un état
+    //    `nonDetermine` ne porte aucun montant fiable, `perdu` vaut 0 brut
+    //    et `rembourse` est un remboursement, pas un gain.
+    if (etatGain == EtatGain.attribue) {
+      final rapports = rapportsAttribues;
+      if (rapports != null && rapports.isNotEmpty) {
+        var total = 0.0;
+        for (final r in rapports) {
+          total += r.montantRetour;
+        }
+        return total;
+      }
+    }
+
+    // ③ Rien de fiable : indéterminé. On ne retombe PAS sur la cote : ce
+    //    serait exactement le défaut mesuré en B1-T12.
+    return null;
+  }
+
+  /// Le gain NET retenu, ou `null` si la mise engagée est inconnue.
+  ///
+  /// Net = brut − mise réellement engagée.
+  ///
+  /// ⚠️ `mise > 0` et non `mise != null` : PARITÉ STRICTE avec
+  /// `UserPrediction.gainRetenuNet`. Côté `UserPrediction`, `montantMise` est
+  /// un `double` de défaut `0.0`, donc une mise absente s'y présente comme
+  /// `0.0` ; le modèle y traite donc déjà `<= 0` comme « non renseignée ».
+  /// Si ce getter-ci acceptait `0.0` comme une mise connue, le MÊME pari
+  /// afficherait un net chiffré ici et `null` côté PROFIL. Une garde qui ne
+  /// peut que transformer un nombre inventé en « indéterminé » explicite,
+  /// jamais l'inverse — et qui n'a, à ce jour, AUCUN consommateur de
+  /// production (mesuré : grep vide sur `gainRetenuNet` hors définitions).
+  double? get gainRetenuNet {
+    final brut = gainRetenuBrut;
+    if (brut == null) return null;
+    final mise = miseTotaleEngagee;
+    if (mise == null || mise <= 0) return null;
+    return brut - mise;
+  }
+
+  /// Un gain manuel a-t-il été déclaré ? (`0.0` compte comme déclaré.)
+  bool get aGainManuel => montantGainManuel != null;
+
+  /// Le ticket est-il lié de façon certaine à son `UserPrediction` jumeau ?
+  bool get estLieAuProfil => idTicketLie != null;
 
   // ★ ÉTAPE 2 — INTERPRÉTATION EN LECTURE DU TYPE DE PARI.
   //
@@ -3333,6 +3437,9 @@ class TrackedCourse {
     this.dividendePlace,
     this.miseBaseCentimesUtilisee,
     this.motifNonDetermination,
+    // ★ B1-T12 / étape 1 — gain manuel et liaison certaine
+    this.montantGainManuel,
+    this.idTicketLie,
   }) : addedAt = addedAt ?? DateTime.now();
 
   /// Crée une copie avec résultat mis à jour (pour persister sans muter)
@@ -3405,6 +3512,11 @@ class TrackedCourse {
     dividendePlace: dividendePlace,
     miseBaseCentimesUtilisee: miseBaseCentimesUtilisee,
     motifNonDetermination: motifNonDetermination,
+    // ★ B1-T12 / étape 1 — le gain manuel et la liaison survivent à la copie.
+    //   Sans ces deux lignes, enregistrer un résultat effacerait le montant
+    //   déclaré par l'utilisateur — même piège que 4-F, B-1 et R1.
+    montantGainManuel: montantGainManuel,
+    idTicketLie: idTicketLie,
     // ★ LOT R1 : `storageKey` DOIT être propagée.
     //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
     //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
@@ -3572,6 +3684,23 @@ class TrackedCourse {
             'miseBaseCentimesUtilisee': miseBaseCentimesUtilisee,
             'motifNonDetermination': motifNonDetermination?.toJson(),
           },
+    // ★ B1-T12 / étape 1 — gain manuel et liaison certaine.
+    //
+    //   ⚠️ ÉCRITURE CONDITIONNELLE, MÊME RAISONNEMENT QUE B-1 ET B-2.
+    //   Le verrou mesuré `expect(json.length, 28)` protège la FORME des
+    //   sauvegardes historiques. Un ticket sans gain manuel et sans liaison
+    //   ne doit pas grossir : les deux clés ne sont écrites que si l'une des
+    //   deux au moins est renseignée.
+    //
+    //   `montantGainManuel` à `0.0` DOIT être écrit (déclaration explicite,
+    //   distincte de l'absence) : le test est `!= null`, pas un test de
+    //   véracité, qui aurait perdu le 0 €.
+    ...?(montantGainManuel == null && idTicketLie == null)
+        ? null
+        : <String, dynamic>{
+            'montantGainManuel': montantGainManuel,
+            'idTicketLie': idTicketLie,
+          },
   };
 
   factory TrackedCourse.fromJson(Map<String, dynamic> j) => TrackedCourse(
@@ -3640,6 +3769,12 @@ class TrackedCourse {
     miseBaseCentimesUtilisee: (j['miseBaseCentimesUtilisee'] as num?)?.toInt(),
     motifNonDetermination:
         MotifNonDetermination.fromJson(j['motifNonDetermination']),
+    // ★ B1-T12 / étape 1 — lecture TOLÉRANTE : clé absente ⇒ `null`.
+    //   Un ticket historique reste « aucun gain manuel » et « non lié »,
+    //   ce qui est la vérité. Aucun gain n'est recalculé au chargement et
+    //   aucun rapprochement n'est tenté (interdictions du mandat).
+    montantGainManuel: (j['montantGainManuel'] as num?)?.toDouble(),
+    idTicketLie: j['idTicketLie'] as String?,
   );
 
   /// Relecture tolérante d'une liste de rapports attribués.

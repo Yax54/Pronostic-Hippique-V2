@@ -3071,6 +3071,42 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       );
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ★ B1-T12 / ÉTAPE 1 — LIAISON CERTAINE DES DEUX TICKETS
+    //
+    //  PROBLÈME MESURÉ, AVANT CETTE CORRECTION
+    //  Ce fichier crée DEUX objets pour UN pari :
+    //    • un `TrackedCourse` (suivi + alertes), clé = `storageKey`, générée
+    //      par `ajouterSuivi` sous la forme `<baseKey>_<millisecondes>` ;
+    //    • un `UserPrediction` (profil + statistiques), id = `predId`,
+    //      généré ici sous la forme `<baseKey>_<millisecondes>`.
+    //  Les deux portent le MÊME format de base mais DEUX horodatages
+    //  distincts, donc deux `millisecondsSinceEpoch` différents. Rien ne les
+    //  reliait : les deux pipelines ignoraient mutuellement leur existence.
+    //
+    //  POURQUOI ON NE RÉPARE PAS ÇA PAR CORRESPONDANCE RÉUNION/COURSE
+    //  Deux paris sur la même course produisent deux tickets qui ont
+    //  exactement la même base `R1C6_ddmmyyyy`. Un rapprochement par cette
+    //  base propagerait un gain au mauvais pari — formellement interdit.
+    //
+    //  SOLUTION RETENUE : les deux identifiants sont fabriqués ICI, à partir
+    //  du MÊME horodatage, au moment où la correspondance est CERTAINE (on
+    //  tient les deux objets dans la même portée). La `storageKey` est passée
+    //  à `ajouterSuivi` via `overrideKey`, qui est le mécanisme PRÉVU pour
+    //  une clé fournie par l'appelant (déjà utilisé par mes_paris_screen).
+    //
+    //  LIMITE ASSUMÉE : seuls les paris créés À PARTIR DE MAINTENANT sont
+    //  liés. Un ticket historique reste `idTicketLie == null` — non lié, et
+    //  on ne prétend pas le contraire. Aucune migration, aucune heuristique.
+    // ══════════════════════════════════════════════════════════════════════
+    final int horodatageLiaison = DateTime.now().millisecondsSinceEpoch;
+    final String predId = '${_courseKey}_$horodatageLiaison';
+    // La clé de suivi DOIT être préfixée par la base pour qu'`estDejaEnSuivi`
+    // (qui teste `k == baseKey || k.startsWith('${baseKey}_')`) continue de
+    // fonctionner à l'identique : on ne change donc pas le format, seulement
+    // la SOURCE de l'horodatage.
+    final String storageKeyLiee = '${_courseKey}_$horodatageLiaison';
+
     final estGP = typePariLabel == 'Gagnant+Placé';
     final tracked = TrackedCourse(
       numReunion: numR,
@@ -3111,9 +3147,18 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       varianteChoisie: _varianteChoisiePourCapture,
       numerosDansOrdre: _numerosDansOrdreCapture,
       formulePari: null,
+      // ★ B1-T12 / étape 1 — la liaison, écrite à la CRÉATION.
+      //   Le suivi pointe vers l'id du pari de profil, qui est fabriqué plus
+      //   bas avec le MÊME horodatage. Correspondance certaine, pas déduite.
+      idTicketLie: predId,
     );
 
-    widget.alertService.ajouterSuivi(tracked, overrideKey: widget.overrideKey);
+    // `overrideKey` = clé fournie par l'appelant. On l'utilise pour que la
+    // storageKey réelle soit EXACTEMENT celle qu'on vient de fabriquer, au
+    // lieu de laisser `ajouterSuivi` en générer une seconde (horodatage
+    // différent = liaison perdue).
+    widget.alertService
+        .ajouterSuivi(tracked, overrideKey: storageKeyLiee);
 
     // ── Enregistrer le pari dans le profil utilisateur (PmuProvider) ─────────
     // C'est ce qui alimente les statistiques du tableau de bord.
@@ -3123,7 +3168,10 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           '${dep.year}-${dep.month.toString().padLeft(2, '0')}-${dep.day.toString().padLeft(2, '0')}';
 
       // Identifiant unique : courseKey + timestamp pour éviter les doublons
-      final predId = '${_courseKey}_${DateTime.now().millisecondsSinceEpoch}';
+      // ★ B1-T12 : `predId` est désormais fabriqué PLUS HAUT, avec le même
+      //   horodatage que la `storageKey` du suivi — c'est ce qui rend la
+      //   liaison certaine. Aucune seconde génération ici, sinon les deux
+      //   identifiants divergeraient à nouveau.
 
       // Numéro principal du cheval (ou 0 pour paris combinés sans cheval unique)
       final numChevalPred = numPrincipal ?? 0;
@@ -3177,6 +3225,9 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         varianteChoisie: _varianteChoisiePourCapture,
         numerosDansOrdre: _numerosDansOrdreCapture,
         formulePari: null,
+        // ★ B1-T12 / étape 1 — la liaison, symétrique de celle du suivi.
+        //   Le profil pointe vers la `storageKey` du `TrackedCourse`.
+        idTicketLie: storageKeyLiee,
       );
 
       // ignore: use_build_context_synchronously
