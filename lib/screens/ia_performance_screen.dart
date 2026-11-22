@@ -3918,15 +3918,46 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       debugPrint('[FILTRE_7J] typePari=${p.typePari} 6j=${stats6j["nb"]} auj=${statsAuj["nb"]} total=${total7j["nb"]}');
       return total7j;
     } else if (_filtrePeriode == 'today') {
-      // ★ v9.99 : Aujourd'hui — lecture directe depuis _pronostics (source temps réel)
-      // statsPourPeriode() lisait historiqueComplet, mis à jour seulement après
-      // analyseJourneeComplete() → affichait 0/0 toute la journée.
-      // precisionAujourdhuiDepuisPronostics calcule en temps réel depuis les pronostics bruts.
-      final aujodhui = IaMemoryService.instance.precisionAujourdhuiDepuisPronostics;
-      return aujodhui[p.typePari] ?? {'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+      // ★ LOT Z3-A — une SEULE source de lecture pour une journée.
+      //
+      // DÉFAUT MESURÉ (`test/z3_reproduction_n5_n6_filtres_test.dart`, Z3-A) :
+      // pour la MÊME journée, ce filtre lisait
+      // `precisionAujourdhuiDepuisPronostics` (nb = 2) alors que
+      // « Période personnalisée » lisait `statsPourPeriode` sur
+      // `historiqueComplet`, vide avant `analyseJourneeComplete()` (nb = 0).
+      //
+      // `statsJourUnique()` agrège désormais les deux sources : les deux
+      // filtres affichent le même total pour une même date.
+      final nowT = DateTime.now();
+      return p.statsJourUnique(nowT, nowT);
     } else if (_filtrePeriode == 'custom' && _filtreDebut != null && _filtreFin != null) {
       // Période personnalisée date à date
-      return p.statsPourPeriode(_filtreDebut!, _filtreFin!);
+      // ★ LOT Z3-A — quand la plage CONTIENT aujourd'hui, on décompose :
+      //   [début .. hier] via `statsPourPeriode` (inchangée) + aujourd'hui
+      //   via `statsJourUnique` (source unique). Aucun jour n'est compté
+      //   deux fois : les deux sous-plages sont disjointes.
+      final DateTime debutJ =
+          DateTime(_filtreDebut!.year, _filtreDebut!.month, _filtreDebut!.day);
+      final DateTime finJ =
+          DateTime(_filtreFin!.year, _filtreFin!.month, _filtreFin!.day);
+      final DateTime nowC = DateTime.now();
+      final DateTime aujC = DateTime(nowC.year, nowC.month, nowC.day);
+
+      if (aujC.isBefore(debutJ) || aujC.isAfter(finJ)) {
+        // La plage ne contient pas aujourd'hui : lecture historique seule.
+        return p.statsPourPeriode(_filtreDebut!, _filtreFin!);
+      }
+
+      final Map<String, int> passe = aujC.isAfter(debutJ)
+          ? p.statsPourPeriode(debutJ, aujC.subtract(const Duration(days: 1)))
+          : <String, int>{'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+      final Map<String, int> jour = p.statsJourUnique(aujC, nowC);
+      return <String, int>{
+        'nb': (passe['nb'] ?? 0) + (jour['nb'] ?? 0),
+        'bons': (passe['bons'] ?? 0) + (jour['bons'] ?? 0),
+        'ordre': (passe['ordre'] ?? 0) + (jour['ordre'] ?? 0),
+        'desordre': (passe['desordre'] ?? 0) + (jour['desordre'] ?? 0),
+      };
     }
     return {'nb': p.nbTotal, 'bons': p.nbBons, 'ordre': p.nbOrdre, 'desordre': p.nbDesordre};
   }

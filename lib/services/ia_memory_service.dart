@@ -7393,6 +7393,68 @@ class StatsPrecisionParType {
     return {'nb': nb, 'bons': bons, 'ordre': ord, 'desordre': des};
   }
 
+  /// ★ LOT Z3-A — SOURCE UNIQUE de la précision d'UNE journée.
+  ///
+  /// DÉFAUT MESURÉ (`test/z3_reproduction_n5_n6_filtres_test.dart`, Z3-A) :
+  /// sur la MÊME journée, deux filtres de `ia_performance_screen` donnaient
+  /// deux totaux différents — mesuré `« Aujourd'hui »` = 2 / `« Période
+  /// incluant aujourd'hui »` = 0 :
+  ///   • `« Aujourd'hui »` lisait `precisionAujourdhuiDepuisPronostics`
+  ///     (pronostics bruts, temps réel) ⇒ nb = 2 ;
+  ///   • `« Période personnalisée »` délègue à `statsPourPeriode`, qui lit
+  ///     `historiqueComplet` — alimenté UNIQUEMENT par
+  ///     `analyseJourneeComplete()`, donc vide pour aujourd'hui avant
+  ///     l'analyse du soir ⇒ nb = 0.
+  ///
+  /// CETTE MÉTHODE est désormais la seule lecture d'une journée : elle
+  /// agrège **les deux** sources, sans en privilégier une.
+  ///
+  /// ⚠️ PÉRIMÈTRE VOLONTAIREMENT RESTREINT — elle ne remplace PAS
+  ///    `statsPourPeriode`, qui reste INCHANGÉE :
+  ///      – elle ne couvre qu'UNE date (celle de `aujourd'hui`), pas une plage ;
+  ///      – elle n'ajoute rien pour une date passée : `historiqueComplet`
+  ///        contient déjà ces journées, et la source temps réel ne rend que
+  ///        le jour courant (`precisionAujourdhuiDepuisPronostics`). Pour une
+  ///        date ≠ aujourd'hui, le résultat est donc EXACTEMENT
+  ///        `statsPourPeriode(d, d)` — aucune double comptabilisation.
+  ///
+  /// Les règles d'éligibilité et de « bon conseil » ne sont pas réécrites :
+  /// elles restent celles de `precisionAujourdhuiDepuisPronostics`
+  /// (`resultatsReels`, `typePariConseille` valide, `_estBonConseilParType`).
+  /// Aucun poids, seuil, ELO ni apprentissage n'est touché : c'est de la
+  /// lecture seule.
+  Map<String, int> statsJourUnique(DateTime jour, DateTime aujourdhui) {
+    final DateTime d =
+        DateTime(jour.year, jour.month, jour.day);
+    final DateTime auj =
+        DateTime(aujourdhui.year, aujourdhui.month, aujourdhui.day);
+
+    // Source 1 — historique persisté (toutes dates).
+    final Map<String, int> hist = statsPourPeriode(d, d);
+
+    // Source 2 — temps réel, UNIQUEMENT si la date demandée est aujourd'hui
+    // (le getter ne rend que le jour courant : l'appeler pour une autre date
+    //  ajouterait les chiffres du jour à une date qui n'est pas la sienne).
+    if (d != auj) return hist;
+
+    final Map<String, int> live =
+        IaMemoryService.instance.precisionAujourdhuiDepuisPronostics[typePari] ??
+            <String, int>{'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+
+    // Pour aujourd'hui, la source temps réel est la plus complète : elle voit
+    // les pronostics résolus dans la journée, alors que `historiqueComplet`
+    // n'est mis à jour qu'après `analyseJourneeComplete()`. On retient donc
+    // le MAXIMUM par compteur — jamais une somme, qui compterait deux fois
+    // les mêmes pronostics une fois l'analyse du soir effectuée.
+    int maxDe(int a, int b) => a > b ? a : b;
+    return <String, int>{
+      'nb': maxDe(hist['nb'] ?? 0, live['nb'] ?? 0),
+      'bons': maxDe(hist['bons'] ?? 0, live['bons'] ?? 0),
+      'ordre': maxDe(hist['ordre'] ?? 0, live['ordre'] ?? 0),
+      'desordre': maxDe(hist['desordre'] ?? 0, live['desordre'] ?? 0),
+    };
+  }
+
   /// Liste des mois disponibles dans l'historique complet
   List<String> get moisDisponibles {
     final mois = <String>{};

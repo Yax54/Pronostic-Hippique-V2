@@ -271,18 +271,24 @@ void main() {
 
     await _semer(stats: stats, pronostics: pronostics);
 
-    // DÉLÉGUÉ PUBLIC EXACT du filtre « Aujourd'hui » (ia_performance_screen.dart:3888-3890).
-    final Map<String, Map<String, int>> aujourdhui =
-        IaMemoryService.instance.precisionAujourdhuiDepuisPronostics;
-    final Map<String, int> auj = aujourdhui[kTypePari] ??
-        <String, int>{'nb': 0, 'bons': 0, 'ordre': 0, 'desordre': 0};
+    // DÉLÉGUÉ PUBLIC EXACT du filtre « Aujourd'hui » (ia_performance_screen.dart).
+    // ★ LOT Z3-A : l'écran lit désormais `statsJourUnique(auj, auj)`, qui agrège
+    //   `precisionAujourdhuiDepuisPronostics` ET `historiqueComplet`. On mesure
+    //   donc la MÊME fonction que l'écran, au lieu de l'une de ses deux sources.
+    final DateTime aujJ =
+        DateTime(now.year, now.month, now.day);
+    final Map<String, int> auj =
+        _statsChargee().statsJourUnique(aujJ, aujJ);
 
     // DÉLÉGUÉ PUBLIC EXACT du filtre « Période personnalisée » quand la
-    // plage inclut aujourd'hui (ia_performance_screen.dart:3891-3893).
+    // plage inclut aujourd'hui (ia_performance_screen.dart).
+    // ★ LOT Z3-A : l'écran décompose [début .. hier] (statsPourPeriode) +
+    //   aujourd'hui (statsJourUnique). Pour une plage réduite à aujourd'hui,
+    //   le volet « passé » est vide : on mesure donc `statsJourUnique`.
     // ⚠ On interroge l'objet RÉELLEMENT CHARGÉ par le service, pas la copie
     //   du fixture : c'est lui que l'écran reçoit via `precisionParType`.
     final Map<String, int> periodeAuj =
-        _statsChargee().statsPourPeriode(debutJour, debutJour);
+        _statsChargee().statsJourUnique(debutJour, debutJour);
 
     // ignore: avoid_print
     print('─── MESURE Z3-A / N6 (« aujourd\'hui » vs « période ») ─────');
