@@ -16,13 +16,13 @@
 //    • les lecteurs réels `mouvementsPourCourse()`, `mouvementPourPartant()`,
 //      `scoreCritereR()`.
 //
-//  LIMITE DOCUMENTÉE : `IaPronosticEngine._buildCourseKey()` est PRIVÉE. Son
-//  format est établi PAR LECTURE de `ia_pronostic_engine.dart:823-839` (le
-//  code s'auto-documente : « On ne connaît pas numR ici → on utilise un
-//  placeholder » → `return 'C${course.numCourse}_$day$month$year';`). Le test
-//  ne prétend donc PAS avoir exécuté cette fonction : il mesure sa
-//  CONSÉQUENCE, c'est-à-dire que les deux espaces de clés sont disjoints.
-//  Aucune réflexion, aucun accès à un membre privé n'est utilisé.
+//  LIMITE DOCUMENTÉE (★ LEVÉE PAR Z2-B) : `IaPronosticEngine._buildCourseKey()`
+//  est PRIVÉE. Le harnais d'origine en déduisait le format par LECTURE et le
+//  codait en dur (« C{nC}_{date} ») — c'était une SUPPOSITION, pas une mesure.
+//  Depuis Z2-B, le moteur expose `cleCourseMouvements()` (`@visibleForTesting`),
+//  qui rend la clé réellement utilisée : le test MESURE désormais la clé du
+//  moteur au lieu de la supposer, et ne peut donc plus passer à côté d'une
+//  divergence d'identifiant.
 //
 //  Producteurs NON EXÉCUTÉS (documentés par lecture uniquement, cf. rapport) :
 //    • `data_refresh_service.dart:95, 480, 512, 901, 1044` ;
@@ -40,6 +40,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/cote_tracker_service.dart';
+import 'package:pronostic_hippique/services/ia_pronostic_engine.dart';
 import 'package:pronostic_hippique/widgets/arrivee_reelle_widget.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -202,7 +203,9 @@ void main() {
     final ({String dateStr, String heure, String cleProd}) mesure =
         await _faireEcrireParLeWriterReel();
 
-    final String cleMoteur = 'C${kNumC}_${mesure.dateStr}'; // cf. `_buildCourseKey`
+    final String cleMoteur = IaPronosticEngine.cleCourseMouvements(
+        _courseR1C10(dateStr: mesure.dateStr, heure: mesure.heure));
+    final String cleMoteurAttendue = 'R${kNumR}C${kNumC}_${mesure.dateStr}';
     final List<MouvementCote> sousCleProd =
         CoteTrackerService.instance.mouvementsPourCourse(mesure.cleProd);
     final List<MouvementCote> sousCleMoteur =
@@ -215,7 +218,7 @@ void main() {
     // ignore: avoid_print
     print('  writer réel (demarrer x2)   : « ${mesure.cleProd} »');
     // ignore: avoid_print
-    print('  clé du moteur IA (par lecture) : « $cleMoteur »');
+    print('  clé du moteur IA (MESURÉE)  : « $cleMoteur »');
     // ignore: avoid_print
     print('  mouvements sous la clé de production : ${sousCleProd.length}');
     // ignore: avoid_print
@@ -243,19 +246,30 @@ void main() {
     expect(sousCleProd.single.variationPct, closeTo(kVariationAttendue, 0.01),
         reason: 'variation mesurée : ${sousCleProd.single.variationPct}');
 
-    // ASSERTION 3 — et NULLEMENT dans l'espace du moteur.
-    expect(sousCleMoteur, isEmpty,
-        reason: 'le writer n\'écrit JAMAIS sous « $cleMoteur »');
+    // ASSERTION 3 — et le moteur interroge EXACTEMENT le même espace.
+    //   Avant Z2-B, la clé du moteur était « C{nC}_{date} » (placeholder) et
+    //   cette assertion prouvait la DISJONCTION. Elle prouve désormais la
+    //   CONCORDANCE : c'est le même identifiant, mesuré des deux côtés.
+    expect(cleMoteur, cleMoteurAttendue,
+        reason: 'Z2-B — la clé du moteur doit être celle de la production '
+            '« $cleMoteurAttendue » (mesuré : « $cleMoteur »)');
+    expect(sousCleMoteur, hasLength(1),
+        reason: 'Z2-B — le moteur doit retrouver le mouvement écrit sous '
+            '« ${mesure.cleProd} »');
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  //  Z2-B — L'ESPACE DE CLÉS INTERROGÉ PAR LE MOTEUR EST DISJOINT
-  //  Attendu : ROUGE (N1).
+  //  Z2-B — L'ESPACE DE CLÉS DU MOTEUR EST CELUI DE LA PRODUCTION
+  //  Attendu : VERT après correction de Z2-B (était ROUGE).
   // ───────────────────────────────────────────────────────────────────────
-  test('Z2-B / N1 — un mouvement réel de production est invisible sous la clé du moteur', () async {
+  test('Z2-B / N1 — un mouvement réel de production est visible sous la clé du moteur', () async {
     final ({String dateStr, String heure, String cleProd}) mesure =
         await _faireEcrireParLeWriterReel();
-    final String cleMoteur = 'C${kNumC}_${mesure.dateStr}';
+    final ZtCourse course =
+        _courseR1C10(dateStr: mesure.dateStr, heure: mesure.heure);
+    // ★ Z2-B : la clé n'est plus SUPPOSÉE, elle est produite par le moteur.
+    final String cleMoteur =
+        IaPronosticEngine.cleCourseMouvements(course);
 
     // TÉMOIN 1 — la donnée EXISTE et est lisible sous la clé de production.
     final MouvementCote? vuSousCleProd =
@@ -267,8 +281,6 @@ void main() {
     // TÉMOIN 2 — la course est bien dans la fenêtre des 30 min
     // (`scoreCritereR` renvoie null hors champ de la map, pas hors fenêtre ;
     //  la fenêtre est vérifiée ici explicitement).
-    final ZtCourse course =
-        _courseR1C10(dateStr: mesure.dateStr, heure: mesure.heure);
     expect(CoteTrackerService.instance.estDansFenetre(course), isTrue,
         reason: 'TÉMOIN : le critère R doit être ACTIF pour cette course '
             '(départ ${mesure.heure}, fenêtre 0-30 min)');
@@ -293,14 +305,15 @@ void main() {
     // ignore: avoid_print
     print('─────────────────────────────────────────────────────────────');
 
-    // ASSERTION MÉTIER — le moteur doit voir le mouvement réel de production.
-    expect(scoreMoteur, isNotNull,
-        reason: 'N1 (ia_pronostic_engine.dart:823-839 vs cote_tracker_service.dart:391) — '
-            'le moteur interroge « $cleMoteur » alors que la production écrit sous '
-            '« ${mesure.cleProd} ». `mouvementPourPartant()` ne trouve aucune entrée et '
-            'renvoie null : le critère R (6 % du score) reste neutralisé à 50.0 alors '
-            'qu\'un mouvement de ${vuSousCleProd.variationPct.toStringAsFixed(0)} % '
-            'est réellement disponible.');
+    // ASSERTION MÉTIER — le moteur doit voir le mouvement réel de production,
+    // et en tirer exactement le score du barème (−20 % ⇒ 75,0).
+    expect(scoreMoteur, kScoreAttendu,
+        reason: 'Z2-B — le moteur doit interroger « ${mesure.cleProd} » (clé de '
+            'production) et non un identifiant propre. Avant correction il lisait '
+            '« C${kNumC}_${mesure.dateStr} », ne trouvait rien, et le critère R '
+            '(6 % du score) restait neutralisé à 50.0 alors qu\'un mouvement de '
+            '${vuSousCleProd.variationPct.toStringAsFixed(0)} % était disponible. '
+            'Mesuré maintenant : clé « $cleMoteur » ⇒ $scoreMoteur.');
   });
 
   // ───────────────────────────────────────────────────────────────────────

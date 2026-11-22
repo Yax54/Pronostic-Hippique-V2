@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/zt_models.dart';
 import 'ia_memory_service.dart';
 import 'ia_memory_models.dart';
@@ -820,22 +821,70 @@ class IaPronosticEngine {
   }
 
 
+  /// ★ LOT Z2-B — ACCÈS DE MESURE à la clé réellement utilisée par le moteur.
+  ///
+  /// `_buildCourseKey` est privée : sans cet accès, un test ne peut que
+  /// SUPPOSER le format (c'était le défaut du harnais Z2-A/Z2-B, qui codait
+  /// en dur « C{nC}_{date} »). Cette fonction rend la clé de production
+  /// elle-même — aucune logique dupliquée, aucun format réimplémenté.
+  ///
+  /// Elle n'est appelée par aucun code de production.
+  @visibleForTesting
+  static String cleCourseMouvements(ZtCourse course) => _buildCourseKey(course);
+
   static String _buildCourseKey(ZtCourse course) {
-    // Format attendu par CoteTrackerService : "RNCN_DDMMYYYY"
-    // On utilise dateStr du cours s'il est disponible
-    if (course.dateStr.length == 8) {
-      // dateStr = DDMMYYYY
-      final day   = course.dateStr.substring(0, 2);
-      final month = course.dateStr.substring(2, 4);
-      final year  = course.dateStr.substring(4, 8);
-      // On ne connaît pas numR ici → on utilise un placeholder
-      // CoteTrackerService construit ses clés sans numR dans les mouvements
-      return 'C${course.numCourse}_$day$month$year';
-    }
+    // Format de RÉFÉRENCE, imposé par la production : "R{nR}C{nC}_DDMMYYYY".
+    // Références mesurées : `cote_tracker_service.dart:391`,
+    // `data_refresh_service.dart:95/480/1044`, `ia_memory_service.dart:6170`,
+    // et le producteur public `buildCourseKey()` (`arrivee_reelle_widget.dart`).
+    //
+    // ★ LOT Z2-B — le numéro de réunion n'est plus SUPPOSÉ.
+    //
+    //   DÉFAUT MESURÉ (`test/z2_reproduction_n1_coursekey_test.dart`, Z2-A/Z2-B)
+    //   sur données réelles (94 courses de `prog_15112026.json`) :
+    //     • la production écrit sous « R1C1_22112026 » ;
+    //     • le moteur interrogeait « C1_22112026 » (placeholder) ;
+    //     • mesures : 1 mouvement sous la clé de production, 0 sous celle du
+    //       moteur ⇒ `scoreCritereR()` renvoyait toujours `null` et le critère
+    //       R (6 % du score) restait neutralisé à 50.0.
+    //
+    //   Le numéro est désormais LU dans `course.anchor`, qui porte déjà
+    //   « R{nR}C{nC} » (producteur : `zone_turf_service.dart:207`,
+    //   `anchor: '$numOfficiel$numOrdre'`). Aucun champ ajouté au modèle,
+    //   donc AUCUNE modification du JSON persisté ni des caches existants.
+    //
+    //   ⚠️ SI LE NUMÉRO EST INCONNU, ON NE RECONSTRUIT RIEN.
+    //      Aucune troisième convention, aucun chiffre inventé (« R1 » par
+    //      défaut serait une clé fausse désignant une AUTRE réunion, donc
+    //      potentiellement les mouvements d'un autre cheval). On rend alors
+    //      une clé VIDE : `scoreCritereR('' , n)` ne peut rien trouver, et
+    //      le critère R reste explicitement à sa valeur neutre.
+    final String numR = _numReunionDepuisAnchor(course.anchor);
+    if (numR.isEmpty) return '';
+
+    final String jour = course.dateStr.length == 8
+        ? course.dateStr
+        : _dateDuJourDdmmyyyy();
+    return 'R${numR}C${course.numCourse}_$jour';
+  }
+
+  /// Extrait le numéro de réunion de `anchor` (« R3C5 » → « 3 »).
+  ///
+  /// Rend une chaîne VIDE si l'ancre ne porte pas un numéro exploitable :
+  /// l'appelant ne doit alors construire aucune clé (voir ci-dessus).
+  static String _numReunionDepuisAnchor(String anchor) {
+    final m = RegExp(r'^R(\d+)C\d+$').firstMatch(anchor.trim());
+    if (m == null) return '';
+    final n = int.tryParse(m.group(1)!);
+    if (n == null || n <= 0) return '';
+    return '$n';
+  }
+
+  static String _dateDuJourDdmmyyyy() {
     final now = DateTime.now();
-    final d = now.day.toString().padLeft(2, '0');
-    final m = now.month.toString().padLeft(2, '0');
-    return 'C${course.numCourse}_$d$m${now.year}';
+    return '${now.day.toString().padLeft(2, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.year}';
   }
 
   static int scoreColor(double score) {
