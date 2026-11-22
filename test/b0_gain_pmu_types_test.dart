@@ -17,6 +17,89 @@ import 'package:pronostic_hippique/services/gain_pmu_types.dart';
 import 'package:pronostic_hippique/services/gain_ticket_calculator.dart'
     show VarianteRapport;
 
+/// ★ LOT B-4.4 — retire les COMMENTAIRES d'un source Dart avant analyse.
+///
+/// POURQUOI CETTE FONCTION EXISTE : le garde-fou B0/1 cherchait les chaînes
+/// interdites dans le texte BRUT. Un fichier qui se contente de CITER
+/// `RapportAttribue.calculer` dans un commentaire — pour dire qu'il ne
+/// l'appelle pas — était donc déclaré coupable. Le contournement évident
+/// aurait été d'EXCLURE ce fichier du contrôle : c'est précisément ce que le
+/// lot B-4.3 a refusé de faire, et ce lot refuse de faire aussi.
+///
+/// On rend donc le contrôle sémantiquement exact (« aucun APPEL ») au lieu
+/// de l'affaiblir (« aucune mention ») : aucun fichier n'a plus besoin d'être
+/// exclu, donc la garde couvre strictement PLUS de fichiers qu'avant.
+///
+/// MESURE de sûreté : la suppression ne touche ni les chaînes de caractères
+/// ni le code. Si une occurrence n'apparaît que dans un commentaire, elle
+/// disparaît d'ici et le test ne peut plus être trompé par une auto-citation.
+String _sansCommentaires(String source) {
+  final sb = StringBuffer();
+  var i = 0;
+  // État : 0 = code, 1 = chaîne ', 2 = chaîne ", 3 = commentaire //, 4 = /* */
+  var etat = 0;
+  while (i < source.length) {
+    final c = source[i];
+    final suivant = (i + 1 < source.length) ? source[i + 1] : '';
+
+    switch (etat) {
+      case 0: // code
+        if (c == '/' && suivant == '/') {
+          etat = 3;
+          i += 2;
+          continue;
+        }
+        if (c == '/' && suivant == '*') {
+          etat = 4;
+          i += 2;
+          continue;
+        }
+        if (c == "'") {
+          etat = 1;
+        } else if (c == '"') {
+          etat = 2;
+        }
+        sb.write(c);
+        i++;
+      case 1: // chaîne simple quote
+        sb.write(c);
+        if (c == r'\') {
+          if (i + 1 < source.length) sb.write(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        if (c == "'") etat = 0;
+        i++;
+      case 2: // chaîne double quote
+        sb.write(c);
+        if (c == r'\') {
+          if (i + 1 < source.length) sb.write(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        if (c == '"') etat = 0;
+        i++;
+      case 3: // commentaire de ligne
+        if (c == '\n') {
+          etat = 0;
+          sb.write(c);
+        }
+        i++;
+      case 4: // commentaire de bloc
+        if (c == '*' && suivant == '/') {
+          etat = 0;
+          i += 2;
+          continue;
+        }
+        if (c == '\n') sb.write(c); // on garde les sauts de ligne
+        i++;
+      default:
+        i++;
+    }
+  }
+  return sb.toString();
+}
+
 /// Rapport publié réaliste, calqué sur R1C6_15112026 (Quinté+).
 RapportPublie _rapport({
   String codePmu = 'E_QUINTE_PLUS',
@@ -140,11 +223,23 @@ void main() {
       // tout provider, tout branchement en production — échoue encore ici.
       // La liste est NOMINATIVE : elle est comparée par égalité, pas par
       // inclusion.
+      // ★ LOT B-4.4 — EXTENSION DÉLIBÉRÉE, UN SEUL FICHIER DE PLUS.
+      //
+      //   • enregistreur_verdict_gain_suivi.dart — applique la décision B-4.3
+      //     au modèle `TrackedCourse` ; il manipule donc `EtatGain`,
+      //     `EtatTirelire`, `MotifNonDetermination` et `RapportAttribue`.
+      //     C'est le SEUL ajout de B-4.4.
+      //
+      // Le contrat reste FERMÉ : un huitième importateur — donc tout écran,
+      // tout provider, tout branchement en production — échoue encore ici.
+      // La liste est NOMINATIVE : elle est comparée par égalité, pas par
+      // inclusion.
       final importateursAttendus = <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
         'lib/services/enregistreur_verdict_gain_pmu.dart',
+        'lib/services/enregistreur_verdict_gain_suivi.dart',
         'lib/services/moteur_gain_pmu.dart',
         'lib/services/resolution_gain_ticket_pmu.dart',
       ];
@@ -201,14 +296,35 @@ void main() {
       // vérifie qu'il n'appelle `RapportAttribue.calculer` QUE dans la branche
       // d'écriture (section D), qu'il n'appelle JAMAIS le moteur B-3, et que
       // tout écart de total provoque un REFUS sans mutation du ticket.
+      //
+      // ★ LOT B-4.4 — LA GARDE EST RENFORCÉE, PAS AFFAIBLIE.
+      //
+      // Deux faits mesurés, vérifiés par grep avant d'écrire ce qui suit :
+      //   • `enregistreur_verdict_gain_suivi.dart` (nouveau) importe le socle
+      //     et ne contient NI `RapportAttribue.calculer` NI
+      //     `totalDesMontantsRetour` en dehors de deux COMMENTAIRES (l.14, l.16)
+      //     qui disent précisément qu'il ne les appelle pas ;
+      //   • `enregistreur_verdict_gain_pmu.dart` en contient UN appel réel
+      //     (l.428), dans la branche d'écriture.
+      //
+      // Le contrôle porte donc désormais sur le code SANS commentaires
+      // (`_sansCommentaires`). Conséquence : le nouveau fichier peut entrer
+      // dans le périmètre — il le DOIT, puisqu'il applique la décision et
+      // pourrait un jour être modifié à la légère — et l'enregistreur B-4.3
+      // reste dehors pour la seule raison déjà documentée (il reconstruit la
+      // preuve d'attribution, son constructeur `_()` étant privé).
+      //
+      // Aucun fichier n'est donc exclu au bénéfice de la commodité : la garde
+      // couvre un fichier de plus et vérifie une propriété plus stricte.
       for (final chemin in <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/enregistreur_verdict_gain_suivi.dart',
         'lib/services/moteur_gain_pmu.dart',
         'lib/services/resolution_gain_ticket_pmu.dart',
       ]) {
-        final contenu = File(chemin).readAsStringSync();
+        final contenu = _sansCommentaires(File(chemin).readAsStringSync());
         for (final calcul in calculsDuSocle) {
           expect(contenu.contains(calcul), isFalse,
               reason: 'B-1 ne doit produire aucun montant : $calcul '

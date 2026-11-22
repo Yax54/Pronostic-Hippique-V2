@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  LOT B-4.3 — ENREGISTREMENT SÉCURISÉ D'UN VERDICT B-3 SUR UN TICKET
+//  LOT B-4.4 — LE CŒUR FINANCIER EST EXTRAIT, PAS DUPLIQUÉ
 //
 //  ── CE QUE CE FICHIER FAIT, ET RIEN DE PLUS ───────────────────────────────
 //  Il reçoit un [UserPrediction] et un [VerdictGain], décide si l'écriture
@@ -24,6 +25,24 @@
 //  rapport attribué ne peut pas être relié à un rapport officiel réel, ou que
 //  la somme des montants ne retombe pas exactement sur `verdict.total`,
 //  l'enregistrement est refusé et le ticket reste intact.
+//
+//  ── ★ LOT B-4.4 — POURQUOI LA DÉCISION A ÉTÉ EXTRAITE ────────────────────
+//  B-4.4 doit appliquer EXACTEMENT les mêmes règles à `TrackedCourse`. La
+//  consigne interdit de « créer un second moteur financier » ou de
+//  « dupliquer la logique de B-4.3 ».
+//
+//  MESURE qui fonde l'extraction : sur les 622 lignes d'origine, seules
+//  QUATRE lectures du porteur (`etatGain`, `etatTirelire`,
+//  `motifNonDetermination`, `rapportsAttribues`) et UN appel `copyWith`
+//  dépendent du modèle `UserPrediction`. Toute l'identité des rapports, tout
+//  le calcul, tous les contrôles de total et la politique de refus sont
+//  indépendants du modèle qui porte les sept champs B-1.
+//
+//  [deciderEcritureVerdict] porte donc désormais la règle, UNE SEULE FOIS.
+//  [enregistrerVerdictGain] (ce fichier) et
+//  [enregistrerVerdictGainSuivi] (`enregistreur_verdict_gain_suivi.dart`)
+//  ne sont plus que deux APPLICATIONS de la même décision. Aucune règle
+//  financière n'est réécrite dans le second fichier.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import '../models/pmu_models.dart';
@@ -260,114 +279,193 @@ bool _verdictEstDefinitif(EtatGain e) =>
     e == EtatGain.attribue || e == EtatGain.perdu || e == EtatGain.rembourse;
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  5. ENREGISTREUR PRINCIPAL
+//  5. ★ LOT B-4.4 — ÉCRITURE PARTAGÉE PAR LES DEUX MODÈLES
+//
+//  Cette section ne connaît AUCUN modèle. Elle ne manipule que les sept
+//  valeurs du schéma B-1. C'est ce qui permet à `UserPrediction` et à
+//  `TrackedCourse` d'être servis par UNE SEULE règle.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Enregistre un [verdict] sur [ticket], avec une ÉVENTUELLE trace des
-/// rapports officiels réellement utilisés.
+/// Les sept valeurs B-1 à écrire sur un ticket, quand l'écriture est permise.
 ///
-/// PARAMÈTRES
-///   • [ticket]  — le ticket à enrichir. Jamais modifié.
-///   • [verdict] — le verdict produit par B-3. Jamais recalculé.
-///   • [rapportsOfficiels] — les `RapportPublie` COMPLETS qui ont servi à la
-///     résolution. Servent à DEUX choses, et à deux seulement : identifier
-///     chaque rapport attribué, et lire sa `miseBaseCentimes` officielle.
-///     Ils sont ignorés (et leur présence est contrôlée) pour un verdict qui
-///     ne comporte aucune composante.
-///   • [miseBaseCentimesOfficielle] — mise de base officielle du bloc, quand
-///     elle est connue indépendamment des rapports. Utilisée seulement si
-///     aucun rapport attribué ne porte déjà cette information.
+/// Aucun de ces champs n'est « facultatif au sens Dart » : `null` est ici une
+/// VALEUR DÉCIDÉE (par exemple « aucun dividende Gagnant sur ce ticket »), pas
+/// une absence de décision. C'est pourquoi il n'existe pas de constructeur
+/// partiel : une écriture est toujours complète, ou elle n'existe pas.
+class EcritureVerdict {
+  final EtatGain etat;
+  final MotifNonDetermination? motif;
+  final EtatTirelire etatTirelire;
+  final List<RapportAttribue>? rapportsAttribues;
+  final double? dividendeGagnant;
+  final double? dividendePlace;
+  final int? miseBaseCentimesUtilisee;
+
+  const EcritureVerdict({
+    required this.etat,
+    required this.motif,
+    required this.etatTirelire,
+    required this.rapportsAttribues,
+    required this.dividendeGagnant,
+    required this.dividendePlace,
+    required this.miseBaseCentimesUtilisee,
+  });
+
+  @override
+  String toString() => 'EcritureVerdict(${etat.name}'
+      '${motif == null ? '' : ', ${motif!.name}'}'
+      ', tirelire=${etatTirelire.name}'
+      ', rapports=${rapportsAttribues?.length ?? 0}'
+      ', G=${dividendeGagnant ?? "-"}, P=${dividendePlace ?? "-"}'
+      ', miseBase=${miseBaseCentimesUtilisee ?? "-"})';
+}
+
+/// Décision d'écriture : soit un refus motivé, soit les sept valeurs à écrire.
 ///
-/// RÈGLE DE REFUS : dès qu'une composante du verdict ne peut pas être reliée
-/// à un rapport officiel fourni de façon NON AMBIGUË, l'enregistrement est
-/// refusé et [ticket] est rendu tel quel.
-ResultatEnregistrementVerdict enregistrerVerdictGain({
-  required UserPrediction ticket,
+/// [ecriture] est non nul SI ET SEULEMENT SI `statut == enregistre`. Aucun
+/// état intermédiaire n'est représentable : on ne peut pas « écrire à moitié ».
+class DecisionEcritureVerdict {
+  final StatutEnregistrementVerdict statut;
+  final String? motif;
+  final EcritureVerdict? ecriture;
+
+  const DecisionEcritureVerdict._({
+    required this.statut,
+    required this.motif,
+    required this.ecriture,
+  });
+
+  /// Refus : rien n'est écrit, le motif dit pourquoi.
+  factory DecisionEcritureVerdict.refus(
+    StatutEnregistrementVerdict statut,
+    String motif,
+  ) =>
+      DecisionEcritureVerdict._(
+        statut: statut,
+        motif: motif,
+        ecriture: null,
+      );
+
+  /// Le ticket portait déjà exactement ce verdict : aucune écriture.
+  static const DecisionEcritureVerdict dejaIdentique =
+      DecisionEcritureVerdict._(
+    statut: StatutEnregistrementVerdict.dejaIdentique,
+    motif: null,
+    ecriture: null,
+  );
+
+  /// Écriture autorisée.
+  factory DecisionEcritureVerdict.ecrire(EcritureVerdict ecriture) =>
+      DecisionEcritureVerdict._(
+        statut: StatutEnregistrementVerdict.enregistre,
+        motif: null,
+        ecriture: ecriture,
+      );
+
+  bool get estEnregistre => statut == StatutEnregistrementVerdict.enregistre;
+
+  bool get estDejaIdentique =>
+      statut == StatutEnregistrementVerdict.dejaIdentique;
+
+  bool get estRefuse => !estEnregistre && !estDejaIdentique;
+
+  @override
+  String toString() => 'DecisionEcritureVerdict(${statut.name}'
+      '${motif == null ? '' : ' — $motif'}'
+      '${ecriture == null ? '' : ' | $ecriture'})';
+}
+
+/// ★ LOT B-4.4 — LA RÈGLE, UNE SEULE FOIS.
+///
+/// Prend l'ÉTAT EXISTANT du ticket sous forme de valeurs (jamais le ticket
+/// lui-même : la décision ne doit pas pouvoir le modifier, et ne doit pas
+/// dépendre du modèle qui le porte) et rend la décision.
+///
+/// Paramètres d'état existant — les quatre seules lectures qui dépendaient du
+/// modèle en B-4.3 :
+///   • [etatExistant]           ← `ticket.etatGain`
+///   • [etatTirelireExistant]   ← `ticket.etatTirelire`
+///   • [motifExistant]          ← `ticket.motifNonDetermination`
+///   • [rapportsExistants]      ← `ticket.rapportsAttribues`
+///
+/// Une valeur `null` signifie « le ticket ne porte rien », ce qui est
+/// exactement la sémantique des champs correspondants dans les deux modèles
+/// (verrou documenté dans leurs `fromJson` respectifs).
+///
+/// ⚠️ AUCUNE hypothèse n'est faite sur la provenance de ces valeurs. Un
+///    appelant qui ne peut pas démontrer qu'elles décrivent le MÊME pari que
+///    [verdict] ne doit pas appeler cette fonction (voir la règle d'identité
+///    dans `enregistreur_verdict_gain_suivi.dart`).
+DecisionEcritureVerdict deciderEcritureVerdict({
+  required EtatGain? etatExistant,
+  required EtatTirelire? etatTirelireExistant,
+  required MotifNonDetermination? motifExistant,
+  required List<RapportAttribue>? rapportsExistants,
   required VerdictGain verdict,
   List<RapportPublie> rapportsOfficiels = const <RapportPublie>[],
   int? miseBaseCentimesOfficielle,
 }) {
   // ── A. Politique : que faire du verdict DÉJÀ présent ? ───────────────────
-  final existant = ticket.etatGain;
-  if (existant != null) {
-    final identique = _verdictIdentique(ticket, verdict);
+  if (etatExistant != null) {
+    final identique = _verdictIdentique(
+      etatExistant: etatExistant,
+      etatTirelireExistant: etatTirelireExistant,
+      motifExistant: motifExistant,
+      rapportsExistants: rapportsExistants,
+      verdict: verdict,
+    );
     if (identique) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket, // l'original, non copié : rien n'a changé
-        statut: StatutEnregistrementVerdict.dejaIdentique,
-        motif: null,
-        persistanceComplete: true,
-        informationsNonPersistees: const <String>[],
-      );
+      return DecisionEcritureVerdict.dejaIdentique;
     }
-    if (_verdictEstDefinitif(existant)) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseVerdictDefinitifExistant,
-        motif: 'Un verdict définitif (${existant.name}) est déjà enregistré. '
-            'Il n\'est jamais réécrit : le ticket reste inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+    if (_verdictEstDefinitif(etatExistant)) {
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseVerdictDefinitifExistant,
+        'Un verdict définitif (${etatExistant.name}) est déjà enregistré. '
+        'Il n\'est jamais réécrit : le ticket reste inchangé.',
       );
     }
     // existant == nonDetermine et verdict différent.
-    return ResultatEnregistrementVerdict._(
-      ticket: ticket,
-      statut: StatutEnregistrementVerdict.refuseTransitionNonDeterminee,
-      motif: 'Le ticket porte déjà une indétermination '
-          '(${ticket.motifNonDetermination?.name ?? "motif non conservé"}). '
-          'La transition automatique vers un verdict définitif n\'est pas '
-          'décidée dans ce lot : le ticket reste inchangé.',
-      persistanceComplete: false,
-      informationsNonPersistees: const <String>[],
+    return DecisionEcritureVerdict.refus(
+      StatutEnregistrementVerdict.refuseTransitionNonDeterminee,
+      'Le ticket porte déjà une indétermination '
+      '(${motifExistant?.name ?? "motif non conservé"}). '
+      'La transition automatique vers un verdict définitif n\'est pas '
+      'décidée dans ce lot : le ticket reste inchangé.',
     );
   }
 
   // ── B. Cohérence interne du verdict ──────────────────────────────────────
   final incoherence = _verifierCoherenceVerdict(verdict);
   if (incoherence != null) {
-    return ResultatEnregistrementVerdict._(
-      ticket: ticket,
-      statut: StatutEnregistrementVerdict.refuseVerdictIncoherent,
-      motif: incoherence,
-      persistanceComplete: false,
-      informationsNonPersistees: const <String>[],
+    return DecisionEcritureVerdict.refus(
+      StatutEnregistrementVerdict.refuseVerdictIncoherent,
+      incoherence,
     );
   }
 
   // ── C. Verdicts SANS composante : aucune attribution à écrire ────────────
   if (verdict.composantes.isEmpty) {
     if (rapportsOfficiels.isNotEmpty) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut:
-            StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports,
-        motif: 'Le verdict « ${verdict.etat.name} » ne comporte AUCUNE '
-            'composante, mais ${rapportsOfficiels.length} rapport(s) officiel(s) '
-            'ont été fournis pour l\'attribution. Cette combinaison est '
-            'contradictoire : aucun rapport n\'est écrit, le ticket reste '
-            'inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports,
+        'Le verdict « ${verdict.etat.name} » ne comporte AUCUNE '
+        'composante, mais ${rapportsOfficiels.length} rapport(s) officiel(s) '
+        'ont été fournis pour l\'attribution. Cette combinaison est '
+        'contradictoire : aucun rapport n\'est écrit, le ticket reste '
+        'inchangé.',
       );
     }
     // Écriture légitime : état + motif + tirelire. `rapportsAttribues` reste
     // `null` (JAMAIS `[]`) — voir la documentation de `_lireRapportsAttribues`.
-    return ResultatEnregistrementVerdict._(
-      ticket: ticket.copyWith(
-        etatGain: verdict.etat,
-        motifNonDetermination: verdict.motif,
-        etatTirelire: verdict.etatTirelire,
-        dividendeGagnant: null,
-        dividendePlace: null,
-        rapportsAttribues: null,
-        miseBaseCentimesUtilisee: miseBaseCentimesOfficielle,
-      ),
-      statut: StatutEnregistrementVerdict.enregistre,
-      motif: null,
-      persistanceComplete: false,
-      informationsNonPersistees: const <String>['explication'],
-    );
+    return DecisionEcritureVerdict.ecrire(EcritureVerdict(
+      etat: verdict.etat,
+      motif: verdict.motif,
+      etatTirelire: verdict.etatTirelire,
+      rapportsAttribues: null,
+      dividendeGagnant: null,
+      dividendePlace: null,
+      miseBaseCentimesUtilisee: miseBaseCentimesOfficielle,
+    ));
   }
 
   // ── D. Verdict AVEC composantes : chaque composante doit être identifiée ─
@@ -396,28 +494,22 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
     }
 
     if (candidats.isEmpty) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseRapportOfficielIntrouvable,
-        motif: 'Le rapport attribué « ${composante.libelleRapport} » '
-            '(${composante.combinaisonRapport}, ${composante.categorie.name}, '
-            '×${composante.pourUnEuro}) ne correspond à AUCUN rapport officiel '
-            'fourni. Aucun rapport n\'est inventé : le ticket reste inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseRapportOfficielIntrouvable,
+        'Le rapport attribué « ${composante.libelleRapport} » '
+        '(${composante.combinaisonRapport}, ${composante.categorie.name}, '
+        '×${composante.pourUnEuro}) ne correspond à AUCUN rapport officiel '
+        'fourni. Aucun rapport n\'est inventé : le ticket reste inchangé.',
       );
     }
     if (candidats.length > 1) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseRapportOfficielAmbigu,
-        motif: '${candidats.length} rapports officiels correspondent au même '
-            'rapport attribué « ${composante.libelleRapport} » '
-            '(${composante.combinaisonRapport}). Impossible de trancher sans '
-            'deviner, et le montant le plus élevé ne départage JAMAIS : le '
-            'ticket reste inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseRapportOfficielAmbigu,
+        '${candidats.length} rapports officiels correspondent au même '
+        'rapport attribué « ${composante.libelleRapport} » '
+        '(${composante.combinaisonRapport}). Impossible de trancher sans '
+        'deviner, et le montant le plus élevé ne départage JAMAIS : le '
+        'ticket reste inchangé.',
       );
     }
 
@@ -430,40 +522,31 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
         miseAppliquee: composante.mise,
       );
     } on ArgumentError {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseVerdictIncoherent,
-        motif: 'La mise de la composante « ${composante.libelleRapport} » '
-            'vaut ${composante.mise} : une mise nulle ou négative ne fonde '
-            'aucun gain. Le ticket reste inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseVerdictIncoherent,
+        'La mise de la composante « ${composante.libelleRapport} » '
+        'vaut ${composante.mise} : une mise nulle ou négative ne fonde '
+        'aucun gain. Le ticket reste inchangé.',
       );
     } on StateError catch (e) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseVerdictIncoherent,
-        motif: 'Le rapport officiel « ${retenu.libelle} » ne porte pas de '
-            'montant exploitable : $e',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseVerdictIncoherent,
+        'Le rapport officiel « ${retenu.libelle} » ne porte pas de '
+        'montant exploitable : $e',
       );
     }
 
     // ── Contrôle d'exactitude : le montant recalculé doit être CELUI du
     //    verdict, au milliardième d'euro près. Aucun montant n'est ajusté.
     if (!_memeMontant(attribue.montantRetour, composante.montantRetour)) {
-      return ResultatEnregistrementVerdict._(
-        ticket: ticket,
-        statut: StatutEnregistrementVerdict.refuseTotalIncoherent,
-        motif: 'Le montant retour de la composante « '
-            '${composante.libelleRapport} » vaut ${composante.montantRetour} '
-            'dans le verdict, mais '
-            '${composante.mise} × ${retenu.pourUnEuro} = '
-            '${attribue.montantRetour} d\'après le rapport officiel. '
-            'Aucun montant n\'est corrigé : le ticket reste inchangé.',
-        persistanceComplete: false,
-        informationsNonPersistees: const <String>[],
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseTotalIncoherent,
+        'Le montant retour de la composante « '
+        '${composante.libelleRapport} » vaut ${composante.montantRetour} '
+        'dans le verdict, mais '
+        '${composante.mise} × ${retenu.pourUnEuro} = '
+        '${attribue.montantRetour} d\'après le rapport officiel. '
+        'Aucun montant n\'est corrigé : le ticket reste inchangé.',
       );
     }
 
@@ -473,15 +556,12 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
   // ── E. Contrôle FINAL : la somme doit retomber sur `verdict.total` ───────
   final totalReconstitue = resoudreTotalDepuisRapports(attribues)!;
   if (!_memeMontant(totalReconstitue, verdict.total)) {
-    return ResultatEnregistrementVerdict._(
-      ticket: ticket,
-      statut: StatutEnregistrementVerdict.refuseTotalIncoherent,
-      motif: 'La somme des montants retour des rapports officiels '
-          '(${totalReconstitue.toStringAsFixed(6)} €) ne correspond pas au '
-          'total du verdict (${verdict.total.toStringAsFixed(6)} €). '
-          'Aucun total n\'est reconstruit de force : le ticket reste inchangé.',
-      persistanceComplete: false,
-      informationsNonPersistees: const <String>[],
+    return DecisionEcritureVerdict.refus(
+      StatutEnregistrementVerdict.refuseTotalIncoherent,
+      'La somme des montants retour des rapports officiels '
+      '(${totalReconstitue.toStringAsFixed(6)} €) ne correspond pas au '
+      'total du verdict (${verdict.total.toStringAsFixed(6)} €). '
+      'Aucun total n\'est reconstruit de force : le ticket reste inchangé.',
     );
   }
 
@@ -519,16 +599,89 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
   }
   miseBase ??= miseBaseCentimesOfficielle;
 
-  // ── H. Écriture ──────────────────────────────────────────────────────────
+  return DecisionEcritureVerdict.ecrire(EcritureVerdict(
+    etat: verdict.etat,
+    motif: verdict.motif,
+    etatTirelire: verdict.etatTirelire,
+    rapportsAttribues: attribues,
+    dividendeGagnant: dividendeGagnant,
+    dividendePlace: dividendePlace,
+    miseBaseCentimesUtilisee: miseBase,
+  ));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  6. APPLICATION AU MODÈLE `UserPrediction`
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Enregistre un [verdict] sur [ticket], avec une ÉVENTUELLE trace des
+/// rapports officiels réellement utilisés.
+///
+/// PARAMÈTRES
+///   • [ticket]  — le ticket à enrichir. Jamais modifié.
+///   • [verdict] — le verdict produit par B-3. Jamais recalculé.
+///   • [rapportsOfficiels] — les `RapportPublie` COMPLETS qui ont servi à la
+///     résolution. Servent à DEUX choses, et à deux seulement : identifier
+///     chaque rapport attribué, et lire sa `miseBaseCentimes` officielle.
+///     Ils sont ignorés (et leur présence est contrôlée) pour un verdict qui
+///     ne comporte aucune composante.
+///   • [miseBaseCentimesOfficielle] — mise de base officielle du bloc, quand
+///     elle est connue indépendamment des rapports. Utilisée seulement si
+///     aucun rapport attribué ne porte déjà cette information.
+///
+/// RÈGLE DE REFUS : dès qu'une composante du verdict ne peut pas être reliée
+/// à un rapport officiel fourni de façon NON AMBIGUË, l'enregistrement est
+/// refusé et [ticket] est rendu tel quel.
+///
+/// ★ LOT B-4.4 — cette fonction n'est plus qu'une APPLICATION : toute la
+///   décision est dans [deciderEcritureVerdict]. Le comportement est
+///   strictement inchangé (les 50 tests de B-4.3 le vérifient).
+ResultatEnregistrementVerdict enregistrerVerdictGain({
+  required UserPrediction ticket,
+  required VerdictGain verdict,
+  List<RapportPublie> rapportsOfficiels = const <RapportPublie>[],
+  int? miseBaseCentimesOfficielle,
+}) {
+  final decision = deciderEcritureVerdict(
+    etatExistant: ticket.etatGain,
+    etatTirelireExistant: ticket.etatTirelire,
+    motifExistant: ticket.motifNonDetermination,
+    rapportsExistants: ticket.rapportsAttribues,
+    verdict: verdict,
+    rapportsOfficiels: rapportsOfficiels,
+    miseBaseCentimesOfficielle: miseBaseCentimesOfficielle,
+  );
+
+  if (decision.estDejaIdentique) {
+    return ResultatEnregistrementVerdict._(
+      ticket: ticket, // l'original, non copié : rien n'a changé
+      statut: StatutEnregistrementVerdict.dejaIdentique,
+      motif: null,
+      persistanceComplete: true,
+      informationsNonPersistees: const <String>[],
+    );
+  }
+
+  if (!decision.estEnregistre) {
+    return ResultatEnregistrementVerdict._(
+      ticket: ticket,
+      statut: decision.statut,
+      motif: decision.motif,
+      persistanceComplete: false,
+      informationsNonPersistees: const <String>[],
+    );
+  }
+
+  final e = decision.ecriture!;
   return ResultatEnregistrementVerdict._(
     ticket: ticket.copyWith(
-      etatGain: verdict.etat,
-      motifNonDetermination: verdict.motif,
-      etatTirelire: verdict.etatTirelire,
-      rapportsAttribues: attribues,
-      dividendeGagnant: dividendeGagnant,
-      dividendePlace: dividendePlace,
-      miseBaseCentimesUtilisee: miseBase,
+      etatGain: e.etat,
+      motifNonDetermination: e.motif,
+      etatTirelire: e.etatTirelire,
+      rapportsAttribues: e.rapportsAttribues,
+      dividendeGagnant: e.dividendeGagnant,
+      dividendePlace: e.dividendePlace,
+      miseBaseCentimesUtilisee: e.miseBaseCentimesUtilisee,
     ),
     statut: StatutEnregistrementVerdict.enregistre,
     motif: null,
@@ -543,26 +696,35 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
 //  Vérifications internes
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Le verdict déjà enregistré sur [ticket] est-il IDENTIQUE à [verdict] ?
+/// Le verdict déjà enregistré est-il IDENTIQUE à [verdict] ?
 ///
 /// « Identique » se juge sur ce qui est RÉELLEMENT persisté : état, motif,
 /// tirelire, dividendes de composante, rapports attribués. Pas sur
 /// `explication`, qui n'est pas conservée. Pas sur `total`, qui se reconstitue.
-bool _verdictIdentique(UserPrediction ticket, VerdictGain verdict) {
-  if (ticket.etatGain != verdict.etat) return false;
-  if (ticket.etatTirelire != null &&
-      ticket.etatTirelire != verdict.etatTirelire) {
+///
+/// ★ LOT B-4.4 — la signature prend désormais des VALEURS, pas un ticket :
+///   la règle ne doit dépendre d'aucun modèle.
+bool _verdictIdentique({
+  required EtatGain etatExistant,
+  required EtatTirelire? etatTirelireExistant,
+  required MotifNonDetermination? motifExistant,
+  required List<RapportAttribue>? rapportsExistants,
+  required VerdictGain verdict,
+}) {
+  if (etatExistant != verdict.etat) return false;
+  if (etatTirelireExistant != null &&
+      etatTirelireExistant != verdict.etatTirelire) {
     return false;
   }
-  if (ticket.etatGain == EtatGain.nonDetermine) {
-    return ticket.motifNonDetermination == verdict.motif;
+  if (etatExistant == EtatGain.nonDetermine) {
+    return motifExistant == verdict.motif;
   }
   if (verdict.etat != EtatGain.attribue) {
     // perdu / rembourse : l'état suffit, aucun montant.
     return true;
   }
   // Attribué : comparer les montants RÉELLEMENT stockés.
-  final stocke = resoudreTotalDepuisRapports(ticket.rapportsAttribues);
+  final stocke = resoudreTotalDepuisRapports(rapportsExistants);
   if (stocke == null) return false;
   return _memeMontant(stocke, verdict.total);
 }
