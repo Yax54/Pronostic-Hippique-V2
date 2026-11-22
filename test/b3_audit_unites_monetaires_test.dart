@@ -24,8 +24,9 @@ import 'package:pronostic_hippique/services/gain_ticket_calculator.dart';
 import 'package:pronostic_hippique/services/moteur_gain_pmu.dart';
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolveur_rapport_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String _dossier = '/home/user/recherche_pmu/multi';
+final String _dossier = dossierMulti;
 
 String _corps(String fichier) =>
     File('$_dossier/$fichier').readAsStringSync();

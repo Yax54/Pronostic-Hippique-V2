@@ -41,12 +41,13 @@ import 'package:pronostic_hippique/services/moteur_gain_pmu.dart'
     show RoleComposante;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
 // ───────────────────────────────────────────────────────────────────────────
 //  DONNÉES RÉELLES
 // ───────────────────────────────────────────────────────────────────────────
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 /// Rapports d'une capture, lus par le DÉCODEUR DE PRODUCTION.
 ///

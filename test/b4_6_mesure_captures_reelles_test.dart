@@ -19,8 +19,9 @@ import 'package:pronostic_hippique/services/gain_ticket_calculator.dart'
     show VarianteRapport, varianteDepuisLibelle;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 void main() {
   test('MESURE — taux de rejet du convertisseur sur les 313 captures réelles',

@@ -27,9 +27,10 @@ import 'package:http/testing.dart';
 
 import 'package:pronostic_hippique/services/gain_calculator.dart' show RapportPmu;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
-const String kDossierNonDatees = '/home/user/recherche_pmu/rapports';
+final String kDossier = dossierMulti;
+final String kDossierNonDatees = dossierRapports;
 
 /// Corps réel : un bloc, deux lignes, toutes deux à dividende NUL.
 const String _corpsToutNul = '''

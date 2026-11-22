@@ -26,8 +26,9 @@ import 'package:pronostic_hippique/services/branchement_verdict_course.dart';
 import 'package:pronostic_hippique/services/gain_pmu_types.dart';
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 /// (codePmu, taille de combinaison) des types de l'application.
 const Map<String, ({String code, int taille})> kTypes = {

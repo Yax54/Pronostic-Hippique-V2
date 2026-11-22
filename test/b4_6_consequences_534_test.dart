@@ -25,8 +25,9 @@ import 'package:pronostic_hippique/services/branchement_verdict_course.dart';
 import 'package:pronostic_hippique/services/gain_calculator.dart';
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 /// Type applicatif + code PMU + taille, pour les blocs réellement publiés.
 const Map<String, ({String type, String code, int taille})> kParCode = {

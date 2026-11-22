@@ -18,8 +18,9 @@ import 'package:pronostic_hippique/services/gain_ticket_calculator.dart'
     show TypePariJoue, codeApiPourType;
 import 'package:pronostic_hippique/services/referentiel_paris_pmu.dart'
     show TypePariPmu, codeApiPourTypePmu;
+import 'fixtures/fixture_paths.dart';
 
-const String kDossierMulti = '/home/user/recherche_pmu/multi';
+final String kDossierMulti = dossierMulti;
 
 void main() {
   group('B4.6-C — les tables divergent, mesuré', () {

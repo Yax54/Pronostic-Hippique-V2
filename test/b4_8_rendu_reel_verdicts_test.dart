@@ -75,12 +75,13 @@ import 'package:pronostic_hippique/services/moteur_gain_pmu.dart'
     show VerdictGain, ComposanteGain, RoleComposante;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
+import 'fixtures/fixture_paths.dart';
 
 // ───────────────────────────────────────────────────────────────────────────
 //  1. CAPTURE RÉELLE
 // ───────────────────────────────────────────────────────────────────────────
 
-const String _kDossier = '/home/user/recherche_pmu/multi';
+final String _kDossier = dossierMulti;
 const String _kCapture = 'R1C6_15112026.json';
 
 List<RapportPmu> _rapportsReels() => PmuApiService.decoderRapportsDefinitifs(

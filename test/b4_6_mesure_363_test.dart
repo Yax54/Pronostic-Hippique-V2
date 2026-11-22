@@ -16,9 +16,10 @@ import 'package:pronostic_hippique/services/gain_ticket_calculator.dart'
     show VarianteRapport, varianteDepuisLibelle;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossierMulti = '/home/user/recherche_pmu/multi';
-const String kDossierRapports = '/home/user/recherche_pmu/rapports';
+final String kDossierMulti = dossierMulti;
+final String kDossierRapports = dossierRapports;
 
 void main() {
   test('MESURE — 363 captures : conversion, dates, limites', () {

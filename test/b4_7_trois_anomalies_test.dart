@@ -42,8 +42,9 @@ import 'package:pronostic_hippique/services/gain_pmu_types.dart';
 import 'package:pronostic_hippique/services/moteur_gain_pmu.dart' show VerdictGain;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 List<RapportPmu> rapportsDe(String nom) =>
     PmuApiService.decoderRapportsDefinitifs(

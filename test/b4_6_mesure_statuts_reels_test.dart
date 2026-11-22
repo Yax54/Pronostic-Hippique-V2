@@ -27,8 +27,9 @@ import 'package:pronostic_hippique/services/enregistreur_verdict_gain_pmu.dart';
 import 'package:pronostic_hippique/services/gain_pmu_types.dart';
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
+import 'fixtures/fixture_paths.dart';
 
-const String kDossier = '/home/user/recherche_pmu/multi';
+final String kDossier = dossierMulti;
 
 final DateTime _heure = DateTime.utc(2026, 11, 15, 14, 30);
 
