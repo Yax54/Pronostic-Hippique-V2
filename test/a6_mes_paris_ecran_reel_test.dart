@@ -60,6 +60,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
+import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -284,14 +285,17 @@ bool _concerneBlocA6(String ligne) =>
 
 /// Vrai si la ligne désigne un débordement PRÉEXISTANT, hors A6.
 ///
-/// Localisations mesurées sur le VRAI écran — SIX emplacements :
-///   • `:119:28`  — `Row` du titre de l'`AppBar` (60 px) ;
-///   • `:1515:18` — `Row` d'en-tête de carte (icône de statut), visible avec
-///                  le texte ×2 (A6-E4) ;
-///   • `:1661:25` — `Row` « Mise + badge type de pari », en-tête de carte ;
-///   • `:1859:30` — `Row` du bloc gain (icône + montant), visible à 320 dp ;
-///   • `:2454:14` — `Row` d'une pastille de statut, visible à 320 dp ;
-///   • `:2597:14` — `Row` du badge « Confiance IA », visible à 320 dp.
+/// Localisations mesurées sur le VRAI écran — SIX emplacements, ancrés par
+/// CONTENU (voir [_sitesPreexistants] ; les numéros de ligne ne sont plus
+/// figés, car ils glissent à chaque insertion et faisaient échouer le test
+/// sans qu'aucun widget ne change — défaut mesuré au lot B-4.5) :
+///   • `Row` du titre de l'`AppBar` (60 px) ;
+///   • `Row` d'en-tête de carte (icône de statut), visible avec le texte ×2
+///     (A6-E4) ;
+///   • `Row` « Mise + badge type de pari », en-tête de carte ;
+///   • `Row` du bloc gain (icône + montant), visible à 320 dp ;
+///   • `Row` d'une pastille de statut, visible à 320 dp ;
+///   • `Row` du badge « Confiance IA », visible à 320 dp.
 ///
 /// Aucun de ces widgets n'appartient au composant A6
 /// (`arrivee_officielle_groupes_widget.dart`). Ils sont signalés, jamais
@@ -301,28 +305,247 @@ bool _concerneBlocA6(String ligne) =>
 ///     (voir `_estPreexistant`, contrôle par nom) ;
 ///   • un débordement d'origine inconnue n'est ni « A6 » ni « préexistant » :
 ///     il tombe dans « autres » et fait ÉCHOUER le test.
-const Set<String> _lignesPreexistantes = <String>{
-  // ★ LOT A-0 puis LOT B-2 bis — décalage de numéros de ligne uniquement.
-  //   Le Lot A-0 avait déjà décalé ces 6 widgets (119→120, 1515→1538, …).
-  //   Le Lot B-2 bis ajoute 27 lignes dans `mes_paris_screen.dart` (5 blocs :
-  //   2 lecture de `arriveeGroupes`/`arriveeDefinitive`, 2 transmissions
-  //   `enregistrerResultatPari` étendues, 1 commentaire de règle). Les 6
-  //   widgets préexistants n'ont PAS bougé : même `Row`, même rôle, même
-  //   nombre de débordements. Seuls leurs numéros de ligne ont glissé.
-  //   Correspondance vérifiée PAR COMPARAISON DU CONTENU des lignes
-  //   (`git show HEAD:` vs fichier courant), et non par addition d'un
-  //   décalage supposé : le site `120` est resté à 120 (offset 0), les cinq
-  //   autres ont pris +27. Aucune hypothèse uniforme n'a été retenue.
-  'mes_paris_screen.dart:120:',   // A-0: ex-119, inchangé — `title: const Row` de l'AppBar
-  'mes_paris_screen.dart:1565:',  // B-2 bis: ex-1538 — `child: Row(children: [`
-  'mes_paris_screen.dart:1711:',  // B-2 bis: ex-1684 — `Row` « Mise + badge type »
-  'mes_paris_screen.dart:1909:',  // B-2 bis: ex-1882 — garde `miseEngagee`/`_isGagnant`
-  'mes_paris_screen.dart:2504:',  // B-2 bis: ex-2477 — `],` du bloc « retour … € »
-  'mes_paris_screen.dart:2647:',  // B-2 bis: ex-2620 — `),` du bloc « favoris »
-};
+/// ★ LOT B-4.5 — ancrage par CONTENU, plus par numéro de ligne.
+///
+/// ── POURQUOI CE CHANGEMENT (défaut de harnais mesuré) ─────────────────────
+/// La version précédente figeait SIX numéros de ligne. Tout ajout de lignes
+/// dans `mes_paris_screen.dart` les décalait, et les six débordements
+/// préexistants tombaient alors dans la catégorie « origine inconnue » :
+/// six tests A6 échouaient sans qu'aucun widget n'ait changé.
+///
+/// Mesure du lot B-4.5 (avant correction) :
+///   `autres→mes_paris_screen.dart:1738:25, mes_paris_screen.dart:122:28`
+///   avec `A6=0` — les widgets fautifs étaient les MÊMES qu'avant, seuls
+///   leurs numéros avaient glissé (120→122, 1565→1592, 1711→1738, …).
+///
+/// ── CE QUI EST VÉRIFIÉ MAINTENANT ────────────────────────────────────────
+/// Chaque site est identifié par une FENÊTRE DE LIGNES CONSÉCUTIVES
+/// (normalisées : espaces compactés) qui se termine SUR la ligne fautive.
+/// La fenêtre est choisie pour être SIGNIFIANTE (elle contient le widget ou
+/// son rôle), jamais un `]),` isolé. Deux garanties sont vérifiées au vol :
+///   1. la fenêtre apparaît EXACTEMENT UNE FOIS dans le fichier — sinon la
+///      signature est ambiguë et le test ÉCHOUE ;
+///   2. elle est INTROUVABLE dans le fichier — le site a bougé ou changé de
+///      façon significative, et le test ÉCHOUE.
+///
+/// Le niveau de protection n'est donc pas diminué : il est rendu indépendant
+/// des décalages. Un site qui changerait de nature (autre widget, autre rôle)
+/// ferait échouer le test au lieu d'être blanchi silencieusement.
+class _SiteRenduPreexistant {
+  const _SiteRenduPreexistant({
+    required this.nom,
+    required this.fenetre,
+    required this.colonneAttendue,
+  });
+
+  /// Nom lisible du site, utilisé dans les messages d'échec.
+  final String nom;
+
+  /// Lignes consécutives normalisées ; la DERNIÈRE est la ligne fautive.
+  final List<String> fenetre;
+
+  /// Colonne du widget dans la dernière ligne (contrôle de vraisemblance).
+  final int colonneAttendue;
+
+  /// Ligne fautive (numéro 1-based) dans [lignes], ou `null` si absente.
+  int? localiser(List<String> lignes) {
+    final k = fenetre.length;
+    int? trouve;
+    for (var i = 0; i + k <= lignes.length; i++) {
+      var identique = true;
+      for (var j = 0; j < k; j++) {
+        if (lignes[i + j] != fenetre[j]) {
+          identique = false;
+          break;
+        }
+      }
+      if (!identique) continue;
+      if (trouve != null) return null; // ambigu : >= 2 occurrences
+      trouve = i + k; // 1-based, dernière ligne de la fenêtre
+    }
+    return trouve;
+  }
+}
+
+/// Les SIX sites de rendu préexistants, ancrés par contenu.
+///
+/// Tous mesurés sur le VRAI écran. Aucun n'appartient au composant A6
+/// (`arrivee_officielle_groupes_widget.dart`) : le contrôle par nom de
+/// [_concerneBlocA6] reste appliqué EN PLUS, dans les deux sens.
+const List<_SiteRenduPreexistant> _sitesPreexistants = <_SiteRenduPreexistant>[
+  // `title: const Row` de l'AppBar (déborde de 60 px sur la droite).
+  _SiteRenduPreexistant(
+    nom: 'AppBar — Row du titre',
+    fenetre: <String>['elevation: 0,', 'title: const Row(children: ['],
+    colonneAttendue: 28,
+  ),
+  // `Row` d'en-tête de carte (icône de statut), visible avec le texte ×2.
+  _SiteRenduPreexistant(
+    nom: 'En-tête de carte — Row statut',
+    fenetre: <String>[
+      'borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),',
+      '),',
+      'child: Row(children: [',
+    ],
+    colonneAttendue: 18,
+  ),
+  // `Row` « Mise + badge type de pari », en-tête de carte.
+  _SiteRenduPreexistant(
+    nom: 'Carte — Row « Mise + badge type »',
+    fenetre: <String>['fontSize: 17),', '),', 'Row(children: ['],
+    colonneAttendue: 25,
+  ),
+  // Garde `miseEngagee` / `_isGagnant` du bloc gain (visible à 320 dp).
+  _SiteRenduPreexistant(
+    nom: 'Carte — garde miseEngagee / _isGagnant',
+    fenetre: <String>[
+      'if (_isGagnant != null && course.miseEngagee != null && '
+          'course.miseEngagee! > 0) ...['
+    ],
+    colonneAttendue: 19,
+  ),
+  // Fermeture du bloc « retour … € » d'une pastille de statut.
+  _SiteRenduPreexistant(
+    nom: 'Bloc « retour … € » — fermeture',
+    fenetre: <String>[
+      "Text('retour \${fmtEuros(retour)} €',",
+      'style: TextStyle(',
+      'color: retourColor, fontSize: 10)),',
+      '],',
+      ']),',
+      ']),',
+    ],
+    colonneAttendue: 17,
+  ),
+  // Fermeture de la liste des favoris (badge « Confiance IA »).
+  _SiteRenduPreexistant(
+    nom: 'Bloc « favoris » — fermeture de liste',
+    fenetre: <String>[
+      'fontWeight: isFirst || isMyHorse ? FontWeight.bold : '
+          'FontWeight.normal,',
+      '),',
+      '),',
+      ');',
+      '}).toList(),',
+    ],
+    colonneAttendue: 17,
+  ),
+];
 
 /// Vrai si la ligne tombe sur une localisation PRÉEXISTANTE connue.
-bool _surLignePreexistante(String ligne) => _lignesPreexistantes.any(ligne.contains);
+///
+/// La résolution est faite PAR CONTENU du fichier de production lu au moment
+/// du test, donc insensible aux décalages de lignes. Lève si une signature
+/// est introuvable ou ambiguë : c'est un échec de harnais explicite, jamais
+/// un blanchiment silencieux.
+bool _surLignePreexistante(String ligne) =>
+    _resoudreSitesPreexistants().any(ligne.contains);
+
+/// Résout les six sites sur le fichier de production COURANT.
+///
+/// Le résultat est mémorisé : la lecture et la validation du fichier ne sont
+/// faites qu'une fois par processus de test.
+List<String>? _sitesResolus;
+
+List<String> _resoudreSitesPreexistants() {
+  final cache = _sitesResolus;
+  if (cache != null) return cache;
+
+  final source =
+      File('lib/screens/mes_paris_screen.dart').readAsStringSync();
+  final brut = source.split('\n');
+  // Normalisation identique à celle des fenêtres : espaces compactés, et
+  // espaces de fin retirés. La comparaison ne dépend donc ni de
+  // l'indentation exacte ni des espaces ajoutés par un formateur.
+  final lignes = brut.map((l) => l.trim().replaceAll(RegExp(r'\s+'), ' ')).toList();
+
+  final adresses = <String>[];
+  final problemes = <String>[];
+  for (final site in _sitesPreexistants) {
+    final n = site.localiser(lignes);
+    if (n == null) {
+      // Distinguer « introuvable » de « ambigu » pour un message utile.
+      final k = site.fenetre.length;
+      var compte = 0;
+      for (var i = 0; i + k <= lignes.length; i++) {
+        var identique = true;
+        for (var j = 0; j < k; j++) {
+          if (lignes[i + j] != site.fenetre[j]) {
+            identique = false;
+            break;
+          }
+        }
+        if (identique) compte++;
+      }
+      problemes.add(compte == 0
+          ? 'SIGNATURE INTROUVABLE : « ${site.nom} » — le site a changé ou '
+              'disparu. Le classement « préexistant » ne peut pas être '
+              'appliqué ; vérifier s\'il s\'agit d\'un NOUVEAU débordement.'
+          : 'SIGNATURE AMBIGUË ($compte occurrences) : « ${site.nom} » — '
+              'l\'ancrage ne désigne plus un site unique.');
+      continue;
+    }
+    final contenuFautif = brut[n - 1];
+    final colonneReelle = contenuFautif.indexOf('Row(');
+    final colonne = colonneReelle >= 0 ? colonneReelle + 1 : site.colonneAttendue;
+    if (colonne != site.colonneAttendue) {
+      problemes.add('COLONNE INATTENDUE pour « ${site.nom} » : '
+          '$colonne au lieu de ${site.colonneAttendue} — le site a changé '
+          'de nature (autre widget à cette position).');
+      continue;
+    }
+    adresses.add('mes_paris_screen.dart:$n:');
+  }
+
+  if (problemes.isNotEmpty) {
+    fail('Harnais A6 — ancrage des sites préexistants invalide :\n'
+        '${problemes.map((p) => '  • $p').join('\n')}\n'
+        'Aucune exception n\'est blanchie : ce fichier de production doit '
+        'être réexaminé.');
+  }
+  return _sitesResolus = adresses;
+}
+
+/// Contrôle de SANTÉ du harnais lui-même.
+///
+/// Démontre que le classement n'est pas devenu permissif :
+///   • la résolution trouve bien SIX adresses distinctes ;
+///   • un débordement fabriqué sur une ligne quelconque n'est PAS classé
+///     « préexistant » (il tombe dans « autres » et fait échouer) ;
+///   • un débordement désignant le composant A6 n'est jamais « préexistant ».
+///
+/// Appelé par le test A6-E0 ; sans lui, une régression du harnais (par
+/// exemple un ancrage qui reconnaîtrait tout) passerait inaperçue.
+void verifierSanteHarnais() {
+  final adresses = _resoudreSitesPreexistants();
+  expect(adresses.length, 6,
+      reason: 'A6 : les SIX sites préexistants doivent être résolus');
+  expect(adresses.toSet().length, 6,
+      reason: 'A6 : les six adresses doivent être DISTINCTES');
+
+  // Contre-épreuve 1 : une localisation arbitraire ne doit pas être blanchie.
+  expect(_surLignePreexistante('mes_paris_screen.dart:4242:7'), isFalse,
+      reason: 'A6 : une ligne quelconque ne doit JAMAIS être classée '
+          '« préexistante »');
+
+  // Contre-épreuve 2 : un débordement du composant A6 reste fautif, même
+  // s'il tombait par hasard sur une adresse préexistante.
+  final a6SurAdresse = 'Row Row:file:///x/'
+      '${adresses.first}25 BadgeExAequo overflows';
+  expect(_estPreexistant(a6SurAdresse), isFalse,
+      reason: 'A6 : le contrôle par NOM doit primer sur l\'adresse');
+  expect(_concerneBlocA6(a6SurAdresse), isTrue);
+
+  // Contre-épreuve 3 : le classement « autres » d'un débordement inconnu
+  // rend bien un échec par `_verifierDebordements`.
+  expect(
+    () => _verifierDebordements(
+        'SONDE', <String>['Row Row:file:///x/mes_paris_screen.dart:4242:7']),
+    throwsA(isA<TestFailure>()),
+    reason: 'A6 : un débordement d\'origine inconnue doit faire ÉCHOUER le '
+        'test, jamais être absorbé',
+  );
+}
 
 /// Vrai si la ligne peut être classée « préexistante », c'est-à-dire si elle
 /// tombe sur une localisation connue ET ne désigne AUCUN widget du composant
@@ -497,6 +720,16 @@ void main() {
 
   // ⚠️ AUCUN `setUp()` enregistré ici : voir la contrainte de harnais en
   //    tête de fichier. Toute la préparation est dans les corps de test.
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  A6-E0 — SANTÉ DU HARNAIS : le classement n'est pas devenu permissif
+  // ═══════════════════════════════════════════════════════════════════════
+  // Ce test ne rend aucun widget : il vérifie le HARNAIS lui-même. Sans lui,
+  // un ancrage qui reconnaîtrait tout (ou plus rien) passerait inaperçu, et
+  // les six tests suivants pourraient devenir verts pour la mauvaise raison.
+  test('A6-E0 — le harnais résout les six sites et refuse tout le reste', () {
+    verifierSanteHarnais();
+  });
 
   // ═══════════════════════════════════════════════════════════════════════
   //  A6-E1 — ARRIVÉE SANS EX ÆQUO : texte historique, aucun badge, aucun rang

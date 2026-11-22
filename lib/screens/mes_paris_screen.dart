@@ -2329,6 +2329,26 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
 
     final mise = c.miseTotaleEngagee;
     if (mise == null || mise <= 0) return null;
+    // ★ LOT B-4.5 / A-0 — AUCUN GAIN MONO-DIVIDENDE POUR UN GAGNANT+PLACÉ.
+    //
+    //   ── DÉFAUT MESURÉ (reproduit par test) ────────────────────────────────
+    //   Un Gagnant+Placé engage DEUX composantes : `miseTotaleEngagee` est la
+    //   SOMME des deux mises, alors que `dividendePmuReel` — écrit par l'ancien
+    //   moteur — est le dividende d'UNE seule composante (le Gagnant). Le
+    //   produit `dividendePmuReel × miseTotaleEngagee` ne vaut donc rien de
+    //   réel : mesuré sur un ticket historique 18,00 × 10 € = « 180 € ».
+    //
+    //   ── CE QUI EST FAIT ICI ───────────────────────────────────────────────
+    //   On ne calcule RIEN (retour `null`), et surtout on n'invente rien :
+    //   ni zéro, ni perte, ni gain. La valeur historique `dividendePmuReel`
+    //   n'est ni effacée ni réécrite — elle reste sur le ticket.
+    //
+    //   ── CE QUI N'EST PAS TOUCHÉ ───────────────────────────────────────────
+    //   • un ticket porteur d'un VERDICT officiel est traité plus haut, par
+    //     `affichageGainSuivi` (le moteur B-3 garde la priorité) ;
+    //   • les paris MONO-COMPOSANTE (Simple, Couplé, Tiercé…) gardent
+    //     exactement le calcul ci-dessous.
+    if (estTypeGagnantPlace(c.typePari)) return null;
     // Priorité 1 : dividende PMU réel récupéré après course
     if (c.dividendePmuReel != null && c.dividendePmuReel! > 0) {
       return c.dividendePmuReel! * mise;
@@ -2360,6 +2380,20 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     }
     if (_isGagnant == false) {
       return '❌ Perdu : -${fmtEuros(mise)} €';
+    }
+    // ★ LOT B-4.5 / A-0 — INTERDICTION DU FAUX GAIN GAGNANT+PLACÉ.
+    //
+    //   Même raison que dans `_gainBrut` : `dividendePmuReel` est le dividende
+    //   d'UNE composante, `miseTotaleEngagee` la somme des DEUX. Leur produit
+    //   n'est pas un gain. Mesuré : « 🏆 Gain gagné : 180 € brut » sur un
+    //   ticket historique 18,00 × 10 €.
+    //
+    //   Le libellé « Gain gagné » est une AFFIRMATION de gain confirmé : il
+    //   est donc interdit ici. On ne bascule PAS pour autant vers « 0 € » ni
+    //   vers « Perdu » : on annonce l'état réel, indéterminé, sans montant.
+    //   La donnée historique reste intacte sur le ticket.
+    if (estTypeGagnantPlace(c.typePari)) {
+      return '⏳ Gain Gagnant+Placé non établi : deux composantes distinctes';
     }
     if (c.dividendePmuReel != null && c.dividendePmuReel! > 0) {
       // Gain GAGNÉ : rapport officiel identifié.

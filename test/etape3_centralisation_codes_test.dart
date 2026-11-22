@@ -222,20 +222,65 @@ void main() {
       );
     });
 
-    test('les gardes A-0 sont intactes aux 3 emplacements', () {
+    // ★ LOT B-4.5 — CONTRÔLE MODERNISÉ, ANCRÉ SUR LE COMPORTEMENT.
+    //
+    //   AVANT : ce test vérifiait la présence littérale de
+    //       if (estTypeGagnantPlace(course.typePari)) return; // A-0
+    //   dans les deux écrans. Cette garde protégeait un `reduce(MAX)` que
+    //   B-4.5 a SUPPRIMÉ : elle est donc devenue sans objet LÀ OÙ ELLE ÉTAIT
+    //   POSÉE, et le contrôle échouait alors que le produit s'améliorait.
+    //
+    //   MAINTENANT : le contrôle vérifie que la protection existe là où le
+    //   danger est RÉEL — les deux calculs d'affichage de `mes_paris_screen`
+    //   qui multiplient un dividende unique par la mise TOTALE, laquelle est
+    //   la somme des deux composantes d'un Gagnant+Placé.
+    //
+    //   Cette assertion n'est pas un ajustement cosmétique pour redevenir
+    //   vert : elle protège une règle métier DÉMONTRÉE par reproduction.
+    //   Mesuré avant correctif : un ticket Gagnant+Placé historique
+    //   (dividendePmuReel = 18,0 ; mise = 10 €) affichait
+    //   « 🏆 Gain gagné : 180 € brut ». Les 6 contrôles comportementaux de
+    //   `e3_4_gagnant_place_comportement_test.dart` rejouent cette
+    //   démonstration sur le VÉRITABLE écran et échouent si elle réapparaît.
+    test('la protection Gagnant+Placé couvre les DEUX calculs d\'affichage '
+        '(et les deux produisent un refus, jamais un montant)', () {
       final mesParis =
           File('lib/screens/mes_paris_screen.dart').readAsStringSync();
-      expect(
-        mesParis.contains('if (estTypeGagnantPlace(course.typePari)) return; // A-0'),
-        isTrue,
-      );
+
+      // Les deux fonctions concernées doivent exister.
+      expect(mesParis.contains('double? _gainBrut(TrackedCourse c)'), isTrue,
+          reason: '_gainBrut alimente le partage / JPEG');
+      expect(mesParis.contains('String _calculerGainAffiche(TrackedCourse c)'),
+          isTrue,
+          reason: '_calculerGainAffiche alimente le bloc gain de la carte');
+
+      // Chacune contient un aiguillage G+P placé AVANT le produit
+      // `dividendePmuReel × mise`.
+      final occurrences =
+          'if (estTypeGagnantPlace(c.typePari))'.allMatches(mesParis).length;
+      expect(occurrences, greaterThanOrEqualTo(2),
+          reason: 'B-4.5 — la protection doit couvrir les DEUX calculs '
+              '(_gainBrut ET _calculerGainAffiche), pas un seul. '
+              'Trouvé : $occurrences');
+
+      // Et cet aiguillage précède bien le produit protégé : le premier
+      // `dividendePmuReel! * mise` doit venir APRÈS la première garde.
+      final garde = mesParis.indexOf('if (estTypeGagnantPlace(c.typePari))');
+      final produit = mesParis.indexOf('c.dividendePmuReel! * mise');
+      expect(garde, greaterThan(-1));
+      expect(produit, greaterThan(garde),
+          reason: 'la garde doit PRÉCÉDER le produit qu\'elle protège');
+
+      // `paris_detail_screen` ne calcule plus aucun gain : il délègue au
+      // verdict officiel (`_buildVerdictOfficiel`). La présence de cette
+      // délégation est le contrôle qui remplace l'ancienne garde locale.
       final detail =
           File('lib/screens/paris_detail_screen.dart').readAsStringSync();
-      expect(
-        detail.contains(
-            'if (estTypeGagnantPlace(widget.tracked.typePari)) return; // A-0'),
-        isTrue,
-      );
+      expect(detail.contains('_buildVerdictOfficiel('), isTrue,
+          reason: 'B-4.5 — la fiche du pari affiche le verdict officiel');
+      expect(detail.contains('dividendePmuReel * '), isFalse,
+          reason: 'la fiche ne doit plus multiplier un dividende unique : '
+              'c\'est précisément le calcul supprimé par B-4.5');
     });
 
     test('mes_paris_screen est resté STRICTEMENT inchangé', () {
