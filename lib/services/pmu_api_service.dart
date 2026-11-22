@@ -1,9 +1,142 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/pmu_models.dart';
 import '../services/gain_calculator.dart';
 import '../services/gain_ticket_calculator.dart' show RapportOfficiel;
+
+// ───────────────────────────────────────────────────────────────────────────
+//  ★ LOT B-4.6 — DIAGNOSTIC DES RAPPORTS MANQUANTS
+//
+//  Constat mesuré (B-4.6) : huit chemins distincts rendaient `[]` et étaient
+//  INDISCERNABLES en release, parce que les neuf `debugPrint` du service sont
+//  tous sous `kDebugMode`. Une réponse vide (`200` + `[]`), un `404`, un `500`,
+//  un `timeout`, une erreur réseau, un corps HTML et une racine non-liste
+//  produisaient exactement le même résultat observable : une liste vide.
+//
+//  Cette énumération et le diagnostic ci-dessous sont PURS : ils n'entrent
+//  dans AUCUN calcul, ne changent AUCUN montant et ne modifient AUCUNE règle.
+//  Ils rendent seulement la cause OBSERVABLE hors debug.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Cause exacte pour laquelle aucun rapport n'a pu être obtenu.
+enum CauseAbsenceRapports {
+  /// Au moins un rapport exploitable a été obtenu : il n'y a rien à signaler.
+  aucune,
+
+  /// L'API a répondu, mais avec un code HTTP autre que 200.
+  /// [DiagnosticRapports.codeHttp] porte le code réellement reçu.
+  httpNonOk,
+
+  /// Le délai de 15 s du service a été dépassé.
+  timeout,
+
+  /// Le réseau est injoignable, ou la connexion a été coupée.
+  reseau,
+
+  /// La réponse n'est pas du JSON (page d'erreur, HTML de maintenance…).
+  corpsNonJson,
+
+  /// La réponse EST du JSON valide, mais ce n'est pas une liste : c'est la
+  /// forme d'un fichier de PROGRAMME (`{"programme": {...}}`), pas celle de
+  /// rapports. Cas réel mesuré sur les captures `prog_*.json`.
+  racineNonListe,
+
+  /// La réponse est une liste valide, mais elle ne contient **aucune ligne**
+  /// de rapport : la course n'a pas encore ses rapports définitifs.
+  aucunRapportPublie,
+
+  /// La réponse publie des lignes, mais **toutes** ont été écartées par le
+  /// filtre historique `dividendeNormalise > 0` de
+  /// [PmuApiService.decoderRapportsDefinitifs].
+  ///
+  /// ★ B-4.6 — cette cause existe pour une raison précise : le filtre
+  /// s'applique *pendant* le décodage, donc une liste vide ne prouve pas que
+  /// le PMU n'a rien publié. Sans cette distinction, une course dont toutes
+  /// les lignes sont à dividende nul serait présentée comme « aucun rapport
+  /// publié » alors que des rapports **ont** été publiés.
+  /// Mesuré : 0 occurrence sur 358 captures réelles — le défaut était latent,
+  /// jamais observé. Il est désormais nommé au lieu d'être confondu.
+  aucunRapportExploitable,
+}
+
+/// Résultat d'une récupération de rapports : les rapports, ET la raison de
+/// leur absence éventuelle.
+///
+/// `aDesRapports == false` n'est donc plus une information unique : la [cause]
+/// dit laquelle des situations s'est produite.
+class DiagnosticRapports {
+  const DiagnosticRapports({
+    required this.rapports,
+    required this.cause,
+    this.codeHttp,
+    this.lignesPubliees = 0,
+  });
+
+  final List<RapportPmu> rapports;
+  final CauseAbsenceRapports cause;
+  final int? codeHttp;
+
+  /// Nombre de lignes de rapport **réellement présentes dans le corps**, avant
+  /// le filtre `dividendeNormalise > 0`. Permet de distinguer « rien publié »
+  /// de « publié mais rien d'exploitable ». `0` hors des cas HTTP 200.
+  final int lignesPubliees;
+
+  bool get aDesRapports => rapports.isNotEmpty;
+
+  @override
+  String toString() =>
+      'DiagnosticRapports(rapports=${rapports.length}, cause=${cause.name}'
+      '${lignesPubliees > 0 ? ', lignesPubliees=$lignesPubliees' : ''}'
+      '${codeHttp != null ? ', http=$codeHttp' : ''})';
+}
+
+/// Compte les lignes de rapport présentes dans une réponse déjà décodée.
+///
+/// Compte **ce que le PMU publie**, sans aucune règle financière : une ligne
+/// est comptée dès qu'elle est un objet JSON à l'intérieur du tableau
+/// `rapports` d'un bloc, quels que soient son dividende et son code de pari.
+/// Le filtre `dividendeNormalise > 0` de
+/// [PmuApiService.decoderRapportsDefinitifs] n'intervient pas ici.
+int _compterLignesPubliees(dynamic decode) {
+  if (decode is! List) return 0;
+  var n = 0;
+  for (final bloc in decode) {
+    if (bloc is! Map) continue;
+    final lignes = bloc['rapports'];
+    if (lignes is! List) continue;
+    for (final ligne in lignes) {
+      if (ligne is Map) n++;
+    }
+  }
+  return n;
+}
+
+/// Lit la variante Ordre / Désordre dans le libellé officiel du PMU.
+///
+/// Rend `null` quand le libellé ne tranche pas : l'appelant garde alors
+/// l'heuristique historique. C'est volontaire — la plupart des libellés réels
+/// (« e-Simple Placé », « e-2sur4 », « e-Trio », « e-Multi en 6 ») ne portent
+/// ni « ordre » ni « désordre », et leur appliquer une règle générale
+/// inverserait leur classement (mesuré : 4050 lignes sur 4684).
+///
+/// Seules les deux mentions explicites sont reconnues. « Désordre » est testé
+/// en premier parce qu'il **contient** la chaîne « ordre ».
+///
+/// Le test ignore la casse et les accents de « Désordre » : mesuré, les
+/// libellés réels emploient la forme accentuée (« e-Tiercé Désordre »).
+@visibleForTesting
+bool? estOrdreDepuisLibelleOfficiel(String libelle) =>
+    _estOrdreDepuisLibelle(libelle);
+
+bool? _estOrdreDepuisLibelle(String libelle) {
+  if (libelle.isEmpty) return null;
+  final l = libelle.toLowerCase();
+  if (l.contains('ésordre') || l.contains('esordre')) return false;
+  if (l.contains('ordre')) return true;
+  return null;
+}
 
 /// Service API PMU — 100% données réelles, zéro démo
 /// Toutes les méthodes retournent des données réelles depuis l'API officielle PMU.
@@ -134,6 +267,20 @@ class PmuApiService {
   ///   E_TIERCE, E_QUARTE_PLUS, E_QUINTE_PLUS, E_MULTI_EN_4, E_MULTI_EN_3
   static Future<List<RapportPmu>> fetchRapportsDefinitifs(
       String date, int numR, int numC) async {
+    final d = await fetchRapportsAvecDiagnostic(date, numR, numC);
+    return d.rapports;
+  }
+
+  /// ★ LOT B-4.6 — la MÊME récupération, mais la cause de l'absence est rendue.
+  ///
+  /// Le comportement observable de [fetchRapportsDefinitifs] est INCHANGÉ :
+  /// elle rend toujours `[]` dans les sept cas d'échec, jamais d'exception.
+  /// Seule la cause devient disponible pour l'appelant qui la demande.
+  ///
+  /// Aucune règle métier, aucun montant, aucun verdict n'est touché ici : on
+  /// ne fait que QUALIFIER une absence qui existait déjà.
+  static Future<DiagnosticRapports> fetchRapportsAvecDiagnostic(
+      String date, int numR, int numC) async {
     final url = kIsWeb
         ? '$_proxyBase/programme/$date/R$numR/C$numC/rapports-definitifs'
         : '$_baseUrl/programme/$date/R$numR/C$numC/rapports-definitifs?$_specialisation';
@@ -143,20 +290,72 @@ class PmuApiService {
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
         if (kDebugMode) debugPrint('⏳ Rapports non disponibles R${numR}C$numC: HTTP ${resp.statusCode}');
-        return [];
+        return DiagnosticRapports(
+          rapports: const <RapportPmu>[],
+          cause: CauseAbsenceRapports.httpNonOk,
+          codeHttp: resp.statusCode,
+        );
       }
+
+      // ── Qualification de la réponse AVANT décodage ────────────────────
+      // `jsonDecode` est volontairement laissé non protégé dans le décodeur
+      // historique ; on isole donc ici les deux causes de forme.
+      dynamic decode;
+      try {
+        decode = jsonDecode(resp.body);
+      } on FormatException {
+        return const DiagnosticRapports(
+          rapports: <RapportPmu>[],
+          cause: CauseAbsenceRapports.corpsNonJson,
+          codeHttp: 200,
+        );
+      }
+      if (decode is! List) {
+        return const DiagnosticRapports(
+          rapports: <RapportPmu>[],
+          cause: CauseAbsenceRapports.racineNonListe,
+          codeHttp: 200,
+        );
+      }
+
       final rapports = decoderRapportsDefinitifs(resp.body);
 
+      // ★ B-4.6 — le filtre `dividendeNormalise > 0` agit PENDANT le décodage.
+      //   Une liste vide ne prouve donc pas que le PMU n'a rien publié : il
+      //   faut compter les lignes réellement présentes dans le corps.
+      final lignesPubliees = _compterLignesPubliees(decode);
+
       if (kDebugMode) {
-        debugPrint('✅ Rapports définitifs R${numR}C$numC: ${rapports.length} rapports');
+        debugPrint('✅ Rapports définitifs R${numR}C$numC: ${rapports.length} '
+            'rapport(s) retenu(s) sur $lignesPubliees ligne(s) publiée(s)');
         for (final r in rapports) {
           debugPrint('  $r');
         }
       }
-      return rapports;
+      return DiagnosticRapports(
+        rapports: rapports,
+        cause: rapports.isNotEmpty
+            ? CauseAbsenceRapports.aucune
+            : (lignesPubliees == 0
+                ? CauseAbsenceRapports.aucunRapportPublie
+                : CauseAbsenceRapports.aucunRapportExploitable),
+        codeHttp: 200,
+        lignesPubliees: lignesPubliees,
+      );
+    } on TimeoutException catch (e) {
+      if (kDebugMode) debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC timeout: $e');
+      return const DiagnosticRapports(
+        rapports: <RapportPmu>[],
+        cause: CauseAbsenceRapports.timeout,
+      );
     } catch (e) {
       if (kDebugMode) debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC error: $e');
-      return [];
+      // Toute exception non liée à la forme du corps est une défaillance
+      // d'échange : le réseau n'a pas rendu de réponse exploitable.
+      return const DiagnosticRapports(
+        rapports: <RapportPmu>[],
+        cause: CauseAbsenceRapports.reseau,
+      );
     }
   }
 
@@ -209,6 +408,7 @@ class PmuApiService {
           continue;
         }
         final combinaison = r['combinaison'] as String? ?? '';
+        final libelle = r['libelle']?.toString() ?? '';
 
         // ── Parsing dividende unifié ──────────────────────────────────────
         // L'API PMU renvoie TOUJOURS le dividende en centimes d'euro
@@ -238,8 +438,33 @@ class PmuApiService {
             typePari: typePari,
             combinaison: combinaison,
             dividende: dividendeNormalise,
-            // NP = "N'importe quelle Position" = Désordre (API PMU réelle)
-            estOrdre: !combinaison.contains('NP') && !combinaison.contains('D') && !combinaison.contains('d'),
+            // ★ B-4.6 — heuristique historique, CORRIGÉE sur un seul point.
+            //
+            //   Historique : `!combinaison.contains('NP') && !combinaison
+            //   .contains('D')`. Mesuré sur 4684 lignes réelles : AUCUNE
+            //   combinaison ne contient « D » → le second terme vaut toujours
+            //   `true` et ne distinguait donc rien.
+            //
+            //   Or les blocs à couple Ordre/Désordre publient la MÊME
+            //   combinaison (mesuré : 20 paires sur 20). Seul le libellé les
+            //   sépare. Résultat mesuré avant correction : 70 lignes libellées
+            //   « Désordre » (e-Tiercé, e-Quarté+, e-Quinté+, e-Super Pick5)
+            //   étaient présentées comme « Dans l'ordre », avec l'icône Ordre.
+            //
+            //   Correction MINIMALE : seul un libellé « désordre » explicite
+            //   force `false`. Aucun autre libellé n'est interprété —
+            //   appliquer la règle inverse (« ordre » explicite ⇒ `true`) a été
+            //   mesuré et inverserait 4050 lignes (Simple Placé, 2sur4, Trio…),
+            //   car la plupart des libellés ne portent aucune des deux mentions.
+            //
+            //   `estOrdre` n'entre dans AUCUN calcul de montant : la chaîne
+            //   financière lit `RapportPublie.variante` (type `RapportAttribue`,
+            //   socle de gain). Cette correction n'affecte que libellés et
+            //   icônes d'affichage.
+            estOrdre: _estOrdreDepuisLibelle(libelle)
+                ?? (!combinaison.contains('NP') &&
+                    !combinaison.contains('D') &&
+                    !combinaison.contains('d')),
             // ── Informations officielles désormais PRÉSERVÉES ────────────
             libelleOfficiel: r['libelle']?.toString() ?? '',
             codePariOfficiel: typePari,
@@ -348,7 +573,9 @@ class PmuApiService {
     final l = label.toLowerCase();
     // Ordre important : tester les plus spécifiques en premier
     if (l.contains('gagnant+placé') || l.contains('gagnant + placé') ||
-        l.contains('gagnant+place'))  return ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
+        l.contains('gagnant+place')) {
+      return ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
+    }
     if (l.contains('couplé gagnant')) return ['E_COUPLE_GAGNANT'];
     if (l.contains('couplé placé'))   return ['E_COUPLE_PLACE'];
     if (l.contains('quinté'))         return ['E_MULTI', 'E_MINI_MULTI'];

@@ -962,6 +962,21 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   List<RapportPmu> _rapportsPmu = [];
   bool _chargementRapports = false;
 
+  /// ★ B-4.6 — une requête de rapports est déjà en vol.
+  /// Empêche deux récupérations simultanées des mêmes rapports (déclencheur
+  /// automatique + tap utilisateur) sans jamais bloquer un rafraîchissement
+  /// légitime : le drapeau retombe dans un `finally`.
+  bool _rapportEnVol = false;
+
+  // ★ LOT B-4.6 — cause RÉELLE de l'absence de rapports, visible en release.
+  //
+  // Avant ce lot, huit situations distinctes (réponse vide, HTTP non-ok,
+  // timeout, erreur réseau, JSON invalide, racine non-liste, aucun rapport
+  // publié) s'affichaient toutes de la même façon : rien. La cause est
+  // désormais conservée pour être montrée à l'utilisateur.
+  CauseAbsenceRapports? _causeAbsenceRapports;
+  int? _causeAbsenceCodeHttp;
+
   TrackedCourse get course => widget.course;
   AlertService get alertSvc => widget.alertSvc;
 
@@ -1020,27 +1035,123 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   }
 
   /// Charge les dividendes PMU officiels après la course
+  // ★ LOT B-4.6 — traduction lisible d'une cause d'absence de rapports.
+  //
+  // Cette phrase est la SEULE information de diagnostic montrée à
+  // l'utilisateur. Elle ne prétend jamais que la course n'a pas eu lieu, ni
+  // qu'il n'y a pas eu de gagnant : elle dit seulement POURQUOI aucun rapport
+  // n'a pu être obtenu, ce que l'application était incapable de dire avant.
+  String _libelleCauseAbsence(CauseAbsenceRapports cause) {
+    switch (cause) {
+      case CauseAbsenceRapports.aucune:
+        return '';
+      case CauseAbsenceRapports.httpNonOk:
+        final code = _causeAbsenceCodeHttp;
+        return code == null
+            ? 'Rapports indisponibles : le serveur PMU a refusé la demande.'
+            : 'Rapports indisponibles : le serveur PMU a répondu HTTP $code.';
+      case CauseAbsenceRapports.timeout:
+        return 'Rapports non obtenus : le serveur PMU n\'a pas répondu à temps.';
+      case CauseAbsenceRapports.reseau:
+        return 'Rapports non obtenus : le réseau est indisponible.';
+      case CauseAbsenceRapports.corpsNonJson:
+        return 'Rapports illisibles : la réponse du serveur PMU n\'est pas du JSON.';
+      case CauseAbsenceRapports.racineNonListe:
+        return 'Rapports illisibles : la réponse reçue est un programme, pas une liste de rapports.';
+      case CauseAbsenceRapports.aucunRapportPublie:
+        return 'Aucun rapport publié pour cette course à cet instant.';
+      case CauseAbsenceRapports.aucunRapportExploitable:
+        // ★ B-4.6 — ne jamais dire « aucun rapport publié » ici : des rapports
+        //   ONT été publiés, ils ne portent simplement aucun dividende
+        //   exploitable (lignes à dividende nul, écartées par le filtre
+        //   historique). Mesuré : 534 lignes réelles dans ce cas.
+        return 'Rapports publiés, mais aucun dividende exploitable pour cette course.';
+    }
+  }
+
+  Widget _buildCauseAbsenceRapports() {
+    final cause = _causeAbsenceRapports;
+    if (cause == null) return const SizedBox.shrink();
+    return GestureDetector(
+      onTap: _chargerRapportsPmu,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1408),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: const Color(0xFFFFA726).withValues(alpha: 0.4)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.info_outline, color: Color(0xFFFFA726), size: 15),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              _libelleCauseAbsence(cause),
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.refresh, color: Colors.white38, size: 15),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _chargerRapportsPmu() async {
     // ✅ Fix: si _chargementRapports est bloqué (timeout précédent), on le réinitialise
     if (_rapportsPmu.isNotEmpty) return;
+    // ★ B-4.6 — GARDE DE RÉ-ENTRANCE.
+    //   Deux déclencheurs existent en parallèle : l'appel automatique posé par
+    //   `initState` (course terminée depuis > 5 min) et le tap de l'utilisateur
+    //   sur « Afficher les dividendes PMU officiels ». Sans ce garde, deux
+    //   requêtes identiques partaient en même temps et la seconde écrasait
+    //   l'état de la première. Aucun état n'est modifié ici : on refuse
+    //   seulement une SECONDE requête simultanée, la première reste libre.
+    if (_rapportEnVol) return;
     final diff = course.heureDepart.difference(DateTime.now());
     // Autoriser si terminée (≤ -20 min) OU si résultat déjà enregistré
     final courseTerminee = diff.inMinutes <= -20 || course.isGagne != null;
     if (!courseTerminee) return;
     if (!mounted) return;
+    _rapportEnVol = true;
     setState(() => _chargementRapports = true);
     try {
       final dep = course.heureDepart;
       final dateStr =
           '${dep.day.toString().padLeft(2, '0')}${dep.month.toString().padLeft(2, '0')}${dep.year}';
       // ✅ Fix: timeout explicite de 15s — jamais de spinner infini
-      final rapports = await PmuApiService.fetchRapportsDefinitifs(
-          dateStr, course.numReunion, course.numCourse)
-          .timeout(const Duration(seconds: 15), onTimeout: () => []);
+      // ★ LOT B-4.6 — on demande la CAUSE, pas seulement la liste.
+      DiagnosticRapports? diagnostic;
+      List<RapportPmu> rapports = const <RapportPmu>[];
+      try {
+        diagnostic = await PmuApiService.fetchRapportsAvecDiagnostic(
+                dateStr, course.numReunion, course.numCourse)
+            .timeout(const Duration(seconds: 15));
+        rapports = diagnostic.rapports;
+      } on TimeoutException {
+        // ★ B-4.6 — le timeout du service et celui de l'écran valent tous deux
+        //   15 s : le second peut donc gagner la course APRÈS que le service a
+        //   déjà obtenu une réponse valide. Écraser un résultat non vide par
+        //   « délai dépassé » serait un mensonge. On ne déclare le délai que si
+        //   aucune donnée n'est arrivée.
+        rapports = _rapportsPmu;
+        diagnostic = rapports.isEmpty
+            ? const DiagnosticRapports(
+                rapports: <RapportPmu>[],
+                cause: CauseAbsenceRapports.timeout,
+              )
+            : const DiagnosticRapports(
+                rapports: <RapportPmu>[],
+                cause: CauseAbsenceRapports.aucune,
+              );
+      }
       if (!mounted) return;
       setState(() {
         _rapportsPmu = rapports;
         _chargementRapports = false;
+        _causeAbsenceRapports = diagnostic?.cause;
+        _causeAbsenceCodeHttp = diagnostic?.codeHttp;
       });
       // ✅ Fix audit : appliquer le dividende réel au profil si rapports disponibles
       if (rapports.isNotEmpty && mounted) {
@@ -1050,6 +1161,8 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       // ✅ Fix: toujours remettre _chargementRapports à false en cas d'erreur
       if (mounted) setState(() => _chargementRapports = false);
       if (kDebugMode) debugPrint('[MesParis] Erreur chargement rapports: $e');
+    } finally {
+      _rapportEnVol = false;
     }
   }
 
@@ -2085,6 +2198,9 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                     ),
                     course.miseEngagee ?? 0,
                     estPerdu: _isGagnant == false)
+              else if (_causeAbsenceRapports != null &&
+                  _causeAbsenceRapports != CauseAbsenceRapports.aucune)
+                _buildCauseAbsenceRapports()
               else
                 GestureDetector(
                   onTap: _chargerRapportsPmu,

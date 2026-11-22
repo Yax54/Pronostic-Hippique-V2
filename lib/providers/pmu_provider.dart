@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -324,8 +325,68 @@ class PmuProvider extends ChangeNotifier {
     }
   }
 
-  /// Sauvegarde toutes les prédictions localement
-  Future<void> _savePredictions() async {
+  /// ★ B-4.6 — sérialisation des écritures, sans décaler la PREMIÈRE.
+  ///
+  /// MESURÉ, pas supposé : sans sérialisation, deux `setStringList` rapprochés
+  /// peuvent s'achever dans le désordre. Reproduction obtenue :
+  /// ordre d'achèvement `[RECENT, ANCIEN]`, contenu final `[ANCIEN]` — le
+  /// disque garde donc l'état ANCIEN et la modification récente est perdue.
+  /// Les sept appels de [_savePredictions] étaient dans ce cas (aucun `await`).
+  ///
+  /// Choix de conception : on n'empile PAS les écritures. Si une écriture est
+  /// en cours, on lève seulement un drapeau ; la boucle réécrit alors l'état
+  /// COURANT avant de rendre la main. Conséquences :
+  ///   • la toute première écriture démarre au même instant qu'avant
+  ///     (aucun microtask ajouté — un test qui lisait le disque juste après
+  ///     une validation continue de voir la donnée) ;
+  ///   • la DERNIÈRE demande gagne toujours, quel que soit l'ordre
+  ///     d'achèvement des `setStringList` ;
+  ///   • aucune écriture intermédiaire n'est perdue durablement : la dernière
+  ///     photographie est complète (`_predictions` entier).
+  bool _ecritureEnCours = false;
+  bool _ecritureRedemandee = false;
+  Completer<void>? _ecritureAttente;
+
+  /// Sauvegarde toutes les prédictions localement.
+  ///
+  /// Rend un `Future` qui se termine quand l'écriture couvrant cet appel est
+  /// achevée. Les sept appelants historiques l'ignorent : leur comportement
+  /// observable est inchangé.
+  Future<void> _savePredictions() {
+    if (_ecritureEnCours) {
+      _ecritureRedemandee = true;
+      return _ecritureAttente?.future ?? Future<void>.value();
+    }
+    _ecritureAttente = Completer<void>();
+    return _boucleEcriture();
+  }
+
+  Future<void> _boucleEcriture() async {
+    _ecritureEnCours = true;
+    try {
+      do {
+        _ecritureRedemandee = false;
+        await _ecrirePredictions();
+      } while (_ecritureRedemandee);
+    } finally {
+      _ecritureEnCours = false;
+      final attente = _ecritureAttente;
+      _ecritureAttente = null;
+      if (attente != null && !attente.isCompleted) attente.complete();
+    }
+  }
+
+  /// Attend la fin de l'écriture de sauvegarde en cours, s'il y en a une.
+  ///
+  /// ★ B-4.6 — exposé pour que la sérialisation soit VÉRIFIABLE : sans point
+  /// d'attente public, un test ne peut pas distinguer « écriture pas encore
+  /// commencée » de « écriture perdue ». Ne modifie aucun état.
+  Future<void> sauvegardeTerminee() =>
+      _ecritureEnCours ? (_ecritureAttente?.future ?? Future<void>.value())
+          : Future<void>.value();
+
+  /// Écriture effective — INCHANGÉE par rapport à l'historique.
+  Future<void> _ecrirePredictions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = _predictions.map((p) => jsonEncode(p.toJson())).toList();

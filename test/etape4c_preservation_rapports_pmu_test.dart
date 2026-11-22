@@ -331,13 +331,21 @@ void main() {
       );
     });
 
-    test('estOrdre reste l\'heuristique historique, rapport par rapport', () {
-      // ⚠️ Ce test ne valide PAS l'heuristique — il constate qu'elle est
-      //    IDENTIQUE à celle d'avant. Elle est fausse (voir 4C/3), mais la
-      //    changer ici modifierait les montants : c'est un autre lot.
+    test('estOrdre suit l\'heuristique historique, corrigée du libellé officiel',
+        () {
+      // ★ B-4.6 — l'heuristique n'est plus seule : un libellé qui tranche
+      //   (« … Ordre » / « … Désordre ») prime sur elle. Mesuré sur les
+      //   captures réelles : 4684 lignes, 0 combinaison contenant « D », donc
+      //   l'heuristique seule ne distinguait RIEN et classait les 70 lignes
+      //   « Désordre » comme « ordre ». Périmètre de la correction : 73 lignes.
+      //   Aucun montant n'en dépend (la chaîne financière lit `variante`).
       for (final r in _decoder()) {
-        expect(r.estOrdre, _heuristiqueHistoriqueEstOrdre(r.combinaison),
-            reason: 'heuristique modifiée sur « ${r.combinaison} »');
+        final parLibelle = estOrdreDepuisLibelleOfficiel(r.libelleOfficiel);
+        final attendu =
+            parLibelle ?? _heuristiqueHistoriqueEstOrdre(r.combinaison);
+        expect(r.estOrdre, attendu,
+            reason: 'valeur inattendue sur « ${r.libelleOfficiel} » '
+                '(${r.combinaison})');
       }
     });
 
@@ -446,18 +454,18 @@ void main() {
       expect(tierce[1].dividende, closeTo(105.10, 1e-9));
     });
 
-    test('Tiercé : estOrdre NE distingue PAS Ordre et Désordre (limite connue)',
-        () {
-      // ⚠️ Constat MESURÉ, pas une validation : l'heuristique classe les deux
-      //    rapports comme « ordre ». C'est la raison pour laquelle le libellé
-      //    officiel est indispensable — et pourquoi sa correction est un lot
-      //    séparé (elle changerait les montants).
+    test('Tiercé : estOrdre distingue désormais Ordre et Désordre', () {
+      // ★ B-4.6 — AVANT : les deux valaient `true` (limite connue, mesurée).
+      //   DÉSORMAIS : le libellé officiel tranche, et les deux diffèrent.
+      //   Cela ne change aucun montant : la chaîne financière lit
+      //   `RapportPublie.variante`, jamais `RapportPmu.estOrdre`.
       final tierce = _deBloc('E_TIERCE');
+      expect(tierce[0].libelleOfficiel, 'e-Tiercé Ordre');
+      expect(tierce[1].libelleOfficiel, 'e-Tiercé Désordre');
       expect(tierce[0].estOrdre, isTrue);
-      expect(tierce[1].estOrdre, isTrue,
-          reason: '« e-Tiercé Désordre » est classé ordre par l\'heuristique '
-              'historique : seule libelleOfficiel le distingue');
-      expect(tierce[0].estOrdre, tierce[1].estOrdre);
+      expect(tierce[1].estOrdre, isFalse,
+          reason: '« e-Tiercé Désordre » ne doit plus être classé ordre');
+      expect(tierce[0].estOrdre, isNot(tierce[1].estOrdre));
     });
 
     test('Quarté+ : Désordre et Bonus 3-sur-4 restent distincts', () {

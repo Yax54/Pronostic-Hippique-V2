@@ -590,14 +590,20 @@ void main() {
   //  4D/8 — AUCUNE DÉCISION NE S'APPUIE SUR estOrdre
   // ══════════════════════════════════════════════════════════════════════════
   group('4D/8 — estOrdre n\'est jamais utilisé', () {
-    test('l\'heuristique est FAUSSE sur le Tiercé (constat mesuré)', () {
+    test('le libellé sépare désormais Ordre et Désordre (B-4.6)', () {
       final tierce = adaptateurRapportsPmuDuCode(_pmu(), 'E_TIERCE');
       final source = _pmu().where((r) => r.codePariOfficiel == 'E_TIERCE');
-      // « e-Tiercé Ordre » ET « e-Tiercé Désordre » sont tous deux estOrdre=true.
-      expect(source.map((r) => r.estOrdre).toSet(), <bool>{true});
-      // Alors que les libellés, eux, sont bien distincts.
+      // ★ B-4.6 — AVANT : `estOrdre` valait `true` pour les DEUX lignes, car
+      //   l'heuristique `!combinaison.contains('D')` ne distinguait rien
+      //   (mesuré : 0 combinaison réelle ne contient « D »). Le libellé
+      //   officiel tranche désormais, et les deux valeurs diffèrent.
+      expect(source.map((r) => r.estOrdre).toSet(), <bool>{true, false});
+      // Les libellés, eux, restent bien distincts.
       expect(tierce.map((o) => o.libelle).toSet(),
           <String>{'e-Tiercé Ordre', 'e-Tiercé Désordre'});
+      // Et le rapport Désordre est bien celui à 105,10 € (pas l'Ordre à 739,50).
+      expect(
+          source.firstWhere((r) => !r.estOrdre).dividende, closeTo(105.10, 1e-9));
     });
 
     test('l\'adaptateur ignore estOrdre : même résultat s\'il est inversé', () {
