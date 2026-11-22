@@ -343,6 +343,33 @@ class PmuProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// ★ LOT B-4.5 — Remplace un pronostic par sa version PORTANT LE VERDICT.
+  ///
+  /// POURQUOI CETTE MÉTHODE EXISTE : `validatePrediction` et
+  /// `enregistrerDividendePmu` modifient `isCorrect`, `gainRealise` et
+  /// `dividendePmuReel`, puis appellent `_syncStatsTypesIA()`. Écrire un
+  /// verdict par leur intermédiaire déclencherait donc une resynchronisation
+  /// des statistiques d'apprentissage IA — ce que le lot B-4.5 interdit.
+  ///
+  /// ⚠️ CETTE MÉTHODE N'ÉCRIT AUCUNE DÉCISION : le pronostic reçu est celui
+  ///    que l'enregistreur B-4.3 a produit (champs B-1 seulement). Elle le
+  ///    range à la place de l'ancien et sauvegarde.
+  ///
+  /// ⚠️ ELLE N'APPELLE **PAS** `_syncStatsTypesIA()` : aucune statistique IA
+  ///    n'est recalculée, aucun historique IA n'est modifié. Les écritures
+  ///    IA existantes (via `enregistrerDividendePmu`) restent le SEUL chemin
+  ///    de synchronisation, et elles ne sont pas empruntées ici.
+  ///
+  /// Rend `true` si le pronostic existait et a été remplacé, `false` sinon.
+  bool appliquerVerdictGainPrediction(UserPrediction resolue) {
+    final idx = _predictions.indexWhere((p) => p.id == resolue.id);
+    if (idx == -1) return false;
+    _predictions[idx] = resolue;
+    _savePredictions();
+    notifyListeners();
+    return true;
+  }
+
   /// Valide ou invalide un pronostic + enregistre la mise et le gain
   void validatePrediction(String id, {
     required bool isCorrect,

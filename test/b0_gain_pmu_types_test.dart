@@ -236,8 +236,20 @@ void main() {
       // inclusion.
       final importateursAttendus = <String>[
         'lib/models/pmu_models.dart',
+        // ★ LOT B-4.5 — deux importateurs AJOUTÉS, la garde ne faiblit pas.
+        //   MESURÉ avant d'écrire ces lignes : dans ces deux fichiers, ni
+        //   `RapportAttribue.calculer` ni `totalDesMontantsRetour` n'est
+        //   appelé (vérifié aussi en source NETTE de commentaires, avec la
+        //   méthode `_sansCommentaires` de ce fichier : les deux occurrences
+        //   trouvées sont des commentaires qui disent qu'ils ne le font pas).
+        //   `affichage_gain_structure.dart` exprime sa somme par
+        //   `resoudreTotalDepuisRapports`, qui est la fonction de B-4.3 et non
+        //   un calcul du socle : elle additionne des `montantRetour` déjà
+        //   persistés, sans produire aucun montant nouveau.
+        'lib/services/affichage_gain_structure.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/branchement_verdict_course.dart',
         'lib/services/enregistreur_verdict_gain_pmu.dart',
         'lib/services/enregistreur_verdict_gain_suivi.dart',
         'lib/services/moteur_gain_pmu.dart',
@@ -318,8 +330,13 @@ void main() {
       // couvre un fichier de plus et vérifie une propriété plus stricte.
       for (final chemin in <String>[
         'lib/models/pmu_models.dart',
+        // ★ LOT B-4.5 — les deux importateurs ajoutés entrent AUSSI dans le
+        //   périmètre de non-production de montant. C'est un renforcement :
+        //   un fichier de plus est contrôlé, sur la même propriété.
+        'lib/services/affichage_gain_structure.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
+        'lib/services/branchement_verdict_course.dart',
         'lib/services/enregistreur_verdict_gain_suivi.dart',
         'lib/services/moteur_gain_pmu.dart',
         'lib/services/resolution_gain_ticket_pmu.dart',

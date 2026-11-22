@@ -565,17 +565,30 @@ void main() {
     // ignore: avoid_print
     print('──────────────────────────────────────────────────────────────');
 
-    // CONTRÔLE CROISÉ : mêmes fixtures réseau, même chemin de code, seul le
-    // type de pari change. Si l'écriture fonctionne ici et pas en T-P4a,
-    // c'est bien la garde A-0 qui produit la différence.
-    expect(apres.dividendePmuReel, closeTo(kCoteGagnant, 1e-9),
-        reason: 'NON-RÉGRESSION — un Simple Gagnant doit recevoir son '
-            'dividende (×18,00). Obtenu : ${apres.dividendePmuReel}');
-    expect(apres.combinaisonPmu, '7',
-        reason: 'NON-RÉGRESSION — la combinaison gagnante est écrite');
-    expect(apres.isCorrect, isTrue, reason: 'NON-RÉGRESSION');
-    expect(apres.gainNet, closeTo(kGainReelSimple, 1e-9),
-        reason: 'NON-RÉGRESSION — gain = (18,00 × 20) − 20 = 340,00 €');
+    // ★ LOT B-4.5 — CE SCÉNARIO CHANGE DE SENS, ET LE CHANGEMENT EST LE LOT.
+    //
+    // Avant B-4.5, ce test prouvait qu'un Simple Gagnant recevait bien ×18,00
+    // par `reduce(MAX)` : c'était la NON-RÉGRESSION du chemin historique.
+    // B-4.5 SUPPRIME ce chemin. Aucun dividende n'est plus sélectionné par
+    // maximum, donc plus rien n'est écrit dans `dividendePmuReel` — ni pour un
+    // G+P, ni pour un Simple. La garde A-0 (qui n'excluait que le G+P) n'est
+    // donc plus la cause d'une différence : les DEUX types se comportent
+    // désormais pareil, et c'est l'égalité qui est vérifiée ici.
+    //
+    // MESURE attendue : `null` des deux côtés, parce que ce scénario ne fournit
+    // PAS d'`arriveeGroupes` (le corps `participants` ne porte que
+    // `ordreArrivee`) — sans groupes officiels, l'arbitre B-3 prononcerait
+    // `deadHeatSansGroupes`, un indéterminé DÉFINITIF que le branchement refuse
+    // d'écrire. Le ticket reste donc en attente, ce qui est l'état honnête.
+    expect(apres.dividendePmuReel, isNull,
+        reason: 'B-4.5 — plus aucun dividende sélectionné par maximum. '
+            'Obtenu : ${apres.dividendePmuReel}');
+    expect(apres.combinaisonPmu, isNull,
+        reason: 'B-4.5 — aucune combinaison sélectionnée par maximum');
+    expect(apres.isCorrect, isNull,
+        reason: 'B-4.5 — le pari reste en attente : aucun verdict écrit');
+    expect(apres.gainNet, 0.0,
+        reason: 'B-4.5 — aucun gain calculé depuis un dividende maximal');
 
     await _demonter(tester);
   });

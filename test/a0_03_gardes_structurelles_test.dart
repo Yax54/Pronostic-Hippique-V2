@@ -77,25 +77,41 @@ void main() {
       );
     });
 
-    test('T2d — P4 : mes_paris_screen garde avant enregistrerDividendePmu', () {
+    test('T2d — P4 (B-4.5) : mes_paris_screen n\'écrit plus de dividende MAX',
+        () {
+      // ★ LOT B-4.5 — la garde T2d protégeait le `reduce(MAX)` : elle exigeait
+      // que la garde G+P précède `provider.enregistrerDividendePmu(`. B-4.5
+      // SUPPRIME cette écriture (et donc le `reduce` qu'elle protégeait) : la
+      // propriété à défendre est désormais plus forte — l'écriture n'existe
+      // plus du tout, donc aucun G+P ne peut recevoir un dividende MAX.
       final src = _lire('lib/screens/mes_paris_screen.dart');
-      _attendreAvant(
-        src,
-        'if (estTypeGagnantPlace(course.typePari)) return; // A-0',
-        'provider.enregistrerDividendePmu(',
-        motif: 'P4',
-      );
+      expect(src.contains('provider.enregistrerDividendePmu('), isFalse,
+          reason: 'P4 — plus aucune injection de dividende MAX');
+      expect(src.contains('enregistrerDividendePmuTracked('), isFalse,
+          reason: 'P4 — plus aucune écriture Tracked de dividende MAX');
+      // ⚠️ La chaîne 'reduce((a, b) => a.dividende > b.dividende' ne peut PAS
+      // être cherchée ici : elle est CITÉE dans le commentaire de documentation
+      // qui explique sa suppression. La vérification exacte, en source NETTE de
+      // commentaires, est faite par B4.3/7.5 (test/b4_3_enregistreur_verdict_test.dart).
+      // Le verdict officiel remplace ce chemin.
+      expect(src.contains('resoudrePrediction('), isTrue, reason: 'B-4.5');
+      expect(src.contains('resoudreSuivi('), isTrue, reason: 'B-4.5');
     });
 
-    test('T2e — P5 : paris_detail_screen garde avant enregistrerDividendePmu',
+    test('T2e — P5 (B-4.5) : paris_detail_screen n\'écrit plus de dividende MAX',
         () {
+      // ★ LOT B-4.5 — même raison que T2d.
       final src = _lire('lib/screens/paris_detail_screen.dart');
-      _attendreAvant(
-        src,
-        'if (estTypeGagnantPlace(widget.tracked.typePari)) return; // A-0',
-        'provider.enregistrerDividendePmu(',
-        motif: 'P5',
-      );
+      expect(src.contains('provider.enregistrerDividendePmu('), isFalse,
+          reason: 'P5 — plus aucune injection de dividende MAX');
+      expect(src.contains('enregistrerDividendePmuTracked('), isFalse,
+          reason: 'P5 — plus aucune écriture Tracked de dividende MAX');
+      // ⚠️ La chaîne 'reduce((a, b) => a.dividende > b.dividende' ne peut PAS
+      // être cherchée ici : elle est CITÉE dans le commentaire de documentation
+      // qui explique sa suppression. La vérification exacte, en source NETTE de
+      // commentaires, est faite par B4.3/7.5 (test/b4_3_enregistreur_verdict_test.dart).
+      expect(src.contains('resoudrePrediction('), isTrue, reason: 'B-4.5');
+      expect(src.contains('resoudreSuivi('), isTrue, reason: 'B-4.5');
     });
 
     test('T2f — P6 et P7 : les entrées G+P sont CONSERVÉES (S2)', () {
@@ -124,20 +140,23 @@ void main() {
     test('T3a — P4 se trouve dans _majGainReelDansProfil, pas dans le rendu',
         () {
       final src = _lire('lib/screens/mes_paris_screen.dart');
-      // La garde doit être après l'entrée de la méthode d'écriture financière…
-      _attendreAvant(
-        src,
-        'void _majGainReelDansProfil(List<RapportPmu> rapports) {',
-        'if (estTypeGagnantPlace(course.typePari)) return; // A-0',
-        motif: 'P4 dans la bonne méthode',
-      );
-      // … et AVANT les deux seules écritures financières de cette méthode.
-      _attendreAvant(
-        src,
-        'if (estTypeGagnantPlace(course.typePari)) return; // A-0',
-        'alertSvc.enregistrerDividendePmuTracked(',
-        motif: 'P4 avant l\'écriture TrackedCourse',
-      );
+      // ★ B-4.5 — MESURE : la méthode `_majGainReelDansProfil` existe toujours,
+      //   mais elle ne fait plus d'écriture financière : la garde A-0 n'a donc
+      //   plus d'objet. On vérifie que la méthode est bien là (pas supprimée en
+      //   silence) et que son corps ne contient plus aucune écriture.
+      expect(
+          src.contains('void _majGainReelDansProfil(List<RapportPmu> rapports) {'),
+          isTrue,
+          reason: 'la méthode doit rester présente');
+      final debut = src.indexOf(
+          'void _majGainReelDansProfil(List<RapportPmu> rapports) {');
+      final fin = src.indexOf('void _verifierResultatAuto()');
+      final corps = src.substring(debut, fin > debut ? fin : src.length);
+      expect(corps.contains('enregistrerDividendePmu'), isFalse,
+          reason: 'P4 — le corps ne doit plus écrire de dividende');
+      // ★ B-4.5 — les DEUX écritures financières de cette méthode ont disparu.
+      expect(src.contains('alertSvc.enregistrerDividendePmuTracked('), isFalse,
+          reason: 'P4 — l\'écriture Tracked du dividende MAX est supprimée');
     });
 
     test('T3b — le chargement des rapports reste AVANT l\'écriture financière',
@@ -228,11 +247,28 @@ void main() {
         // Interdit : 'gagnant+placé' écrit en dur hors du helper.
         expect(src.contains("== 'gagnant+placé'"), isFalse,
             reason: '$f ne doit pas réimplémenter la reconnaissance');
-        // Obligatoire : le helper est importé et utilisé.
-        expect(src.contains('type_pari_utils.dart'), isTrue,
-            reason: '$f doit importer le helper');
-        expect(src.contains('estTypeGagnantPlace('), isTrue,
-            reason: '$f doit utiliser le helper');
+        // Obligatoire : le helper est importé et utilisé — SAUF pour
+        // `paris_detail_screen.dart` depuis B-4.5.
+        //
+        // ★ LOT B-4.5 — MESURE : sa seule utilisation du helper était la garde
+        //   `estTypeGagnantPlace(widget.tracked.typePari)` qui protégeait le
+        //   `reduce(MAX)`. Ce `reduce` est supprimé, donc la garde aussi, donc
+        //   l'import devient inutilisé (`flutter analyze` le signale). Le G+P
+        //   n'est plus EXCLU du calcul : il est résolu par le moteur B-3, qui
+        //   traite ses deux composantes séparément — ce qui est le but même du
+        //   lot. La contrepartie est vérifiée ci-dessous : l'écran ne
+        //   réimplémente pas la reconnaissance en dur.
+        if (f == 'lib/screens/paris_detail_screen.dart') {
+          expect(src.contains('type_pari_utils.dart'), isFalse,
+              reason: '$f ne doit plus importer un helper devenu inutile');
+          expect(src.contains('estTypeGagnantPlace('), isFalse,
+              reason: '$f ne doit plus filtrer le G+P');
+        } else {
+          expect(src.contains('type_pari_utils.dart'), isTrue,
+              reason: '$f doit importer le helper');
+          expect(src.contains('estTypeGagnantPlace('), isTrue,
+              reason: '$f doit utiliser le helper');
+        }
       }
     });
 

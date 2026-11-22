@@ -1197,8 +1197,16 @@ void main() {
       expect(code.contains('dividende >'), isFalse);
     });
 
-    test('B4.3/7.5 les 12 fichiers protégés sont inchangés sur disque', () {
-      // Comparaison par contenu : on s'assure que le lot n'a pas débordé.
+    test('B4.3/7.5 les 11 fichiers protégés existent et reduce(MAX) est ABSENT',
+        () {
+      // La garde d'origine vérifiait la PRÉSENCE du `reduce(MAX)` dans les deux
+      // écrans : c'était exact pour B-4.3, qui ne branchait rien. B-4.5 change
+      // la propriété à défendre, dans le sens le plus strict : la sélection par
+      // montant maximal doit avoir DISPARU de tout `lib/`.
+      //
+      // MESURÉ avant d'écrire : `grep "reduce((a, b) => a.dividende > b.dividende"
+      // lib/` ne renvoie plus rien (les deux occurrences de mes_paris_screen
+      // l.1105 et paris_detail_screen l.691 ont été supprimées).
       final proteges = <String>[
         'lib/screens/mes_paris_screen.dart',
         'lib/screens/paris_detail_screen.dart',
@@ -1215,14 +1223,37 @@ void main() {
       for (final f in proteges) {
         expect(File(f).existsSync(), isTrue, reason: f);
       }
-      // Les DEUX écrans contiennent encore reduce(MAX) : non neutralisé ici.
-      final mes = File('lib/screens/mes_paris_screen.dart').readAsStringSync();
-      final detail =
-          File('lib/screens/paris_detail_screen.dart').readAsStringSync();
-      expect(mes.contains('reduce((a, b) => a.dividende > b.dividende'),
-          isTrue);
-      expect(detail.contains('reduce((a, b) => a.dividende > b.dividende'),
-          isTrue);
+
+      // ★ B-4.5 — la neutralisation est prouvée, fichier par fichier, dans
+      // TOUT `lib/` : aucun `reduce` ne compare plus deux dividendes.
+      final coupables = <String>[];
+      for (final f in Directory('lib').listSync(recursive: true)) {
+        if (f is! File || !f.path.endsWith('.dart')) continue;
+        final code = codeSansCommentaires(f.path);
+        if (code.contains('reduce((a, b) => a.dividende > b.dividende') ||
+            code.contains('reduce((a, b) => a.dividende >') ||
+            RegExp(r'\.reduce\([^)]*dividende').hasMatch(code)) {
+          coupables.add(f.path);
+        }
+      }
+      expect(coupables, isEmpty,
+          reason: 'aucune sélection de dividende maximal ne doit subsister : '
+              '$coupables');
+
+      // Et les deux écrans portent bien le branchement B-4.5 à la place.
+      for (final ecran in <String>[
+        'lib/screens/mes_paris_screen.dart',
+        'lib/screens/paris_detail_screen.dart',
+      ]) {
+        final code = codeSansCommentaires(ecran);
+        expect(code.contains('resoudrePrediction'), isTrue, reason: ecran);
+        expect(code.contains('resoudreSuivi'), isTrue, reason: ecran);
+        // Les deux écritures de l'ancien chemin ont disparu de ces écrans.
+        expect(code.contains('enregistrerDividendePmuTracked'), isFalse,
+            reason: '$ecran ne doit plus écrire de dividende sélectionné');
+        expect(code.contains('enregistrerDividendePmu('), isFalse,
+            reason: '$ecran ne doit plus injecter de gain dans l\'IA');
+      }
     });
   });
 }

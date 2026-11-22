@@ -29,6 +29,8 @@ import '../widgets/ia/ia_bubble_widget.dart';      // ★ v9.85 IA bulle
 import '../services/arrivee_officielle_service.dart'; // ★ A6 — lecture L0
 import '../widgets/arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu ex æquo
 import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
+import '../services/branchement_verdict_course.dart'; // ★ B-4.5 — verdict officiel
+import '../services/affichage_gain_structure.dart'; // ★ B-4.5 — affichage structuré
 
 // ★ v9.85 : deepLinkCourseKeyNotifier retiré de main.dart — notifier local
 final deepLinkCourseKeyNotifier = ValueNotifier<String?>(null);
@@ -1051,77 +1053,102 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     }
   }
 
-  /// Met à jour le vrai gain PMU dans le profil utilisateur (PmuProvider + AlertService).
-  /// ✅ Fix audit : cette méthode était absente dans mes_paris_screen — dividendes jamais
-  /// enregistrés sauf si l'utilisateur ouvrait manuellement l'écran paris_detail_screen.
-  /// UNIQUEMENT si le pari est réellement gagnant (isGagne == true).
+  /// ★ LOT B-4.5 — Applique le VERDICT OFFICIEL, sans sélection de montant.
+  ///
+  /// ── CE QUI A ÉTÉ RETIRÉ, ET POURQUOI (défaut mesuré) ─────────────────────
+  /// Cette méthode contenait, jusqu'à B-4.5, un `reduce(MAX)` :
+  ///
+  ///     final meilleur = matching
+  ///         .reduce((a, b) => a.dividende > b.dividende ? a : b);
+  ///
+  /// Il choisissait le PLUS GROS dividende parmi les codes du pari, puis
+  /// l'écrivait comme gain du ticket. Trois défauts, tous mesurés :
+  ///   1. le montant retenu n'était pas celui du rapport du pari joué, mais le
+  ///      maximum publié pour un code approché (`'tiercé'` → `E_TRIO`, etc.) ;
+  ///   2. le pari était résolu par `getPredictionForCourse`, un `firstWhere` :
+  ///      sur une course à plusieurs paris, les suivants n'étaient jamais
+  ///      résolus (ni gagnés, ni perdus) ;
+  ///   3. écrire ce dividende déclenchait `PmuProvider.enregistrerDividendePmu`
+  ///      → `_syncStatsTypesIA()`, donc une resynchronisation de l'apprentissage
+  ///      à partir d'un montant faux.
+  ///
+  /// Le `reduce(MAX)` est SUPPRIMÉ. Aucune sélection de montant ne subsiste.
+  ///
+  /// ── CE QUI LE REMPLACE ───────────────────────────────────────────────────
+  /// Le verdict vient exclusivement du moteur B-3, via la couture B-4.5 :
+  /// l'arrivée officielle est celle de LA course, et CHAQUE pari de cette
+  /// course est résolu avec ses propres numéros et sa propre mise. Aucun pari
+  /// n'est choisi à la place d'un autre, aucun montant n'est propagé.
+  ///
+  /// L'ISOLATION IA EST STRUCTURELLE : ni `enregistrerDividendePmu`, ni
+  /// `_syncStatsTypesIA` ne sont appelés ici. Les gains déjà calculés, les
+  /// poids, les seuils, le TOP3, le ROI, les statistiques et l'ELO restent
+  /// strictement inchangés.
+  ///
+  /// ── PÉRIMÈTRE RÉEL, SANS EMBELLISSEMENT ──────────────────────────────────
+  /// Le chemin ne s'exécute que si `rapports` est non vide ET que l'écran
+  /// connaît l'arrivée officielle. `_arriveeGroupesOfficiels` rend `null`
+  /// quand l'API n'a pas fourni de groupes : l'arbitre prononcerait alors
+  /// `deadHeatSansGroupes`, c'est-à-dire un indéterminé qui pourrait être
+  /// levé plus tard. Or un `nonDetermine` est DÉFINITIF pour B-4.3 (transition
+  /// refusée) : on refuse donc de l'écrire, et le ticket reste en attente.
+  List<List<int>>? get _arriveeGroupesOfficiels {
+    final groupes = course.arriveeGroupes;
+    if (groupes == null || groupes.isEmpty) return null;
+    return groupes;
+  }
+
   void _majGainReelDansProfil(List<RapportPmu> rapports) {
     if (!mounted) return;
-    // CRITIQUE : enregistrer SEULEMENT si isGagne == true (pas null, pas false)
-    if (course.isGagne != true) return;
-    // ★ LOT A-0 (protection P4 — DÉFENSIVE) : Gagnant+Placé = 2 composantes.
-    //   Le bloc ci-dessous sélectionne UN dividende par `reduce(MAX)` (l.1093),
-    //   ce qui ne peut pas attribuer le bon dividende à la bonne composante.
-    //   Aujourd'hui cette garde est INERTE : `TrackedCourse.isGagne` n'est
-    //   jamais écrit effectivement (défaut R1, clé de map ≠ clé passée).
-    //   Elle est posée dès maintenant pour que la correction de R1 ne rende
-    //   pas ce `reduce(MAX)` soudainement actif sur les G+P.
-    //   Ne bloque QUE l'attribution financière : `_rapportsPmu` est déjà
-    //   renseigné avant l'appel (voir `_chargerRapportsPmu` l.1040-1043),
-    //   donc l'affichage des rapports reste intact.
-    if (estTypeGagnantPlace(course.typePari)) return; // A-0
+
+    final groupes = _arriveeGroupesOfficiels;
+    if (groupes == null) return;
+    if (rapports.isEmpty) return;
+
+    final resultat = construireResultatOfficiel(
+      arriveeGroupes: groupes,
+      arriveeDefinitive: course.arriveeDefinitive,
+      rapports: rapports,
+    );
+
     try {
       final provider = context.read<PmuProvider>();
-      final pred = provider.getPredictionForCourse(course.numReunion, course.numCourse);
-      if (pred == null || pred.dividendeRecupere) return;
 
-      final typePariLower = course.typePari.toLowerCase();
-      List<String> codesPmu = [];
-      if (typePariLower.contains('gagnant+placé') || typePariLower.contains('gagnant + placé') || typePariLower.contains('gagnant+place')) {
-        codesPmu = ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
-      } else if (typePariLower.contains('couplé gagnant')) {
-        codesPmu = ['E_COUPLE_GAGNANT'];
-      } else if (typePariLower.contains('couplé placé')) {
-        codesPmu = ['E_COUPLE_PLACE'];
-      } else if (typePariLower.contains('quinté')) {
-        codesPmu = ['E_MULTI', 'E_MINI_MULTI'];
-      } else if (typePariLower.contains('quarté')) {
-        codesPmu = ['E_SUPER_QUATRE'];
-      } else if (typePariLower.contains('tiercé')) {
-        codesPmu = ['E_TRIO'];
-      } else if (typePariLower.contains('simple gagnant')) {
-        codesPmu = ['E_SIMPLE_GAGNANT'];
-      } else if (typePariLower.contains('simple placé')) {
-        codesPmu = ['E_SIMPLE_PLACE'];
-      } else if (typePariLower.contains('gagnant')) {
-        codesPmu = ['E_SIMPLE_GAGNANT'];
-      } else if (typePariLower.contains('placé')) {
-        codesPmu = ['E_SIMPLE_PLACE'];
+      // ── 1. TOUS les paris de CETTE course, chacun avec ses propres données ──
+      // `getAllPredictionsForCourse` remplace le `firstWhere` qui ne résolvait
+      // que le premier pari. Aucun appariement n'est fait entre les deux
+      // modèles : chacun est résolu séparément.
+      final predictions = provider.getAllPredictionsForCourse(
+          course.numReunion, course.numCourse);
+      for (final pred in predictions) {
+        if (pred.etatGain != null) continue; // verdict déjà écrit : ne pas rejouer
+        final resolution = resoudrePrediction(
+          prediction: pred,
+          resultat: resultat,
+        );
+        if (resolution.enregistrement != null &&
+            resolution.enregistrement!.estEnregistre) {
+          provider.appliquerVerdictGainPrediction(
+              resolution.enregistrement!.ticket);
+        }
       }
-      if (codesPmu.isEmpty) return;
 
-      final matching = rapports.where((r) => codesPmu.contains(r.typePari)).toList();
-      if (matching.isEmpty) return;
-      final meilleur = matching.reduce((a, b) => a.dividende > b.dividende ? a : b);
-
-      // 1. Mettre à jour UserPrediction dans PmuProvider (profil / historique)
-      provider.enregistrerDividendePmu(
-        pred.id,
-        dividendePmuReel: meilleur.dividende,
-        combinaisonPmu: meilleur.combinaison,
-      );
-      // 2. Mettre à jour TrackedCourse dans AlertService (mes paris / sauvegarde)
-      final storageKey = widget.storageKey;
-      alertSvc.enregistrerDividendePmuTracked(
-        storageKey,
-        dividende: meilleur.dividende,
-        combinaison: meilleur.combinaison,
-      );
-      if (kDebugMode) {
-        debugPrint('[MesParis] ✅ Dividende PMU appliqué au profil: ×${meilleur.dividende.toStringAsFixed(2)}');
+      // ── 2. Le ticket SUIVI de cet écran, avec ses propres données ───────────
+      if (course.etatGain == null) {
+        final resolution = resoudreSuivi(
+          ticket: course,
+          resultat: resultat,
+        );
+        if (resolution.enregistrement != null &&
+            resolution.enregistrement!.estEnregistre) {
+          alertSvc.appliquerVerdictGainSuivi(
+            widget.storageKey,
+            resolution.enregistrement!.ticket,
+          );
+        }
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('[MesParis] Erreur maj gain réel: $e');
+      if (kDebugMode) debugPrint('[MesParis] Erreur verdict officiel: $e');
     }
   }
 
@@ -2286,6 +2313,20 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   ///  2. cote enregistrée (gain potentiel, AVANT le résultat officiel) ;
   ///  3. sinon `null` — jamais un montant inventé.
   double? _gainBrut(TrackedCourse c) {
+    // ★ LOT B-4.5 — Un ticket qui porte un VERDICT OFFICIEL ne se calcule plus
+    //   ici : le montant est celui du verdict, reconstruit par
+    //   `affichageGainSuivi` à partir des `montantRetour` DÉJÀ persistés.
+    //   Aucune multiplication n'est refaite (ce serait le double comptage que
+    //   le lot élimine), et un dividende sélectionné par l'ancien `reduce(MAX)`
+    //   ne peut plus être présenté comme un gain confirmé.
+    if (c.etatGain != null) {
+      final vue = affichageGainSuivi(c);
+      return vue.nature == NatureAffichageGain.attribue ||
+              vue.nature == NatureAffichageGain.rembourse
+          ? vue.montant
+          : null;
+    }
+
     final mise = c.miseTotaleEngagee;
     if (mise == null || mise <= 0) return null;
     // Priorité 1 : dividende PMU réel récupéré après course
@@ -2304,6 +2345,15 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   /// débordement (contrainte A6 mesurée). Le détail complet (retour brut,
   /// net, multiplicateur) reste disponible dans la fiche du pari.
   String _calculerGainAffiche(TrackedCourse c) {
+    // ★ LOT B-4.5 — Vérité OFFICIELLE d'abord. Un ticket qui porte un verdict
+    //   (`etatGain != null`) est décrit EXCLUSIVEMENT par ce verdict : les
+    //   quatre états sont distingués, et le montant affiché est une somme de
+    //   `montantRetour` déjà persistés. `isGagne` et `dividendePmuReel` ne sont
+    //   alors même pas lus, donc l'historique ne peut pas contredire le verdict.
+    if (c.etatGain != null) {
+      return affichageGainSuivi(c).libelle;
+    }
+
     final mise = c.miseTotaleEngagee;
     if (mise == null || mise <= 0) {
       return _isGagnant == true ? '🏆 Pari gagnant' : '❌ Perdu';

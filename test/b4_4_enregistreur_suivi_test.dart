@@ -1427,18 +1427,45 @@ void main() {
               '$coupables');
     });
 
-    test('9.6 AUCUN fichier de lib/ n\'appelle enregistrerVerdictGainSuivi', () {
-      final coupables = <String>[];
+    test('9.6 SEUL le branchement B-4.5 appelle enregistrerVerdictGainSuivi', () {
+      // ★ LOT B-4.5 — la garde d'origine exigeait ZÉRO appelant, ce qui était
+      // exact pour B-4.4 (branchement hors périmètre). B-4.5 EST ce
+      // branchement : la propriété à défendre devient donc « un seul point
+      // d'entrée, et c'est la couture », ce qui reste une garde stricte :
+      // aucun écran, aucun provider, aucun service n'a le droit d'appeler
+      // l'enregistreur directement.
+      //
+      // MESURÉ : le seul fichier qui appelle `enregistrerVerdictGainSuivi`
+      // (hors sa propre définition) est
+      // `lib/services/branchement_verdict_course.dart`.
+      final appelants = <String>[];
       for (final f in Directory('lib').listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
         if (f.path.endsWith('enregistreur_verdict_gain_suivi.dart')) continue;
         if (_sansCommentaires(f.readAsStringSync())
             .contains('enregistrerVerdictGainSuivi')) {
-          coupables.add(f.path);
+          appelants.add(f.path);
         }
       }
-      expect(coupables, isEmpty,
-          reason: 'le branchement est HORS PÉRIMÈTRE de B-4.4 : $coupables');
+      expect(appelants,
+          equals(<String>['lib/services/branchement_verdict_course.dart']),
+          reason: 'un seul point d\'entrée, la couture B-4.5 : $appelants');
+
+      // CONTRE-GARDE : les écrans et le provider n'appellent JAMAIS
+      // l'enregistreur. C'est ce qui interdit une écriture de verdict
+      // dispersée, et donc une écriture qui contournerait la politique B-4.3.
+      for (final interdit in <String>[
+        'lib/screens/mes_paris_screen.dart',
+        'lib/screens/paris_detail_screen.dart',
+        'lib/providers/pmu_provider.dart',
+        'lib/services/alert_service.dart',
+      ]) {
+        expect(
+            _sansCommentaires(File(interdit).readAsStringSync())
+                .contains('enregistrerVerdictGainSuivi'),
+            isFalse,
+            reason: '$interdit ne doit pas appeler l\'enregistreur');
+      }
     });
   });
 

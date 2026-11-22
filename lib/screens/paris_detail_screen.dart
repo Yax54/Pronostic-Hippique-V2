@@ -20,8 +20,9 @@ import '../services/zone_turf_service.dart';
 import '../services/pmu_api_service.dart';
 import '../services/gain_calculator.dart';
 import '../utils/format_euros.dart';
-import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../services/referentiel_paris_pmu.dart'; // ★ ÉTAPE 3 — codes API centraux
+import '../services/branchement_verdict_course.dart'; // ★ B-4.5 — verdict officiel
+import '../services/affichage_gain_structure.dart'; // ★ B-4.5 — affichage structuré
 import '../services/ia_pronostic_engine.dart';
 import '../services/bookmaker_service.dart';
 import '../widgets/bet_bottom_sheet.dart';
@@ -634,77 +635,70 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
     }
   }
 
-  /// Met à jour le vrai gain PMU dans le profil utilisateur
-  /// UNIQUEMENT si le pari est réellement gagnant — jamais pour un pari perdu ou en attente
+  /// ★ LOT B-4.5 — Applique le VERDICT OFFICIEL, sans sélection de montant.
+  ///
+  /// Le `reduce(MAX)` qui vivait ici — identique à celui de `mes_paris_screen`
+  /// — est SUPPRIMÉ :
+  ///
+  ///     final meilleur = matching
+  ///         .reduce((a, b) => a.dividende > b.dividende ? a : b);
+  ///
+  /// Il retenait le plus gros dividende publié pour un code approché du type de
+  /// pari, et l'écrivait comme gain du ticket. Aucune de ses trois propriétés
+  /// n'était acceptable : le montant n'était pas celui du pari joué, un seul
+  /// pari par course était résolu (`firstWhere`), et l'écriture déclenchait
+  /// `_syncStatsTypesIA()` depuis un montant faux.
+  ///
+  /// Le verdict vient désormais du moteur B-3 via la couture B-4.5. Aucune
+  /// sélection de montant ne subsiste dans ce fichier.
+  ///
+  /// PÉRIMÈTRE RÉEL : la course doit avoir une arrivée GROUPÉE et des rapports.
+  /// Sans groupes officiels, l'arbitre prononcerait `deadHeatSansGroupes`,
+  /// indéterminé DÉFINITIF pour B-4.3 : on refuse donc de l'écrire.
   void _majGainReelDansProfil(List<RapportPmu> rapports) {
     if (!mounted) return;
-    // ★ CRITIQUE : enregistrer SEULEMENT si isGagne == true (pas null, pas false)
-    // isGagne == null = résultat inconnu → on n'enregistre pas encore
-    // isGagne == false = perdu → on n'enregistre pas de gain
-    if (widget.tracked.isGagne != true) return;
-    // ★ LOT A-0 (protection P5 — DÉFENSIVE) : Gagnant+Placé = 2 composantes.
-    //   Même raison que P4 (`mes_paris_screen.dart`) : le `reduce(MAX)` l.676
-    //   ne peut pas attribuer le bon dividende à la bonne composante.
-    //   Garde INERTE aujourd'hui (défaut R1 : `TrackedCourse.isGagne` n'est
-    //   jamais écrit), posée pour sécuriser la future correction de R1.
-    //   Ne bloque QUE l'attribution financière : les rapports restent
-    //   affichés (`_rapportsPmu` renseigné l.622-625 avant cet appel).
-    if (estTypeGagnantPlace(widget.tracked.typePari)) return; // A-0
+
+    final tc = widget.tracked;
+    final groupes = tc.arriveeGroupes;
+    if (groupes == null || groupes.isEmpty) return;
+    if (rapports.isEmpty) return;
+
+    final resultat = construireResultatOfficiel(
+      arriveeGroupes: groupes,
+      arriveeDefinitive: tc.arriveeDefinitive,
+      rapports: rapports,
+    );
+
     try {
       final provider = context.read<PmuProvider>();
-      final tc = widget.tracked;
-      final pred = provider.getPredictionForCourse(tc.numReunion, tc.numCourse);
-      if (pred == null || pred.dividendeRecupere) return;
 
-      final typePariLower = tc.typePari.toLowerCase();
-      List<String> codesPmu = [];
-      if (typePariLower.contains('gagnant+placé') || typePariLower.contains('gagnant + placé') || typePariLower.contains('gagnant+place')) {
-        codesPmu = ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
-      } else if (typePariLower.contains('couplé gagnant')) {
-        // ★ ÉTAPE 3 — équivalence démontrée, code identique au référentiel.
-        codesPmu = _codeUnique(TypePariPmu.coupleGagnant, ['E_COUPLE_GAGNANT']);
-      } else if (typePariLower.contains('couplé placé')) {
-        codesPmu = _codeUnique(TypePariPmu.couplePlace, ['E_COUPLE_PLACE']);
-      } else if (typePariLower.contains('quinté')) {
-        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUINTE_PLUS.
-        //    Remplacer changerait le montant retenu par reduce(MAX) au-dessus.
-        codesPmu = ['E_MULTI', 'E_MINI_MULTI'];
-      } else if (typePariLower.contains('quarté')) {
-        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_QUARTE_PLUS.
-        codesPmu = ['E_SUPER_QUATRE'];
-      } else if (typePariLower.contains('tiercé')) {
-        // ⚠️ ÉTAPE 3 — NON REMPLAÇABLE : code officiel E_TIERCE, E_TRIO = Trio.
-        codesPmu = ['E_TRIO'];
-      } else if (typePariLower.contains('simple gagnant')) {
-        codesPmu = _codeUnique(TypePariPmu.simpleGagnant, ['E_SIMPLE_GAGNANT']);
-      } else if (typePariLower.contains('simple placé')) {
-        codesPmu = _codeUnique(TypePariPmu.simplePlace, ['E_SIMPLE_PLACE']);
-      } else if (typePariLower.contains('gagnant')) {
-        codesPmu = ['E_SIMPLE_GAGNANT'];
-      } else if (typePariLower.contains('placé')) {
-        codesPmu = ['E_SIMPLE_PLACE'];
+      // ── 1. TOUS les paris de profil de CETTE course ────────────────────────
+      final predictions =
+          provider.getAllPredictionsForCourse(tc.numReunion, tc.numCourse);
+      for (final pred in predictions) {
+        if (pred.etatGain != null) continue;
+        final resolution =
+            resoudrePrediction(prediction: pred, resultat: resultat);
+        if (resolution.enregistrement != null &&
+            resolution.enregistrement!.estEnregistre) {
+          provider.appliquerVerdictGainPrediction(
+              resolution.enregistrement!.ticket);
+        }
       }
-      if (codesPmu.isEmpty) return;
 
-      final matching = rapports.where((r) => codesPmu.contains(r.typePari)).toList();
-      if (matching.isEmpty) return;
-      final meilleur = matching.reduce((a, b) => a.dividende > b.dividende ? a : b);
-      // 1. Mettre à jour UserPrediction dans PmuProvider (profil / historique)
-      // isCorrect calculé depuis dividendePmuReel > 0 (jamais hardcodé à true)
-      provider.enregistrerDividendePmu(
-        pred.id,
-        dividendePmuReel: meilleur.dividende,
-        combinaisonPmu: meilleur.combinaison,
-      );
-      // 2. Mettre à jour TrackedCourse dans AlertService (mes paris / sauvegarde)
-      final storageKey = tc.storageKey ?? tc.key;
-      widget.alertSvc.enregistrerDividendePmuTracked(
-        storageKey,
-        dividende: meilleur.dividende,
-        combinaison: meilleur.combinaison,
-      );
+      // ── 2. Le ticket SUIVI affiché par cet écran ───────────────────────────
+      if (tc.etatGain == null) {
+        final resolution = resoudreSuivi(ticket: tc, resultat: resultat);
+        if (resolution.enregistrement != null &&
+            resolution.enregistrement!.estEnregistre) {
+          widget.alertSvc.appliquerVerdictGainSuivi(
+            tc.storageKey ?? tc.key,
+            resolution.enregistrement!.ticket,
+          );
+        }
+      }
     } catch (e) {
-      if (kDebugMode) debugPrint('Erreur maj gain réel: $e');
+      if (kDebugMode) debugPrint('Erreur verdict officiel: $e');
     }
   }
 
@@ -861,6 +855,13 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
           const SizedBox(height: 14),
           const Divider(color: Colors.white10, height: 1),
           const SizedBox(height: 14),
+          // ★ LOT B-4.5 — VERDICT OFFICIEL en tête, quand il existe.
+          //   Il est lu EXCLUSIVEMENT depuis `etatGain` / `rapportsAttribues` :
+          //   aucun montant n'est recalculé, aucune multiplication n'est refaite.
+          if (tc.etatGain != null) ...[
+            _buildVerdictOfficiel(tc),
+            const SizedBox(height: 12),
+          ],
           if (_chargementRapports)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
@@ -1001,6 +1002,73 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
     // Simple Gagnant, Simple Placé, Gagnant+Placé
     return {'icon': '🏇', 'bg': const Color(0xFF1A1500), 'border': const Color(0xFFFFB74D),
             'labelColor': const Color(0xFFFFCC80)};
+  }
+
+  /// ★ LOT B-4.5 — Bandeau du VERDICT OFFICIEL.
+  ///
+  /// Lit `affichageGainSuivi` et n'affiche QUE ce que le verdict autorise.
+  /// Aucun montant n'est calculé ici : `montant` vient de la somme des
+  /// `montantRetour` déjà persistés par B-4.1/B-4.3/B-4.4.
+  /// Les quatre états sont distingués, et un `rembourse` n'est jamais présenté
+  /// comme un gain — c'est la règle d'arbitrage du lot.
+  Widget _buildVerdictOfficiel(TrackedCourse tc) {
+    final vue = affichageGainSuivi(tc);
+    late final Color accent;
+    late final IconData icone;
+    switch (vue.nature) {
+      case NatureAffichageGain.attribue:
+        accent = const Color(0xFF69F0AE);
+        icone = Icons.verified_outlined;
+        break;
+      case NatureAffichageGain.perdu:
+        accent = const Color(0xFFEF9A9A);
+        icone = Icons.cancel_outlined;
+        break;
+      case NatureAffichageGain.rembourse:
+        accent = const Color(0xFF81D4FA);
+        icone = Icons.undo_outlined;
+        break;
+      case NatureAffichageGain.indetermine:
+        accent = const Color(0xFFFFB300);
+        icone = Icons.help_outline;
+        break;
+      case NatureAffichageGain.historique:
+        accent = Colors.white54;
+        icone = Icons.history;
+        break;
+    }
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1422),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.5), width: 1.5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icone, color: accent, size: 16),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              vue.libelle,
+              style: TextStyle(
+                color: accent,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ]),
+        if (vue.detail != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            vue.detail!,
+            style: const TextStyle(
+                color: Colors.white54, fontSize: 11, height: 1.4),
+          ),
+        ],
+      ]),
+    );
   }
 
   /// Affiche les vrais dividendes PMU récupérés après la course — tous types

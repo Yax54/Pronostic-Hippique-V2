@@ -874,6 +874,36 @@ class AlertService extends ChangeNotifier {
     await _save();
   }
 
+  /// ★ LOT B-4.5 — Persiste un ticket DÉJÀ RÉSOLU par l'enregistreur B-4.4.
+  ///
+  /// POURQUOI CETTE MÉTHODE EXISTE : `ajouterSuivi` fabrique TOUJOURS une
+  /// nouvelle `storageKey` (`${baseKey}_${millisecondes}`), donc elle ne peut
+  /// pas mettre à jour un ticket existant sans en créer un doublon. Or un
+  /// verdict doit s'écrire sur le ticket EXISTANT.
+  ///
+  /// ⚠️ ELLE N'ÉCRIT AUCUNE DÉCISION : le ticket reçu est celui que
+  ///    l'enregistreur B-4.4 a produit. Cette méthode le range sous sa clé et
+  ///    sauvegarde, rien de plus. Aucun `isGagne`, aucun `dividendePmuReel`,
+  ///    aucun `messageResultat` n'y est calculé ni modifié.
+  ///
+  /// ⚠️ ELLE NE DÉCLENCHE AUCUNE SYNCHRONISATION IA : elle n'appelle ni
+  ///    `PmuProvider.enregistrerDividendePmu`, ni `_syncStatsTypesIA`, ni
+  ///    `IaMemoryService`.
+  ///
+  /// Rend `true` si le ticket existait et a été remplacé, `false` sinon.
+  Future<bool> appliquerVerdictGainSuivi(
+    String courseKey,
+    TrackedCourse ticketResolu,
+  ) async {
+    final existant = _trackedCourses[courseKey];
+    if (existant == null) return false;
+    // La clé de rangement est conservée : aucun doublon n'est créé.
+    _trackedCourses[courseKey] = ticketResolu;
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
   // ── Ajout d'alerte ────────────────────────────────────────────────────────
 
   void _addAlert(AppAlert alert) {
