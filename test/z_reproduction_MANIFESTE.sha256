@@ -1,22 +1,51 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #  MANIFESTE D'INTÉGRITÉ — TESTS DE DIAGNOSTIC Z1 / Z2 / Z3 / Z4
+# ═══════════════════════════════════════════════════════════════════════════
+#
+#  OBJET — CE QUE CE FICHIER CONTRÔLE, ET CE QU'IL NE CONTRÔLE PAS
+#
+#  Ce manifeste vérifie UNIQUEMENT l'identité des quatre fichiers de test
+#  ci-dessous : il permet de savoir si leur CONTENU a changé depuis la
+#  référence figée. C'est un contrôle d'INTÉGRITÉ DE FICHIERS.
+#
+#  ⚠️ Il ne remplace PAS, et ne doit jamais être confondu avec, le résultat
+#     de la suite Flutter. « sha256sum -c » réussit ⇒ les fichiers sont
+#     inchangés. Cela ne dit RIEN du nombre de tests verts ou rouges.
+#     Le nombre de tests se mesure avec « flutter test », pas ici.
 #
 #  Ces quatre fichiers ne sont PAS des tests de régression : ce sont des
-#  REPRODUCTIONS DE DÉFAUTS. Un échec dans ces fichiers est le RÉSULTAT
-#  ATTENDU, et non une régression nouvelle.
+#  REPRODUCTIONS DE DÉFAUTS. Un échec dans ces fichiers signalerait une
+#  régression, et non un résultat attendu.
 #
-#  Statut mesuré le 2026-11-20 (HEAD ef1c16e423777d41e47eb916be05dad9c6a85803) :
-#      z1 → +0 -1   (D4  : dividende PMU du mauvais cheval)
-#      z2 → +2 -2   (N1  : espaces de clés courseKey disjoints ; N1-bis : copyWith)
-#      z3 → +3 -2   (N5/N6 : fenêtres de filtres incohérentes)
-#      z4 → +2 -2   (D2  : suppression de suivi inopérante)
-#      ensemble     → +7 -7
+#  ── RÉFÉRENCE FIGÉE ─────────────────────────────────────────────────────
+#  Commit de référence : b1d4ce630458b9a403a21046fd7b26dccc0c979f
+#  Date                : 2026-11-22
 #
-#  Vérification de l'intégrité à tout moment :
+#  ── ÉTAT MESURÉ, PAR FICHIER, À CETTE RÉFÉRENCE ─────────────────────────
+#  (mesuré par « flutter test <fichier> », un fichier à la fois)
+#      z1 → +5, 0 échec
+#      z2 → +4, 0 échec
+#      z3 → +5, 0 échec   (dont Z3-B, déclaré en « testWidgets »)
+#      z4 → +4, 0 échec
+#      cumul de ces quatre fichiers → 18 tests, 0 échec
+#
+#  ── LIMITE DE COUVERTURE ────────────────────────────────────────────────
+#  Ce manifeste ne couvre pas « z5_widget_d2_suppression_test.dart »
+#  (créé par 6b4e325, antérieur à ce chantier).
+#
+#  ── HISTORIQUE ──────────────────────────────────────────────────────────
+#  La version précédente datait du 2026-11-20 (HEAD ef1c16e) et annonçait
+#  « +7 -7 » : c'était l'état AVANT correction, où chaque fichier contenait
+#  des reproductions de défauts volontairement rouges. Les quatre lots
+#  (015be93, b1d4ce6, 964ba74, 20cc550) ont rendu ces tests conformes ; les
+#  empreintes comme ce commentaire étaient devenus faux et sont remis à jour
+#  ici, sans modifier aucun fichier de test.
+#
+#  ── VÉRIFICATION ────────────────────────────────────────────────────────
 #      cd test && sha256sum -c z_reproduction_MANIFESTE.sha256
 #  Sortie attendue : quatre lignes « OK ».
 # ═══════════════════════════════════════════════════════════════════════════
-d9a7e8926611d55937d4357d684d7ef08f775d46171583efdecef26ad2d9f1e0  z1_reproduction_d4_dividende_test.dart
-b18c294db041423a9e89c2e4a02d3f509687621b0114d75d0b32ddff7b459fc7  z2_reproduction_n1_coursekey_test.dart
-8faffeb039ae21f124a1826255da5d887fd126caccfa2152a61139bf49ca4b4a  z3_reproduction_n5_n6_filtres_test.dart
-ac5ed971a6ebc2a256bd7b07cc3015c1a2067356a4aa1ed3025ac5ead1ace958  z4_reproduction_d2_suppression_test.dart
+571f830ca1a037f64e09c277294b9720ca203267553f6ab15bfed9d1529d1c8f  z1_reproduction_d4_dividende_test.dart
+be878d6bf6129951a1b2ed1991db4f64e628dbe42185fc5ebfa451fd5778ed81  z2_reproduction_n1_coursekey_test.dart
+6b896fee5e7149ffb6efc1c23d2ecde4485c0ed6487e59b1cf4e04f7d49059bb  z3_reproduction_n5_n6_filtres_test.dart
+388990c2d597837a4882547251c90262be1256cc5037d3059500ef20f69cc540  z4_reproduction_d2_suppression_test.dart
