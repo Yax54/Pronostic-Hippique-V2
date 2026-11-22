@@ -119,13 +119,23 @@ void main() {
       //     RapportPublie et EtatTirelire pour filtrer les rapports ;
       //   • moteur_gain_pmu.dart     — le moteur a besoin de VerdictGain,
       //     EtatTirelire et MotifNonDetermination pour rendre son verdict.
-      // Le contrat reste FERMÉ : un cinquième importateur — donc tout écran,
+      //
+      // ★ LOT B-4.1 — EXTENSION DÉLIBÉRÉE, UN SEUL FICHIER DE PLUS.
+      //
+      //   • resolution_gain_ticket_pmu.dart — la couche de passage B-4.1
+      //     construit un EtatCourseOfficiel et un RapportPublie, donc elle
+      //     importe le socle. C'est le SEUL ajout de B-4.1.
+      //
+      // Le contrat reste FERMÉ : un sixième importateur — donc tout écran,
       // tout provider, tout branchement en production — échoue encore ici.
+      // La liste est NOMINATIVE : elle est comparée par égalité, pas par
+      // inclusion.
       final importateursAttendus = <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
         'lib/services/moteur_gain_pmu.dart',
+        'lib/services/resolution_gain_ticket_pmu.dart',
       ];
 
       final racine = Directory('lib');
@@ -159,11 +169,20 @@ void main() {
       // d'écrire ce test : aucune des deux chaînes n'apparaît dans ces
       // fichiers. B-3 produit ses VerdictGain sans jamais appeler
       // RapportAttribue.calculer ni totalDesMontantsRetour.
+      //
+      // ★ LOT B-4.1 — la couche de passage est ajoutée au MÊME périmètre.
+      //
+      // Elle convertit des rapports et transmet le ticket au moteur, mais elle
+      // ne doit produire aucun montant par elle-même : tout montant vient du
+      // VerdictGain du moteur. Vérifié par grep avant d'écrire ce test : ni
+      // `RapportAttribue.calculer` ni `totalDesMontantsRetour` n'apparaissent
+      // dans ce fichier (grep vide, code de sortie 1).
       for (final chemin in <String>[
         'lib/models/pmu_models.dart',
         'lib/services/alert_service.dart',
         'lib/services/arbitre_variante_pmu.dart',
         'lib/services/moteur_gain_pmu.dart',
+        'lib/services/resolution_gain_ticket_pmu.dart',
       ]) {
         final contenu = File(chemin).readAsStringSync();
         for (final calcul in calculsDuSocle) {
