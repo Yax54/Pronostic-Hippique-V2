@@ -50,6 +50,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/providers/pmu_provider.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
 
 // ───────────────────────────────────────────────────────────────────────────
 //  Constantes de mesure — aucune valeur « ronde » inventée : ce sont les
@@ -695,17 +696,186 @@ void main() {
       expect(s.contains('if (isCorrect == null) continue;'), isTrue);
     });
 
-    test('H7/3 — l\'apprentissage IA n\'est pas touché', () {
-      // `_syncStatsTypesIA` doit continuer de transmettre `gainNet` BRUT :
-      // la qualification d'affichage ne doit pas atteindre l'apprentissage.
+    test('H7/3 — l\'apprentissage IA n\'est pas touché', () async {
+      // ═══════════════════════════════════════════════════════════════════════
+      //  H7/3 — RÉÉCRIT LE 2026-11-25 SUR ARBITRAGE EXPLICITE (B1-T12).
+      //
+      //  ── POURQUOI L'ANCIENNE ASSERTION A ÉTÉ RETIRÉE ──────────────────────
+      //  Elle interdisait TEXTUELLEMENT la présence de `gainGagnantPlaceEtabli`
+      //  dans `_syncStatsTypesIA` :
+      //
+      //      expect(bloc.contains('gainGagnantPlaceEtabli'), isFalse, ...)
+      //
+      //  Or ce prédicat ne fait que QUALIFIER une contribution financière. Le
+      //  supprimer du bloc n'était donc pas une garantie d'absence d'atteinte
+      //  à l'apprentissage : c'était une garantie de FORME.
+      //
+      //  La démonstration mesurée de séparation des données a été refaite :
+      //    • `_statsTypes`      (ia_memory_service.dart:159)
+      //    • `_precisionParType`(ia_memory_service.dart:161)
+      //  sont DEUX maps distinctes. Les seuils adaptatifs
+      //  (ia_memory_service.dart:5917-5919) lisent `nbParType`, construit à
+      //  l.5775-5788 depuis `IaPronostic.typePariConseille` et
+      //  `_estBonConseilParType` — jamais depuis `_statsTypes`.
+      //  Seules lectures de `_statsTypes` : le getter `statsParType`
+      //  (2 lecteurs d'AFFICHAGE : ia_performance_screen.dart:2673,
+      //  ia_precision_widget.dart:31) plus clear/load/save.
+      //
+      //  ── CE QUE H7/3 GARANTIT DÉSORMAIS ───────────────────────────────────
+      //   (1) STRUCTURE : le bloc ne transmet QUE typePari / isCorrect /
+      //       gainNet, et n'écrit vers aucun poids, seuil ni mécanisme
+      //       d'apprentissage.
+      //   (2) COMPORTEMENT : après `mettreAJourStatsTypes`, les seuils ET les
+      //       poids sont STRICTEMENT identiques — et les stats par type ont
+      //       réellement été recalculées (sinon le test passerait à vide).
+      // ═══════════════════════════════════════════════════════════════════════
+
+      // ── (1) VÉRIFICATION STRUCTURELLE ─────────────────────────────────────
+      //
+      //  ⚠️ DEUX LECTURES SONT NÉCESSAIRES, et c'est mesuré :
+      //    • `codeSeulFichier` retire les COMMENTAIRES **ET** les CONTENUS DE
+      //      CHAÎNES. Les clés `'typePari'` / `'isCorrect'` / `'gainNet'` y
+      //      sont donc absentes par construction : on ne peut pas les y
+      //      chercher (première exécution : « Expected: true / Actual:
+      //      <false> », ligne 748).
+      //    • Inversement, le source BRUT contient le commentaire de
+      //      justification, qui cite « poids », « seuils », « gradient »,
+      //      « TOP3 » : on ne peut pas y chercher l'absence de ces mots.
+      //  Chaque assertion utilise donc la lecture qui la rend honnête.
+      final brut = File('lib/providers/pmu_provider.dart').readAsStringSync();
       final s = codeSeulFichier('lib/providers/pmu_provider.dart');
       final iSync = s.indexOf('void _syncStatsTypesIA()');
-      expect(iSync, greaterThanOrEqualTo(0));
-      final bloc = s.substring(iSync, iSync + 400);
+      expect(iSync, greaterThanOrEqualTo(0),
+          reason: '_syncStatsTypesIA doit exister');
+
+      // Le bloc est délimité par la méthode SUIVANTE, pas par une taille
+      // arbitraire : une fenêtre fixe pourrait déborder sur le code voisin et
+      // rendre l'assertion fausse dans les deux sens.
+      //
+      // Bloc en CODE SEUL (identifiants, sans commentaires ni chaînes).
+      final iSuivante = s.indexOf('void ', iSync + 1);
+      final bloc = iSuivante > iSync
+          ? s.substring(iSync, iSuivante)
+          : s.substring(iSync);
+
+      // Bloc en SOURCE BRUT (les clés sont des chaînes).
+      final iSyncBrut = brut.indexOf('void _syncStatsTypesIA()');
+      expect(iSyncBrut, greaterThanOrEqualTo(0));
+      final iSuivanteBrut = brut.indexOf('void ', iSyncBrut + 1);
+      final blocBrut = iSuivanteBrut > iSyncBrut
+          ? brut.substring(iSyncBrut, iSuivanteBrut)
+          : brut.substring(iSyncBrut);
+
+      // (1a) Les trois clés transmises, et elles seules — lues sur le BRUT.
+      expect(blocBrut.contains("'typePari'"), isTrue,
+          reason: 'la statistique a besoin du type de pari');
+      expect(blocBrut.contains("'isCorrect'"), isTrue,
+          reason: 'la statistique a besoin du résultat sportif');
+      expect(blocBrut.contains("'gainNet'"), isTrue,
+          reason: 'la statistique a besoin de la contribution financière');
+
+      // (1b) La valeur transmise est bien celle de la formule, conditionnée
+      //      par la qualification d'affichage — lue sur le CODE SEUL.
+      //      Le prédicat est AUTORISÉ ici : il ne fait que choisir entre
+      //      `gainNet` et `0.0`.
       expect(bloc.contains('p.gainNet'), isTrue,
-          reason: 'les stats IA reçoivent la valeur de la formule, inchangée');
-      expect(bloc.contains('gainGagnantPlaceEtabli'), isFalse,
-          reason: 'aucun prédicat d\'affichage dans le bloc d\'apprentissage');
+          reason: 'les stats reçoivent la valeur de gainNet, jamais un montant '
+              'recalculé');
+      expect(bloc.contains('p.gainGagnantPlaceEtabli'), isTrue,
+          reason: 'la contribution financière est conditionnée par la '
+              'qualification G+P (autorisation B1-T12)');
+
+      // (1c) AUCUNE ÉCRITURE vers les mécanismes protégés. C'est le cœur de
+      //      la protection : le bloc ne doit pas toucher aux poids, aux
+      //      seuils, au gradient, ni au TOP3.
+      for (final interdit in <String>[
+        'poids',
+        'seuil',
+        '_seuils',
+        'gradient',
+        'apprendre',
+        'ajusterSeuil',
+        'top3',
+        'TOP3',
+        'learningRate',
+      ]) {
+        expect(bloc.toLowerCase().contains(interdit.toLowerCase()), isFalse,
+            reason: 'le bloc de statistiques ne doit pas référencer '
+                '« $interdit » : ce n\'est pas son rôle');
+      }
+
+      // (1d) Le bloc n'appelle QUE `mettreAJourStatsTypes` : aucune autre
+      //      méthode d'écriture de `IaMemoryService`.
+      expect(bloc.contains('mettreAJourStatsTypes'), isTrue,
+          reason: 'seul point d\'entrée autorisé vers les statistiques');
+      for (final autreEcriture in <String>[
+        'enregistrerResultat',
+        'apprendre',
+        'entrainer',
+        'mettreAJourPoids',
+        'ajusterSeuils',
+      ]) {
+        expect(bloc.contains(autreEcriture), isFalse,
+            reason: 'aucune écriture « $autreEcriture » depuis ce bloc');
+      }
+
+      // ── (2) VÉRIFICATION COMPORTEMENTALE ──────────────────────────────────
+      // On observe l'apprentissage par ses ACCESSEURS PUBLICS, avant/après.
+      final svc = IaMemoryService.instance;
+
+      // Isolation : on réinitialise par le mécanisme déjà présent dans le
+      // projet, sans créer d'infrastructure nouvelle.
+      SharedPreferences.setMockInitialValues({});
+      await svc.recharger();
+
+      final seuilsAvant = Map<String, dynamic>.from(svc.seuilsConfiance.toJson());
+      final poidsAvant = Map<String, dynamic>.from(svc.poids.toJson());
+
+      // Données REPRÉSENTATIVES : un G+P neutralisé (gainNet 0.0, tel que le
+      // transmet désormais `_syncStatsTypesIA`) et un Simple Gagnant réel.
+      await svc.mettreAJourStatsTypes([
+        {'typePari': 'Gagnant+Placé', 'isCorrect': true, 'gainNet': 0.0},
+        {'typePari': 'Simple Gagnant', 'isCorrect': true, 'gainNet': 20.0},
+        {'typePari': 'Simple Gagnant', 'isCorrect': false, 'gainNet': -10.0},
+      ]);
+
+      // (2a) Les seuils n'ont pas bougé : toJson() est comparé clé par clé.
+      final seuilsApres = svc.seuilsConfiance.toJson();
+      expect(seuilsApres, equals(seuilsAvant),
+          reason: 'aucun seuil adaptatif ne doit être ajusté par les '
+              'statistiques par type de pari');
+
+      // (2b) Les poids n'ont pas bougé, y compris les sous-structures
+      //      (poidsIndices, dernierGradient, poidsParDiscipline).
+      final poidsApres = svc.poids.toJson();
+      expect(poidsApres, equals(poidsAvant),
+          reason: 'aucun poids ne doit être modifié par les statistiques par '
+              'type de pari (gradient descent intact)');
+
+      // (2c) GARDE-FOU ANTI-TEST-À-VIDE : le comportement attendu a bien été
+      //      exercé. Sans cette assertion, un `mettreAJourStatsTypes` qui ne
+      //      ferait rien passerait le test pour de mauvaises raisons.
+      final stats = svc.statsParType;
+      final sg = stats.firstWhere((e) => e.typePari == 'Simple Gagnant',
+          orElse: () => throw StateError(
+              'les statistiques n\'ont pas été mises à jour : le test ne '
+              'prouverait rien'));
+      expect(sg.nbJoues, 2, reason: 'deux paris Simple Gagnant transmis');
+      expect(sg.nbGagnes, 1);
+      expect(sg.nbPerdus, 1);
+      expect(sg.gainNet, 10.0,
+          reason: '20.0 + (−10.0) = 10.0 : la contribution financière a bien '
+              'été accumulée');
+
+      final gp = stats.where((e) => e.typePari == 'Gagnant+Placé').toList();
+      expect(gp.length, 1,
+          reason: 'la ligne G+P existe (résultat sportif connu)');
+      expect(gp.first.gainNet, 0.0,
+          reason: 'le gain G+P non établi est transmis à 0.0 : il n\'est pas '
+              'comptabilisé comme un gain réel');
+      expect(gp.first.nbGagnes, 1,
+          reason: 'le résultat sportif reste compté : seule la contribution '
+              'financière est neutralisée');
     });
 
     test('H7/4 — C4 n\'est pas traité', () {

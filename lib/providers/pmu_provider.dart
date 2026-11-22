@@ -594,10 +594,37 @@ class PmuProvider extends ChangeNotifier {
   }
 
   void _syncStatsTypesIA() {
+    // ★ B1-T12 / étape 1 — LA CONTRIBUTION FINANCIÈRE TRANSMISE EST GARDÉE.
+    //
+    //   DÉFAUT MESURÉ (test/b1_t12_sync_stats_gp_test.dart, T1) : un ticket
+    //   `Gagnant+Placé` déclaré gagnant par `validatePrediction` reçoit
+    //   `isCorrect = true` MAIS `gainRealise = null` (la garde G+P de
+    //   `validatePrediction` ne produit aucun montant). L'état transmis ici
+    //   était alors `p.gainNet`, soit (18,00 × 10) − 10 = **170,00 €** :
+    //   un produit cote × mise d'UNE SEULE composante, appliqué à un ticket
+    //   qui en engage DEUX. Ces 170,00 € entraient dans `_statsTypes`, y
+    //   étaient PERSISTÉS (`ia_stats_types_v1`) et affichés comme un gain.
+    //
+    //   CE QUI EST CORRIGÉ, ET RIEN DE PLUS : la VALEUR TRANSMISE. Le prédicat
+    //   `gainGagnantPlaceEtabli` — déjà utilisé par les 12 autres sites
+    //   d'affichage et par `totalGainsNet` / `getGainsNetByDateRange` ci-dessus
+    //   — vaut :
+    //     • `false` sur un G+P gagné sans gain officiel  → contribution 0,00 €
+    //     • `true`  sur un G+P dont le gain est officiel → montant CONSERVÉ
+    //     • `true`  sur un G+P perdant                   → −mise CONSERVÉE
+    //     • `true`  hors Gagnant+Placé                   → STRICTEMENT inchangé
+    //
+    //   NE SONT PAS MODIFIÉS : `UserPrediction.gainNet`, `retourTotal`,
+    //   `miseTotaleEngagee`, les formules, les modèles, la persistance, les
+    //   poids, seuils, gradient descent, TOP3 learning, le ROI et l'ELO.
+    //   Aucune migration, aucun recalcul forcé : les tickets historiques ne
+    //   sont pas réécrits, et `mettreAJourStatsTypes` recalcule depuis la
+    //   liste reçue à chaque appel — la correction prend donc effet au
+    //   prochain recalcul NORMAL, sans intervention.
     final allPreds = _predictions.map((p) => {
       'typePari':  p.typePari,
       'isCorrect': p.isCorrect,
-      'gainNet':   p.gainNet,
+      'gainNet':   p.gainGagnantPlaceEtabli ? p.gainNet : 0.0,
     }).toList();
     // Appel async non bloquant — on ignore le Future
     IaMemoryService.instance.mettreAJourStatsTypes(allPreds);
