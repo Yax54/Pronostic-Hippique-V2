@@ -425,13 +425,35 @@ DecisionEcritureVerdict deciderEcritureVerdict({
       );
     }
     // existant == nonDetermine et verdict différent.
-    return DecisionEcritureVerdict.refus(
-      StatutEnregistrementVerdict.refuseTransitionNonDeterminee,
-      'Le ticket porte déjà une indétermination '
-      '(${motifExistant?.name ?? "motif non conservé"}). '
-      'La transition automatique vers un verdict définitif n\'est pas '
-      'décidée dans ce lot : le ticket reste inchangé.',
-    );
+    //
+    // ★ CORRECTION « Anomalie 2 » (validée par l'utilisateur).
+    //
+    // AVANT : toute transition était refusée (`refuseTransitionNonDeterminee`).
+    // Un ticket déclaré indéterminé faute de rapports officiels restait donc
+    // indéterminé POUR TOUJOURS, même après publication des rapports — alors
+    // que les données permettaient alors de trancher.
+    //
+    // APRÈS : la transition est AUTORISÉE, sous quatre conditions strictes :
+    //   1. l'existant est bien `nonDetermine` (testé plus haut) : aucun verdict
+    //      définitif n'est jamais réécrit — `_verdictEstDefinitif` a déjà
+    //      renvoyé `refuseVerdictDefinitifExistant` avant d'arriver ici ;
+    //   2. le nouveau verdict est DIFFÉRENT (sinon `dejaIdentique` plus haut) ;
+    //   3. le nouveau verdict est COHÉRENT (branche B ci-dessous le revérifie) ;
+    //   4. le nouveau verdict est exploitable : `perdu`/`rembourse` sans
+    //      composante et total nul, ou `attribue` avec des composantes toutes
+    //      identifiées à un rapport officiel fourni (branche D).
+    //
+    // IDEMPOTENCE : une fois le verdict définitif écrit, l'existant devient
+    // `perdu`/`rembourse`/`attribue`, donc `_verdictEstDefinitif` renvoie vrai
+    // au passage suivant ⇒ `dejaIdentique` ou `refuseVerdictDefinitifExistant`.
+    // Aucun double gain n'est possible : l'écriture REMPLACE le verdict, elle
+    // ne s'y ajoute pas.
+    //
+    // ⚠️ CETTE TRANSITION N'EST DÉCLENCHÉE QUE PAR UNE ACTUALISATION OFFICIELLE
+    //    des résultats. Une simple ouverture d'écran ne rappelle pas cette
+    //    fonction avec de nouveaux rapports : elle réutilise les données déjà
+    //    chargées, donc `dejaIdentique`. Aucun recalcul arbitraire.
+    // (on poursuit vers la branche B)
   }
 
   // ── B. Cohérence interne du verdict ──────────────────────────────────────
@@ -444,19 +466,29 @@ DecisionEcritureVerdict deciderEcritureVerdict({
   }
 
   // ── C. Verdicts SANS composante : aucune attribution à écrire ────────────
+  //
+  // ★ CORRECTION « Anomalie 1 » (validée par l'utilisateur).
+  //
+  // AVANT : dès que `rapportsOfficiels` était non vide, un verdict sans
+  // composante était REFUSÉ (`refuseVerdictSansRapportAvecRapports`).
+  //
+  // POURQUOI C'ÉTAIT FAUX — mesuré sur les captures réelles :
+  //   la présence de rapports officiels pour une COURSE n'implique pas que le
+  //   TICKET doive porter une composante. Un pari dont la combinaison n'est pas
+  //   gagnante est `perdu` alors que la course publie parfaitement ses rapports.
+  //   La garde transformait donc toute perte démontrée en « en attente », et un
+  //   même ticket était persisté `nonDetermine` quand les rapports manquaient
+  //   puis restait bloqué dès qu'ils arrivaient : la persistance dépendait de la
+  //   disponibilité des données, ce qui n'a aucun sens métier.
+  //
+  // CE QUI EST CONSERVÉ — le refus ne disparaît pas, il est CIBLÉ :
+  //   `_verifierCoherenceVerdict` (branche B, inchangée) garantit déjà que
+  //   `perdu`/`rembourse` n'ont AUCUNE composante et un total nul, et qu'un
+  //   `nonDetermine` porte un motif. Un verdict sans composante ne peut donc
+  //   être qu'un de ces trois états : aucun montant n'est inventé ici.
+  //   `rapportsAttribues` reste `null` (JAMAIS `[]`) — voir la documentation de
+  //   `_lireRapportsAttribues`.
   if (verdict.composantes.isEmpty) {
-    if (rapportsOfficiels.isNotEmpty) {
-      return DecisionEcritureVerdict.refus(
-        StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports,
-        'Le verdict « ${verdict.etat.name} » ne comporte AUCUNE '
-        'composante, mais ${rapportsOfficiels.length} rapport(s) officiel(s) '
-        'ont été fournis pour l\'attribution. Cette combinaison est '
-        'contradictoire : aucun rapport n\'est écrit, le ticket reste '
-        'inchangé.',
-      );
-    }
-    // Écriture légitime : état + motif + tirelire. `rapportsAttribues` reste
-    // `null` (JAMAIS `[]`) — voir la documentation de `_lireRapportsAttribues`.
     return DecisionEcritureVerdict.ecrire(EcritureVerdict(
       etat: verdict.etat,
       motif: verdict.motif,

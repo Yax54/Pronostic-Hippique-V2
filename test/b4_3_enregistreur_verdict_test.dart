@@ -320,19 +320,24 @@ void main() {
       expect(r.ticket.etatTirelire, EtatTirelire.nonDeterminee);
     });
 
-    test('B4.3/2.5 un verdict sans composante avec rapports fournis est REFUSÉ',
+    test('B4.3/2.5 un verdict sans composante est ENREGISTRÉ sans montant',
         () {
+      // Corrigé en B-4.7 : refuser tout verdict sans composante dès que des
+      // rapports existent condamnait un ticket réellement perdant à rester
+      // éternellement « en attente ». Un verdict « perdu » ne porte AUCUN
+      // montant : l'enregistrer ne peut donc pas fabriquer de gain fictif.
       final avant = ticketHistorique();
       final r = enregistrerVerdictGain(
         ticket: avant,
         verdict: VerdictGain.perdu(explication: 'perdu'),
         rapportsOfficiels: <RapportPublie>[rapportOfficielTierceOrdre()],
       );
-      expect(r.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(r.estRefuse, isTrue);
-      expect(identical(r.ticket, avant), isTrue, reason: 'original rendu tel quel');
-      expect(r.ticket.etatGain, isNull, reason: 'aucune mutation');
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.estRefuse, isFalse);
+      expect(r.ticket.etatGain, EtatGain.perdu);
+      expect(r.ticket.rapportsAttribues, isNull, reason: 'aucun montant');
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
     });
 
     test('B4.3/2.6 un verdict « attribue » sans composante est REFUSÉ', () {
@@ -861,7 +866,10 @@ void main() {
       expect(identical(second.ticket, premier.ticket), isTrue);
     });
 
-    test('B4.3/5.3 nonDetermine : transition automatique REFUSÉE', () {
+    test('B4.3/5.3 nonDetermine : transition vers un verdict définitif AUTORISÉE',
+        () {
+      // Corrigé en B-4.7 : un ticket « nonDetermine » doit pouvoir devenir
+      // définitif dès qu'une récupération officielle démontre le verdict.
       final premier = enregistrerVerdictGain(
         ticket: ticketHistorique(),
         verdict: VerdictGain.nonDetermine(
@@ -876,11 +884,9 @@ void main() {
         verdict: verdictTierceOrdreAttribue(),
         rapportsOfficiels: <RapportPublie>[rapportOfficielTierceOrdre()],
       );
-      expect(second.statut,
-          StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(second.ticket.etatGain, EtatGain.nonDetermine);
-      expect(second.ticket.motifNonDetermination,
-          MotifNonDetermination.arriveeNonDefinitive);
+      expect(second.statut, StatutEnregistrementVerdict.enregistre);
+      expect(second.ticket.etatGain, EtatGain.attribue);
+      expect(second.ticket.rapportsAttribues, isNotNull);
     });
 
     test('B4.3/5.4 nonDetermine RÉPÉTÉ avec le même motif : idempotent', () {

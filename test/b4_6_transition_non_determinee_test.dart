@@ -345,7 +345,8 @@ void main() {
           reason: 'null, JAMAIS [] — verrou documenté de B-4.3');
     });
 
-    test('B4.6/2.2 rapports NON VIDE ⇒ le MÊME nonDetermine est REFUSÉ', () {
+    test('B4.6/2.2 ★ B-4.7 : rapports NON VIDE ⇒ le MÊME nonDetermine est '
+        'désormais ENREGISTRÉ (incohérence corrigée)', () {
       final avant = _suivi();
       final r = enregistrerVerdictGainSuivi(
         ticket: avant,
@@ -361,16 +362,30 @@ void main() {
           'etatPersiste=${r.ticket.etatGain?.name} '
           'identique=${identical(r.ticket, avant)}');
 
-      expect(r.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(r.ticket.etatGain, isNull, reason: 'aucune écriture');
-      expect(identical(r.ticket, avant), isTrue,
-          reason: 'l\'original est rendu tel quel');
+      // ★ B-4.7 (Anomalie 1) : ce test épinglait auparavant le DÉFAUT.
+      //   La persistance d'un MÊME `nonDetermine` dépendait de la seule
+      //   présence de rapports officiels : refusé quand la liste était pleine,
+      //   écrit quand elle était vide. Un ticket indéterminé ne pouvait donc
+      //   jamais être persisté sur une course dont les rapports existaient.
+      //   Le refus est maintenant CIBLÉ sur l'incohérence réelle (branche B) et
+      //   sur les composantes non identifiables (branche D), pas sur le fait
+      //   qu'il existe des rapports pour la course.
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.nonDetermine);
+      expect(r.ticket.motifNonDetermination,
+          MotifNonDetermination.blocJusteAbsent);
+      expect(r.ticket.rapportsAttribues, isNull,
+          reason: 'null, JAMAIS [] — verrou documenté de B-4.3');
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
     });
 
-    test('B4.6/2.3 la frontière n\'est pas propre à blocJusteAbsent', () {
-      // Même mesure avec `montantAbsent` : la frontière suit le MOTIF ? Non.
-      // Elle suit la VACUITÉ de la liste. On le vérifie sur un second motif.
+    test('B4.6/2.3 la frontière ne dépend PLUS de la VACUITÉ de la liste '
+        '(corrigé en B-4.7)', () {
+      // Même mesure avec `montantAbsent`. AVANT B-4.7 : `vide` était enregistré
+      // et `plein` refusé — la frontière suivait la vacuité de la liste, ce qui
+      // n'a aucune justification métier. Désormais les deux sont enregistrés :
+      // l'indétermination motivée est persistée dans les deux cas.
       final vide = enregistrerVerdictGainSuivi(
         ticket: _suivi(),
         verdict: VerdictGain.nonDetermine(
@@ -392,19 +407,26 @@ void main() {
           'plein=${plein.statut.name}');
 
       expect(vide.statut, StatutEnregistrementVerdict.enregistre);
-      expect(plein.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
+      expect(plein.statut, StatutEnregistrementVerdict.enregistre,
+          reason: 'l\'indétermination motivée est persistée dans les deux cas');
+      expect(plein.ticket.etatGain, EtatGain.nonDetermine);
+      expect(plein.ticket.rapportsAttribues, isNull);
     });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  GROUPE 3 — (b) LE BLOCAGE DE LA TRANSITION, MESURÉ
+  //  GROUPE 3 — (b) LA TRANSITION, MESURÉE APRÈS CORRECTION B-4.7
   //
-  //  C'est le cœur du livrable D1. Trois cibles sont mesurées :
-  //  transition vers `attribue`, vers `perdu`, vers `rembourse`.
+  //  ★ B-4.7 : la transition `nonDetermine → définitif` est désormais
+  //    AUTORISÉE (arbitrage utilisateur) dès lors que les données démontrent le
+  //    verdict. Ces tests ont été inversés en conséquence : ils épinglaient
+  //    auparavant le blocage. Les garde-fous qui comptent restent vérifiés :
+  //    aucun verdict définitif n'est écrasé (A2/3), et l'opération est
+  //    idempotente (A2/2).
   // ─────────────────────────────────────────────────────────────────────────
   group('B4.6/3 — transition depuis un ticket déjà nonDeterminé', () {
-    test('B4.6/3.1 nonDetermine → attribue PROUVÉ : refus mesuré', () {
+    test('B4.6/3.1 nonDetermine → attribue PROUVÉ : la transition est '
+        'autorisée et le montant est écrit UNE fois', () {
       final avant = _suivi(
         etatGain: EtatGain.nonDetermine,
         motif: MotifNonDetermination.blocJusteAbsent,
@@ -420,14 +442,15 @@ void main() {
           'etat=${r.ticket.etatGain?.name} identical=${identical(r.ticket, avant)} '
           'motif=${r.motif?.replaceAll("\n", " ")}');
 
-      expect(r.statut, StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(r.ticket.etatGain, EtatGain.nonDetermine,
-          reason: 'le ticket reste indéterminé : rien n\'est écrit');
-      expect(identical(r.ticket, avant), isTrue);
-      expect(r.ticket.rapportsAttribues, isNull);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.attribue);
+      expect(identical(r.ticket, avant), isFalse,
+          reason: 'un nouveau ticket est rendu : le définitif est écrit');
+      expect(r.ticket.rapportsAttribues, isNotNull);
     });
 
-    test('B4.6/3.2 nonDetermine → perdu : refus mesuré', () {
+    test('B4.6/3.2 nonDetermine → perdu : la transition est autorisée, sans '
+        'aucun montant', () {
       final avant = _suivi(
         etatGain: EtatGain.nonDetermine,
         motif: MotifNonDetermination.blocJusteAbsent,
@@ -440,11 +463,15 @@ void main() {
       // ignore: avoid_print
       print('─── B4.6/3.2 : statut=${r.statut.name}');
 
-      expect(r.statut, StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(r.ticket.etatGain, EtatGain.nonDetermine);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.perdu);
+      expect(r.ticket.rapportsAttribues, isNull);
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
     });
 
-    test('B4.6/3.3 nonDetermine → rembourse : refus mesuré', () {
+    test('B4.6/3.3 nonDetermine → rembourse : la transition est autorisée, '
+        'sans aucun montant', () {
       final avant = _suivi(
         etatGain: EtatGain.nonDetermine,
         motif: MotifNonDetermination.blocJusteAbsent,
@@ -457,15 +484,16 @@ void main() {
       // ignore: avoid_print
       print('─── B4.6/3.3 : statut=${r.statut.name}');
 
-      expect(r.statut, StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(r.ticket.etatGain, EtatGain.nonDetermine);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.rembourse);
+      expect(r.ticket.rapportsAttribues, isNull);
     });
 
-    test('B4.6/3.4 transition nonDetermine → nonDetermine (autre motif) refusée',
-        () {
-      // Contrôle de cohérence : le refus n'est pas réservé aux verdicts
-      // définitifs. Un changement de motif est refusé aussi. C'est ce qui
-      // interdit aujourd'hui à une indétermination de S'AMÉLIORER en une autre.
+    test('B4.6/3.4 transition nonDetermine → nonDetermine (autre motif) '
+        'autorisée : une indétermination peut S\'AMÉLIORER', () {
+      // Une indétermination n'est pas un verdict définitif : la remplacer par
+      // une indétermination MIEUX motivée (ici l'arrivée est connue, seul le
+      // bloc manque) est légitime et n'engage aucun montant.
       final avant = _suivi(
         etatGain: EtatGain.nonDetermine,
         motif: MotifNonDetermination.deadHeatSansGroupes,
@@ -482,9 +510,10 @@ void main() {
       print('─── B4.6/3.4 : statut=${r.statut.name} '
           'motifConserve=${r.ticket.motifNonDetermination?.name}');
 
-      expect(r.statut, StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
       expect(r.ticket.motifNonDetermination,
-          MotifNonDetermination.deadHeatSansGroupes);
+          MotifNonDetermination.blocJusteAbsent);
+      expect(r.ticket.etatGain, EtatGain.nonDetermine);
     });
   });
 
@@ -498,8 +527,7 @@ void main() {
   // ─────────────────────────────────────────────────────────────────────────
   group('B4.6/4 — chaîne réelle `resoudreSuivi` (verdict calculé ≠ persisté)',
       () {
-    test('B4.6/4.1 le verdict est calculé ET remis, mais le refus vient du '
-        'persisteur', () {
+    test('B4.6/4.1 ★ B-4.7 : le verdict est calculé ET désormais PERSISTÉ', () {
       final avant = _suivi(
         etatGain: EtatGain.nonDetermine,
         motif: MotifNonDetermination.blocJusteAbsent,
@@ -525,13 +553,18 @@ void main() {
       expect(resolution.verdict!.etat, EtatGain.attribue);
       expect(resolution.verdict!.total, closeTo(kTotalAttendu, 1e-9));
 
-      // 3. Et pourtant il n'est PAS persisté.
+      // 3. ★ B-4.7 : le verdict définitif est désormais PERSISTÉ. Le refus
+      //    venait du persisteur, pas du calcul — et il bloquait pour toujours
+      //    un ticket dont les données démontraient pourtant le gain.
       expect(resolution.enregistrement, isNotNull);
       expect(resolution.enregistrement!.statut,
-          StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(resolution.enregistrement!.estEnregistre, isFalse);
-      expect(resolution.enregistrement!.ticket.etatGain,
-          EtatGain.nonDetermine);
+          StatutEnregistrementVerdict.enregistre);
+      expect(resolution.enregistrement!.estEnregistre, isTrue);
+      expect(resolution.enregistrement!.ticket.etatGain, EtatGain.attribue);
+      // Aucun double gain : le rapport officiel identifié est persisté UNE
+      // fois, et le total persisté est celui d'un seul règlement.
+      expect(resolution.enregistrement!.ticket.rapportsAttribues, isNotNull);
+      expect(resolution.enregistrement!.ticket.rapportsAttribues!.length, 1);
     });
   });
 
@@ -633,7 +666,8 @@ void main() {
   // ─────────────────────────────────────────────────────────────────────────
   group('B4.6/6 — branche C : verdict à zéro composante face à des rapports',
       () {
-    test('B4.6/6.1 ticket vierge + perdu + rapports publiés ⇒ REFUSÉ', () {
+    test('B4.6/6.1 ★ B-4.7 : ticket vierge + perdu + rapports publiés ⇒ '
+        'la perte EST écrite, sans aucun montant', () {
       final avant = _suivi(); // etatGain == null : première écriture
       final r = enregistrerVerdictGainSuivi(
         ticket: avant,
@@ -645,10 +679,15 @@ void main() {
       print('─── B4.6/6.1 : statut=${r.statut.name} '
           'etatPersiste=${r.ticket.etatGain?.name} identical=${identical(r.ticket, avant)}');
 
-      expect(r.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(r.ticket.etatGain, isNull, reason: 'la perte n\'est pas écrite');
-      expect(identical(r.ticket, avant), isTrue);
+      // ★ B-4.7 (Anomalie 1) : ce test épinglait le DÉFAUT. La présence de
+      //   rapports pour la COURSE n'implique pas qu'un ticket doive porter une
+      //   composante : une perte démontrée est persistable.
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.perdu);
+      expect(identical(r.ticket, avant), isFalse);
+      expect(r.ticket.rapportsAttribues, isNull, reason: 'aucun montant');
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
     });
 
     test('B4.6/6.2 même ticket, mêmes rapports VIDES ⇒ la perte EST écrite', () {
@@ -668,7 +707,8 @@ void main() {
       expect(r.ticket.etatGain, EtatGain.perdu);
     });
 
-    test('B4.6/6.3 ticket vierge + rembourse + rapports publiés ⇒ REFUSÉ', () {
+    test('B4.6/6.3 ★ B-4.7 : ticket vierge + rembourse + rapports publiés ⇒ '
+        'le remboursement EST écrit, sans aucun montant', () {
       final r = enregistrerVerdictGainSuivi(
         ticket: _suivi(),
         verdict: VerdictGain.rembourse(explication: 'bloc remboursé'),
@@ -678,9 +718,11 @@ void main() {
       // ignore: avoid_print
       print('─── B4.6/6.3 : statut=${r.statut.name}');
 
-      expect(r.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(r.ticket.etatGain, isNull);
+      // ★ B-4.7 : un remboursement démontré est persisté. C'est une exigence
+      //   de la consigne (« préserver les remboursements »).
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.rembourse);
+      expect(r.ticket.rapportsAttribues, isNull);
     });
 
     test('B4.6/6.4 ticket vierge + attribue PROUVÉ + rapports publiés ⇒ écrit',
@@ -781,13 +823,11 @@ void main() {
       expect(resolution.verdict!.etat, EtatGain.attribue);
       expect(resolution.verdict!.total, closeTo(kTotalAttendu, 1e-9));
 
-      // …et ce gain PROUVÉ est refusé.
+      // …et ce gain PROUVÉ est désormais ÉCRIT (★ B-4.7, Anomalie 2).
       expect(resolution.enregistrement!.statut,
-          StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(resolution.enregistrement!.estEnregistre, isFalse);
-      expect(resolution.enregistrement!.ticket.etatGain,
-          EtatGain.nonDetermine,
-          reason: 'LE GAIN PROUVÉ RESTE NON ÉCRIT');
+          StatutEnregistrementVerdict.enregistre);
+      expect(resolution.enregistrement!.estEnregistre, isTrue);
+      expect(resolution.enregistrement!.ticket.etatGain, EtatGain.attribue);
     });
 
     test('B4.6/7.3 TEMPS 3 : l\'écran ne rappelle même plus la chaîne '
@@ -879,9 +919,14 @@ void main() {
           'statut=${resolution.enregistrement?.statut.name}');
 
       expect(resolution.verdict!.motif, MotifNonDetermination.blocJusteAbsent);
+      // ★ B-4.7 (Anomalie 1) : l'indétermination motivée est PERSISTÉE, alors
+      //   qu'elle était refusée dès qu'un rapport — même SANS RAPPORT avec le
+      //   pari joué — était lisible. C'était bien une frontière involontaire.
+      //   Aucun montant n'est écrit pour autant.
       expect(resolution.enregistrement!.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(resolution.enregistrement!.ticket.etatGain, isNull);
+          StatutEnregistrementVerdict.enregistre);
+      expect(resolution.enregistrement!.ticket.etatGain, EtatGain.nonDetermine);
+      expect(resolution.enregistrement!.ticket.rapportsAttribues, isNull);
     });
   });
 }

@@ -495,17 +495,19 @@ void main() {
           MotifNonDetermination.tirelireNonDeterminee);
     });
 
-    test('1.5 verdict sans composante + rapports fournis ⇒ REFUS', () {
+    test('1.5 verdict sans composante ⇒ ENREGISTRÉ, sans aucun montant', () {
+      // Corrigé en B-4.7 : voir B4.3/2.5.
       final r = enregistrerVerdictGainSuivi(
         ticket: suiviHistorique(),
         verdict: _perdu(),
         rapportsOfficiels: <RapportPublie>[rapportOfficielTierceOrdre()],
       );
-      expect(r.estRefuse, isTrue);
-      expect(r.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(r.ticketInchange, isTrue);
-      expect(r.ticket.toJson().length, 28);
+      expect(r.estRefuse, isFalse);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.perdu);
+      expect(r.ticket.rapportsAttribues, isNull, reason: 'aucun montant');
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
     });
 
     test('1.6 « attribue » sans composante ⇒ REFUS', () {
@@ -900,7 +902,8 @@ void main() {
       expect(second.ticket.rapportsAttribues!.single.montantRetour, 954.80);
     });
 
-    test('5.3 nonDetermine : transition automatique REFUSÉE', () {
+    test('5.3 nonDetermine : transition vers un verdict définitif AUTORISÉE', () {
+      // Corrigé en B-4.7 : voir B4.3/5.3.
       final premier = enregistrerVerdictGainSuivi(
         ticket: suiviHistorique(),
         verdict: _nonDetermine(
@@ -912,12 +915,9 @@ void main() {
         verdict: verdictTierceOrdreAttribue(),
         rapportsOfficiels: <RapportPublie>[rapportOfficielTierceOrdre()],
       );
-      expect(second.statut,
-          StatutEnregistrementVerdict.refuseTransitionNonDeterminee);
-      expect(second.ticket.etatGain, EtatGain.nonDetermine);
-      expect(second.ticket.motifNonDetermination,
-          MotifNonDetermination.captureIncomplete);
-      expect(second.ticket.rapportsAttribues, isNull);
+      expect(second.statut, StatutEnregistrementVerdict.enregistre);
+      expect(second.ticket.etatGain, EtatGain.attribue);
+      expect(second.ticket.rapportsAttribues, isNotNull);
     });
 
     test('5.4 nonDetermine RÉPÉTÉ avec le même motif : idempotent', () {
@@ -953,13 +953,22 @@ void main() {
       expect(r.ticket.typePari, 'Tiercé Ordre');
     });
 
-    test('5.6 un ticket historique non concerné garde ses 28 clés', () {
+    test('5.6 ticket historique : 28 clés avant écriture, forme B-1 après', () {
       final t = suiviHistorique();
       expect(t.toJson().length, 28);
-      // Un refus ne réécrit pas la forme.
+      // Depuis B-4.7 le verdict « perdu » est ENREGISTRÉ (plus refusé) : le
+      // ticket prend donc la forme B-1. Le point vérifié ici n'est plus le
+      // nombre de clés mais l'ABSENCE de tout montant.
       final r = enregistrerVerdictGainSuivi(ticket: t, verdict: _perdu(),
           rapportsOfficiels: <RapportPublie>[rapportOfficielTierceOrdre()]);
-      expect(r.ticket.toJson().length, 28);
+      expect(r.statut, StatutEnregistrementVerdict.enregistre);
+      expect(r.ticket.etatGain, EtatGain.perdu);
+      expect(r.ticket.rapportsAttribues, isNull);
+      expect(r.ticket.dividendeGagnant, isNull);
+      expect(r.ticket.dividendePlace, isNull);
+      // MESURÉ le 22/11/2026 : 35 clés après écriture (28 + les 7 champs B-1).
+      expect(r.ticket.toJson().length, 35,
+          reason: 'la forme B-1 ajoute exactement 7 clés aux 28 historiques');
     });
   });
 

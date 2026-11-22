@@ -980,6 +980,70 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   TrackedCourse get course => widget.course;
   AlertService get alertSvc => widget.alertSvc;
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ★ B-4.7 — LE VERDICT OFFICIEL PILOTE LE BANDEAU DE RÉSULTAT
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  //  ── DÉFAUT MESURÉ AVANT CE LOT ──────────────────────────────────────────
+  //  Le bandeau de résultat était conditionné par `_resultMessage != null`.
+  //  Or `enregistrerVerdictGainSuivi` ne touche JAMAIS `messageResultat`
+  //  (ni `isGagne`) : un ticket `nonDetermine` persisté en production a donc
+  //  ces deux champs à `null` et n'affichait STRICTEMENT RIEN. Le verdict
+  //  indéterminé — pourtant enregistré et prouvé — était invisible.
+  //
+  //  ── CE QUI EST FAIT ICI ─────────────────────────────────────────────────
+  //  Le bandeau est élargi à tout ticket porteur d'un `etatGain`. La source du
+  //  texte est `affichageGainSuivi` (B-4.5), qui lit EXCLUSIVEMENT le verdict
+  //  structuré quand il existe : aucun montant n'est recalculé, aucune règle
+  //  financière n'est touchée, et les champs historiques ne peuvent pas
+  //  contredire le verdict.
+  //
+  //  ── ANTI-DOUBLON ────────────────────────────────────────────────────────
+  //  Si `_resultMessage` est absent, le libellé du verdict devient le TITRE et
+  //  le bloc de gain est supprimé : le montant (« Gain gagné : 75 € brut »)
+  //  reste visible DANS le titre, une seule fois. Quand `_resultMessage` existe
+  //  (tickets historiques), le rendu est strictement inchangé (exigence A6).
+
+  /// Verdict officiel structuré, ou `null` pour un ticket historique.
+  AffichageGain? get _verdictOfficiel =>
+      course.etatGain != null ? affichageGainSuivi(course) : null;
+
+  /// Titre du bandeau : message historique s'il existe, sinon le verdict.
+  String? get _titreResultat => _resultMessage ?? _verdictOfficiel?.libelle;
+
+  /// `true` quand le titre porte DÉJÀ le libellé du verdict ⇒ le bloc de gain
+  /// ne doit pas le répéter.
+  bool get _verdictPorteLeTitre =>
+      _resultMessage == null && _verdictOfficiel != null;
+
+  /// `true` quand le verdict est un `nonDetermine` : teinte neutre/ambre, et
+  /// surtout JAMAIS la teinte « perdu » (qui affirmerait une perte non établie).
+  bool get _resultatIndetermine =>
+      _verdictPorteLeTitre &&
+      _verdictOfficiel!.nature == NatureAffichageGain.indetermine;
+
+  Color get _couleurFondResultat => _resultatIndetermine
+      ? const Color(0xFF3B2E0D)
+      : (_isGagnant == true
+          ? const Color(0xFF0D3B1F)
+          : const Color(0xFF3B0D0D));
+
+  Color get _couleurAccentResultat => _resultatIndetermine
+      ? const Color(0xFFFFB300)
+      : (_isGagnant == true
+          ? const Color(0xFF4CAF7D)
+          : const Color(0xFFEF5350));
+
+  Color get _couleurTexteResultat => _resultatIndetermine
+      ? const Color(0xFFFFD180)
+      : (_isGagnant == true
+          ? const Color(0xFF69F0AE)
+          : const Color(0xFFEF9A9A));
+
+  IconData get _iconeResultat => _resultatIndetermine
+      ? Icons.help_outline
+      : (_isGagnant == true ? Icons.emoji_events : Icons.cancel_outlined);
+
   @override
   void initState() {
     super.initState();
@@ -2002,50 +2066,63 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                   Text('Vérification du résultat...', style: TextStyle(color: Colors.white54, fontSize: 13)),
                 ]),
               ),
-            ] else if (_resultMessage != null) ...[ 
+            ] else if (_titreResultat != null) ...[ 
               const SizedBox(height: 10),
               // Bandeau résultat principal
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: _isGagnant == true
-                      ? const Color(0xFF0D3B1F)
-                      : const Color(0xFF3B0D0D),
+                  color: _couleurFondResultat,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: _isGagnant == true
-                        ? const Color(0xFF4CAF7D)
-                        : const Color(0xFFEF5350),
+                    color: _couleurAccentResultat,
                     width: 1.5,
                   ),
                   boxShadow: [BoxShadow(
-                    color: (_isGagnant == true
-                        ? const Color(0xFF4CAF7D)
-                        : const Color(0xFFEF5350)).withValues(alpha: 0.2),
+                    color: _couleurAccentResultat.withValues(alpha: 0.2),
                     blurRadius: 10,
                   )],
                 ),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Icon(
-                      _isGagnant == true ? Icons.emoji_events : Icons.cancel_outlined,
-                      color: _isGagnant == true ? const Color(0xFFFFD700) : const Color(0xFFEF5350),
+                      _iconeResultat,
+                      color: _resultatIndetermine
+                          ? const Color(0xFFFFB300)
+                          : (_isGagnant == true ? const Color(0xFFFFD700) : const Color(0xFFEF5350)),
                       size: 22,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _resultMessage!,
+                        _titreResultat!,
                         style: TextStyle(
-                          color: _isGagnant == true ? const Color(0xFF69F0AE) : const Color(0xFFEF9A9A),
+                          color: _couleurTexteResultat,
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ]),
+                  // ★ B-4.7 — Motif du verdict quand il est compréhensible.
+                  //   Affiché UNIQUEMENT si le titre porte le verdict (sinon le
+                  //   détail ferait doublon avec le bloc de gain, qui lit déjà
+                  //   `affichageGainSuivi`).
+                  if (_verdictPorteLeTitre && _verdictOfficiel!.detail != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _verdictOfficiel!.detail!,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 12, height: 1.35),
+                    ),
+                  ],
                   // ★ v91 : Gain OU Perte affiché directement sur le ticket
+                  // ★ B-4.7 : aucune garde ajoutée ici. Un ticket `nonDetermine`
+                  //   a `_isGagnant == null` (l'enregistreur n'écrit jamais
+                  //   `isGagne`), donc ce bloc n'est déjà pas rendu ; et quand
+                  //   `_resultMessage` existe, `_verdictPorteLeTitre` est faux.
+                  //   La condition reste donc BYTE-IDENTIQUE à l'ancre A6.
                   if (_isGagnant != null && course.miseEngagee != null && course.miseEngagee! > 0) ...[
                     const SizedBox(height: 8),
                     Container(

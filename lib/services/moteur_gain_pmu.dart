@@ -168,6 +168,7 @@ import 'gain_ticket_calculator.dart'
         RapportOfficiel,
         TypePariJoue,
         VarianteRapport,
+        codeApiPourType,
         identifierGagnantPlace,
         tailleCombinaisonAttendue,
         typePariDepuisLibelle,
@@ -642,6 +643,50 @@ VerdictGain resoudreGainTicket({
     );
   }
 
+  // ── 6 bis. ★ CORRECTION « Anomalie 1 » — PERTE DÉMONTRÉE PAR RECOUPEMENT ──
+  //
+  // MESURE QUI A MOTIVÉ CE BLOC (308 captures datées, 5 `prog_*.json`) :
+  //   • 299/299 blocs `E_SIMPLE_GAGNANT` publient EXACTEMENT le 1er cheval de
+  //     l'arrivée officielle ;
+  //   • 299/299 blocs `E_SIMPLE_PLACE` publient EXACTEMENT les N premiers
+  //     chevaux de l'arrivée, où N est le nombre de lignes du bloc (2 lignes
+  //     quand ≤ 7 partants déclarés, 3 au-delà, 4 en cas d'ex æquo au 3e rang) ;
+  //   • 192/192 `E_COUPLE_GAGNANT` et 191/191 `E_COUPLE_PLACE` idem ;
+  //   • ZÉRO trou de rang : les rangs publiés sont toujours 1..N sans saut.
+  //
+  // PREUVE DE COMPLÉTUDE UTILISÉE ICI — elle n'est JAMAIS supposée :
+  //   le bloc est réputé complet SI ET SEULEMENT SI l'ensemble de ses
+  //   combinaisons recoupe EXACTEMENT les N premiers chevaux de l'arrivée
+  //   officielle définitive, N = nombre de lignes publiées, et si ses rangs
+  //   sont contigus de 1 à N. Les deux sources sont officielles et
+  //   indépendantes : leur concordance EST la preuve.
+  //
+  //   Si le recoupement échoue (bloc partiel, tronqué, ou arrivée
+  //   incohérente), on NE conclut PAS à la perte : le verdict reste
+  //   `nonDetermine`. Une absence de rapport n'est donc jamais transformée en
+  //   défaite, conformément à la règle validée.
+  //
+  // PÉRIMÈTRE VOLONTAIREMENT RESTREINT : seuls les types dont la mesure a
+  // montré un recoupement parfait et sans ambiguïté sont couverts. `E_TRIO`,
+  // `E_TIERCE` et `E_QUARTE_PLUS` ont leurs propres règles (Bonus, variantes)
+  // et ne sont pas concernés — ils passent par l'arbitre plus haut.
+  if (_blocEstDemontreComplet(
+    type: type,
+    numerosJoues: numerosJoues,
+    etat: etat,
+  )) {
+    // Le bloc est complet et la combinaison jouée n'y figure pas (sinon le
+    // résolveur aurait rendu un rapport). La perte est donc ÉTABLIE.
+    return VerdictGain.perdu(
+      explication: 'Le bloc officiel de $libelleTypePari est DÉMONTRÉ complet : '
+          'ses ${_nbLignesBloc(type: type, etat: etat)} ligne(s) recoupent '
+          'exactement l\'arrivée officielle définitive, avec des rangs contigus. '
+          'La combinaison jouée (${numerosJoues.join("-")}) n\'y figure pas : la '
+          'perte est établie par recoupement de deux sources officielles, sans '
+          'aucune attribution de montant.',
+    );
+  }
+
   // ── 7. DÉLÉGATION AU RÉSOLVEUR sur la liste restreinte ────────────────────
   final resolution = resoudreRapportPmu(
     libelleTypePari: libelleTypePari,
@@ -923,9 +968,186 @@ VerdictGain _evaluerBonus({
   );
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+//  ★ CORRECTION « Anomalie 1 » — PREUVE DE COMPLÉTUDE PAR RECOUPEMENT
+//
+//  Ces trois fonctions ne manipulent AUCUN montant : elles ne lisent que des
+//  combinaisons et des rangs. Elles ne peuvent donc pas fabriquer un gain.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Lignes du bloc du type, pour cette course.
+List<RapportPublie> _lignesBloc({
+  required TypePariJoue type,
+  required EtatCourseOfficiel etat,
+}) {
+  final code = codeApiPourType(type);
+  if (code == null) return const <RapportPublie>[];
+  return etat.rapports.where((r) => r.codePmu == code).toList();
+}
+
+int _nbLignesBloc({
+  required TypePariJoue type,
+  required EtatCourseOfficiel etat,
+}) =>
+    _lignesBloc(type: type, etat: etat).length;
+
+/// Cheveux de l'arrivée officielle, groupes APLATIS dans l'ordre, ex æquo
+/// préservés dans leur ordre de publication.
+///
+/// Aucun groupe n'est inventé : un groupe vide rend la liste inexploitable.
+List<int>? _arriveeAplatie(EtatCourseOfficiel etat) {
+  final g = etat.arriveeGroupes;
+  if (g == null || g.isEmpty) return null;
+  final out = <int>[];
+  for (final groupe in g) {
+    if (groupe.isEmpty) return null;
+    out.addAll(groupe);
+  }
+  return out;
+}
+
+/// `true` si la perte du ticket est DÉMONTRÉE par recoupement.
+///
+/// Preuve exigée, dans cet ordre :
+///   1. arrivée officielle définitive et exploitable, groupes connus ;
+///   2. le type fait partie du périmètre mesuré (aucun Bonus, aucune variante
+///      concurrente à arbitrer) ;
+///   3. le bloc du type EXISTE et n'est pas vide ;
+///   4. ses rangs sont CONTIGUS de 1 à N (aucune ligne manquante) ;
+///   5. ses combinaisons recoupent EXACTEMENT les N premiers chevaux de
+///      l'arrivée — c'est la preuve que le bloc est complet ;
+///   6. la combinaison jouée n'y figure pas.
+///
+/// Si l'une des conditions 1 à 5 échoue, on rend `false` : la perte n'est PAS
+/// établie et le verdict restera `nonDetermine`. Jamais de perte supposée.
+bool _blocEstDemontreComplet({
+  required TypePariJoue type,
+  required List<int> numerosJoues,
+  required EtatCourseOfficiel etat,
+}) {
+  // 1. Périmètre : uniquement les types mesurés sans ambiguïté.
+  if (!_dansPerimetrePerteDemontree(type)) return false;
+
+  // Arrivée définitive impérativement requise. `null` = API muette ⇒ refus.
+  if (etat.arriveeDefinitive != true) return false;
+
+  final arrivee = _arriveeAplatie(etat);
+  if (arrivee == null) return false;
+
+  // 3. Le bloc doit exister.
+  final lignes = _lignesBloc(type: type, etat: etat);
+  if (lignes.isEmpty) return false;
+
+  // 4. Rangs contigus 1..R.
+  //
+  // ⚠️ Plusieurs lignes peuvent partager un même rang (mesuré : un Couplé
+  //    Placé publie C(k,2) paires réparties sur 3 rangs, un 2sur4 sur 1 ou 2
+  //    rangs). On n'exige donc PAS `rangs.length == n`, mais que les rangs
+  //    distincts forment une suite CONTIGUË à partir de 1 : un rang manquant
+  //    trahit un bloc tronqué.
+  final rangs = <int>{};
+  for (final l in lignes) {
+    final r = l.rang;
+    if (r == null || r < 1) return false;
+    rangs.add(r);
+  }
+  final n = lignes.length;
+  final rMax = rangs.reduce((a, b) => a > b ? a : b);
+  if (rMax > n) return false;
+  for (var i = 1; i <= rMax; i++) {
+    if (!rangs.contains(i)) return false;
+  }
+
+  // 5. Recoupement EXACT avec l'arrivée aplatie.
+  //
+  // ⚠️ PIÈGE CORRIGÉ ICI : le nombre de LIGNES d'un bloc n'est pas le nombre
+  //    de CHEVAUX qu'il couvre. Un Couplé Gagnant a UNE ligne pour DEUX
+  //    chevaux, un Couplé Placé a C(K,2) lignes pour K chevaux. Confondre les
+  //    deux faisait échouer la preuve sur le Couplé Gagnant (mesuré).
+  //
+  //    On déduit donc K — le nombre de chevaux couverts — de l'ENSEMBLE des
+  //    numéros publiés, puis on EXIGE que le bloc contienne exactement le
+  //    nombre de lignes que la règle PMU impose pour K chevaux. Un bloc
+  //    partiel (quelques paires d'un Couplé Placé, par exemple) est ainsi
+  //    détecté et la perte n'est PAS prononcée.
+  final publies = <int>{};
+  for (final l in lignes) {
+    final numeros = l.numeros;
+    if (numeros == null || numeros.isEmpty) return false;
+    publies.addAll(numeros);
+  }
+  final k = publies.length;
+  if (k == 0 || k > arrivee.length) return false;
+
+  final attendu = <int>{};
+  for (var i = 0; i < k; i++) {
+    attendu.add(arrivee[i]);
+  }
+  if (publies.length != attendu.length) return false;
+  if (!publies.containsAll(attendu)) return false;
+
+  // Nombre de lignes imposé par la règle PMU pour K chevaux couverts.
+  final lignesAttendues = _lignesAttenduesPour(type, k);
+  if (lignesAttendues == null || lignesAttendues != n) return false;
+
+  // 6. La combinaison jouée ne figure dans aucun rapport du bloc.
+  //    (Les types du périmètre n'ont qu'une variante : l'égalité d'ENSEMBLE
+  //    suffit, et elle est plus stricte que l'égalité de chaîne.)
+  final joues = numerosJoues.toSet();
+  for (final l in lignes) {
+    final numeros = l.numeros;
+    if (numeros == null) continue;
+    if (numeros.length == joues.length && numeros.toSet().containsAll(joues)) {
+      return false; // présent ⇒ ce n'est pas une perte
+    }
+  }
+  return true;
+}
+
+/// Nombre de lignes qu'un bloc COMPLET doit publier pour [k] chevaux couverts.
+///
+/// Mesuré sur 308 captures : Simple Gagnant = 1 ligne quel que soit k (k=1) ;
+/// Simple Placé = k lignes (une par cheval payable) ; Couplé Gagnant = 1 ligne
+/// pour k=2 ; Couplé Placé = C(k,2) paires. `null` = type hors périmètre.
+int? _lignesAttenduesPour(TypePariJoue type, int k) {
+  switch (type) {
+    case TypePariJoue.simpleGagnant:
+      return k == 1 ? 1 : null;
+    case TypePariJoue.simplePlace:
+      return k;
+    case TypePariJoue.coupleGagnant:
+    case TypePariJoue.coupleOrdre:
+      return k == 2 ? 1 : null;
+    case TypePariJoue.couplePlace:
+      // C(k,2) : toutes les paires des k chevaux payables.
+      return k < 2 ? null : (k * (k - 1)) ~/ 2;
+    default:
+      return null;
+  }
+}
+
+/// Types dont la perte peut être démontrée par recoupement.
+///
+/// EXCLUS volontairement :
+///   • `tierce`/`quarte`/`quinte` : arbitrés sur l'arrivée, avec Bonus ;
+///   • `tierceOrdre`/`tierceDesordre`/`coupleOrdre` : variante déclarée,
+///     traités par l'arbitre qui prononce déjà la perte ;
+///   • `gagnantPlace` : deux composantes, traité séparément ;
+///   • `inconnu` : aucun calcul.
+bool _dansPerimetrePerteDemontree(TypePariJoue type) {
+  switch (type) {
+    case TypePariJoue.simpleGagnant:
+    case TypePariJoue.simplePlace:
+    case TypePariJoue.coupleGagnant:
+    case TypePariJoue.couplePlace:
+      return true;
+    default:
+      return false;
+  }
+}
+
 /// Rapport Ordre publié d'un bloc, ou `null`. Aucun choix par montant.
-RapportPublie? _rapportOrdrePublie(List<RapportPublie> rapports, String code) {
-  for (final r in rapports) {
+RapportPublie? _rapportOrdrePublie(List<RapportPublie> rapports, String code) {  for (final r in rapports) {
     if (r.codePmu == code && r.variante == VarianteRapport.ordre) return r;
   }
   return null;

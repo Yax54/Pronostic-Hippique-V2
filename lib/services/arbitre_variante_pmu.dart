@@ -458,10 +458,47 @@ ArbitrageVariante arbitrerVariante({
     }
   }
 
-  final variante =
-      memeOrdre ? VarianteRapport.ordre : VarianteRapport.desordre;
+  // ── 8. Variante DÉCLARÉE par le ticket, prioritaire sur l'arrivée ────────
+  // ★ CORRECTION « Anomalie 3 » (validée par l'utilisateur).
+  //
+  // MESURE QUI A MOTIVÉ CE BLOC (308 captures datées) :
+  //   • le bloc « e-Tiercé Ordre » et le bloc « e-Tiercé Désordre » publient
+  //     la MÊME combinaison (20/20 paires Ordre/Désordre mesurées) ;
+  //   • la variante ne peut donc PAS se déduire de la combinaison publiée :
+  //     elle se déduit du LIBELLÉ, et le libellé est déterminé par le pari
+  //     réellement joué, pas par l'arrivée.
+  //
+  // DÉFAUTS CORRIGÉS (les deux venaient de la déduction par l'arrivée seule) :
+  //   1. « Tiercé Désordre » joué, arrivée dans l'ordre exact ⇒ l'arrivée
+  //      établissait `ordre`, la restriction écartait le rapport Désordre
+  //      réellement publié, et un ticket GAGNANT était déclaré
+  //      `blocJusteAbsent`. Le Désordre est payable quel que soit l'ordre
+  //      d'arrivée : la variante déclarée doit primer.
+  //   2. SYMÉTRIQUE : « Tiercé Ordre » joué, arrivée dans un ordre différent
+  //      ⇒ l'arrivée établissait `desordre` et le ticket PERDANT était payé
+  //      au dividende Désordre — un faux gain silencieux. L'Ordre exige
+  //      l'ordre exact : la perte est établie.
+  //
+  // CE QUI N'EST PAS CHANGÉ : `tierce`/`quarte`/`quinte` sans mention d'ordre
+  // n'ont AUCUNE variante déclarée et continuent de suivre l'arrivée ; aucun
+  // repli vers une autre variante n'est introduit ; aucun montant n'est lu ici.
+  final varianteDeclaree = _varianteDeclareeParType(type);
 
-  // ── 8. Restriction à la variante établie — AUCUN critère de montant ──────
+  if (varianteDeclaree == VarianteRapport.ordre && !memeOrdre) {
+    return ArbitrageVariante.perdu(
+      explication: 'Le ticket est un « $type », qui exige l\'ORDRE EXACT de '
+          'l\'arrivée. Or les chevaux joués (${numerosJoues.join("-")}) forment '
+          'le bon ensemble mais dans un ordre différent de l\'arrivée officielle '
+          'définitive (${premiersOfficiels.join("-")}). La variante Désordre '
+          'n\'est PAS substituée : le pari Ordre est perdu, et lui attribuer le '
+          'rapport Désordre serait payer une variante qui n\'a pas été jouée.',
+    );
+  }
+
+  final variante = varianteDeclaree ??
+      (memeOrdre ? VarianteRapport.ordre : VarianteRapport.desordre);
+
+  // ── 9. Restriction à la variante établie — AUCUN critère de montant ──────
   final compatibles = etat.rapports
       .where((r) => r.codePmu == code && r.variante == variante)
       .toList();
@@ -469,9 +506,10 @@ ArbitrageVariante arbitrerVariante({
   if (compatibles.isEmpty) {
     return ArbitrageVariante.indetermine(
       motif: MotifNonDetermination.blocJusteAbsent,
-      explication: 'L\'arrivée établit la variante « ${variante.name} » mais '
-          'aucun rapport publié de code $code ne la porte. Aucun repli sur une '
-          'autre variante n\'est fait : ce serait payer le mauvais rapport.',
+      explication: 'La variante « ${variante.name} » '
+          '${varianteDeclaree != null ? "est celle du pari joué" : "est établie par l arrivée"} '
+          'mais aucun rapport publié de code $code ne la porte. Aucun repli sur '
+          'une autre variante n\'est fait : ce serait payer le mauvais rapport.',
     );
   }
 
@@ -492,6 +530,34 @@ bool _memeOrdre(List<int> a, List<int> b) {
     if (a[i] != b[i]) return false;
   }
   return true;
+}
+
+/// Variante EXPLICITEMENT déclarée par le type de pari joué, ou `null`.
+///
+/// ★ CORRECTION « Anomalie 3 ». `null` signifie « le type ne déclare aucune
+/// variante » : l'arbitrage retombe alors sur la déduction par l'arrivée,
+/// exactement comme avant cette correction.
+///
+/// SEULS les types dont le LIBELLÉ nomme la variante sont concernés. Un ticket
+/// « Tiercé » (sans mention d'ordre) n'en déclare aucune : il reste payé selon
+/// l'arrivée, ce qui est la règle historique et n'est pas modifié ici.
+///
+/// Le Couplé Ordre déclare `ordre` pour la même raison : son libellé impose
+/// l'ordre, et lui attribuer un rapport Désordre serait payer une variante
+/// qui n'a pas été jouée.
+VarianteRapport? _varianteDeclareeParType(TypePariJoue type) {
+  switch (type) {
+    case TypePariJoue.tierceOrdre:
+    case TypePariJoue.coupleOrdre:
+      return VarianteRapport.ordre;
+    case TypePariJoue.tierceDesordre:
+      return VarianteRapport.desordre;
+    // Types sans variante déclarée : `tierce`, `quarte`, `quinte` (payés selon
+    // l'arrivée), et tous les types sans notion d'ordre (jamais arbitrés ici,
+    // ils sortent avant par `_exigeArbitrageArrivee`).
+    default:
+      return null;
+  }
 }
 
 bool _memeEnsemble(List<int>? a, List<int>? b) {

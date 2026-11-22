@@ -148,11 +148,21 @@ void verifierDeadHeat(ResolutionTicketPrediction res, {String? trace}) {
       reason: 'une non-détermination doit être motivée$contexte');
 
   // La décision d'écriture ne doit RIEN persister de montant.
+  //
+  // ★ B-4.7 : l'indétermination est désormais PERSISTÉE (état + motif), alors
+  //   qu'elle était refusée dès que des rapports officiels existaient. C'était
+  //   l'« Anomalie 1 » : la persistance d'un MÊME ticket dépendait de la
+  //   disponibilité des données. Aucun montant n'est écrit pour autant — c'est
+  //   ce que ce helper continue d'exiger, et c'est ce qui compte.
   final e = res.enregistrement!;
   expect(e.ticket.rapportsAttribues, isNull,
       reason: 'aucun rapport attribué ne doit être écrit$contexte');
-  expect(e.ticket.etatGain, isNull,
-      reason: 'aucun état de gain ne doit être écrit$contexte');
+  expect(e.ticket.etatGain, EtatGain.nonDetermine,
+      reason: 'l\'indétermination motivée est persistée, sans montant$contexte');
+  expect(e.ticket.dividendeGagnant, isNull,
+      reason: 'aucun dividende Gagnant$contexte');
+  expect(e.ticket.dividendePlace, isNull,
+      reason: 'aucun dividende Placé$contexte');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -592,15 +602,20 @@ void main() {
           reason: 'le moteur sait maintenant calculer 4774,00 €');
       expect(second.verdict!.total, 4774.0);
 
-      // 3) MAIS la persistance refuse la transition automatique :
-      //    c'est la règle B-4.3, non modifiée par ce lot.
+      // 3) ★ B-4.7 (Anomalie 2) : la transition EST désormais autorisée quand
+      //    les rapports officiels démontrent le verdict. Elle était refusée
+      //    par la branche A (`refuseTransitionNonDeterminee`), ce qui laissait
+      //    le ticket indéterminé POUR TOUJOURS. Le verdict définitif est écrit
+      //    une seule fois, et le total reste celui d'un seul règlement.
       expect(second.enregistrement!.statut,
-          StatutEnregistrementVerdict.refuseTransitionNonDeterminee,
-          reason: 'la transition automatique nonDetermine → définitif n\'est '
-              'PAS décidée : elle reste un arbitrage humain');
-      expect(second.enregistrement!.ticket.etatGain, EtatGain.nonDetermine,
-          reason: 'le ticket persisté reste indéterminé — aucun montant écrit');
-      expect(second.enregistrement!.ticket.rapportsAttribues, isNull);
+          StatutEnregistrementVerdict.enregistre,
+          reason: 'la transition nonDetermine → définitif est autorisée dès lors '
+              'que les rapports officiels démontrent le verdict');
+      expect(second.enregistrement!.ticket.etatGain, EtatGain.attribue);
+      expect(second.enregistrement!.ticket.rapportsAttribues, isNotNull,
+          reason: 'le rapport officiel identifié est persisté');
+      expect(second.verdict!.total, 4774.0,
+          reason: 'aucun double gain : le total est celui d\'un seul règlement');
 
       // 4) Un ticket NEUF, lui, obtient bien le montant : la donnée tardive
       //    n'est donc pas perdue, elle n'est simplement jamais réécrite
@@ -630,7 +645,14 @@ void main() {
       expect(v.etat, EtatGain.nonDetermine);
       expect(v.motif, MotifNonDetermination.arriveeNonDefinitive);
       expect(v.total, 0.0);
-      expect(resu.enregistrement!.ticket.etatGain, isNull);
+      expect(v.composantes, isEmpty, reason: 'aucun ordre deviné');
+      // ★ B-4.7 : l'indétermination motivée est désormais PERSISTÉE (le
+      //   refus dépendait auparavant de la seule présence de rapports). Ce qui
+      //   compte ici est vérifié : AUCUN montant n'est écrit.
+      expect(resu.enregistrement!.ticket.etatGain, EtatGain.nonDetermine);
+      expect(resu.enregistrement!.ticket.rapportsAttribues, isNull);
+      expect(resu.enregistrement!.ticket.dividendeGagnant, isNull);
+      expect(resu.enregistrement!.ticket.dividendePlace, isNull);
     });
   });
 
@@ -683,11 +705,17 @@ void main() {
           <double>{477.40, 80.30});
     });
 
-    test('S8-19 la variante vient de l\'ARRIVÉE, pas du libellé joué', () {
-      // « Tiercé Désordre » avec un ordre qui EST celui de l'arrivée :
-      // l'arbitre établit « ordre » d'après l'arrivée, puis le résolveur ne
-      // trouve aucun rapport Désordre de cette combinaison ⇒ refus motivé.
-      // C'est un comportement EXISTANT, mesuré ici et documenté, pas corrigé.
+    test('S8-19 la variante vient du LIBELLÉ joué, pas de l\'ARRIVÉE '
+        '(corrigé en B-4.7)', () {
+      // ★ B-4.7 (Anomalie 3) : ce test épinglait auparavant le DÉFAUT.
+      //   « Tiercé Désordre » joué avec un ordre qui EST celui de l'arrivée :
+      //   l'arbitre déduisait « ordre » de l'arrivée, écartait le rapport
+      //   Désordre pourtant publié, et déclarait le ticket `blocJusteAbsent` —
+      //   alors que ce ticket est GAGNANT Désordre.
+      //
+      //   Mesure qui fonde la correction : Ordre et Désordre publient la MÊME
+      //   combinaison (20/20 paires), donc la combinaison ne peut pas désigner
+      //   la variante ; seul le libellé joué le peut.
       final resu = resoudre(
         pred('Tiercé Désordre', <int>[9, 4, 15],
             code: 'E_TIERCE',
@@ -696,13 +724,11 @@ void main() {
         res,
       );
       final v = resu.verdict!;
-      expect(v.etat, EtatGain.nonDetermine,
-          reason: 'aucun rapport Désordre ne correspond à une arrivée dans '
-              'l\'ordre');
-      expect(v.motif, MotifNonDetermination.blocJusteAbsent);
-      expect(v.total, 0.0,
-          reason: 'aucun repli sur le rapport Ordre, qui serait le mauvais');
-      expect(resu.enregistrement!.ticket.etatGain, isNull);
+      expect(v.etat, EtatGain.attribue,
+          reason: 'le Désordre est payable quel que soit l\'ordre d\'arrivée');
+      // e-Tiercé Désordre 9-4-15 publié à 80,30 € pour 1 €, mise 10 €.
+      expect(v.total, 803.0, reason: 'dividende Désordre, jamais celui d\'Ordre');
+      expect(resu.enregistrement!.ticket.etatGain, EtatGain.attribue);
     });
 
     test('S8-20 Couplé Ordre sur ex æquo hors rangs comparés : payé à 74,00 €', () {
@@ -778,13 +804,14 @@ void main() {
     });
 
     test('S8-23 un pari PERDU n\'écrit jamais de montant', () {
-      // ⚠️ CONSTAT MESURÉ, DOCUMENTÉ, NON CORRIGÉ.
-      //    `deciderEcritureVerdict` branche C refuse d'écrire un verdict sans
-      //    composante lorsque des rapports officiels ont été fournis. Un pari
-      //    perdu sur une course dont les rapports sont publiés n'est donc PAS
-      //    persisté : le ticket reste sans état de gain. C'est une règle
-      //    héritée du lot B-4.3, hors périmètre de B-4.6.
-      //    L'essentiel pour ce lot est vérifié ici : AUCUN montant n'est écrit.
+      // ★ B-4.7 (Anomalie 1) : la branche C refusait d'écrire un verdict sans
+      //   composante dès que des rapports officiels étaient fournis. Un pari
+      //   perdu sur une course dont les rapports sont publiés n'était donc PAS
+      //   persisté : le ticket restait « en attente » indéfiniment, alors que
+      //   sa perte était démontrée.
+      //
+      //   Le verdict `perdu` est désormais ENREGISTRÉ — et l'exigence qui
+      //   compte est vérifiée ici : AUCUN montant n'est écrit.
       final resu = resoudre(
         pred('Tiercé', <int>[1, 2, 3],
             code: 'E_TIERCE', ordre: <int>[1, 2, 3]),
@@ -796,9 +823,13 @@ void main() {
       expect(v.total, 0.0);
       expect(v.composantes, isEmpty);
       expect(resu.enregistrement!.statut,
-          StatutEnregistrementVerdict.refuseVerdictSansRapportAvecRapports);
-      expect(resu.enregistrement!.ticket.etatGain, isNull);
-      expect(resu.enregistrement!.ticket.rapportsAttribues, isNull);
+          StatutEnregistrementVerdict.enregistre,
+          reason: 'la perte démontrée est persistée');
+      expect(resu.enregistrement!.ticket.etatGain, EtatGain.perdu);
+      expect(resu.enregistrement!.ticket.rapportsAttribues, isNull,
+          reason: 'aucun rapport attribué : un perdu n\'a pas de montant');
+      expect(resu.enregistrement!.ticket.dividendeGagnant, isNull);
+      expect(resu.enregistrement!.ticket.dividendePlace, isNull);
     });
   });
 }
