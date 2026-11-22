@@ -127,9 +127,36 @@ class IaDialogDetailTypePariState extends State<IaDialogDetailTypePari> {
     }
     if (_filtre == 'all') return _tousPronostics;
     if (_filtre == '7j') {
-      final limite = DateTime.now().subtract(const Duration(days: 7));
+      // ★ LOT Z3-B — « 7 derniers jours » = 7 DATES CALENDAIRES, pas 7×24 h.
+      //
+      //   ── DÉFAUT MESURÉ (reproduit par `test/z3_reproduction_n5_n6_filtres_test.dart`)
+      //   L'ancien code était :
+      //
+      //       final limite = DateTime.now().subtract(const Duration(days: 7));
+      //       .where((pr) => pr.datePronostic.isAfter(limite))
+      //
+      //   soit une fenêtre GLISSANTE de 7×24 h à partir de l'instant présent.
+      //   Une course du jour d-7 à 23 h 59 tombe donc DANS la fenêtre, et le
+      //   filtre couvre alors 8 dates distinctes (d-7 .. d) au lieu de 7.
+      //   Mesuré : le pronostic daté d-7 23:59:59 était rendu.
+      //
+      //   ── CE QUI EST FAIT ────────────────────────────────────────────────
+      //   Bornes de JOURNÉE, comme les branches « Aujourd'hui » et « Période »
+      //   ci-dessous : début à 00:00 du jour d-6, fin à 23:59:59 d'aujourd'hui.
+      //   La fenêtre couvre donc exactement 7 dates : d-6, d-5, d-4, d-3, d-2,
+      //   d-1, d. Aucune donnée n'est modifiée, aucun calcul statistique n'est
+      //   touché : seule la BORNE de sélection change.
+      //
+      //   ⚠️ La branche « 60j » ci-dessus N'EST PAS modifiée : son libellé est
+      //      « 60j glissants », qui désigne explicitement une fenêtre glissante
+      //      de 60×24 h. Ce sont deux sémantiques différentes, et seules les
+      //      libellés en JOURS (« 7 derniers jours ») désignent des dates.
+      final now = DateTime.now();
+      final deb = DateTime(now.year, now.month, now.day - 6);
+      final fin = DateTime(now.year, now.month, now.day, 23, 59, 59);
       return _tousPronostics
-          .where((pr) => pr.datePronostic.isAfter(limite))
+          .where((pr) =>
+              !pr.datePronostic.isBefore(deb) && !pr.datePronostic.isAfter(fin))
           .toList();
     }
     if (_filtre == 'today') {
