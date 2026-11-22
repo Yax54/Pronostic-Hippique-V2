@@ -332,14 +332,23 @@ void main() {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  //  Z2-D — CONSTAT COMPLÉMENTAIRE (distinct de N1, non corrigé ici)
-  //  `ZtPartant.copyWith()` (`zt_models.dart:312-346`) ne transporte PAS
-  //  `scoreMouvementCote`. Or `analyserCourse()` retourne des `copyWith`.
-  //  Conséquence : même avec un identifiant aligné, le critère R ne
-  //  parviendrait pas aux partants rendus. Ce test le MESURE, pour que la
-  //  future correction de N1 ne soit pas présentée comme suffisante.
+  //  Z2-D — MÉCANISME COMPLÉMENTAIRE (distinct de N1) — ★ CORRIGÉ
+  //  `ZtPartant.copyWith()` ne transportait PAS `scoreMouvementCote`, alors
+  //  qu'`IaPronosticEngine.analyserCourse()` et `analyserCourseAvecCriteres()`
+  //  terminent tous deux par un `copyWith`.
+  //
+  //  MESURÉ AVANT la correction (mutation `git stash` sur `zt_models.dart`) :
+  //    • `copyWith(scoreIA: 88.0)`  : 75.0 → 50.0  (ce test-ci, ROUGE)
+  //    • `analyserCourseAvecCriteres()` : 75.0 → 50.0 (production réelle)
+  //    • `scoreIA` : 73.005249548 AVANT et 73.005249548 APRÈS ⇒ identique
+  //  Le défaut ne touchait donc QUE la valeur d'affichage du critère R
+  //  (`fiche_cheval_screen.dart:549`, `labelMouvementCote`), jamais le score.
+  //
+  //  Après correction : ce test est VERT et verrouille la non-régression.
+  //  ⚠️ Ce test ne prétend PAS que Z2-B est réglé : la clé du moteur reste
+  //     disjointe de celle de la production (voir Z2-B ci-dessus).
   // ───────────────────────────────────────────────────────────────────────
-  test('Z2-D / N1 — copyWith() perd scoreMouvementCote (mécanisme distinct)', () {
+  test('Z2-D / N1 — copyWith() conserve scoreMouvementCote (corrigé)', () {
     final ZtPartant original = _partant16();
     original.scoreMouvementCote = kScoreAttendu;
 
@@ -360,10 +369,9 @@ void main() {
     print('─────────────────────────────────────────────────────────────');
 
     expect(copie.scoreMouvementCote, kScoreAttendu,
-        reason: 'Z2-D (zt_models.dart:312-346) — `copyWith()` ne recopie pas '
-            '`scoreMouvementCote` : la valeur retombe à la valeur par défaut '
-            '${copie.scoreMouvementCote}. Tout partant retourné par '
-            '`analyserCourse()` (qui termine par `copyWith`) perd donc le score '
-            'du critère R, indépendamment de N1. CONSTAT SÉPARÉ, NON CORRIGÉ.');
+        reason: 'Z2-D — `copyWith()` doit TRANSPORTER `scoreMouvementCote` : '
+            '`analyserCourse()` et `analyserCourseAvecCriteres()` terminent '
+            'tous deux par un `copyWith`, et le champ était perdu au profit de '
+            'sa valeur par défaut 50.0 (mesuré 75.0 → 50.0 avant correction).');
   });
 }

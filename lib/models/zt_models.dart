@@ -344,6 +344,29 @@ class ZtPartant {
     double? eloVariationMois,        // ★ v8.0
     String? statsTerrainCsv,         // ★ v9.0
     int?    gainsDernierAn,          // ★ v9.0
+    // ★ LOT Z2-D — le score du critère R doit SURVIVRE à la copie.
+    //
+    //   DÉFAUT MESURÉ (`test/z2_reproduction_n1_coursekey_test.dart`, Z2-D) :
+    //   `IaPronosticEngine.analyserCourse()` écrit `p.scoreMouvementCote`
+    //   AVANT de calculer les scores, puis retourne des `ZtPartant` produits
+    //   par CE `copyWith`. Le champ n'étant pas recopié, chaque partant rendu
+    //   retombait à sa valeur par défaut 50.0 (« neutre / hors fenêtre ») :
+    //   mesuré 75.0 → 50.0. Le critère R (6 % du score) alimentait donc
+    //   correctement le CALCUL mais arrivait neutralisé à l'AFFICHAGE
+    //   (`fiche_cheval_screen.dart:549`) et au libellé de tendance
+    //   (`labelMouvementCote`, ci-dessous).
+    //
+    //   ⚠️ AUCUN SCORE IA N'EST MODIFIÉ PAR CETTE LIGNE. Le score est lu par
+    //      `_calculerScoreBrutEtCriteres` (`ia_pronostic_engine.dart:263`,
+    //      `final scoreMouvCote = p.scoreMouvementCote;`) à partir du partant
+    //      d'ORIGINE, AVANT tout `copyWith` (l.78 et l.139). Recopier le champ
+    //      dans la copie ne peut donc pas changer un score : cela restitue
+    //      seulement une valeur d'affichage. Mesuré avant/après sur la même
+    //      course : scores identiques au chiffre près.
+    //
+    //   `null` = non fourni ⇒ la valeur de l'original est conservée, comme
+    //   pour les autres champs de cette méthode.
+    double? scoreMouvementCote,     // ★ LOT Z2-D
   }) {
     return ZtPartant(
       numero: numero, nom: nom, driver: driver, entraineur: entraineur,
@@ -366,7 +389,13 @@ class ZtPartant {
       labelIA:          labelIA          ?? this.labelIA,
       explicationIA:    explicationIA    ?? this.explicationIA,
       rang:             rang             ?? this.rang,
-    );
+    )
+      // ★ LOT Z2-D — recopie HORS du constructeur : `scoreMouvementCote`
+      //   n'est pas un paramètre du constructeur `ZtPartant` mais un champ
+      //   MUTABLE initialisé à 50.0. Le passer au constructeur écraserait
+      //   toujours la valeur de l'original ; on l'affecte donc après coup,
+      //   et uniquement si l'appelant en fournit une.
+      ..scoreMouvementCote = scoreMouvementCote ?? this.scoreMouvementCote;
   }
 
   // ── estHorsCourse ─────────────────────────────────────────────────
