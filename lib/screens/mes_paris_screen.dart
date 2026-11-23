@@ -32,6 +32,8 @@ import '../widgets/arrivee_officielle_groupes_widget.dart'; // ★ A6 — rendu 
 import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../services/branchement_verdict_course.dart'; // ★ B-4.5 — verdict officiel
 import '../services/affichage_gain_structure.dart'; // ★ B-4.5 — affichage structuré
+import '../services/gain_durable_vue.dart'; // ★ B1-T12 lot 2-C — vue durable
+import '../services/resultat_ecriture_gain.dart'; // ★ B1-T12 lot 2-C — issue d'écriture
 
 // ★ v9.85 : deepLinkCourseKeyNotifier retiré de main.dart — notifier local
 final deepLinkCourseKeyNotifier = ValueNotifier<String?>(null);
@@ -800,14 +802,49 @@ class _CoursesTabState extends State<_CoursesTab> {
         final entry = entries[i - 1];
         return KeyedSubtree(
           key: _itemKeys[entry.key],
-          child: _TrackedCourseCard(
-            course: entry.value,
-            storageKey: entry.key,
-            alertSvc: widget.alertSvc,
+          // ★ B1-T12 / LOT 2-C — ABONNEMENT RÉEL À `PmuProvider`.
+          //
+          //   `listen: false` seul ne notifie PERSONNE : il faudrait un
+          //   abonnement pour que la carte se reconstruise. Ce `Consumer`
+          //   apporte exactement cela, avec une portée limitée À LA CARTE :
+          //   aucun `setState` de l'écran, aucune reconstruction de la liste
+          //   ni des onglets.
+          //
+          //   `PmuProvider` est DÉJÀ requis par cet écran (mesuré :
+          //   `context.read<PmuProvider>()`), donc ce `Consumer` n'ajoute
+          //   aucune dépendance nouvelle et ne peut pas échouer par absence.
+          //
+          //   Déclencheurs couverts : saisie et modification du gain manuel,
+          //   acceptation et refus d'un gain officiel, restauration des
+          //   données (`_loadSavedPredictions` → `notifyListeners`).
+          child: Consumer<PmuProvider>(
+            builder: (ctxCarte, pmu, _) => _TrackedCourseCard(
+              course: entry.value,
+              storageKey: entry.key,
+              alertSvc: widget.alertSvc,
+              predictionLiee: _predictionLieeDans(pmu, entry.key),
+            ),
           ),
         );
       },
     );
+  }
+
+  /// ★ B1-T12 / LOT 2-C — RAPPROCHEMENT PAR IDENTIFIANT PERSISTANT SEUL.
+  ///
+  /// `UserPrediction.idTicketLie` porte la clé de persistance du `TrackedCourse`
+  /// jumeau (mesuré : `bet_bottom_sheet.dart`, liaison écrite à la création).
+  /// On ne déduit RIEN de la réunion, de la course, de la date ou du type de
+  /// pari : deux paris sur la MÊME course restent donc totalement indépendants.
+  ///
+  /// Rend `null` quand aucune liaison certaine n'existe — un ancien ticket, ou
+  /// un ticket créé par le chemin « Suivre une course » qui n'écrit aucune
+  /// liaison. La carte conserve alors son affichage historique.
+  UserPrediction? _predictionLieeDans(PmuProvider pmu, String storageKey) {
+    for (final p in pmu.predictions) {
+      if (p.idTicketLie == storageKey) return p;
+    }
+    return null;
   }
 }
 
@@ -924,7 +961,18 @@ class _TrackedCourseCard extends StatefulWidget {
   final String storageKey; // clé réelle avec timestamp
   final AlertService alertSvc;
 
-  const _TrackedCourseCard({required this.course, required this.storageKey, required this.alertSvc});
+  /// ★ B1-T12 / LOT 2-C — ticket durable rapproché par IDENTIFIANT PERSISTANT.
+  ///
+  /// `null` ⇒ aucune décision durable applicable ⇒ la carte conserve son
+  /// comportement HISTORIQUE, sans un caractère de différence.
+  final UserPrediction? predictionLiee;
+
+  const _TrackedCourseCard({
+    required this.course,
+    required this.storageKey,
+    required this.alertSvc,
+    this.predictionLiee,
+  });
 
   @override
   State<_TrackedCourseCard> createState() => _TrackedCourseCardState();
@@ -2524,7 +2572,48 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   ///  1. dividende PMU officiel (rapport réellement identifié) ;
   ///  2. cote enregistrée (gain potentiel, AVANT le résultat officiel) ;
   ///  3. sinon `null` — jamais un montant inventé.
+  /// ★ B1-T12 / LOT 2-C — LA SEULE ENTRÉE D'AFFICHAGE DURABLE DE CETTE CARTE.
+  ///
+  /// Rend `null` si aucune preuve durable ne s'applique, ce qui laisse les
+  /// appelants sur leur chaîne HISTORIQUE sans un caractère de différence.
+  ///
+  /// ── POURQUOI UN VERDICT EST CHERCHÉ SUR **LES DEUX** MODÈLES ─────────────
+  ///   `etatGain` existe sur `TrackedCourse` **et** sur `UserPrediction`
+  ///   (mesuré). Un verdict posé sur le profil durable doit donc lui aussi
+  ///   interdire à une décision B1-T12 de réécrire l'affichage : sinon un
+  ///   verdict B-3/B-4.5 pourrait être contourné par un simple gain déclaré.
+  ///
+  /// ── `demandeOuverte` ────────────────────────────────────────────────────
+  ///   Vrai quand un montant OFFICIEL est connu sans qu'aucune décision ne
+  ///   soit prise. C'est le seul cas où l'écran doit annoncer qu'une décision
+  ///   est attendue — et il ne l'annonce que si le montant existe réellement.
+  GainDurable? _vueDurable() {
+    final pred = widget.predictionLiee;
+    final verdictOfficielPresent =
+        widget.course.etatGain != null || pred?.etatGain != null;
+    final demandeOuverte =
+        pred?.montantOfficielPmu != null && pred?.decisionGainPmu == null;
+    return vueDurable(
+      pred,
+      verdictOfficielPresent: verdictOfficielPresent,
+      demandeOuverte: demandeOuverte,
+    );
+  }
+
   double? _gainBrut(TrackedCourse c) {
+    // ★ B1-T12 / LOT 2-C — DÉCISION DURABLE D'ABORD, MÊME AVANT LE VERDICT.
+    //
+    //   Sans cette garde, un pari dont l'utilisateur a ACCEPTÉ le gain officiel
+    //   continuait d'afficher ici le montant de la branche `dividendePmuReel`,
+    //   c'est-à-dire un AUTRE nombre que celui du libellé de la carte. Les deux
+    //   surfaces se contredisaient pour le même pari.
+    //
+    //   La garde rend `null` dans TROIS cas, et `null` signifie « je n'ai rien
+    //   de durable à dire » : l'appelant retombe alors sur la chaîne
+    //   HISTORIQUE, à l'identique (aucune régression d'affichage).
+    final durable = _vueDurable();
+    if (durable != null) return durable.montant;
+
     // ★ LOT B-4.5 — Un ticket qui porte un VERDICT OFFICIEL ne se calcule plus
     //   ici : le montant est celui du verdict, reconstruit par
     //   `affichageGainSuivi` à partir des `montantRetour` DÉJÀ persistés.
@@ -2604,36 +2693,98 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     if (resultat == null || !resultat.valide) return;
     if (!mounted) return;
 
-    final ecrit = await widget.alertSvc
-        .enregistrerGainManuel(widget.storageKey, resultat.montant);
+    // ★ LOT 2-C — L'ISSUE NOMMÉE REMPLACE LE BOOLÉEN.
+    //
+    //   `enregistrerGainManuel` réduisait quatre situations distinctes à
+    //   `true`/`false`, et le booléen était ensuite traduit en un SnackBar
+    //   VERT (« enregistré ») même quand seule la copie temporaire, purgée au
+    //   bout de 24 h, avait été écrite. Une seule opération pouvait donc
+    //   afficher deux messages successifs, dont un mensonger.
+    //
+    //   Ici : UN SEUL message, produit par `_snackBarIssueGain`, et qui ne dit
+    //   « enregistré » que si le disque le confirme.
+    final issue = await widget.alertSvc
+        .enregistrerGainManuelDetaille(widget.storageKey, resultat.montant);
     if (!mounted) return;
 
-    if (!ecrit) {
-      // La clé n'existe plus (ticket retiré entre-temps) : on le DIT, plutôt
-      // que d'afficher un succès mensonger.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ticket introuvable : le gain n\'a pas été enregistré.'),
-          backgroundColor: Color(0xFFB71C1C),
-        ),
-      );
-      return;
+    setState(() {}); // rafraîchit le libellé du ticket, sans changer d'écran.
+    _snackBarIssueGain(issue, resultat.montant);
+  }
+
+  /// ★ B1-T12 / LOT 2-C — UN SEUL SnackBar PAR OPÉRATION, ET IL DIT LA VÉRITÉ.
+  ///
+  /// COULEURS — une seule par opération, jamais de vert suivi d'un orange :
+  ///   • vert   : le gain a été écrit DURABLEMENT (il survivra à la purge) ;
+  ///   • orange : la saisie est prise en compte, mais sa conservation est
+  ///              LIMITÉE et la limite est écrite noir sur blanc ;
+  ///   • rouge  : rien n'a été enregistré, ou l'issue est incertaine.
+  ///
+  /// ⚠️ AUCUN ÉTAT N'EST ANNONCÉ « ENREGISTRÉ » SANS PREUVE D'ÉCRITURE.
+  void _snackBarIssueGain(ResultatEcritureGain issue, double? montant) {
+    final String texte;
+    final Color couleur;
+
+    switch (issue) {
+      case ResultatEcritureGain.complet:
+        texte = montant == null
+            ? 'Gain déclaré retiré et enregistré durablement : '
+                'le rapport officiel fait de nouveau foi.'
+            : 'Gain déclaré enregistré durablement : ${fmtEuros(montant)} € brut.';
+        couleur = const Color(0xFF2E7D52); // vert
+
+      case ResultatEcritureGain.durableSeul:
+        texte = 'Gain enregistré durablement, mais l\'affichage du suivi n\'a '
+            'pas pu être mis à jour. Le montant est conservé.';
+        couleur = const Color(0xFFE08A00); // orange
+
+      case ResultatEcritureGain.nonLie:
+        // Ticket créé par « Suivre une course » : aucune liaison durable.
+        texte = 'Gain enregistré pour ce suivi UNIQUEMENT : ce ticket n\'est pas '
+            'lié à un pari du profil, il sera donc supprimé au bout de 24 h.';
+        couleur = const Color(0xFFE08A00); // orange
+
+      case ResultatEcritureGain.echecFinancier:
+        texte = 'Gain NON enregistré : l\'écriture a échoué.';
+        couleur = const Color(0xFFB71C1C); // rouge
+
+      case ResultatEcritureGain.ticketIntrouvable:
+        texte = 'Ticket introuvable : le gain n\'a pas été enregistré.';
+        couleur = const Color(0xFFB71C1C); // rouge
+
+      case ResultatEcritureGain.remplaceeParPlusRecente:
+        texte = 'Gain NON enregistré : une saisie plus récente sur ce même '
+            'ticket a pris le dessus.';
+        couleur = const Color(0xFFE08A00); // orange
+
+      case ResultatEcritureGain.echecNonReconcilie:
+        texte = 'Gain NON enregistré, et la cohérence n\'a pas pu être '
+            'rétablie. Vérifiez le montant affiché avant de réessayer.';
+        couleur = const Color(0xFFB71C1C); // rouge
     }
 
-    setState(() {}); // rafraîchit le libellé du ticket, sans changer d'écran.
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          resultat.montant == null
-              ? 'Gain manuel retiré : le rapport officiel fait de nouveau foi.'
-              : 'Gain manuel enregistré : ${fmtEuros(resultat.montant!)} € brut.',
-        ),
-        backgroundColor: const Color(0xFF2E7D52),
-      ),
+      SnackBar(content: Text(texte), backgroundColor: couleur),
     );
   }
 
   String _calculerGainAffiche(TrackedCourse c) {
+    // ★ B1-T12 / LOT 2-C — DÉCISION DURABLE D'ABORD.
+    //
+    //   Le gain déclaré par l'utilisateur (lot 2-A) était persisté mais
+    //   affiché NULLE PART : la carte continuait d'annoncer « ⏳ En attente du
+    //   rapport officiel » alors que le montant était enregistré. La branche ①
+    //   ci-dessous le rend enfin visible, et rend aussi l'effet d'une décision
+    //   Accepter/Refuser.
+    //
+    //   ⚠️ LA GARDE NE S'ACTIVE QUE SUR PREUVE DURABLE. `vueDurable` rend
+    //      `null` quand un verdict officiel existe (les branches ② à ⑦
+    //      historiques reprennent alors la main), quand aucune décision ni
+    //      déclaration n'existe, et quand aucun `UserPrediction` n'est lié.
+    //      Un ticket qui n'a jamais connu le lot 2-C garde donc exactement
+    //      son libellé d'avant.
+    final durable = _vueDurable();
+    if (durable != null) return durable.libelle;
+
     // ★ LOT B-4.5 — Vérité OFFICIELLE d'abord. Un ticket qui porte un verdict
     //   (`etatGain != null`) est décrit EXCLUSIVEMENT par ce verdict : les
     //   quatre états sont distingués, et le montant affiché est une somme de

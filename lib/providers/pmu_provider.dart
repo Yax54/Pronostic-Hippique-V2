@@ -3,12 +3,34 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pmu_models.dart';
+import '../models/decision_gain_pmu.dart';
 import '../services/pmu_api_service.dart';
 import '../services/ia_memory_service.dart';
 import '../utils/type_pari_utils.dart'
     show estEtatSansPariRecommande, estTypeGagnantPlace;
 
 enum LoadingState { idle, loading, success, error }
+
+/// ★ B1-T12 / LOT 2-C — ISSUE RÉELLE D'UNE MODIFICATION DE GAIN MANUEL.
+///
+/// Trois états pour la confirmation, jamais confondus : deux opérations
+/// concurrentes demandant 10 € puis 20 € ne peuvent pas toutes deux être
+/// déclarées « enregistrées » alors que le disque ne porte que 20 €.
+enum IssueEcritureGain {
+  /// Le montant DEMANDÉ est réellement présent sur le support persistant.
+  confirme,
+
+  /// La valeur demandée a été REMPLACÉE par une opération ultérieure.
+  /// Elle n'est plus enregistrée : on ne l'annonce donc jamais comme telle.
+  remplacee,
+
+  /// La sauvegarde a échoué, mais mémoire et disque sont PROUVÉS alignés.
+  echec,
+
+  /// La sauvegarde ET la réconciliation ont échoué : la cohérence n'est PAS
+  /// prouvée. Le ticket est bloqué jusqu'à récupération contrôlée.
+  echecNonReconcilie,
+}
 
 class PmuProvider extends ChangeNotifier {
   List<PmuReunion> _reunions = [];
@@ -345,35 +367,129 @@ class PmuProvider extends ChangeNotifier {
   ///     photographie est complète (`_predictions` entier).
   bool _ecritureEnCours = false;
   bool _ecritureRedemandee = false;
-  Completer<void>? _ecritureAttente;
+  Completer<bool>? _ecritureAttente;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B1-T12 / LOT 2-C — CONFIRMATION RÉELLE DES ÉCRITURES FINANCIÈRES
+  //
+  //  DÉFAUT MESURÉ AVANT D'ÉCRIRE : `_ecrirePredictions` AVALAIT l'exception
+  //  (`catch (e) { debugPrint }`) et `_savePredictions` rendait un
+  //  `Future<void>`. Un échec d'écriture était donc STRICTEMENT indétectable :
+  //  aucune décision financière ne pouvait être annoncée de façon honnête.
+  //
+  //  Ce qui change, et RIEN de plus :
+  //    • `_ecrirePredictions` rend le `bool` réel de `setStringList` ;
+  //    • `_savePredictions` / `_boucleEcriture` le propagent ;
+  //    • un numéro de version mémoire est comparé à un numéro de version
+  //      RÉELLEMENT écrit, pour qu'un succès corresponde à une version donnée.
+  //
+  //  ⚠️ LE MÉCANISME B-4.6 EST INCHANGÉ : pas d'empilement d'écritures, pas de
+  //     microtask ajouté, « la dernière demande gagne ».
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Numéro de version de l'état mémoire. Incrémenté par toute écriture
+  /// financière du lot 2-C.
+  int _versionMemoire = 0;
+
+  /// Version RÉELLEMENT écrite, ou `null` si AUCUNE écriture réussie n'a
+  /// encore eu lieu.
+  ///
+  /// ⚠️ POURQUOI `int?` ET NON `int = 0` : avec `0`, la comparaison `0 >= 0`
+  ///    rendait `true` alors qu'aucun octet n'avait été écrit — un faux succès
+  ///    mesuré. `null` rend « jamais écrit » impossible à confondre avec
+  ///    « écrit à la version 0 » : une PREUVE d'écriture est exigée.
+  int? _versionEecrite;
+
+  /// Une version demandée est-elle réellement sur le disque ?
+  ///
+  /// DÉFINITION UNIQUE, partagée par les trois points de décision (appel
+  /// regroupé, appel séquentiel, confirmation) : ils ne peuvent pas diverger.
+  bool _versionEcriteCouvre(int versionDemandee) {
+    final ecrite = _versionEecrite;
+    return ecrite != null && ecrite >= versionDemandee;
+  }
+
+  /// ★ GÉNÉRATION D'OPÉRATION, PAR TICKET.
+  ///
+  /// Chaque modification de `montantGainManuel` reçoit un numéro strictement
+  /// croissant. Un rétablissement n'est permis QUE si l'opération échouée est
+  /// encore la DERNIÈRE applicable à ce ticket.
+  ///
+  /// ⚠️ LA COMPARAISON DE MONTANT SEULE NE SUFFIT PAS (défaut identifié) :
+  ///    la succession 10 € → 20 € → 10 € ramène `montantGainManuel` à la
+  ///    valeur de la PREMIÈRE opération. Un contrôle par égalité de montant
+  ///    laisserait la 1ʳᵉ opération (échouée, périmée) se croire légitime et
+  ///    rétablir un état qui n'est plus le sien. Seul un identifiant
+  ///    d'opération distingue ces deux « 10 € ».
+  final Map<String, int> _generationGainManuel = <String, int>{};
+
+  int _incrementerGenerationGainManuel(String id) {
+    final g = (_generationGainManuel[id] ?? 0) + 1;
+    _generationGainManuel[id] = g;
+    return g;
+  }
+
+  /// ★ TICKETS DONT LA COHÉRENCE MÉMOIRE/DISQUE N'EST PAS PROUVÉE.
+  ///
+  /// Alimenté UNIQUEMENT par un échec de réconciliation. Tant qu'un
+  /// identifiant y figure, AUCUNE nouvelle écriture financière ne s'appuie sur
+  /// l'état mémoire de ce ticket : il pourrait diverger du disque. La garde
+  /// est BLOQUANTE et le dit — elle ne « tente pas quand même ».
+  final Set<String> _etatFinancierDivergent = <String>{};
+
+  /// Le ticket est-il dans un état financier non prouvé ?
+  bool estEtatFinancierDivergent(String id) =>
+      _etatFinancierDivergent.contains(id);
+
+  /// Nombre de tickets en état non réconcilié — pour l'UI et les tests.
+  int get nombreEtatsFinanciersDivergents => _etatFinancierDivergent.length;
 
   /// Sauvegarde toutes les prédictions localement.
   ///
   /// Rend un `Future` qui se termine quand l'écriture couvrant cet appel est
   /// achevée. Les sept appelants historiques l'ignorent : leur comportement
   /// observable est inchangé.
-  Future<void> _savePredictions() {
+  Future<bool> _savePredictions() {
+    // Version demandée = état mémoire AU MOMENT DE L'APPEL. C'est elle qui
+    // doit se retrouver sur le disque pour qu'un `true` soit honnête.
+    final versionDemandee = _versionMemoire;
     if (_ecritureEnCours) {
       _ecritureRedemandee = true;
-      return _ecritureAttente?.future ?? Future<void>.value();
+      // ⚠️ JAMAIS `true` par défaut : un completer absent ne prouve RIEN.
+      final attente = _ecritureAttente;
+      if (attente == null) return Future<bool>.value(false);
+      // On ne se contente pas du résultat de la passe en cours : la VERSION
+      // DEMANDÉE doit avoir été écrite.
+      return attente.future.then((ok) => ok && _versionEcriteCouvre(versionDemandee));
     }
-    _ecritureAttente = Completer<void>();
-    return _boucleEcriture();
+    _ecritureAttente = Completer<bool>();
+    return _boucleEcriture(versionDemandee);
   }
 
-  Future<void> _boucleEcriture() async {
+  Future<bool> _boucleEcriture(int versionDemandee) async {
     _ecritureEnCours = true;
+    var ok = true;
     try {
       do {
         _ecritureRedemandee = false;
-        await _ecrirePredictions();
+        // La version est lue JUSTE AVANT la construction de la photographie.
+        // Une mutation survenue après est au pire non couverte par cette
+        // passe, mais elle lèvera `_ecritureRedemandee`.
+        final versionPhoto = _versionMemoire;
+        ok = await _ecrirePredictions();
+        if (ok) _versionEecrite = versionPhoto;
       } while (_ecritureRedemandee);
     } finally {
       _ecritureEnCours = false;
       final attente = _ecritureAttente;
       _ecritureAttente = null;
-      if (attente != null && !attente.isCompleted) attente.complete();
+      // Tous les appelants regroupés partagent ce completer : ils reçoivent
+      // le résultat de la photographie FINALE, jamais d'une passe
+      // intermédiaire.
+      if (attente != null && !attente.isCompleted) attente.complete(ok);
     }
+    // Succès ⇔ la passe a réussi ET ma version est bien sur le disque.
+    return ok && _versionEcriteCouvre(versionDemandee);
   }
 
   /// Attend la fin de l'écriture de sauvegarde en cours, s'il y en a une.
@@ -385,15 +501,344 @@ class PmuProvider extends ChangeNotifier {
       _ecritureEnCours ? (_ecritureAttente?.future ?? Future<void>.value())
           : Future<void>.value();
 
-  /// Écriture effective — INCHANGÉE par rapport à l'historique.
-  Future<void> _ecrirePredictions() async {
+  /// Écriture effective.
+  ///
+  /// Rend `true` si le disque a réellement accepté la liste.
+  /// `SharedPreferences.setStringList` rend lui-même un `bool` : c'est la
+  /// seule confirmation réelle disponible, et elle est utilisée telle quelle.
+  /// Une exception rend `false` — jamais un succès silencieux.
+  Future<bool> _ecrirePredictions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = _predictions.map((p) => jsonEncode(p.toJson())).toList();
-      await prefs.setStringList(_prefsKey, raw);
+      return await prefs.setStringList(_prefsKey, raw);
     } catch (e) {
       if (kDebugMode) debugPrint('_savePredictions error: $e');
+      return false;
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B1-T12 / LOT 2-C — ÉCRITURE FINANCIÈRE DURABLE, CONFIRMÉE ET REPRENABLE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// ★ GARDE-FOU D'INTÉGRATION — NON ACTIF DANS CE RACCORDEMENT.
+  ///
+  /// ⚠️ STATUT MESURÉ, SANS AUCUNE AMBIGUÏTÉ :
+  ///    • la méthode EXISTE et son mécanisme est testé isolément ;
+  ///    • elle N'EST APPELÉE PAR AUCUNE TRANSITION Accepter/Refuser ;
+  ///    • aucune transition Accepter/Refuser n'existe encore dans ce
+  ///      raccordement (`grep "DecisionGainPmu" lib/` ne trouve que le modèle
+  ///      et les getters, jamais un appel d'écriture de décision).
+  ///    Elle ne protège donc RIEN aujourd'hui. La présenter comme active
+  ///    serait un mensonge : elle est un POINT D'ACCROÎT.
+  ///
+  /// ⚠️ EXIGENCE POUR L'IMPLÉMENTATION FUTURE — l'invalidation devra être
+  ///    intégrée à une TRANSITION FINANCIÈRE COMPLÈTE, c'est-à-dire testée
+  ///    dans le même scénario que la persistance de la décision :
+  ///      ① `invaliderPourDecisionFinanciere(id)` — EN PREMIÈRE INSTRUCTION ;
+  ///      ② écriture de `decisionGainPmu` + `montantOfficielPmu` ;
+  ///      ③ confirmation réelle de cette écriture ;
+  ///      ④ vérification qu'aucun rétablissement de gain manuel ne l'annule ;
+  ///      ⑤ relecture après redémarrage.
+  ///    Un appel isolé dans un test ne prouvera JAMAIS l'intégration : le test
+  ///    devra exercer la décision réelle de bout en bout.
+  void invaliderPourDecisionFinanciere(String id) =>
+      _invaliderOperationsGainManuel(id);
+
+  /// Invalide TOUTES les opérations de gain manuel en vol sur ce ticket :
+  /// après cet appel, aucune d'elles n'est plus la dernière génération, donc
+  /// aucune ne peut plus effectuer de rétablissement ni se déclarer confirmée.
+  ///
+  /// On ne fait qu'avancer un compteur interne : aucune règle métier, aucun
+  /// moteur PMU, aucune décision utilisateur n'est modifiée.
+  void _invaliderOperationsGainManuel(String id) {
+    _generationGainManuel[id] = (_generationGainManuel[id] ?? 0) + 1;
+  }
+
+  /// ★ ÉCRITURE FINANCIÈRE DURABLE DU GAIN DÉCLARÉ.
+  ///
+  /// Rend une ISSUE À QUATRE ÉTATS, jamais un booléen ambigu :
+  ///   • `confirme`  : le montant DEMANDÉ est réellement sur le disque ;
+  ///   • `remplacee` : une opération plus récente fait foi, ma valeur n'est
+  ///                   plus enregistrée ;
+  ///   • `echec`     : échec, mais mémoire et disque sont PROUVÉS alignés ;
+  ///   • `echecNonReconcilie` : échec dont la réconciliation a échoué — la
+  ///                   cohérence n'est PAS prouvée, le ticket est bloqué.
+  ///
+  /// `montant == null` EFFACE la déclaration ; `0.0` est une déclaration
+  /// explicite. Les deux restent distincts de bout en bout.
+  ///
+  /// ⚠️ N'APPELLE **PAS** `_syncStatsTypesIA()` : les statistiques et le
+  ///    PROFIL sont hors périmètre de ce lot.
+  Future<IssueEcritureGain> enregistrerGainManuelPrediction(
+      String id, double? montant) async {
+    // ★ GARDE BLOQUANTE — on n'écrit JAMAIS sur un ticket dont la cohérence
+    //   n'est pas prouvée. On ne réutilise donc pas silencieusement un état
+    //   mémoire potentiellement divergent.
+    if (_etatFinancierDivergent.contains(id)) {
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return IssueEcritureGain.echec;
+
+    // ① L'opération reçoit son identifiant AVANT toute écriture.
+    final maGeneration = _incrementerGenerationGainManuel(id);
+    final ancienMontant = _predictions[idx].montantGainManuel;
+
+    // ② Égalité en mémoire ≠ preuve disque : on VÉRIFIE, on ne conclut pas.
+    if (ancienMontant == montant) {
+      return _issueDepuisDisque(id, montant, maGeneration);
+    }
+
+    // ③ Modification en mémoire — SEUL `montantGainManuel` est touché.
+    _predictions[idx] = _predictions[idx].copyWith(montantGainManuel: montant);
+    _versionMemoire++;
+    notifyListeners();
+
+    final ecrit = await _savePredictions();
+    if (!ecrit) {
+      return _rollbackCible(id, montant, ancienMontant, maGeneration);
+    }
+
+    // ④ Preuve finale : le ticket porte-t-il, PAR SON ID, CE montant ?
+    return _issueDepuisDisque(id, montant, maGeneration);
+  }
+
+  /// Issue d'une opération, établie à partir du disque ET de sa génération.
+  ///
+  /// ⚠️ L'ORDRE COMPTE AUTANT QUE LA COMPARAISON : la génération est vérifiée
+  ///    AVANT la lecture, puis REVÉRIFIÉE APRÈS — un `await` laisse toujours
+  ///    passer une opération concurrente. Sans la revérification, la
+  ///    succession 10 € → 20 € → 10 € ferait croire à l'opération N°1 que le
+  ///    « 10 » du disque est le sien, alors qu'il vient de l'opération N°3.
+  Future<IssueEcritureGain> _issueDepuisDisque(
+      String id, double? montant, int maGeneration) async {
+    // ① Suis-je encore la dernière opération applicable ?
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    // ② Lecture asynchrone — point de reprise pour une autre opération.
+    final presentSurDisque = await verifierGainPersiste(id, montant);
+
+    // ③ La génération a-t-elle bougé pendant l'attente ?
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    // ④ Je suis la dernière ET le disque porte ma valeur.
+    return presentSurDisque
+        ? IssueEcritureGain.confirme
+        : IssueEcritureGain.echec;
+  }
+
+  /// Rétablissement du SEUL champ `montantGainManuel` après échec.
+  ///
+  /// TROIS GARDE-FOUS, chacun mesurable :
+  ///   ① GÉNÉRATION : l'opération échouée doit être la DERNIÈRE applicable.
+  ///      Une acceptation, un refus ou une réédition survenue entre-temps
+  ///      interdit donc le rétablissement, et n'est jamais annulée.
+  ///   ② VALEUR : le champ doit encore porter la valeur que l'on a échoué à
+  ///      écrire. S'il a changé, on ne touche à rien.
+  ///   ③ PORTÉE : `copyWith` ne reçoit QUE `montantGainManuel`. Tous les
+  ///      autres champs (`decisionGainPmu`, `montantOfficielPmu`,
+  ///      `montantGainManuelAvantDecision`, mises, cotes, verdicts…) gardent
+  ///      leur valeur COURANTE. On ne réinstalle JAMAIS l'objet entier.
+  Future<IssueEcritureGain> _rollbackCible(String id, double? montantEchoue,
+      double? ancienMontant, int maGeneration) async {
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return IssueEcritureGain.echec;
+    if (_predictions[idx].montantGainManuel != montantEchoue) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    // Rétablissement LIMITÉ à ce seul champ.
+    _predictions[idx] =
+        _predictions[idx].copyWith(montantGainManuel: ancienMontant);
+    _versionMemoire++;
+    notifyListeners();
+
+    return _reconcilierApresEchec(id, ancienMontant, maGeneration);
+  }
+
+  /// Aligne mémoire et disque, et DIT honnêtement si l'alignement est établi.
+  ///
+  /// ⚠️ LE RÉSULTAT DE `_savePredictions()` N'EST PLUS IGNORÉ : c'est lui qui
+  ///    distingue `echec` (alignement prouvé) de `echecNonReconcilie`
+  ///    (cohérence non prouvée, ticket bloqué).
+  ///
+  /// ⚠️ AUCUNE ÉCRITURE PARALLÈLE : si une passe est en vol, `_savePredictions`
+  ///    lève `_ecritureRedemandee` et la boucle B-4.6 existante réécrit la
+  ///    photographie COURANTE. On n'introduit donc jamais une écriture
+  ///    susceptible de restaurer un ancien montant par-dessus une décision.
+  Future<IssueEcritureGain> _reconcilierApresEchec(
+      String id, double? ancienMontant, int maGeneration) async {
+    // Le disque porte-t-il DÉJÀ l'ancien montant ? La première écriture n'a
+    // alors rien changé : la mémoire est alignée, rien à écrire.
+    if (await verifierGainPersiste(id, ancienMontant)) {
+      if (_generationGainManuel[id] != maGeneration) {
+        return IssueEcritureGain.remplacee;
+      }
+      _etatFinancierDivergent.remove(id); // cohérence prouvée
+      return IssueEcritureGain.echec;
+    }
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    final reconcilie = await _savePredictions();
+    if (!reconcilie) {
+      _etatFinancierDivergent.add(id); // cohérence NON prouvée
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (!await verifierGainPersiste(id, ancienMontant)) {
+      _etatFinancierDivergent.add(id);
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    _etatFinancierDivergent.remove(id);
+    return IssueEcritureGain.echec; // échec d'écriture, alignement PROUVÉ
+  }
+
+  /// Vérifie que le ticket [id] porte réellement [montant] sur le DISQUE.
+  ///
+  /// Lecture seule : ne peut rien corrompre. Utilisée comme PREUVE finale,
+  /// car ni le `bool` de `setStringList` ni la version ne prouvent qu'un
+  /// ticket DONNÉ porte un montant DONNÉ — la photographie peut contenir une
+  /// valeur plus récente.
+  ///
+  /// ⚠️ `null` ET `0.0` SONT DISTINGUÉS PAR CONSTRUCTION :
+  ///    • `montant == null` → la clé doit valoir `null` (effacement écrit) ;
+  ///    • `montant == 0.0`  → la clé doit valoir `0.0` (déclaration explicite).
+  /// Un montant EFFACÉ n'est donc jamais confondu avec un montant nul.
+  ///
+  /// Rend `false` si le ticket est absent du disque : rien n'est confirmé.
+  Future<bool> verifierGainPersiste(String id, double? montant) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList(_prefsKey) ?? [];
+      for (final s in raw) {
+        final map = jsonDecode(s) as Map<String, dynamic>;
+        if (map['id'] != id) continue;
+        final stocke = (map['montantGainManuel'] as num?)?.toDouble();
+        if (montant == null) return stocke == null;
+        return stocke == montant;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Confirmation fiable pour une écriture financière.
+  ///
+  /// Distincte de [sauvegardeTerminee] (dont la signature et le contrat sont
+  /// INCHANGÉS) : celle-ci rend le RÉSULTAT RÉEL de l'écriture.
+  ///
+  /// ⚠️ AUCUN indicateur « écriture en retard » n'intervient ici : ce serait
+  ///    exactement l'indicateur dont il est interdit de faire une preuve. La
+  ///    preuve est le retour de `setStringList` + la version écrite.
+  Future<bool> confirmationEcriturePredictions() {
+    final attente = _ecritureAttente;
+    final versionDemandee = _versionMemoire;
+    // Aucune écriture réussie n'a jamais eu lieu ⇒ `false`. Sans cette
+    // ligne, `0 >= 0` rendrait `true` : faux succès mesuré.
+    if (_versionEecrite == null && !_ecritureEnCours) {
+      return Future<bool>.value(false);
+    }
+    if (_ecritureEnCours && attente != null) {
+      return attente.future
+          .then((ok) => ok && _versionEcriteCouvre(versionDemandee));
+    }
+    return Future<bool>.value(_versionEcriteCouvre(versionDemandee));
+  }
+
+  /// ★ RÉCUPÉRATION CONTRÔLÉE D'UN ÉTAT FINANCIER NON PROUVÉ.
+  ///
+  /// ⚠️ CE QUE CETTE MÉTHODE NE FAIT PAS, ET C'EST LE CŒUR DE LA CORRECTION :
+  ///    elle N'APPELLE PAS `reloadPredictions()`. Un rechargement ÉCRASE
+  ///    l'état mémoire AVANT toute comparaison : on ne pourrait plus rien
+  ///    comparer, et une modification concurrente plus récente serait perdue.
+  ///    On lit donc le disque SÉPARÉMENT, sans y substituer la mémoire.
+  ///
+  /// DÉROULEMENT, aucune étape raccourcie :
+  ///   ① ATTENDRE les écritures en vol : on n'observe jamais un état
+  ///      intermédiaire, donc jamais un faux désaccord.
+  ///   ② LIRE le disque sans écraser la mémoire.
+  ///   ③ COMPARER les TROIS champs financiers : `montantGainManuel`,
+  ///      `montantOfficielPmu`, `decisionGainPmu`.
+  ///   ④ PRÉSERVER la modification concurrente plus récente : si l'état
+  ///      mémoire a bougé pendant la lecture, on ne conclut RIEN.
+  ///   ⑤ DÉBLOQUER seulement si les trois champs concordent.
+  ///   ⑥ INCERTITUDE ⇒ le ticket RESTE bloqué et on rend `false`.
+  ///
+  /// Rend `true` UNIQUEMENT si la cohérence des trois champs est prouvée.
+  Future<bool> reconcilierEtatFinancier(String id) async {
+    // ① Attendre les écritures en cours (mécanisme B-4.6, contrat inchangé).
+    await sauvegardeTerminee();
+
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return false; // ticket absent : l'absence n'est pas une preuve
+
+    // ② Lecture du disque, SANS toucher à la mémoire.
+    Map<String, dynamic>? surDisque;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList(_prefsKey) ?? [];
+      for (final s in raw) {
+        final map = jsonDecode(s) as Map<String, dynamic>;
+        if (map['id'] == id) {
+          surDisque = map;
+          break;
+        }
+      }
+    } catch (_) {
+      return false; // lecture impossible : incertitude ⇒ reste bloqué
+    }
+    if (surDisque == null) return false; // absent du disque : aucune preuve
+
+    // ④ Capturer la génération AVANT de figer les valeurs mémoire : si elle
+    //    changeait pendant la suite, une modification concurrente serait en
+    //    cours et aucun verdict ne serait honnête.
+    final generationAvant = _generationGainManuel[id] ?? 0;
+    final memoire = _predictions[idx];
+
+    // ③ Comparaison des TROIS champs financiers.
+    final manuelDisque = (surDisque['montantGainManuel'] as num?)?.toDouble();
+    final officielDisque = (surDisque['montantOfficielPmu'] as num?)?.toDouble();
+    final decisionDisque = _lireDecisionGainDepuisJson(surDisque['decisionGainPmu']);
+
+    final concordance = memoire.montantGainManuel == manuelDisque &&
+        memoire.montantOfficielPmu == officielDisque &&
+        memoire.decisionGainPmu == decisionDisque;
+
+    // ④ Modification concurrente survenue pendant la lecture ?
+    if ((_generationGainManuel[id] ?? 0) != generationAvant) {
+      return false; // on ne débloque pas sur un état qui a bougé
+    }
+
+    // ⑤ / ⑥ Déblocage seulement sur concordance prouvée.
+    if (!concordance) return false;
+    _etatFinancierDivergent.remove(id);
+    notifyListeners();
+    return true;
+  }
+
+  /// Relecture tolérante d'une décision depuis une map JSON brute.
+  /// Toute valeur absente ou inconnue rend `null` (jamais un refus inventé).
+  static DecisionGainPmu? _lireDecisionGainDepuisJson(dynamic valeur) {
+    if (valeur is! String) return null;
+    for (final d in DecisionGainPmu.values) {
+      if (d.name == valeur) return d;
+    }
+    return null;
   }
 
   /// Ajoute une prédiction (plusieurs paris sur la même course autorisés)

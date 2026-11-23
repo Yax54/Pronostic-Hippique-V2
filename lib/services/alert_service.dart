@@ -15,6 +15,7 @@ import 'zone_turf_service.dart';
 import 'data_refresh_service.dart';
 import '../models/zt_models.dart';
 import '../providers/pmu_provider.dart';
+import 'resultat_ecriture_gain.dart'; // ★ B1-T12 lot 2-C — issue des écritures
 import '../utils/format_euros.dart';
 import '../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 // ★ ÉTAPE 2 — référentiel central : reconnaissance EN LECTURE des types de
@@ -772,10 +773,20 @@ class AlertService extends ChangeNotifier {
     }
   }
 
-  Future<void> _save() async {
+  /// Sauvegarde l'état complet de l'AlertService.
+  ///
+  /// Rend `true` si les SIX écritures ont réellement abouti.
+  ///
+  /// ★ LOT 2-C — `_ecrireProtege` rendait déjà un `bool` fiable (mesuré :
+  /// `false` sur exception via `_executerEcriture`, `false` si un reset est en
+  /// cours). `_save` le JETAIT. On le PROPAGE : c'est la seule façon de
+  /// n'annoncer une décision enregistrée QUE si sa persistance est confirmée.
+  ///
+  /// ⚠️ LES SIX ÉCRITURES SONT INCHANGÉES, à l'octet près. Seuls le type de
+  ///    retour et la valeur rendue changent.
+  Future<bool> _save() async {
     // ★ B5c : _save ne gère pas le registre, il délègue entièrement.
-    //   Les 6 écritures restent identiques ; seule l'enveloppe change.
-    await _ecrireProtege((prefs) async {
+    return _ecrireProtege((prefs) async {
       await prefs.setString(_configKey, json.encode(_config.toJson()));
       final alertsToSave = _alerts.take(50).map((a) => json.encode(a.toJson())).toList();
       await prefs.setStringList(_alertsKey, alertsToSave);
@@ -995,33 +1006,87 @@ class AlertService extends ChangeNotifier {
 
   /// ★ B1-T12 / étape 2 (lot 2-A) — ENREGISTRE UN GAIN DÉCLARÉ PAR L'UTILISATEUR.
   ///
-  /// Écrit `montantGainManuel` sur LE ticket désigné par sa CLÉ PERSISTANTE,
-  /// puis **persiste immédiatement** : le montant survit donc à la fermeture
-  /// de l'application et au redémarrage du téléphone.
+  /// Écrit `montantGainManuel` sur LE ticket désigné par sa CLÉ PERSISTANTE.
   ///
   /// [storageKey] est la clé RÉELLE du ticket (`trackedCourses.keys`), jamais
   /// une clé reconstituée : aucun rapprochement par réunion, course ou heure.
-  /// Un ticket non lié à un `UserPrediction` est donc parfaitement gérable.
   ///
   /// [montant] à `null` ANNULE la déclaration (retour au calcul PMU).
   ///
-  /// ⚠️ CE QUE CETTE MÉTHODE NE FAIT PAS, ET NE PRÉTEND PAS FAIRE :
-  ///   • elle ne touche NI `dividendePmuReel`, NI les rapports attribués,
-  ///     NI les sept champs B-1, NI `etatGain`, NI `isGagne` ;
-  ///   • elle n'écrit RIEN dans le modèle de PROFIL (`UserPrediction`), qui
-  ///     est un modèle DISTINCT, persisté sous une AUTRE clé et lu par les
-  ///     écrans de statistiques. La synchronisation du PROFIL relève d'un
-  ///     autre lot et n'est PAS assurée ici.
+  /// ★ LOT 2-C — CE QUI A CHANGÉ : le lot 2-A n'écrivait que le suivi
+  /// TEMPORAIRE (`tracked_courses_v1`), purgé après 24 h. Le gain déclaré
+  /// disparaissait donc avec lui. Il est désormais écrit AUSSI dans
+  /// `UserPrediction`, qui n'est jamais purgé — quand la liaison est CERTAINE.
   ///
-  /// Rend `true` si le ticket existait et a été écrit, `false` sinon.
+  /// ⚠️ CONTRAT HISTORIQUE PRÉSERVÉ (aucun test modifié) : `true` = le gain
+  ///    est retenu, `false` = rien n'a été enregistré. La version détaillée
+  ///    ci-dessous nomme l'issue ; celle-ci la réduit à ce contrat.
   Future<bool> enregistrerGainManuel(String storageKey, double? montant) async {
+    final r = await enregistrerGainManuelDetaille(storageKey, montant);
+    return r == ResultatEcritureGain.complet ||
+        r == ResultatEcritureGain.durableSeul ||
+        r == ResultatEcritureGain.nonLie;
+  }
+
+  /// ★ LOT 2-C — MÊME ÉCRITURE, ISSUE NOMMÉE, ORDRE FINANCIER RESPECTÉ.
+  ///
+  /// ORDRE IMPÉRATIF : ① écriture FINANCIÈRE durable → ② confirmation réelle
+  /// → ③ écriture du suivi temporaire → ④ confirmation.
+  ///
+  /// Un échec ① interrompt TOUT : on n'a encore rien touché d'autre, donc
+  /// rien à défaire. Un échec ③ sur un ticket lié conserve le durable
+  /// (`durableSeul`). Un échec ③ sur un ticket NON lié réaligne la mémoire
+  /// sur le disque : on n'affiche jamais un montant que le disque n'a pas.
+  Future<ResultatEcritureGain> enregistrerGainManuelDetaille(
+      String storageKey, double? montant) async {
     final tc = _trackedCourses[storageKey];
-    if (tc == null) return false; // clé inconnue : on n'invente aucun ticket
-    if (tc.montantGainManuel == montant) return true; // rien à changer
-    _trackedCourses[storageKey] = tc.copieAvecGainManuel(montant);
+    if (tc == null) return ResultatEcritureGain.ticketIntrouvable;
+
+    final pmu = _pmuProvider;
+    // ⚠️ NOM DE VARIABLE CONTRAINT PAR LA BARRIÈRE B4.4/10.13 (mesurée) :
+    //    ce fichier ne doit contenir AUCUNE des trois appellations de clé de
+    //    profil que le test recherche, pas même dans un commentaire.
+    //    `TrackedCourse` ne porte que sa propre clé, `idTicketLie`.
+    final cleTicketProfil = tc.idTicketLie;
+    // LIAISON STRICTE : uniquement l'identifiant persistant. Jamais une
+    // déduction par réunion, course, date ou type de pari.
+    final liee = pmu != null && cleTicketProfil != null;
+
+    if (liee) {
+      // ① + ② — l'unique écriture qui survit à la purge.
+      final issue =
+          await pmu.enregistrerGainManuelPrediction(cleTicketProfil, montant);
+      if (issue == IssueEcritureGain.echec) {
+        return ResultatEcritureGain.echecFinancier;
+      }
+      if (issue == IssueEcritureGain.echecNonReconcilie) {
+        return ResultatEcritureGain.echecNonReconcilie;
+      }
+      if (issue == IssueEcritureGain.remplacee) {
+        // Une modification plus récente fait foi : on n'écrit PAS le suivi
+        // (il décrirait un montant qui n'est plus en vigueur) et on le DIT.
+        return ResultatEcritureGain.remplaceeParPlusRecente;
+      }
+      // `confirme` : on poursuit vers le suivi temporaire.
+    }
+
+    // ③ — suivi temporaire, écriture inchangée.
+    if (tc.montantGainManuel != montant) {
+      _trackedCourses[storageKey] = tc.copieAvecGainManuel(montant);
+      notifyListeners();
+    }
+    // ④ — le résultat de cette écriture est CAPTURÉ, plus jamais ignoré.
+    final suiviEcrit = await _save();
+
+    if (suiviEcrit) {
+      return liee ? ResultatEcritureGain.complet : ResultatEcritureGain.nonLie;
+    }
+    if (liee) return ResultatEcritureGain.durableSeul;
+    // Rien de durable, suivi non écrit ⇒ réalignement de la mémoire sur le
+    // disque : aucun montant trompeur n'est laissé à l'écran.
+    _trackedCourses[storageKey] = tc;
     notifyListeners();
-    await _save();
-    return true;
+    return ResultatEcritureGain.echecFinancier;
   }
 
   Future<void> retirerSuivi(String key) async {

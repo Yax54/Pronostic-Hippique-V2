@@ -36,6 +36,9 @@ import '../services/gain_pmu_types.dart'
         EtatTirelire,
         MotifNonDetermination,
         RapportAttribue;
+// ★ B1-T12 / LOT 2-C — type de décision, dans la MÊME couche modèle.
+//   `decision_gain_pmu.dart` n'importe RIEN : aucun cycle possible.
+import 'decision_gain_pmu.dart';
 import '../utils/type_pari_utils.dart' show estTypeGagnantPlace;
 
 // ─── Réunion ────────────────────────────────────────────────────────────────
@@ -638,6 +641,42 @@ class UserPrediction {
   /// course restent donc indépendants.
   final String? idTicketLie;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B1-T12 / LOT 2-C — LA DÉCISION FINANCIÈRE, DURABLE
+  //
+  //  Un gain officiel PMU peut arriver APRÈS que l'utilisateur ait déclaré son
+  //  propre montant. Il faut alors que l'utilisateur tranche. Ces trois champs
+  //  sont ce qui rend cette décision DURABLE : ils survivent à la fermeture de
+  //  l'application, au redémarrage, à la purge du suivi temporaire et à une
+  //  sauvegarde/restauration.
+  //
+  //  ⚠️ ÉCRITURE CONDITIONNELLE DANS `toJson` : un ticket qui ne porte aucune
+  //     décision conserve EXACTEMENT sa forme d'origine (26 ou 28 clés). La
+  //     forme des sauvegardes historiques n'est donc pas modifiée.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Le gain OFFICIEL PMU de référence, en euros BRUTS.
+  ///
+  /// `null` = aucun gain officiel n'a jamais été établi pour ce ticket.
+  /// `0.0` = gain officiellement établi à 0 € (perte) — DISTINCT de `null`.
+  ///
+  /// Ce champ ne reçoit JAMAIS une cote, une estimation, ni le montant d'un
+  /// rapport ambigu : seule une valeur officielle établie y est écrite.
+  final double? montantOfficielPmu;
+
+  /// La décision de l'utilisateur, ou `null` si aucune n'a été prise.
+  ///
+  /// ⚠️ `null` N'EST JAMAIS UN REFUS. C'est l'état « demande en attente » ou
+  /// « aucune demande ». Un refus est une décision explicite, enregistrée
+  /// comme telle.
+  final DecisionGainPmu? decisionGainPmu;
+
+  /// Le montant manuel tel qu'il était AVANT la décision — conservé en trace
+  /// pour que l'utilisateur puisse toujours savoir ce qu'il avait déclaré.
+  ///
+  /// Écrit au moment de l'acceptation ; jamais réécrit ensuite.
+  final double? montantGainManuelAvantDecision;
+
   /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
   /// CONTRAT CORRIGÉ. L'ancienne version rendait `true` dès que le code PMU
@@ -828,6 +867,10 @@ class UserPrediction {
     // ★ B1-T12 / étape 1 — gain manuel et liaison certaine
     this.montantGainManuel,
     this.idTicketLie,
+    // ★ B1-T12 / lot 2-C — décision de gain (tous facultatifs, null par défaut)
+    this.montantOfficielPmu,
+    this.decisionGainPmu,
+    this.montantGainManuelAvantDecision,
   });
 
   /// Gain net calculé :
@@ -876,8 +919,22 @@ class UserPrediction {
   ///
   /// `null` = aucun montant fiable → état indéterminé (ne rien affirmer).
   double? get gainRetenuBrut {
+    // ⓪ ACCEPTATION EXPLICITE D'UN GAIN OFFICIEL — PRIME SUR TOUT LE RESTE.
+    //
+    //    DÉFAUT MESURÉ AVANT D'ÉCRIRE : la branche ① ci-dessous rend le
+    //    montant manuel INCONDITIONNELLEMENT dès qu'il existe. Sans cette
+    //    branche ⓪, accepter un gain officiel n'aurait donc AUCUN effet
+    //    financier : le montant retenu resterait celui du manuel, et la
+    //    décision de l'utilisateur serait sans conséquence.
+    //
+    //    `0.0` officiel ACCEPTÉ vaut 0 € (perte établie), et NON
+    //    « indéterminé » : c'est un résultat officiel, distinct d'une absence.
+    if (decisionGainPmu == DecisionGainPmu.accepte) return montantOfficielPmu;
+
     // ① La déclaration de l'utilisateur est prioritaire. Un `0.0` explicite
     //    est un montant : il ne retombe donc PAS sur le PMU.
+    //    Ceci couvre aussi le REFUS explicite et l'ATTENTE (`null`), qui
+    //    doivent tous deux laisser le manuel seul maître — lot 2-A inchangé.
     final manuel = montantGainManuel;
     if (manuel != null) return manuel;
 
@@ -1076,6 +1133,24 @@ class UserPrediction {
             'montantGainManuel': montantGainManuel,
             'idTicketLie': idTicketLie,
           },
+    // ★ B1-T12 / lot 2-C — LA DÉCISION FINANCIÈRE.
+    //
+    //   ⚠️ MÊME RÈGLE QUE B1-T12 : ÉCRITURE CONDITIONNELLE.
+    //   Un ticket sans décision ne doit PAS grossir d'un seul octet, sinon le
+    //   verrou mesuré `expect(json.length, 26)` d'un ticket historique
+    //   tomberait, et la forme de TOUTES les sauvegardes changerait.
+    //   Les trois clés ne sont donc écrites que si l'une au moins est
+    //   renseignée. `0.0` est écrit (déclaration explicite) : le test `!= null`
+    //   le garantit, contrairement à un test de véracité.
+    ...?(montantOfficielPmu == null &&
+            decisionGainPmu == null &&
+            montantGainManuelAvantDecision == null)
+        ? null
+        : <String, dynamic>{
+            'montantOfficielPmu': montantOfficielPmu,
+            'decisionGainPmu': decisionGainPmu?.name,
+            'montantGainManuelAvantDecision': montantGainManuelAvantDecision,
+          },
   };
 
   factory UserPrediction.fromJson(Map<String, dynamic> json) {
@@ -1141,7 +1216,28 @@ class UserPrediction {
       //   au chargement (interdiction du mandat).
       montantGainManuel: (json['montantGainManuel'] as num?)?.toDouble(),
       idTicketLie: json['idTicketLie'] as String?,
+      // ★ B1-T12 / lot 2-C — LECTURE TOLÉRANTE.
+      //   Clé absente ⇒ `null` ⇒ aucune décision. Une sauvegarde ancienne est
+      //   donc relue sans erreur et sans qu'aucune décision soit inventée.
+      //   Une valeur inconnue ⇒ `null` : on ne DEVINE jamais une décision.
+      montantOfficielPmu: (json['montantOfficielPmu'] as num?)?.toDouble(),
+      decisionGainPmu: _lireDecisionGain(json['decisionGainPmu']),
+      montantGainManuelAvantDecision:
+          (json['montantGainManuelAvantDecision'] as num?)?.toDouble(),
     );
+  }
+
+  /// Relecture TOLÉRANTE d'une décision de gain.
+  ///
+  /// Rend `null` — et non un refus, ni une acceptation — pour toute valeur
+  /// absente, non textuelle ou inconnue. Inventer une décision reviendrait à
+  /// appliquer ou écarter un montant que l'utilisateur n'a jamais tranché.
+  static DecisionGainPmu? _lireDecisionGain(dynamic valeur) {
+    if (valeur is! String) return null;
+    for (final d in DecisionGainPmu.values) {
+      if (d.name == valeur) return d;
+    }
+    return null;
   }
 
   /// Relecture tolérante d'une liste de rapports attribués.
@@ -1228,6 +1324,13 @@ class UserPrediction {
     //  et l'annulation deviendrait impossible. D'où `Object?` + sentinelle.
     Object? montantGainManuel = _inchange,
     Object? idTicketLie = _inchange,
+    // ── LOT 2-C — décision de gain (sentinelle obligatoire, comme ci-dessus) ─
+    //  `null` doit pouvoir ÊTRE ÉCRIT explicitement : annuler une décision est
+    //  une opération légitime, qu'un paramètre `double?`/`enum?` nu rendrait
+    //  impossible en le confondant avec « non fourni ».
+    Object? montantOfficielPmu = _inchange,
+    Object? decisionGainPmu = _inchange,
+    Object? montantGainManuelAvantDecision = _inchange,
   }) {
     return UserPrediction(
       // Champs REQUIS : jamais nuls, donc `?? this.x` est sans ambiguïté.
@@ -1325,6 +1428,18 @@ class UserPrediction {
       idTicketLie: identical(idTicketLie, _inchange)
           ? this.idTicketLie
           : idTicketLie as String?,
+      // ★ LOT 2-C — propagés avec la sentinelle : `null` peut être écrit
+      //   explicitement (annulation d'une décision, effacement d'un montant).
+      montantOfficielPmu: identical(montantOfficielPmu, _inchange)
+          ? this.montantOfficielPmu
+          : montantOfficielPmu as double?,
+      decisionGainPmu: identical(decisionGainPmu, _inchange)
+          ? this.decisionGainPmu
+          : decisionGainPmu as DecisionGainPmu?,
+      montantGainManuelAvantDecision:
+          identical(montantGainManuelAvantDecision, _inchange)
+              ? this.montantGainManuelAvantDecision
+              : montantGainManuelAvantDecision as double?,
     );
   }
 }
