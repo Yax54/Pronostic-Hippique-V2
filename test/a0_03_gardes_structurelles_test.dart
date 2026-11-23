@@ -159,12 +159,19 @@ void main() {
       //   mais elle ne fait plus d'écriture financière : la garde A-0 n'a donc
       //   plus d'objet. On vérifie que la méthode est bien là (pas supprimée en
       //   silence) et que son corps ne contient plus aucune écriture.
+      // ★ LOT 2-C / DERNIER VERROU — ANCRE DÉPLACÉE, INTENTION CONSERVÉE.
+      //   La méthode est devenue `Future<void> ... async` : elle ATTEND
+      //   désormais la confirmation de l'écriture du verdict au lieu de la
+      //   lancer sans preuve. La garde porte sur sa PRÉSENCE et sur l'ABSENCE
+      //   d'écriture de dividende dans son corps — les deux sont inchangées,
+      //   et la vérification reste STRICTE (aucune écriture financière).
       expect(
-          src.contains('void _majGainReelDansProfil(List<RapportPmu> rapports) {'),
+          src.contains(
+              'Future<void> _majGainReelDansProfil(List<RapportPmu> rapports) async {'),
           isTrue,
           reason: 'la méthode doit rester présente');
       final debut = src.indexOf(
-          'void _majGainReelDansProfil(List<RapportPmu> rapports) {');
+          'Future<void> _majGainReelDansProfil(List<RapportPmu> rapports) async {');
       final fin = src.indexOf('void _verifierResultatAuto()');
       final corps = src.substring(debut, fin > debut ? fin : src.length);
       expect(corps.contains('enregistrerDividendePmu'), isFalse,

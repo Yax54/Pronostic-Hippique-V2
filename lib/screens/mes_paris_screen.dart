@@ -1268,7 +1268,11 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       });
       // ✅ Fix audit : appliquer le dividende réel au profil si rapports disponibles
       if (rapports.isNotEmpty && mounted) {
-        _majGainReelDansProfil(rapports);
+        // ★ B1-T12 / LOT 2-C — l'écriture du verdict est désormais ASYNCHRONE
+        //   et CONFIRMÉE : elle attend la sauvegarde puis relit le disque.
+        //   On l'attend réellement — sinon un message de réussite pourrait
+        //   précéder un échec d'écriture.
+        await _majGainReelDansProfil(rapports);
       }
     } catch (e) {
       // ✅ Fix: toujours remettre _chargementRapports à false en cas d'erreur
@@ -1324,7 +1328,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     return groupes;
   }
 
-  void _majGainReelDansProfil(List<RapportPmu> rapports) {
+  Future<void> _majGainReelDansProfil(List<RapportPmu> rapports) async {
     if (!mounted) return;
 
     final groupes = _arriveeGroupesOfficiels;
@@ -1348,12 +1352,13 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
           course.numReunion, course.numCourse);
       for (final pred in predictions) {
         if (pred.etatGain != null) continue; // verdict déjà écrit : ne pas rejouer
-        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE.
+        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE ET CONFIRMÉE.
         //   L'ancienne voie (`resoudrePrediction` sur l'instantané + remplacement
         //   d'objet entier) écrasait une saisie manuelle survenue pendant
-        //   l'attente réseau (défaut D1, mesuré). La nouvelle relit l'état FRAIS
-        //   et fusionne les champs financiers dans un bloc synchrone.
-        provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
+        //   l'attente réseau (défaut D1, mesuré). La nouvelle relit l'état FRAIS,
+        //   fusionne les champs financiers, ATTEND la sauvegarde puis RELIT le
+        //   disque. Son issue n'est jamais supposée : elle est rendue.
+        await provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
       }
 
       // ── 2. Le ticket SUIVI de cet écran, avec ses propres données ───────────

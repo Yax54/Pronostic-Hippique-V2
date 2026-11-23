@@ -626,7 +626,9 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
         _chargementRapports = false;
       });
       if (rapports.isNotEmpty && mounted) {
-        _majGainReelDansProfil(rapports);
+        // ★ B1-T12 / LOT 2-C — attente réelle : aucun message de réussite ne
+        //   doit précéder la confirmation d'écriture.
+        await _majGainReelDansProfil(rapports);
       }
     } catch (e) {
       // ✅ Fix : toujours remettre _chargementRapports à false
@@ -655,7 +657,7 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
   /// PÉRIMÈTRE RÉEL : la course doit avoir une arrivée GROUPÉE et des rapports.
   /// Sans groupes officiels, l'arbitre prononcerait `deadHeatSansGroupes`,
   /// indéterminé DÉFINITIF pour B-4.3 : on refuse donc de l'écrire.
-  void _majGainReelDansProfil(List<RapportPmu> rapports) {
+  Future<void> _majGainReelDansProfil(List<RapportPmu> rapports) async {
     if (!mounted) return;
 
     final tc = widget.tracked;
@@ -677,11 +679,11 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
           provider.getAllPredictionsForCourse(tc.numReunion, tc.numCourse);
       for (final pred in predictions) {
         if (pred.etatGain != null) continue;
-        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE (même correctif que
-        //   `mes_paris_screen`) : relit l'état FRAIS et fusionne les champs
-        //   financiers, au lieu de remplacer un objet entier capturé avant
-        //   l'attente réseau.
-        provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
+        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE ET CONFIRMÉE (même correctif
+        //   que `mes_paris_screen`) : relit l'état FRAIS, fusionne les champs
+        //   financiers, ATTEND la sauvegarde puis RELIT le disque. L'issue est
+        //   rendue, jamais supposée — on l'attend.
+        await provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
       }
 
       // ── 2. Le ticket SUIVI affiché par cet écran ───────────────────────────

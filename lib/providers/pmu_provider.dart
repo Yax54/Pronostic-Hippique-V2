@@ -885,6 +885,183 @@ class PmuProvider extends ChangeNotifier {
   ///    IA existantes (via `enregistrerDividendePmu`) restent le SEUL chemin
   ///    de synchronisation, et elles ne sont pas empruntées ici.
   ///
+  /// Preuve que le DISQUE porte bien l'état du ticket [id] après un `await`.
+  ///
+  /// ⚠️ MÊME RIGUEUR QUE [_issueDepuisDisque] : la génération est contrôlée
+  ///    AVANT la lecture, puis REVÉRIFIÉE APRÈS — un `await` laisse toujours
+  ///    passer une opération concurrente. Sans la revérification, une opération
+  ///    périmée pourrait se croire confirmée sur une valeur écrite par une
+  ///    autre.
+  ///
+  /// ⚠️ `verifierGainPersiste` N'EST PAS RÉUTILISÉE : elle est câblée sur
+  ///    `montantGainManuel`. L'appeler ici prouverait le MAUVAIS champ, donc
+  ///    un faux succès de plus. La lecture porte sur les SEPT champs que
+  ///    l'enregistreur B-4.3 écrit.
+  Future<IssueEcritureGain> _issueDepuisDisqueVerdict(
+      String id, int maGeneration, UserPrediction verdictEcrit) async {
+    // ① Suis-je encore la dernière opération applicable ?
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    final present = await _disquePorteLeVerdict(id, verdictEcrit);
+
+    // ② La génération a-t-elle bougé pendant la lecture ?
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    if (present) {
+      _etatFinancierDivergent.remove(id); // cohérence prouvée
+      return IssueEcritureGain.confirme;
+    }
+
+    // ③ Le disque NE PORTE PAS le verdict alors que `_savePredictions()` a
+    //    rendu `true`. Rendre `echec` ici serait MENSONGER : `echec` signifie
+    //    « échec dont l'alignement mémoire/disque est PROUVÉ ». On tente donc
+    //    UNE réconciliation, puis on PROUVE — ou on bloque.
+    final reconcilie = await _savePredictions();
+    if (!reconcilie) {
+      _etatFinancierDivergent.add(id);
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (!await _disquePorteLeVerdict(id, verdictEcrit)) {
+      _etatFinancierDivergent.add(id);
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    _etatFinancierDivergent.remove(id);
+    return IssueEcritureGain.confirme;
+  }
+
+  /// Lit le DISQUE (après `prefs.reload()`) et compare les SEPT champs B-1.
+  ///
+  /// Rend `false` si le ticket est absent : rien n'est confirmé.
+  Future<bool> _disquePorteLeVerdict(String id, UserPrediction attendu) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // ⚠️ DÉFAUT MESURÉ, CORRIGÉ : `SharedPreferences` tient un CACHE mis à
+      //    jour MÊME QUAND LE SUPPORT REFUSE (`setStringList` rend `false` mais
+      //    le cache porte la nouvelle valeur). Sans `reload()`, cette preuve
+      //    lirait le CACHE et confirmerait une valeur que le DISQUE ne porte
+      //    pas — un faux succès.
+      await prefs.reload();
+      final raw = prefs.getStringList(_prefsKey) ?? <String>[];
+      for (final s in raw) {
+        final map = jsonDecode(s) as Map<String, dynamic>;
+        if (map['id'] != id) continue;
+        final lu = UserPrediction.fromJson(map);
+        return lu.etatGain == attendu.etatGain &&
+            lu.motifNonDetermination == attendu.motifNonDetermination &&
+            lu.etatTirelire == attendu.etatTirelire &&
+            lu.dividendeGagnant == attendu.dividendeGagnant &&
+            lu.dividendePlace == attendu.dividendePlace &&
+            lu.miseBaseCentimesUtilisee == attendu.miseBaseCentimesUtilisee &&
+            lu.rapportsAttribues?.length == attendu.rapportsAttribues?.length;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Rétablissement CONDITIONNEL des SEPT champs du verdict après échec.
+  ///
+  /// ⚠️ TROIS GARDE-FOUS, identiques à [_rollbackCible] :
+  ///   ① GÉNÉRATION : une opération plus récente interdit tout rétablissement.
+  ///   ② VALEUR : on ne rétablit que si la mémoire porte ENCORE le verdict
+  ///      que l'on a échoué à écrire.
+  ///   ③ PORTÉE : seuls les sept champs du verdict sont touchés. Les QUATRE
+  ///      champs financiers du lot 2-C (dont `montantGainManuel`) sont repris
+  ///      de l'état COURANT — jamais d'un ancien objet entier.
+  ///
+  /// Rend `echec` si l'alignement est PROUVÉ, `echecNonReconcilie` sinon (le
+  /// ticket est alors bloqué par `_etatFinancierDivergent`).
+  Future<IssueEcritureGain> _retablirVerdictApresEchec(
+    String id,
+    int maGeneration,
+    UserPrediction verdictEchoue,
+    UserPrediction avantVerdict,
+  ) async {
+    // ① Une opération plus récente fait foi : je ne rétablis rien.
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return IssueEcritureGain.echecNonReconcilie;
+
+    // ② VALEUR : on ne rétablit que si la mémoire porte ENCORE le verdict que
+    //    l'on a échoué à écrire. S'il a changé, l'état courant n'est plus le
+    //    mien et je n'ai rien à annuler.
+    if (!_memesChampsVerdict(_predictions[idx], verdictEchoue)) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    // ③ Rétablissement LIMITÉ aux sept champs du verdict, SUR l'état courant :
+    //    les quatre champs financiers ne sont même pas transmis à `copyWith`,
+    //    donc ils ne peuvent pas être écrasés.
+    _predictions[idx] = _predictions[idx].copyWith(
+      etatGain: avantVerdict.etatGain,
+      rapportsAttribues: avantVerdict.rapportsAttribues,
+      etatTirelire: avantVerdict.etatTirelire,
+      dividendeGagnant: avantVerdict.dividendeGagnant,
+      dividendePlace: avantVerdict.dividendePlace,
+      miseBaseCentimesUtilisee: avantVerdict.miseBaseCentimesUtilisee,
+      motifNonDetermination: avantVerdict.motifNonDetermination,
+    );
+    _versionMemoire++;
+    notifyListeners();
+
+    // ③bis Le disque porte-t-il DÉJÀ cet état ? Alors rien n'a été changé :
+    //    l'alignement est PROUVÉ, l'issue est `echec` (et non un blocage).
+    if (await _disquePorteLeVerdict(id, _predictions[idx])) {
+      if (_generationGainManuel[id] != maGeneration) {
+        return IssueEcritureGain.remplacee;
+      }
+      _etatFinancierDivergent.remove(id);
+      return IssueEcritureGain.echec;
+    }
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+
+    // ④ Réconciliation : une seule tentative, puis preuve. `echec` n'est rendu
+    //    QUE si le disque porte réellement l'état rétabli — sinon le ticket
+    //    est bloqué et on le DIT (`echecNonReconcilie`).
+    final reconcilie = await _savePredictions();
+    if (!reconcilie) {
+      _etatFinancierDivergent.add(id);
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (!await _disquePorteLeVerdict(id, _predictions[idx])) {
+      _etatFinancierDivergent.add(id);
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    _etatFinancierDivergent.remove(id);
+    return IssueEcritureGain.echec; // échec d'écriture, alignement PROUVÉ
+  }
+
+  /// Comparaison PURE de deux états en mémoire sur les SEPT champs du verdict.
+  ///
+  /// Sert la garde de VALEUR du rétablissement : elle ne lit RIEN sur le
+  /// disque et ne prouve donc que ce qu'elle prétend — l'état mémoire est-il
+  /// encore celui que l'on a échoué à écrire.
+  bool _memesChampsVerdict(
+          UserPrediction courant, UserPrediction attendu) =>
+      courant.etatGain == attendu.etatGain &&
+      courant.motifNonDetermination == attendu.motifNonDetermination &&
+      courant.etatTirelire == attendu.etatTirelire &&
+      courant.dividendeGagnant == attendu.dividendeGagnant &&
+      courant.dividendePlace == attendu.dividendePlace &&
+      courant.miseBaseCentimesUtilisee == attendu.miseBaseCentimesUtilisee &&
+      courant.rapportsAttribues?.length == attendu.rapportsAttribues?.length;
+
   /// Rend `true` si le pronostic existait et a été remplacé, `false` sinon.
   bool appliquerVerdictGainPrediction(UserPrediction resolue) {
     final idx = _predictions.indexWhere((p) => p.id == resolue.id);
@@ -943,46 +1120,54 @@ class PmuProvider extends ChangeNotifier {
   /// Rend `false` — sans rien écrire — dans tous les autres cas : ticket
   /// absent, état financier divergent, verdict déjà posé, capture
   /// inexploitable, ou refus de la politique B-4.3.
-  bool appliquerVerdictGainPredictionSecurise(
-      String id, ResultatOfficielCourse resultat) {
+  Future<IssueEcritureGain> appliquerVerdictGainPredictionSecurise(
+      String id, ResultatOfficielCourse resultat) async {
     // ⚠️ GARDE BLOQUANTE — jamais d'écriture sur un ticket dont la cohérence
     //    mémoire/disque n'est pas prouvée (même règle que le gain manuel).
-    if (_etatFinancierDivergent.contains(id)) return false;
+    if (_etatFinancierDivergent.contains(id)) {
+      return IssueEcritureGain.echecNonReconcilie;
+    }
 
-    // ══ BLOC SYNCHRONE — AUCUN `await` DE LA LECTURE À L'AFFECTATION ══════
+    // ══ PARTIE 1 — SYNCHRONE. AUCUN `await` DE LA LECTURE À L'AFFECTATION ══
+    //    L'isolate Dart est mono-thread : sans point de suspension, aucune
+    //    opération concurrente ne peut s'intercaler, donc l'état lu ne peut
+    //    pas devenir périmé avant l'affectation. C'est la protection CAUSALE
+    //    contre le défaut D1 (voir E10).
     final idx = _predictions.indexWhere((p) => p.id == id);
-    if (idx == -1) return false;
+    if (idx == -1) return IssueEcritureGain.echec;
 
     // ① L'état FRAIS, relu maintenant — PAS l'instantané de l'appelant.
     final etatFrais = _predictions[idx];
 
     // ② Verdict déjà posé : la politique B-4.3 le refuserait de toute façon
     //    (`refuseVerdictDefinitifExistant`) ; on évite un calcul inutile.
-    if (etatFrais.etatGain != null) return false;
+    if (etatFrais.etatGain != null) return IssueEcritureGain.echec;
 
     // ③ Construction du ticket : refuse explicitement toute capture
     //    incomplète. On ne complète NI numéro, NI ordre, NI mise.
     final construit = construireTicketPrediction(etatFrais);
-    if (!construit.estExploitable) return false;
+    if (!construit.estExploitable) return IssueEcritureGain.echec;
 
-    // ④ Résolution officielle — moteur B-3, synchrone, pur.
+    // ④ Résolution officielle — moteur B-3, synchrone, pur. INCHANGÉ.
     final verdict = resoudreGainTicketDepuisDonnees(
       ticket: construit.ticket!,
       resultat: resultat,
     );
 
-    // ⑤ Politique d'écriture — B-4.3, appelée telle quelle.
+    // ⑤ Politique d'écriture — B-4.3, appelée telle quelle. INCHANGÉE.
     final enregistrement = appliquerVerdictPrediction(
       ticket: etatFrais,
       verdict: verdict,
       resultat: resultat,
     );
-    if (!enregistrement.estEnregistre) return false;
+    if (!enregistrement.estEnregistre) return IssueEcritureGain.echec;
 
     // ⑥ FUSION EXPLICITE — les SEPT champs B-1 proviennent de l'enregistreur ;
-    //    les QUATRE champs financiers du lot 2-C sont repris de l'état FRAIS
-    //    (et non de l'instantané réseau). `copyWith` porte des sentinelles :
-    //    un `null` explicite est écrit tel quel.
+    //    les QUATRE champs financiers du lot 2-C sont repris de l'état FRAIS.
+    //    `copyWith` porte des sentinelles : un `null` explicite est écrit tel
+    //    quel. Cette fusion est DÉFENSIVE (l'enregistreur part déjà de
+    //    `etatFrais`) : elle est conservée comme garde en profondeur, et non
+    //    présentée comme la protection — les mutations l'ont mesuré.
     final fusionnee = enregistrement.ticket.copyWith(
       montantGainManuel: etatFrais.montantGainManuel,
       montantOfficielPmu: etatFrais.montantOfficielPmu,
@@ -991,18 +1176,43 @@ class PmuProvider extends ChangeNotifier {
           etatFrais.montantGainManuelAvantDecision,
     );
 
-    // ⓖ GÉNÉRATION PARTAGÉE — une saisie manuelle en vol ne doit plus se
-    //    croire légitime : sans cette invalidation, son `_rollbackCible`
-    //    pourrait réinstaller un `montantGainManuel` APRÈS la fusion.
-    _incrementerGenerationGainManuel(id);
+    // ⑦ Témoin d'AVANT, indispensable au rétablissement conditionnel : ce que
+    //    le disque devra porter si l'écriture échoue.
+    // ⚠️ Le témoin d'AVANT est l'OBJET `UserPrediction` lui-même, et non sept
+    //    variables typées : `PmuProvider` n'importe PAS le socle `gain_pmu_types`
+    //    (garde B-0 : la liste des importateurs est FERMÉE et nominative). Les
+    //    types des sept champs sont donc obtenus par INFÉRENCE depuis les
+    //    accesseurs de `UserPrediction` — aucun nom de type du socle n'est
+    //    écrit ici, et la portée du rétablissement reste identique.
+    final avantVerdict = etatFrais;
+
+    // ⑧ GÉNÉRATION PARTAGÉE — une saisie manuelle en vol ne doit plus se croire
+    //    légitime. `maGeneration` identifie CETTE opération : une opération
+    //    plus récente la remplacera et interdisra tout rétablissement.
+    final maGeneration = _incrementerGenerationGainManuel(id);
 
     _predictions[idx] = fusionnee;
     _versionMemoire++;
     notifyListeners();
-    // ══ FIN DU BLOC SYNCHRONE ═════════════════════════════════════════════
+    // ══ FIN DE LA PARTIE SYNCHRONE ═════════════════════════════════════════
+    //    Le témoin transmis est l'état EXACT que l'on vient d'écrire en
+    //    mémoire : c'est lui que le disque doit porter. Le relire après coup
+    //    (`_predictions[idx]`) serait faux — `notifyListeners()` a pu laisser
+    //    un auditeur modifier l'entrée, et on confirmerait alors l'écriture
+    //    d'autrui.
+    final verdictEcrit = fusionnee;
 
-    _savePredictions();
-    return true;
+    // ══ PARTIE 2 — ASYNCHRONE. LE SUCCÈS N'EST JAMAIS RENDU SANS PREUVE. ════
+    //    Avant cette correction, la méthode rendait `true` juste après avoir
+    //    APPELÉ `_savePredictions()` sans attendre son résultat : `true` ne
+    //    prouvait donc RIEN sur la persistance. Le contrat est désormais le
+    //    même que celui du gain manuel : on attend, puis on RELIT le disque.
+    final ecrit = await _savePredictions();
+    if (!ecrit) {
+      return _retablirVerdictApresEchec(
+          id, maGeneration, verdictEcrit, avantVerdict);
+    }
+    return _issueDepuisDisqueVerdict(id, maGeneration, verdictEcrit);
   }
 
   /// Valide ou invalide un pronostic + enregistre la mise et le gain
