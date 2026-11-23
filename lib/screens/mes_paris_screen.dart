@@ -1922,6 +1922,78 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
           child: Column(children: [
+            // ═══════════════════════════════════════════════════════════════
+            // ★ B1-T12 / LOT 2-C — BADGE DU GAIN DURABLE, HORS DE TOUTE
+            //   DÉPENDANCE AU VERDICT.
+            //
+            // ── DÉFAUT MESURÉ, ET SA CAUSE EXACTE ──────────────────────────
+            //   Le libellé de gain existait à UN SEUL endroit : le bloc
+            //   historique, lui-même imbriqué dans
+            //   `] else if (_titreResultat != null) ...[`.
+            //   `_titreResultat` vaut `_resultMessage ?? _verdictOfficiel?.libelle`
+            //   (mesuré, `:1061`), donc il est NON NUL SEULEMENT quand un
+            //   verdict existe. Un pari qui porte un gain DÉCLARÉ (lot 2-A)
+            //   sans verdict n'avait donc AUCUN libellé construit — même en
+            //   dehors de la garde `_isGagnant != null`.
+            //
+            //   Mesuré sur l'écran réel, avant ce correctif : carte rendue
+            //   (« Prix Test », « Vincennes • R1C3 », 19 `Text`),
+            //   `isGagne = null`, et **0** occurrence de « Gain gagné » comme
+            //   de « En attente ». Le montant persisté n'était affiché nulle
+            //   part. C'était le défaut de fond du lot 2-A.
+            //
+            // ── EXCLUSIVITÉ, DÉFINIE EXPLICITEMENT (pas de doublon) ────────
+            //   Le badge historique et celui-ci ne peuvent JAMAIS coexister :
+            //     • badge historique  ⇔ `_porteBadgeHistorique`  (voir getter)
+            //     • badge durable     ⇔ `_afficherBadgeDurable`
+            //   et `_afficherBadgeDurable` exige `!_porteBadgeHistorique`.
+            //   Les deux conditions sont COMPLÉMENTAIRES, donc une seule
+            //   branche s'exécute pour un ticket donné.
+            //
+            // ── CE QUE CE BLOC NE FAIT PAS ────────────────────────────────
+            //   • il ne touche NI au bandeau de verdict, NI à sa logique ;
+            //   • il ne modifie NI `affichageGainSuivi`, NI un moteur PMU,
+            //     NI une formule, NI l'IA ;
+            //   • il n'écrit rien et n'accepte rien : il LIT `_vueDurable()`,
+            //     qui rend `null` dès qu'un verdict officiel structuré existe
+            //     (défense en profondeur, testée séparément) ;
+            //   • il n'invente aucun montant : `_gainBrut`/`_calculerGainAffiche`
+            //     restent seuls maîtres du texte, via la même vue unique.
+            if (_afficherBadgeDurable) ...[
+              const SizedBox(height: 8),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _ouvrirSaisieGainManuel(),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD700).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFFFD700).withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.attach_money,
+                        color: Color(0xFFFFD700), size: 16),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        _calculerGainAffiche(course),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFFFD700),
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            ],
             if (course.nomCheval != null)
               Container(
                 padding: const EdgeInsets.all(12),
@@ -2599,6 +2671,49 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       demandeOuverte: demandeOuverte,
     );
   }
+
+  /// ★ B1-T12 / LOT 2-C — la carte porte-t-elle DÉJÀ le badge historique ?
+  ///
+  /// C'est EXACTEMENT la condition de la ligne de garde ancrée par la barrière
+  /// A6 (mesurée : `mes_paris_screen.dart:2175`), reproduite ici sans la
+  /// modifier. Elle sert UNIQUEMENT à définir l'EXCLUSIVITÉ des deux badges.
+  ///
+  /// ⚠️ Aucune duplication de logique métier : c'est une simple conjonction de
+  ///    trois tests de nullité/positivité, recopiée à l'identique pour rester
+  ///    synchronisée avec la garde historique.
+  bool get _porteBadgeHistorique =>
+      _isGagnant != null &&
+      widget.course.miseEngagee != null &&
+      widget.course.miseEngagee! > 0;
+
+  /// ★ B1-T12 / LOT 2-C — faut-il construire le badge de gain durable ?
+  ///
+  /// EXCLUSIVITÉ EXPLICITE, ET C'EST LA SEULE RÈGLE DE CETTE MÉTHODE :
+  ///   • `_porteBadgeHistorique` vrai  ⇒ le badge historique s'affiche déjà
+  ///     (dans le bandeau de verdict) et il affiche DÉJÀ le libellé durable,
+  ///     puisque `_calculerGainAffiche` consulte la même vue unique.
+  ///     ⇒ on ne construit RIEN ici. Jamais deux badges, jamais deux montants.
+  ///   • `_porteBadgeHistorique` faux  ⇒ aucun badge n'existe ; si une vue
+  ///     durable est applicable, on l'affiche ici, MÊME SANS VERDICT.
+  ///
+  /// `_vueDurable()` porte les garanties de fond :
+  ///   • verdict officiel présent (sur l'un OU l'autre modèle) ⇒ `null`,
+  ///     donc AUCUN badge : la priorité B-3/B-4.5 est respectée ;
+  ///   • aucune décision ET aucun montant déclaré ⇒ `null`, donc aucun badge :
+  ///     on n'affiche jamais un gain inexistant ;
+  ///   • `0.0` déclaré ⇒ `GainDurable` NON nul (libellé « ❌ Gain déclaré :
+  ///     0 € ») : le montant EXISTE et vaut zéro, ce qui est distinct de
+  ///     « inconnu » (`null`). La présence du montant, et non sa positivité,
+  ///     gouverne l'affichage — c'est la règle demandée ;
+  ///   • décision en attente ⇒ libellé « décision PMU en attente » portant le
+  ///     montant DÉCLARÉ : l'officiel ne remplace jamais le manuel sans
+  ///     acceptation explicite.
+  ///
+  /// ⚠️ Un montant manuel n'est JAMAIS traité comme un verdict officiel :
+  ///    `estOfficiel` reste faux dans toute vue déclarée, et `_isGagnant`
+  ///    n'est pas alimenté ici (aucune écriture, aucun état).
+  bool get _afficherBadgeDurable =>
+      !_porteBadgeHistorique && _vueDurable() != null;
 
   double? _gainBrut(TrackedCourse c) {
     // ★ B1-T12 / LOT 2-C — DÉCISION DURABLE D'ABORD, MÊME AVANT LE VERDICT.

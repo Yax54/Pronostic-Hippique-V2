@@ -49,9 +49,18 @@ class _Store extends SharedPreferencesStorePlatform {
   final Map<String, Object> _d;
 
   int? refusRestants;
+
+  /// ★ FAMILLE P — provoque une EXCEPTION (et non un `false`) sur les clés
+  ///   fautives. C'est l'autre voie d'échec réelle d'un stockage.
+  int? exceptionsRestantes;
+
   bool ecritureAutorisee = true;
   final Set<String> clesFautives = <String>{};
   final List<String> journal = <String>[];
+
+  /// Toutes les clés réellement écrites, fautives ou non : permet de vérifier
+  /// qu'aucune des six écritures de `_save()` n'est escamotée.
+  final List<String> journalComplet = <String>[];
 
   bool _fautive(String k) {
     if (clesFautives.isEmpty) {
@@ -90,8 +99,14 @@ class _Store extends SharedPreferencesStorePlatform {
 
   @override
   Future<bool> setValue(String t, String k, Object v) async {
+    journalComplet.add(k);
     if (_fautive(k)) {
       if (!ecritureAutorisee) return false;
+      final ne = exceptionsRestantes;
+      if (ne != null && ne > 0) {
+        exceptionsRestantes = ne - 1;
+        throw StateError('stockage indisponible (simulation)');
+      }
       final n = refusRestants;
       if (n != null && n > 0) {
         refusRestants = n - 1;
@@ -708,6 +723,139 @@ void main() {
               verdictOfficielPresent:
                   avecVerdictModele.etatGain != null),
           isNull);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  FAMILLE P — PROPAGATION RÉELLE DES TROIS ISSUES D'ÉCRITURE
+  //
+  //  ⚠️ POURQUOI CETTE FAMILLE EXISTE
+  //     `SharedPreferences.setStringList` rend un `bool`. Avant ce lot,
+  //     `AlertService._save()` n'en testait AUCUN des six retours (mesuré :
+  //     `grep -c "if (!await prefs.setString"` → 0). Un support qui refuse
+  //     SANS lever d'exception (cas ② ci-dessous) était donc indiscernable
+  //     d'un succès. Ces trois tests prouvent, cas par cas, la propagation.
+  //
+  //     Ils passent par le CHEMIN PUBLIC (`enregistrerGainManuelDetaille`) :
+  //     `_save()` est privé, et un test ne doit pas exiger d'ouvrir la
+  //     production. Le résultat observable est le même.
+  // ═══════════════════════════════════════════════════════════════════════
+  group('P — propagation des trois issues d\'écriture du suivi', () {
+    test('P1 écriture retournant `true` ⇒ succès réel, `complet`', () async {
+      final store = _Store();
+      await _preparer(store,
+          preds: [_pred('p1', idTicketLie: kCleLiee)],
+          suivis: [_tc(kCleLiee, idTicketLie: 'p1')]);
+
+      // ⚠️ `derniereErreurEcriture` est un état du SINGLETON : il peut porter
+      //    une erreur laissée par un test précédent. L'assertion exacte n'est
+      //    donc pas « l'erreur est nulle » (dépendante de l'ordre), mais
+      //    « P1 n'AJOUTE aucune erreur ». On capture avant, on compare après :
+      //    c'est plus strict, pas plus permissif.
+      final erreurAvant = AlertService.instance.derniereErreurEcriture;
+
+      final r = await AlertService.instance
+          .enregistrerGainManuelDetaille(kCleLiee, 12.0);
+
+      expect(r, ResultatEcritureGain.complet);
+      // Preuve matérielle : le support porte bien la valeur.
+      expect(
+          (store.suiviParCle(kCleLiee)!['montantGainManuel'] as num)
+              .toDouble(),
+          12.0);
+      // Aucune nouvelle erreur : un succès ne laisse pas de trace d'échec.
+      expect(AlertService.instance.derniereErreurEcriture,
+          same(erreurAvant));
+    });
+
+    test('P2 écriture retournant `false` SANS exception ⇒ échec RÉELLEMENT '
+        'propagé, `durableSeul` (jamais un faux succès)', () async {
+      final store = _Store();
+      await _preparer(store,
+          preds: [_pred('p1', idTicketLie: kCleLiee)],
+          suivis: [_tc(kCleLiee, idTicketLie: 'p1')]);
+
+      // Valeur de départ DIFFÉRENTE : l'écriture du suivi est donc réellement
+      // tentée (sinon le service ne réécrit rien et le refus ne serait pas
+      // exercé — ce serait un test qui ne teste rien).
+      await AlertService.instance.enregistrerGainManuelDetaille(kCleLiee, 99.0);
+
+      store.clesFautives
+        ..clear()
+        ..add('tracked_courses');
+      store.refusRestants = 1; // `false`, aucune exception
+
+      final r = await AlertService.instance
+          .enregistrerGainManuelDetaille(kCleLiee, 12.0);
+
+      expect(r, ResultatEcritureGain.durableSeul,
+          reason: 'le refus silencieux doit être propagé, pas ignoré');
+      // Le défaut est MÉMORISÉ, donc diagnostiquable.
+      expect(AlertService.instance.derniereErreurEcriture, isNotNull);
+      // Le durable, lui, est bien écrit : c'est la définition de `durableSeul`.
+      expect(
+          (store.predParId('p1')!['montantGainManuel'] as num).toDouble(),
+          12.0);
+    });
+
+    test('P3 écriture levant une exception ⇒ échec propagé, `durableSeul`, et '
+        'l\'exception est mémorisée', () async {
+      final store = _Store();
+      await _preparer(store,
+          preds: [_pred('p1', idTicketLie: kCleLiee)],
+          suivis: [_tc(kCleLiee, idTicketLie: 'p1')]);
+
+      await AlertService.instance.enregistrerGainManuelDetaille(kCleLiee, 99.0);
+
+      store.clesFautives
+        ..clear()
+        ..add('tracked_courses');
+      store.exceptionsRestantes = 1;
+
+      final r = await AlertService.instance
+          .enregistrerGainManuelDetaille(kCleLiee, 12.0);
+
+      expect(r, ResultatEcritureGain.durableSeul);
+      expect(AlertService.instance.derniereErreurEcriture, isNotNull);
+      expect(
+          (store.predParId('p1')!['montantGainManuel'] as num).toDouble(),
+          12.0);
+    });
+
+    test('P4 les SIX écritures sont TOUTES tentées, même si la première est '
+        'refusée (aucun court-circuit)', () async {
+      // Un court-circuit après la première écrite laisserait cinq clés non
+      // tentées : la sauvegarde ne serait alors ni complète ni honnêtement
+      // décrite. On vérifie donc la présence des SIX clés.
+      final store = _Store();
+      await _preparer(store,
+          preds: [_pred('p1', idTicketLie: kCleLiee)],
+          suivis: [_tc(kCleLiee, idTicketLie: 'p1')]);
+
+      await AlertService.instance.enregistrerGainManuelDetaille(kCleLiee, 99.0);
+      store.journalComplet.clear();
+
+      store.clesFautives
+        ..clear()
+        ..add('tracked_courses');
+      store.refusRestants = 1;
+
+      await AlertService.instance.enregistrerGainManuelDetaille(kCleLiee, 12.0);
+
+      final tentees = store.journalComplet.toSet();
+      // ⚠️ NOMS MESURÉS dans `alert_service.dart:396-406`, préfixés par la
+      //    plateforme `shared_preferences`. Aucun de ces six n'est deviné.
+      for (final k in const <String>[
+        'flutter.alert_config_v2',
+        'flutter.alert_history_v1',
+        'flutter.tracked_courses_v1',
+        'flutter.alert_sent_ids_v1',
+        'flutter.alert_resultats_verifies_v1',
+        'flutter.alert_cote_chute_notifies_v1',
+      ]) {
+        expect(tentees.contains(k), isTrue,
+            reason: 'écriture NON tentée : $k — journal = $tentees');
+      }
     });
   });
 }

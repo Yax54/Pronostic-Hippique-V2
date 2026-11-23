@@ -773,6 +773,19 @@ class AlertService extends ChangeNotifier {
     }
   }
 
+  /// Refus SILENCIEUX d'une écriture de `SharedPreferences` : le support a
+  /// rendu `false` sans lever d'exception.
+  ///
+  /// ⚠️ POURQUOI UNE EXCEPTION, ET POURQUOI PRIVÉE.
+  ///    `_ecrireProtege` a UN SEUL chemin d'échec fiable : `_executerEcriture`
+  ///    capture les exceptions et rend `false`. Réutiliser ce chemin évite de
+  ///    toucher à la barrière de reset, donc de rouvrir un mécanisme déjà
+  ///    validé par la suite B5c. Le type est privé : il ne fait pas partie de
+  ///    l'API publique et ne peut pas fuiter chez un appelant.
+  ///
+  ///    Le refus n'est PAS avalé : il devient `false` ET il est mémorisé
+  ///    dans [derniereErreurEcriture], donc diagnostiquable.
+  ///
   /// Sauvegarde l'état complet de l'AlertService.
   ///
   /// Rend `true` si les SIX écritures ont réellement abouti.
@@ -782,25 +795,58 @@ class AlertService extends ChangeNotifier {
   /// cours). `_save` le JETAIT. On le PROPAGE : c'est la seule façon de
   /// n'annoncer une décision enregistrée QUE si sa persistance est confirmée.
   ///
-  /// ⚠️ LES SIX ÉCRITURES SONT INCHANGÉES, à l'octet près. Seuls le type de
-  ///    retour et la valeur rendue changent.
+  /// ⚠️ DÉFAUT MESURÉ, CORRIGÉ ICI — `SharedPreferences.setStringList` rend un
+  ///    `bool`. Les six appels ci-dessous IGNORAIENT cette valeur (mesuré :
+  ///    `grep -c "if (!await prefs.setString"` → **0**, aucune capture du tout).
+  ///    Un support qui REFUSE sans lever d'exception (`return false`) était donc
+  ///    indiscernable d'un succès : `_ecrireProtege` ne bascule sur `false` que
+  ///    s'il y a une EXCEPTION, et il n'y en avait pas. Le service annonçait
+  ///    alors « suivi écrit » sur une écriture refusée — un faux succès, ce que
+  ///    ce lot doit rendre impossible.
+  ///
+  ///    Correctif MINIMAL : chaque écriture est capturée ; si l'une d'elles a
+  ///    été refusée, l'action lève [_EcritureAlertesRefusee], que
+  ///    `_executerEcriture` transforme déjà en `false` (chemin existant, aucune
+  ///    signature modifiée) et mémorise dans [derniereErreurEcriture].
+  ///
+  ///    Politique TOUT-OU-RIEN assumée : si une seule des six écritures est
+  ///    refusée, on ne prétend pas que la sauvegarde a réussi. Le sens est
+  ///    conservateur — on peut annoncer `durableSeul` alors que le suivi a
+  ///    partiellement abouti, jamais l'inverse.
+  ///
+  /// ⚠️ LES SIX ÉCRITURES SONT INCHANGÉES, à l'octet près (mêmes clés, mêmes
+  ///    valeurs, même ordre). Seuls le type de retour, la CAPTURE des six
+  ///    résultats et la valeur rendue changent.
   Future<bool> _save() async {
     // ★ B5c : _save ne gère pas le registre, il délègue entièrement.
     return _ecrireProtege((prefs) async {
-      await prefs.setString(_configKey, json.encode(_config.toJson()));
+      final configEcrit =
+          await prefs.setString(_configKey, json.encode(_config.toJson()));
       final alertsToSave = _alerts.take(50).map((a) => json.encode(a.toJson())).toList();
-      await prefs.setStringList(_alertsKey, alertsToSave);
+      final alertsEcrit = await prefs.setStringList(_alertsKey, alertsToSave);
       final trackedToSave = _trackedCourses.values.map((tc) => json.encode(tc.toJson())).toList();
-      await prefs.setStringList(_trackedKey, trackedToSave);
+      final trackedEcrit = await prefs.setStringList(_trackedKey, trackedToSave);
       // ★ Bug fix : persister les IDs envoyés (max 200 pour limiter la taille)
       final sentToSave = _sentAlertIds.take(200).toList();
-      await prefs.setStringList(_sentIdsKey, sentToSave);
+      final sentEcrit = await prefs.setStringList(_sentIdsKey, sentToSave);
       // ★ Bug fix : persister les résultats vérifiés (max 100)
       final resultatsToSave = _resultatsVerifies.take(100).toList();
-      await prefs.setStringList(_resultatsKey, resultatsToSave);
+      final resultatsEcrit =
+          await prefs.setStringList(_resultatsKey, resultatsToSave);
       // ★ v10.24 audit : persister les alertes cote-chute envoyées (max 100, jour glissant)
       final coteChuteToSave = _coteChuteNotifies.take(100).toList();
-      await prefs.setStringList(_coteChuteKey, coteChuteToSave);
+      final coteChuteEcrit =
+          await prefs.setStringList(_coteChuteKey, coteChuteToSave);
+      // Les six sont tentées dans TOUS les cas (aucun court-circuit : une
+      // écriture non tentée serait un autre mensonge). On ne tranche qu'après.
+      if (!configEcrit ||
+          !alertsEcrit ||
+          !trackedEcrit ||
+          !sentEcrit ||
+          !resultatsEcrit ||
+          !coteChuteEcrit) {
+        throw const _EcritureAlertesRefusee();
+      }
     });
   }
 
@@ -4116,4 +4162,14 @@ class TrackedCourse {
     }
     return List<List<int>>.unmodifiable(out);
   }
+}
+
+/// Refus silencieux d'une écriture de `SharedPreferences` (`false` sans
+/// exception). Voir [AlertService._save] : c'est ce type qui transforme un
+/// refus muet en échec de sauvegarde réellement observable.
+class _EcritureAlertesRefusee implements Exception {
+  const _EcritureAlertesRefusee();
+  @override
+  String toString() =>
+      'EcritureAlertesRefusee: le stockage a refusé une écriture (false)';
 }
