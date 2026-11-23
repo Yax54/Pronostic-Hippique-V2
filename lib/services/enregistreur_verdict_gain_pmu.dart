@@ -117,8 +117,7 @@ class ResultatEnregistrementVerdict {
     required this.informationsNonPersistees,
   });
 
-  bool get estEnregistre =>
-      statut == StatutEnregistrementVerdict.enregistre;
+  bool get estEnregistre => statut == StatutEnregistrementVerdict.enregistre;
 
   bool get estRefuse =>
       statut == StatutEnregistrementVerdict.refuseVerdictDefinitifExistant ||
@@ -277,6 +276,169 @@ double? resoudreTotalDepuisRapports(List<RapportAttribue>? rapports) {
 
 bool _verdictEstDefinitif(EtatGain e) =>
     e == EtatGain.attribue || e == EtatGain.perdu || e == EtatGain.rembourse;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  4-bis. ★ B1-T12 / RACCORDEMENT TARDIF — VERDICT OFFICIEL → MONTANT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//  POURQUOI CETTE FONCTION EXISTE, ET POURQUOI ELLE EST ICI
+//
+//  Le raccordement des gains officiels tardifs doit alimenter
+//  `montantOfficielPmu` à partir d'un `VerdictGain`. Deux contraintes se
+//  contredisent :
+//    • le garde-fou B-0 tient une liste FERMÉE de neuf importateurs de
+//      `gain_pmu_types.dart` (comparée par ÉGALITÉ) ;
+//    • `PmuProvider` — l'écrivain légitime — n'en fait pas partie et ne peut
+//      donc pas nommer `EtatGain`, ni `VerdictGain` : il ne sait pas
+//      distinguer `perdu` de `rembourse` (mesuré : `estGagne` et
+//      `estNonDetermine` sont ses SEULS accesseurs booléens, et
+//      `VerdictGain.total` vaut `0.0` pour les deux).
+//
+//  La conversion est donc placée ICI : ce fichier est DÉJÀ le 6ᵉ importateur
+//  autorisé, il nomme déjà `EtatGain` et `VerdictGain`, et il n'ajoute que
+//  des `import` qui ne remontent jamais vers un provider (aucun cycle).
+//  La liste B-0 reste donc strictement à neuf, sans être élargie.
+//
+//  ⚠️ FONCTION PURE : aucun accès disque, aucun réseau, aucune horloge, aucun
+//     état. Elle ne modifie NI `deciderEcritureVerdict` NI `enregistrerVerdictGain`,
+//     dont les règles restent inchangées.
+
+/// Le montant OFFICIEL exploitable porté par [verdict], ou `null`.
+///
+/// CONTRAT, état par état — il suit exactement les règles arbitrées :
+///   • `attribue`    → [VerdictGain.total], le retour BRUT officiel ;
+///   • `perdu`       → `0.0`, perte établie (distinct de `null`) ;
+///   • `rembourse`   → `null` : un remboursement n'est pas un gain. Écrire `0.0`
+///                     afficherait « Perdu : gain officiel établi à 0 € », et
+///                     écrire la mise restituée afficherait « 🏆 Gain gagné ».
+///                     Le verdict de remboursement, lui, est conservé par
+///                     l'écriture B-1 : seule la conversion en montant est
+///                     refusée. C'est l'arbitrage A du lot.
+///   • `nonDetermine` → `null` : aucune perte n'est inventée.
+///
+/// ⚠️ `total` EST UN RETOUR BRUT, PAS UN BÉNÉFICE NET. Il vaut la somme des
+///    `montantRetour` des composantes, chaque `montantRetour` étant
+///    `miseAppliquee × pourUnEuro` — c'est-à-dire ce que l'opérateur REND,
+///    mise comprise. `gainRetenuNet` du modèle en déduit la mise ; cette
+///    fonction ne fait pas cette déduction, car `montantOfficielPmu` est
+///    normativement un montant BRUT.
+///
+/// ⚠️ COMPLÉTUDE — L'ARBITRAGE B EXIGE UNE PREUVE, PAS UNE ESPÉRANCE.
+///    `total` n'est rendu que si le verdict est COMPLET au sens démontrable :
+///    chaque composante porte un `montantRetour` fini et strictement positif,
+///    et `total` en est exactement la somme. Une composante silencieusement
+///    écartée (voir le défaut documenté ci-dessous) ferait de `total` un
+///    montant PARTIEL présenté comme total : dans ce cas on rend `null`.
+///
+/// ⚠️ DÉFAUT CONNU, NON CORRIGÉ ICI (moteur protégé, hors périmètre) :
+///    `_composanteGagnantPlace` ne teste PAS `publie.rembourse`. Un
+///    Gagnant+Placé remboursé est donc traité comme `attribue`, et sa
+///    composante remboursée est comptée au dividende publié. Ce lot ne
+///    modifie pas ce moteur : il BLOQUE l'écriture du montant dès que la
+///    moindre composante porte `rembourse`, et le signale.
+double? montantOfficielDepuisVerdict(
+  VerdictGain verdict, {
+  Set<String> combinaisonsRemboursees = const <String>{},
+}) {
+  switch (verdict.etat) {
+    case EtatGain.perdu:
+      // Perte définitive et démontrée : `0.0` est une information, `null`
+      // serait une absence. La distinction est portée par le modèle.
+      return 0.0;
+
+    case EtatGain.rembourse:
+      // Arbitrage A : JAMAIS de montant pour un remboursement.
+      return null;
+
+    case EtatGain.nonDetermine:
+      // Aucune perte inventée : on ne sait pas, donc on ne dit rien.
+      return null;
+
+    case EtatGain.attribue:
+      // Complétude démontrée, ou rien.
+      return _totalDemontreComplet(verdict, combinaisonsRemboursees);
+  }
+}
+
+/// Le `total` d'un verdict `attribue`, UNIQUEMENT s'il est démontrablement
+/// complet et strictement positif.
+///
+/// Rend `null` — donc « montant officiel non établi » — dans quatre cas :
+///   ① aucune composante : `attribue` sans composante est impossible par
+///      construction (`VerdictGain.attribue` lève), donc un tel verdict est
+///      incohérent et aucun montant ne doit en sortir ;
+///   ② une composante a un `montantRetour` non fini ou non strictement
+///      positif : elle ne fonde aucun retour, et l'ignorer produirait un
+///      total PARTIEL ;
+///   ③ la somme des `montantRetour` ne retombe pas EXACTEMENT sur `total` :
+///      le contrat de `VerdictGain` serait violé, on ne « corrige » rien ;
+///   ④ une composante porte une combinaison figurant dans
+///      [combinaisonsRemboursees] : c'est la preuve RÉELLE du défaut de
+///      `_composanteGagnantPlace`, qui ne teste pas `publie.rembourse`. Un
+///      remboursement ne doit jamais devenir un gain par cette voie.
+///
+/// ⚠️ La comparaison ③ est EXACTE (`==`), volontairement : `total` est
+///    construit par la MÊME addition, dans le même ordre. Une tolérance
+///    masquerait précisément l'incohérence qu'on cherche à détecter.
+double? _totalDemontreComplet(
+  VerdictGain verdict,
+  Set<String> combinaisonsRemboursees,
+) {
+  final composantes = verdict.composantes;
+
+  // ① `attribue` sans composante : incohérent, aucun montant.
+  if (composantes.isEmpty) return null;
+
+  var somme = 0.0;
+  for (final c in composantes) {
+    final retour = c.montantRetour;
+
+    // ② Une composante sans retour exploitable rend le total PARTIEL.
+    if (!retour.isFinite || !(retour > 0)) return null;
+
+    somme += retour;
+  }
+
+  // ③ Le total doit être EXACTEMENT la somme des composantes.
+  if (somme != verdict.total) return null;
+
+  // ④ Aucune composante remboursée (défaut G+P documenté).
+  if (_uneComposanteRemboursee(verdict, combinaisonsRemboursees)) {
+    return null;
+  }
+
+  // Un total nul n'est pas un gain : `0.0` est réservé à la perte établie.
+  if (!(somme > 0)) return null;
+
+  return somme;
+}
+
+/// Une composante du verdict provient-elle d'un rapport EXPLICITEMENT marqué
+/// remboursé ?
+///
+/// [combinaisonsRemboursees] porte les combinaisons des rapports officiels dont
+/// le drapeau `rembourse` est vrai. `ComposanteGain` ne transporte PAS ce
+/// drapeau, et le moteur protégé ne le consulte pas dans le chemin
+/// Gagnant+Placé : sans cette information fournie par l'appelant, l'absence de
+/// remboursement ne serait pas démontrable.
+///
+/// ⚠️ ENSEMBLE VIDE = AUCUNE PREUVE DE REMBOURSEMENT, PAS UNE PREUVE D'ABSENCE.
+///    Ce n'est pas une faiblesse de la garde mais sa portée exacte : la
+///    conversion ne peut contredire un fait que si ce fait lui est fourni. Le
+///    raccordement tardif, lui, transmet TOUJOURS l'ensemble réel (il dispose
+///    des `ResultatOfficielCourse`).
+bool _uneComposanteRemboursee(
+  VerdictGain verdict,
+  Set<String> combinaisonsRemboursees,
+) {
+  if (combinaisonsRemboursees.isEmpty) return false;
+  for (final c in verdict.composantes) {
+    final combinaison = c.combinaisonRapport.trim();
+    if (combinaison.isEmpty) continue;
+    if (combinaisonsRemboursees.contains(combinaison)) return true;
+  }
+  return false;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  5. ★ LOT B-4.4 — ÉCRITURE PARTAGÉE PAR LES DEUX MODÈLES

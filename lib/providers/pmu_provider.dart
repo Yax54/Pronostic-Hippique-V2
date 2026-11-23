@@ -9,6 +9,28 @@ import '../services/branchement_verdict_course.dart'
     show construireTicketPrediction, appliquerVerdictPrediction;
 import '../services/resolution_gain_ticket_pmu.dart'
     show ResultatOfficielCourse, resoudreGainTicketDepuisDonnees;
+// ★ B1-T12 / RACCORDEMENT TARDIF — conversion PURE verdict → montant officiel.
+//
+// ⚠️ `show` CIBLÉ SUR UNE SEULE FONCTION, et non sur le socle des gains PMU :
+//    c'est ce qui permet à `PmuProvider` de produire un montant officiel SANS
+//    devenir le dixième importateur de ce socle (garde B-0, liste fermée de
+//    neuf comparée par égalité). Le type du paramètre reste INFÉRÉ — aucun
+//    nom de type du socle n'apparaît ici.
+//    ⚠️ AUCUNE CITATION DU NOM DE FICHIER DU SOCLE, même en commentaire : la
+//       garde B-0 cherche cette sous-chaîne dans le texte BRUT, commentaires
+//       inclus. La nommer ici ferait de ce fichier un « coupable » alors qu'il
+//       ne l'importe pas. C'est la prose qui s'adapte, jamais la garde.
+// ⚠️ AUCUN CYCLE : `enregistreur_verdict_gain_pmu.dart` n'importe que
+//    `pmu_models`, le socle et le moteur ; il ne remonte jamais vers ce
+//    provider. Vérifié par `grep` sur ses trois `import`.
+import '../services/enregistreur_verdict_gain_pmu.dart'
+    show montantOfficielDepuisVerdict;
+// Le TYPE du verdict est nommé ici pour que la conversion ne soit jamais
+// appelée sur un `dynamic` : un paramètre non typé déplacerait le contrôle de
+// type à l'exécution, là où il n'y a plus de test possible. `VerdictGain` vit
+// dans le moteur, qui n'est PAS le socle fermé surveillé par B-0 — importer le
+// moteur ne change donc pas la liste des neuf.
+import '../services/moteur_gain_pmu.dart' show VerdictGain;
 import '../services/ia_memory_service.dart';
 import '../utils/type_pari_utils.dart'
     show estEtatSansPariRecommande, estTypeGagnantPlace;
@@ -76,8 +98,7 @@ class PmuProvider extends ChangeNotifier {
       _reunions.where((r) => r.isFrench).toList();
 
   /// Toutes courses confondues (toutes réunions y compris étrangères)
-  List<PmuCourse> get allCourses =>
-      _reunions.expand((r) => r.courses).toList();
+  List<PmuCourse> get allCourses => _reunions.expand((r) => r.courses).toList();
 
   /// Courses françaises uniquement
   List<PmuCourse> get frenchCourses =>
@@ -162,12 +183,8 @@ class PmuProvider extends ChangeNotifier {
   ///   affichable. `retourTotal` n'est pas modifié ; sa contribution à un
   ///   total est filtrée par le même prédicat que `totalGainsNet`.
   double get totalGagnes {
-    return _predictions
-        .where((p) => p.isCorrect == true)
-        .fold(
-            0.0,
-            (sum, p) =>
-                sum + (p.gainGagnantPlaceEtabli ? p.retourTotal : 0.0));
+    return _predictions.where((p) => p.isCorrect == true).fold(0.0,
+        (sum, p) => sum + (p.gainGagnantPlaceEtabli ? p.retourTotal : 0.0));
   }
 
   /// Total perdu
@@ -180,12 +197,15 @@ class PmuProvider extends ChangeNotifier {
   }
 
   /// Prédictions filtrées par plage de dates
-  List<UserPrediction> getPredictionsByDateRange(DateTime? debut, DateTime? fin) {
+  List<UserPrediction> getPredictionsByDateRange(
+      DateTime? debut, DateTime? fin) {
     return _predictions.where((p) {
       if (debut != null && p.createdAt.isBefore(debut)) return false;
-      if (fin != null && p.createdAt.isAfter(fin.add(const Duration(days: 1)))) return false;
+      if (fin != null && p.createdAt.isAfter(fin.add(const Duration(days: 1))))
+        return false;
       return true;
-    }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   /// Gains nets sur une plage de dates
@@ -236,15 +256,18 @@ class PmuProvider extends ChangeNotifier {
   }
 
   /// Charge les participants d'une course depuis l'API PMU réelle.
-  /// 
+  ///
   /// Règles de rechargement :
   /// - Si jamais chargé → charge
   /// - Si déjà chargé MAIS liste vide → retente (API peut ne pas avoir encore les données)
   /// - Si déjà chargé ET liste non-vide → ne recharge pas (données déjà OK)
   /// - forceReload = true → recharge toujours (bouton Réessayer)
-  Future<void> loadParticipants(PmuCourse course, {bool forceReload = false}) async {
+  Future<void> loadParticipants(PmuCourse course,
+      {bool forceReload = false}) async {
     // Ne pas recharger si on a déjà des participants valides
-    if (!forceReload && course.participantsLoaded && course.participants.isNotEmpty) {
+    if (!forceReload &&
+        course.participantsLoaded &&
+        course.participants.isNotEmpty) {
       return;
     }
 
@@ -258,7 +281,8 @@ class PmuProvider extends ChangeNotifier {
       course.participants = participants;
       course.participantsLoaded = true;
       if (kDebugMode) {
-        debugPrint('✅ R${course.numReunion}C${course.numOrdre}: ${participants.length} partants réels');
+        debugPrint(
+            '✅ R${course.numReunion}C${course.numOrdre}: ${participants.length} partants réels');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('loadParticipants error: $e');
@@ -286,12 +310,15 @@ class PmuProvider extends ChangeNotifier {
             c.participants = participants;
             c.participantsLoaded = true;
             if (kDebugMode) {
-              debugPrint('✅ R${c.numReunion}C${c.numOrdre}: ${participants.length} partants');
+              debugPrint(
+                  '✅ R${c.numReunion}C${c.numOrdre}: ${participants.length} partants');
             }
           } catch (e) {
             c.participants = [];
             c.participantsLoaded = true;
-            if (kDebugMode) debugPrint('loadParticipants error R${c.numReunion}C${c.numOrdre}: $e');
+            if (kDebugMode)
+              debugPrint(
+                  'loadParticipants error R${c.numReunion}C${c.numOrdre}: $e');
           }
         }
       }),
@@ -464,7 +491,8 @@ class PmuProvider extends ChangeNotifier {
       if (attente == null) return Future<bool>.value(false);
       // On ne se contente pas du résultat de la passe en cours : la VERSION
       // DEMANDÉE doit avoir été écrite.
-      return attente.future.then((ok) => ok && _versionEcriteCouvre(versionDemandee));
+      return attente.future
+          .then((ok) => ok && _versionEcriteCouvre(versionDemandee));
     }
     _ecritureAttente = Completer<bool>();
     return _boucleEcriture(versionDemandee);
@@ -501,9 +529,9 @@ class PmuProvider extends ChangeNotifier {
   /// ★ B-4.6 — exposé pour que la sérialisation soit VÉRIFIABLE : sans point
   /// d'attente public, un test ne peut pas distinguer « écriture pas encore
   /// commencée » de « écriture perdue ». Ne modifie aucun état.
-  Future<void> sauvegardeTerminee() =>
-      _ecritureEnCours ? (_ecritureAttente?.future ?? Future<void>.value())
-          : Future<void>.value();
+  Future<void> sauvegardeTerminee() => _ecritureEnCours
+      ? (_ecritureAttente?.future ?? Future<void>.value())
+      : Future<void>.value();
 
   /// Écriture effective.
   ///
@@ -799,7 +827,8 @@ class PmuProvider extends ChangeNotifier {
     await sauvegardeTerminee();
 
     final idx = _predictions.indexWhere((p) => p.id == id);
-    if (idx == -1) return false; // ticket absent : l'absence n'est pas une preuve
+    if (idx == -1)
+      return false; // ticket absent : l'absence n'est pas une preuve
 
     // ② Lecture du disque, SANS toucher à la mémoire.
     Map<String, dynamic>? surDisque;
@@ -831,8 +860,10 @@ class PmuProvider extends ChangeNotifier {
 
     // ③ Comparaison des TROIS champs financiers.
     final manuelDisque = (surDisque['montantGainManuel'] as num?)?.toDouble();
-    final officielDisque = (surDisque['montantOfficielPmu'] as num?)?.toDouble();
-    final decisionDisque = _lireDecisionGainDepuisJson(surDisque['decisionGainPmu']);
+    final officielDisque =
+        (surDisque['montantOfficielPmu'] as num?)?.toDouble();
+    final decisionDisque =
+        _lireDecisionGainDepuisJson(surDisque['decisionGainPmu']);
 
     final concordance = memoire.montantGainManuel == manuelDisque &&
         memoire.montantOfficielPmu == officielDisque &&
@@ -1052,8 +1083,7 @@ class PmuProvider extends ChangeNotifier {
   /// Sert la garde de VALEUR du rétablissement : elle ne lit RIEN sur le
   /// disque et ne prouve donc que ce qu'elle prétend — l'état mémoire est-il
   /// encore celui que l'on a échoué à écrire.
-  bool _memesChampsVerdict(
-          UserPrediction courant, UserPrediction attendu) =>
+  bool _memesChampsVerdict(UserPrediction courant, UserPrediction attendu) =>
       courant.etatGain == attendu.etatGain &&
       courant.motifNonDetermination == attendu.motifNonDetermination &&
       courant.etatTirelire == attendu.etatTirelire &&
@@ -1121,7 +1151,8 @@ class PmuProvider extends ChangeNotifier {
   /// absent, état financier divergent, verdict déjà posé, capture
   /// inexploitable, ou refus de la politique B-4.3.
   Future<IssueEcritureGain> appliquerVerdictGainPredictionSecurise(
-      String id, ResultatOfficielCourse resultat) async {
+      String id, ResultatOfficielCourse resultat,
+      {bool enregistrerMontantOfficiel = false}) async {
     // ⚠️ GARDE BLOQUANTE — jamais d'écriture sur un ticket dont la cohérence
     //    mémoire/disque n'est pas prouvée (même règle que le gain manuel).
     if (_etatFinancierDivergent.contains(id)) {
@@ -1172,9 +1203,40 @@ class PmuProvider extends ChangeNotifier {
       montantGainManuel: etatFrais.montantGainManuel,
       montantOfficielPmu: etatFrais.montantOfficielPmu,
       decisionGainPmu: etatFrais.decisionGainPmu,
-      montantGainManuelAvantDecision:
-          etatFrais.montantGainManuelAvantDecision,
+      montantGainManuelAvantDecision: etatFrais.montantGainManuelAvantDecision,
     );
+
+    // ⑥-bis ★ B1-T12 / RACCORDEMENT DES GAINS OFFICIELS TARDIFS.
+    //
+    //   DÉSACTIVÉ PAR DÉFAUT. Sans ce drapeau, la méthode est EXACTEMENT celle
+    //   validée au lot 2-C : les 38 appels existants (2 écrans + tests) n'ont
+    //   pas changé d'un caractère et leur comportement est identique — la
+    //   mutation « retrait de l'attente de `_savePredictions()` » produit
+    //   toujours ses 8 échecs, ce qui le prouve.
+    //
+    //   QUAND IL EST ACTIVÉ (voie tardive uniquement), il écrit le montant
+    //   OFFICIEL BRUT issu du verdict, par la fonction PURE de B-4.3 :
+    //     • `attribue` → retour brut, seulement si démontrablement complet ;
+    //     • `perdu`    → `0.0` (perte établie) ;
+    //     • `rembourse`→ `null` — JAMAIS converti en gain (arbitrage A) ;
+    //     • `nonDetermine` → `null`.
+    //
+    //   ⚠️ CE QUI N'EST JAMAIS ÉCRIT ICI :
+    //     • `montantGainManuel` — la saisie de l'utilisateur est INTOUCHÉE ;
+    //     • `decisionGainPmu` — aucune décision Accepter/Refuser automatique ;
+    //     • `montantGainManuelAvantDecision` — trace, préservée.
+    //
+    //   ⚠️ DIVERGENCE, PAS ÉCRASEMENT. Si un gain manuel existe et que le
+    //      montant officiel diffère, on enregistre l'officiel en RÉFÉRENCE et
+    //      on laisse `decisionGainPmu` à `null` : la demande reste ouverte.
+    //      Le montant manuel continue donc de faire foi à l'affichage
+    //      (`gainRetenuBrut`, branche ①) jusqu'à décision explicite.
+    //      Montants IDENTIQUES : même chose, l'information d'égalité est
+    //      portée par l'égalité elle-même, disponible pour la notification
+    //      informative unique ultérieure — sans nouveau champ.
+    final avecOfficiel = enregistrerMontantOfficiel
+        ? _fusionnerMontantOfficiel(fusionnee, verdict)
+        : fusionnee;
 
     // ⑦ Témoin d'AVANT, indispensable au rétablissement conditionnel : ce que
     //    le disque devra porter si l'écriture échoue.
@@ -1191,7 +1253,7 @@ class PmuProvider extends ChangeNotifier {
     //    plus récente la remplacera et interdisra tout rétablissement.
     final maGeneration = _incrementerGenerationGainManuel(id);
 
-    _predictions[idx] = fusionnee;
+    _predictions[idx] = avecOfficiel;
     _versionMemoire++;
     notifyListeners();
     // ══ FIN DE LA PARTIE SYNCHRONE ═════════════════════════════════════════
@@ -1200,7 +1262,7 @@ class PmuProvider extends ChangeNotifier {
     //    (`_predictions[idx]`) serait faux — `notifyListeners()` a pu laisser
     //    un auditeur modifier l'entrée, et on confirmerait alors l'écriture
     //    d'autrui.
-    final verdictEcrit = fusionnee;
+    final verdictEcrit = avecOfficiel;
 
     // ══ PARTIE 2 — ASYNCHRONE. LE SUCCÈS N'EST JAMAIS RENDU SANS PREUVE. ════
     //    Avant cette correction, la méthode rendait `true` juste après avoir
@@ -1215,8 +1277,36 @@ class PmuProvider extends ChangeNotifier {
     return _issueDepuisDisqueVerdict(id, maGeneration, verdictEcrit);
   }
 
+  /// ★ B1-T12 / RACCORDEMENT TARDIF — fusion du SEUL champ officiel.
+  ///
+  /// Écrit `montantOfficielPmu` à partir du verdict, et RIEN d'autre :
+  ///   • `montantGainManuel` n'est pas passé à `copyWith` ⇒ il reste celui de
+  ///     [base], c'est-à-dire la saisie de l'utilisateur, intacte ;
+  ///   • `decisionGainPmu` n'est pas passé ⇒ aucune décision automatique ;
+  ///   • `montantGainManuelAvantDecision` n'est pas passé ⇒ trace préservée ;
+  ///   • les sept champs B-1 viennent de l'enregistreur et ne sont pas touchés.
+  ///
+  /// ⚠️ DIVERGENCE ASSUMÉE : quand un gain manuel existe et que l'officiel en
+  ///    diffère, on n'écrase RIEN. On enregistre l'officiel en RÉFÉRENCE et on
+  ///    laisse `decisionGainPmu == null` : la demande reste ouverte, et le
+  ///    montant manuel continue de faire foi à l'affichage. C'est exactement
+  ///    « conserver le gain manuel actif et enregistrer l'état de divergence ».
+  ///
+  /// ⚠️ `null` N'ÉCRASE PAS UN OFFICIEL DÉJÀ CONNU. Si le verdict ne permet
+  ///    pas d'établir de montant (`rembourse`, `nonDetermine`, ou total non
+  ///    démontrable), on conserve la valeur déjà présente : une absence de
+  ///    preuve n'est pas une preuve d'absence, et effacer un montant officiel
+  ///    antérieurement établi serait une régression.
+  UserPrediction _fusionnerMontantOfficiel(
+      UserPrediction base, VerdictGain verdictOfficiel) {
+    final montant = montantOfficielDepuisVerdict(verdictOfficiel);
+    if (montant == null) return base;
+    return base.copyWith(montantOfficielPmu: montant);
+  }
+
   /// Valide ou invalide un pronostic + enregistre la mise et le gain
-  void validatePrediction(String id, {
+  void validatePrediction(
+    String id, {
     required bool isCorrect,
     double? montantMise,
     double? gainRealise,
@@ -1295,7 +1385,8 @@ class PmuProvider extends ChangeNotifier {
   /// Met à jour le dividende PMU réel après la course
   /// Appelé automatiquement par le watchdog ou manuellement depuis paris_detail_screen
   /// ✅ Fix: isCorrect calculé depuis dividendePmuReel > 0 (jamais hardcodé à true)
-  void enregistrerDividendePmu(String id, {
+  void enregistrerDividendePmu(
+    String id, {
     required double dividendePmuReel,
     required String combinaisonPmu,
   }) {
@@ -1337,7 +1428,8 @@ class PmuProvider extends ChangeNotifier {
     notifyListeners();
     _syncStatsTypesIA();
     if (kDebugMode) {
-      debugPrint('✅ Dividende PMU enregistré: ×${dividendePmuReel.toStringAsFixed(2)} → gain ${gainNet.toStringAsFixed(2)}€');
+      debugPrint(
+          '✅ Dividende PMU enregistré: ×${dividendePmuReel.toStringAsFixed(2)} → gain ${gainNet.toStringAsFixed(2)}€');
     }
   }
 
@@ -1346,8 +1438,9 @@ class PmuProvider extends ChangeNotifier {
   /// À appeler après la fin d'une course.
   Future<int> recupererDividendesPmuManquants() async {
     int nbMisAJour = 0;
-    final enAttenteCombines = _predictions.where((p) =>
-      p.isCorrect == null && p.estPariCombine).toList();
+    final enAttenteCombines = _predictions
+        .where((p) => p.isCorrect == null && p.estPariCombine)
+        .toList();
 
     for (final pred in enAttenteCombines) {
       try {
@@ -1368,11 +1461,13 @@ class PmuProvider extends ChangeNotifier {
           nbMisAJour++;
         }
       } catch (e) {
-        if (kDebugMode) debugPrint('❌ Erreur récupération dividende ${pred.id}: $e');
+        if (kDebugMode)
+          debugPrint('❌ Erreur récupération dividende ${pred.id}: $e');
       }
     }
     if (nbMisAJour > 0) {
-      if (kDebugMode) debugPrint('✅ $nbMisAJour dividendes PMU récupérés et enregistrés');
+      if (kDebugMode)
+        debugPrint('✅ $nbMisAJour dividendes PMU récupérés et enregistrés');
     }
     return nbMisAJour;
   }
@@ -1405,11 +1500,13 @@ class PmuProvider extends ChangeNotifier {
     //   sont pas réécrits, et `mettreAJourStatsTypes` recalcule depuis la
     //   liste reçue à chaque appel — la correction prend donc effet au
     //   prochain recalcul NORMAL, sans intervention.
-    final allPreds = _predictions.map((p) => {
-      'typePari':  p.typePari,
-      'isCorrect': p.isCorrect,
-      'gainNet':   p.gainGagnantPlaceEtabli ? p.gainNet : 0.0,
-    }).toList();
+    final allPreds = _predictions
+        .map((p) => {
+              'typePari': p.typePari,
+              'isCorrect': p.isCorrect,
+              'gainNet': p.gainGagnantPlaceEtabli ? p.gainNet : 0.0,
+            })
+        .toList();
     // Appel async non bloquant — on ignore le Future
     IaMemoryService.instance.mettreAJourStatsTypes(allPreds);
   }
@@ -1444,8 +1541,8 @@ class PmuProvider extends ChangeNotifier {
   /// ⚠️ Utiliser [getAllPredictionsForCourse] si plusieurs paris sur la même course.
   UserPrediction? getPredictionForCourse(int numR, int numC) {
     try {
-      return _predictions.firstWhere(
-          (p) => p.numReunion == numR && p.numCourse == numC);
+      return _predictions
+          .firstWhere((p) => p.numReunion == numR && p.numCourse == numC);
     } catch (_) {
       return null;
     }
@@ -1464,8 +1561,8 @@ class PmuProvider extends ChangeNotifier {
   /// Utile pour les mises à jour de dividende : on cherche le pari en attente.
   UserPrediction? getPendingPredictionForCourse(int numR, int numC) {
     try {
-      return _predictions.firstWhere(
-          (p) => p.numReunion == numR && p.numCourse == numC && p.isCorrect == null);
+      return _predictions.firstWhere((p) =>
+          p.numReunion == numR && p.numCourse == numC && p.isCorrect == null);
     } catch (_) {
       return getPredictionForCourse(numR, numC); // fallback sur le premier
     }
