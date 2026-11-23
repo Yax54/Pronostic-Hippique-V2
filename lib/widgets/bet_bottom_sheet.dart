@@ -31,6 +31,7 @@ import '../services/referentiel_paris_pmu.dart'
         codeApiPourTypePmu,
         exigeOrdreExactSaisie;
 import '../utils/format_euros.dart';
+import 'paris/mise_manuelle_dialog.dart';
 import '../utils/type_pari_utils.dart'; // ★ B2-A : détection Gagnant+Placé
 import 'type_pari_badge.dart'; // ★ v10.32
 
@@ -131,6 +132,21 @@ class _BetSheet extends StatefulWidget {
 
 class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixin {
   double _mise = 10.0;
+
+  /// ★ B1-T12 / LOT 2-B — AFFICHAGE de la mise, sans arrondi trompeur.
+  ///
+  /// Avant ce lot, TOUT l'écran arrondissait la mise à l'euro via
+  /// `toStringAsFixed(0)`. C'était acceptable tant que le Slider ne produisait
+  /// que des ENTIERS ; la saisie
+  /// libre permet désormais 10,50 € — l'afficher « 11 € » ou « 10 € »
+  /// contredirait le montant réellement engagé.
+  ///
+  /// `fmtEuros` (déjà utilisé partout ailleurs dans le projet) donne
+  /// « 10 » pour un entier et « 10.50 » pour une décimale : aucun « 10.0 »
+  /// parasite. ⚠️ Seule la REPRÉSENTATION change : `_mise` reste le montant
+  /// exact, et tous les calculs de gain continuent de l'utiliser tel quel.
+  String get _miseAffichee => '${fmtEuros(_mise)} €';
+
   ZtPartant? _chevalSelectionne;
   TabController? _tabController;
 
@@ -596,7 +612,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         'raison':
             'Score IA très élevé (${score.round()}/100) — forte confiance '
             'sur ce cheval. La cote ×${coteG.toStringAsFixed(1)} offre un '
-            'bon rapport gain/risque. Mise recommandée : ${_mise.toStringAsFixed(0)} €.',
+            'bon rapport gain/risque. Mise recommandée : $_miseAffichee.',
         'probabilite': _coteToProbaPct(coteG),
         'gainEstime': _mise * coteG - _mise,
       };
@@ -1604,7 +1620,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
               const Text('📊 Calculateur de gains PMU', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               Text(
-                'Mise actuelle : ${_mise.toStringAsFixed(0)} € — Cote Gagnant : ×${_coteGagnant.toStringAsFixed(2)} — Cote Placé : ×${_cotePlacee.toStringAsFixed(2)}',
+                'Mise actuelle : $_miseAffichee — Cote Gagnant : ×${_coteGagnant.toStringAsFixed(2)} — Cote Placé : ×${_cotePlacee.toStringAsFixed(2)}',
                 style: const TextStyle(color: Colors.white60, fontSize: 14),
               ),
               const SizedBox(height: 4),
@@ -2493,68 +2509,112 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
   // ── Sélecteur de mise ────────────────────────────────────────────────────────
 
+  /// ★ B1-T12 / LOT 2-B — Ouvre la SAISIE NUMÉRIQUE de la mise.
+  ///
+  /// Remplace le `Slider` supprimé. `showDialog` n'empile aucune route plein
+  /// écran : au retour, la fiche de pari, son onglet et son défilement sont
+  /// ceux d'avant l'ouverture.
+  ///
+  /// ENREGISTREMENT : la valeur n'est écrite dans `_mise` QU'À la validation.
+  /// Une annulation ne peut donc pas modifier la mise précédente ; l'état
+  /// « en cours de saisie » vit dans le contrôleur de la fenêtre, pas ici.
+  ///
+  /// Les montants rapides (2/5/10/20/50/100/200) restent en dessous et sont
+  /// parfaitement compatibles : ils écrivent directement `_mise`.
+  Future<void> _ouvrirSaisieMise() async {
+    final saisie = await showDialog<double>(
+      context: context,
+      builder: (_) => MiseManuelleDialog(montantActuel: _mise),
+    );
+    // `null` = annulation : on ne touche À RIEN.
+    if (saisie == null || !mounted) return;
+    setState(() => _mise = saisie);
+  }
+
   Widget _buildMiseSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Montant de la mise', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            color: _card,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _gold.withValues(alpha: 0.4)),
+        // ★ B1-T12 / LOT 2-B — LE SLIDER EST SUPPRIMÉ.
+        //
+        //   Historique mesuré (voir rapport) : ce `Slider` datait du premier
+        //   commit du dépôt (`ddde819`) et n'avait jamais été retiré ; la
+        //   correction UX « saisie manuelle sans slider » (commit cd9f011,
+        //   v10.36) avait été appliquée à `simulation_screen.dart` SEULEMENT.
+        //   Il est ici remplacé par un champ numérique, sans en conserver la
+        //   moindre trace dans ce parcours.
+        //
+        //   ⚠️ AUCUNE BORNE 2–200 € N'EST REPORTÉE. Le Slider imposait
+        //   `min: 2, max: 200` par commodité d'interface, pas par règle
+        //   métier : mesuré, aucune contrainte équivalente n'existe dans le
+        //   modèle ni dans le provider (le seul seuil du projet est
+        //   `montantMise > 0`, c.-à-d. « une mise strictement positive »).
+        //
+        //   Le montant est désormais SAISI : toucher le montant ouvre le
+        //   clavier numérique (voir `_ouvrirSaisieMise`).
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _ouvrirSaisieMise,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+            decoration: BoxDecoration(
+              color: _card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _gold.withValues(alpha: 0.4)),
+            ),
+            child: Column(children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      _miseAffichee,
+                      style: const TextStyle(color: _gold, fontSize: 36, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.edit, size: 18, color: Colors.white38),
+                ],
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                'Toucher pour saisir le montant',
+                style: TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              const SizedBox(height: 6),
+              Builder(builder: (_) {
+                final tp = _typesPari[_typePariIndex];
+                final isMulti = tp == 'Tiercé' || tp == 'Quarté+' || tp == 'Quinté+';
+                final isCouple = tp == 'Couplé Gagnant' || tp == 'Couplé Placé';
+                final isGP = tp == 'Gagnant+Placé';
+                String sousTitre;
+                if (isMulti) {
+                  // Tiercé/Quarté+/Quinté+ : afficher ordre + désordre, pas la cote du cheval
+                  final res = tp == 'Tiercé'
+                      ? GainCalculator.tierce(_mise, _getCotes3(), _nbPartants)
+                      : tp == 'Quarté+'
+                          ? GainCalculator.quarte(_mise, _getCotes4(), _nbPartants)
+                          : GainCalculator.quinte(_mise, _getCotes5(), _nbPartants);
+                  // gainNet = gain en ordre (net), gainSiDesordre = gain désordre (net)
+                  final retourOrdre    = res.gainNet + _mise;
+                  final retourDesordre = (res.gainSiDesordre ?? 0) + _mise;
+                  sousTitre = 'Ordre ~${fmtEuros(retourOrdre)} €  •  Désordre ~${fmtEuros(retourDesordre)} €';
+                } else if (isCouple) {
+                  sousTitre = 'Retour estimé : ~${fmtEuros(_retourTotal)} €  (≈×${_coteAffichee.toStringAsFixed(1)})';
+                } else if (isGP) {
+                  sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (2 composantes : 2 mises engagées)';
+                } else {
+                  // Simple Gagnant / Simple Placé : cote du cheval, cohérente
+                  sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (cote ×${_coteAffichee.toStringAsFixed(1)})';
+                }
+                return Text(sousTitre, style: const TextStyle(color: Colors.white38, fontSize: 13));
+              }),
+            ]),
           ),
-          child: Column(children: [
-            Text('${_mise.toStringAsFixed(0)} €', style: const TextStyle(color: _gold, fontSize: 36, fontWeight: FontWeight.bold, letterSpacing: 1)),
-            Builder(builder: (_) {
-              final tp = _typesPari[_typePariIndex];
-              final isMulti = tp == 'Tiercé' || tp == 'Quarté+' || tp == 'Quinté+';
-              final isCouple = tp == 'Couplé Gagnant' || tp == 'Couplé Placé';
-              final isGP = tp == 'Gagnant+Placé';
-              String sousTitre;
-              if (isMulti) {
-                // Tiercé/Quarté+/Quinté+ : afficher ordre + désordre, pas la cote du cheval
-                final res = tp == 'Tiercé'
-                    ? GainCalculator.tierce(_mise, _getCotes3(), _nbPartants)
-                    : tp == 'Quarté+'
-                        ? GainCalculator.quarte(_mise, _getCotes4(), _nbPartants)
-                        : GainCalculator.quinte(_mise, _getCotes5(), _nbPartants);
-                // gainNet = gain en ordre (net), gainSiDesordre = gain désordre (net)
-                final retourOrdre    = res.gainNet + _mise;
-                final retourDesordre = (res.gainSiDesordre ?? 0) + _mise;
-                sousTitre = 'Ordre ~${fmtEuros(retourOrdre)} €  •  Désordre ~${fmtEuros(retourDesordre)} €';
-              } else if (isCouple) {
-                sousTitre = 'Retour estimé : ~${fmtEuros(_retourTotal)} €  (≈×${_coteAffichee.toStringAsFixed(1)})';
-              } else if (isGP) {
-                sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (2 composantes : 2 mises engagées)';
-              } else {
-                // Simple Gagnant / Simple Placé : cote du cheval, cohérente
-                sousTitre = 'Retour billet : ~${fmtEuros(_retourTotal)} €  (cote ×${_coteAffichee.toStringAsFixed(1)})';
-              }
-              return Text(sousTitre, style: const TextStyle(color: Colors.white38, fontSize: 13));
-            }),
-          ]),
-        ),
-        const SizedBox(height: 10),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            activeTrackColor: _gold,
-            inactiveTrackColor: const Color(0xFF1A3A2A),
-            thumbColor: _gold,
-            overlayColor: _gold.withValues(alpha: 0.15),
-          ),
-          child: Slider(value: _mise.clamp(2.0, 200.0).roundToDouble(), min: 2, max: 200, divisions: 99, onChanged: (v) => setState(() => _mise = v.roundToDouble())),
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: const [
-            Text('2 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
-            Text('100 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
-            Text('200 €', style: TextStyle(color: Colors.white24, fontSize: 14)),
-          ],
         ),
         const SizedBox(height: 10),
         Wrap(
@@ -2637,12 +2697,12 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
           // ── Mise (double si Gagnant+Placé)
           if (isGagnantPlace) ...[
-            _summaryRow('💰 Mise engagée', '${_mise.toStringAsFixed(0)} × 2 = ${(_mise*2).toStringAsFixed(0)} €',
+            _summaryRow('💰 Mise engagée', '${fmtEuros(_mise)} × 2 = ${fmtEuros(_mise * 2)} €',
                 highlight: true, color: const Color(0xFFFFB74D)),
-            _summaryRow('  ↳ Gagnant', '${_mise.toStringAsFixed(0)} €'),
-            _summaryRow('  ↳ Placé',   '${_mise.toStringAsFixed(0)} €'),
+            _summaryRow('  ↳ Gagnant', _miseAffichee),
+            _summaryRow('  ↳ Placé',   _miseAffichee),
           ] else
-            _summaryRow('💰 Mise', '${_mise.toStringAsFixed(0)} €'),
+            _summaryRow('💰 Mise', _miseAffichee),
 
           const SizedBox(height: 6),
 
@@ -2673,22 +2733,22 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           // ── Scénarios selon le type
           if (typePari == 'Simple Gagnant') ...[
             _scenarioRow('🏆 Si 1er', '${fmtEuros(_retourTotal)} €', Colors.greenAccent),
-            _scenarioRow('❌ Si 2e+', '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+            _scenarioRow('❌ Si 2e+', '-$_miseAffichee', const Color(0xFFEF5350)),
           ] else if (isPlace) ...[
             _scenarioRow('🎯 Si top 3', '${fmtEuros(_retourTotal)} €', Colors.greenAccent),
-            _scenarioRow('❌ Si 4e+',   '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+            _scenarioRow('❌ Si 4e+',   '-$_miseAffichee', const Color(0xFFEF5350)),
           ] else if (isCoupleGagnant) ...[
             _scenarioRow('🏆 Si les 2 dans le top 2',
                 '+${fmtEuros(_gainEstime)} €', Colors.greenAccent),
             _scenarioRow('🥈 Si 1 seul dans le top 2',
-                '-${_mise.toStringAsFixed(0)} € (perdu)', const Color(0xFFEF5350)),
+                '-$_miseAffichee (perdu)', const Color(0xFFEF5350)),
             _scenarioRow('❌ Aucun dans le top 2',
-                '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+                '-$_miseAffichee', const Color(0xFFEF5350)),
           ] else if (isCouplePlace) ...[
             _scenarioRow('🏆 Si les 2 dans le top 3',
                 '+${fmtEuros(_gainEstime)} €', Colors.greenAccent),
             _scenarioRow('❌ Si 1 seul dans le top 3',
-                '-${_mise.toStringAsFixed(0)} € (perdu)', const Color(0xFFEF5350)),
+                '-$_miseAffichee (perdu)', const Color(0xFFEF5350)),
           ] else if (isGagnantPlace) ...[
             // ★ SOUS-LOT B : on affiche le RETOUR BRUT (mise incluse) et le
             //   BÉNÉFICE NET séparément, calculés sur les DEUX composantes.
@@ -2738,7 +2798,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
               return Column(children: [
                 _scenarioRow('🏆 Dans l\'ordre',   '+${fmtEuros(r.gainNet)} €', Colors.greenAccent),
                 _scenarioRow('🥈 Dans le désordre','+${fmtEuros(r.gainSiDesordre ?? 0)} €', const Color(0xFFFFB74D)),
-                _scenarioRow('❌ Perdu',            '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+                _scenarioRow('❌ Perdu',            '-$_miseAffichee', const Color(0xFFEF5350)),
               ]);
             }(),
           ] else if (typePari == 'Quarté+') ...[
@@ -2747,7 +2807,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
               return Column(children: [
                 _scenarioRow('🏆 Dans l\'ordre',   '+${fmtEuros(r.gainNet)} €', Colors.greenAccent),
                 _scenarioRow('🥈 Dans le désordre','+${fmtEuros(r.gainSiDesordre ?? 0)} €', const Color(0xFFFFB74D)),
-                _scenarioRow('❌ Perdu',            '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+                _scenarioRow('❌ Perdu',            '-$_miseAffichee', const Color(0xFFEF5350)),
               ]);
             }(),
           ] else if (typePari == 'Quinté+') ...[
@@ -2757,7 +2817,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                 _scenarioRow('🏆 Dans l\'ordre',   '+${fmtEuros(r.gainNet)} €', Colors.greenAccent),
                 _scenarioRow('🥈 Dans le désordre','+${fmtEuros(r.gainSiDesordre ?? 0)} €', const Color(0xFFFFB74D)),
                 _scenarioRow('⭐ Bonus 4/5 bons',  '+${fmtEuros(r.gainBonus4sur5 ?? 0)} €', const Color(0xFF64B5F6)),
-                _scenarioRow('❌ Perdu',            '-${_mise.toStringAsFixed(0)} €', const Color(0xFFEF5350)),
+                _scenarioRow('❌ Perdu',            '-$_miseAffichee', const Color(0xFFEF5350)),
               ]);
             }(),
           ],
@@ -2831,8 +2891,8 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     final miseAffichee = _miseReelle;
     final typePariCurrent = _typesPari[_typePariIndex];
     final suffixeMise = typePariCurrent == 'Gagnant+Placé'
-        ? '${_mise.toStringAsFixed(0)}×2=${miseAffichee.toStringAsFixed(0)} €'
-        : '${miseAffichee.toStringAsFixed(0)} €';
+        ? '${fmtEuros(_mise)}×2=${fmtEuros(miseAffichee)} €'
+        : '${fmtEuros(miseAffichee)} €';
 
     // Label adapté selon le type de pari
     final String label;
@@ -3272,8 +3332,8 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
     // Message adapté selon simple ou combiné
     final msgPari = _estPariCombi
-        ? '✅ $typePariLabel ($modeLabel) — ${numerosJoues.map((n) => "N°$n").join(" · ")} — ${_mise.toStringAsFixed(0)} €'
-        : '✅ Pari placé : ${_mise.toStringAsFixed(0)} € sur N°${partant.numero} — ${partant.nom}';
+        ? '✅ $typePariLabel ($modeLabel) — ${numerosJoues.map((n) => "N°$n").join(" · ")} — $_miseAffichee'
+        : '✅ Pari placé : $_miseAffichee sur N°${partant.numero} — ${partant.nom}';
 
     ScaffoldMessenger.of(ctx).showSnackBar(
       SnackBar(
