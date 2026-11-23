@@ -58,6 +58,19 @@ class _StoreControle extends SharedPreferencesStorePlatform {
   /// concurrente au pire moment (pendant la sauvegarde).
   Future<void> Function()? avantChaqueEcriture;
 
+  /// ★ AJOUT MOTIVÉ PAR LA MUTATION M1 — appelé AVANT chaque LECTURE.
+  ///
+  /// ⚠️ POURQUOI CE POINT D'INJECTION EXISTE, ET RIEN DE PLUS.
+  ///    La re-vérification de génération après `await` ne peut être exercée
+  ///    QUE si une opération concurrente démarre PENDANT la lecture asynchrone
+  ///    de preuve (`verifierGainPersiste` → `getAllWithParameters`). Le hook
+  ///    d'écriture, lui, s'exécute trop tôt : `_savePredictions` dépile la
+  ///    demande en cours avant de rédiger, donc l'ordre des générations
+  ///    observé par l'opération ① reste intact et le mutant M1 survivait.
+  ///
+  ///    Sans ce hook, la protection était structurellement non testable.
+  Future<void> Function()? avantChaqueLecture;
+
   bool _fautive(String key) => key.contains('user_predictions') ||
       key.contains('tracked_courses');
 
@@ -85,6 +98,8 @@ class _StoreControle extends SharedPreferencesStorePlatform {
   @override
   Future<Map<String, Object>> getAllWithParameters(
       GetAllParameters parameters) async {
+    final hook = avantChaqueLecture;
+    if (hook != null) await hook();
     final f = parameters.filter;
     final r = Map<String, Object>.from(_data);
     r.removeWhere((k, _) =>
@@ -1173,6 +1188,47 @@ void main() {
         ]);
         expect(store.predictionsBrutes().length, avant);
         expect(pmu.predictions.length, 3);
+      });
+    });
+
+    test('N18 une opération concurrente démarrée PENDANT la lecture de preuve '
+        'invalide la confirmation (re-vérification après `await`)', () async {
+      // ⚠️ CE TEST COMBLE LA LACUNE RÉVÉLÉE PAR LA MUTATION M1.
+      //
+      //    La protection « re-vérifier la génération APRÈS l'await » survivait
+      //    à toute la suite : avec le hook d'écriture, `_savePredictions`
+      //    dépile la demande en cours AVANT de rédiger, donc l'ordre des
+      //    générations vu par l'opération ① restait intact et le mutant
+      //    passait. Le hook de LECTURE place l'opération concurrente
+      //    exactement là où la garde doit agir : pendant `verifierGainPersiste`.
+      //
+      //    Ce que le mutant produirait ici : ① conclut `confirme` alors que sa
+      //    génération a été remplacée ⇒ un succès annoncé sur une valeur qui
+      //    n'est plus la sienne. C'est précisément le faux succès interdit.
+      await _sansReseau(() async {
+        final store = _StoreControle();
+        final pmu = await _providerAvec(store, [_pred('p1')]);
+
+        // La 2e opération démarre pendant la PREMIÈRE lecture de preuve, puis
+        // le hook se désarme : il ne s'appliquera qu'une seule fois.
+        store.avantChaqueLecture = () async {
+          store.avantChaqueLecture = null;
+          unawaited(pmu.enregistrerGainManuelPrediction('p1', 99.0));
+        };
+
+        final r1 = await pmu.enregistrerGainManuelPrediction('p1', 10.0);
+        await pmu.sauvegardeTerminee();
+
+        expect(r1, isNot(IssueEcritureGain.confirme),
+            reason: 'l\'opération ① a été remplacée PENDANT sa lecture de '
+                'preuve : elle ne peut pas se déclarer confirmée');
+        expect(r1, IssueEcritureGain.remplacee,
+            reason: 'l\'issue doit être NOMMÉE : remplacée par plus récente');
+        expect(
+            (store.predictionParId('p1')!['montantGainManuel'] as num)
+                .toDouble(),
+            99.0,
+            reason: 'la valeur finale est celle de l\'opération la plus récente');
       });
     });
   });
