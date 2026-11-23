@@ -5,6 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pmu_models.dart';
 import '../models/decision_gain_pmu.dart';
 import '../services/pmu_api_service.dart';
+import '../services/branchement_verdict_course.dart'
+    show construireTicketPrediction, appliquerVerdictPrediction;
+import '../services/resolution_gain_ticket_pmu.dart'
+    show ResultatOfficielCourse, resoudreGainTicketDepuisDonnees;
 import '../services/ia_memory_service.dart';
 import '../utils/type_pari_utils.dart'
     show estEtatSansPariRecommande, estTypeGagnantPlace;
@@ -888,6 +892,116 @@ class PmuProvider extends ChangeNotifier {
     _predictions[idx] = resolue;
     _savePredictions();
     notifyListeners();
+    return true;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ B1-T12 / LOT 2-C — ÉCRITURE DE VERDICT SANS ÉCRASEMENT FINANCIER
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  //  DÉFAUT MESURÉ, REPRODUIT PAR TEST (D1) :
+  //
+  //    `appliquerVerdictGainPrediction` ci-dessus affecte un OBJET ENTIER
+  //    (`_predictions[idx] = resolue`). L'objet reçu a été calculé par
+  //    l'appelant à partir d'un INSTANTANÉ capturé AVANT une attente réseau
+  //    (~15 s). Pendant cette attente, l'utilisateur peut saisir un gain
+  //    manuel : `enregistrerGainManuelPrediction` écrit alors `12.0` dans
+  //    `_predictions[idx]`, puis le verdict reprend et REMPLACE l'objet par
+  //    celui de l'instantané, qui porte `montantGainManuel: null`.
+  //
+  //    Mesure D1 : `expect(12.0)` → `Actual: <null>`, MÉMOIRE **ET** DISQUE.
+  //
+  //    L'asymétrie est décisive (mesure D2) : dans l'ordre inverse, la saisie
+  //    manuelle survit, parce que `enregistrerGainManuelPrediction` fait un
+  //    `copyWith` limité à UN champ. Une seule des deux écritures est donc
+  //    destructrice — ce n'est pas « l'ordre » qui est fragile, c'est
+  //    l'affectation d'objet entier.
+  //
+  //  CORRECTION — SANS AUCUN `await` ENTRE LECTURE ET ÉCRITURE :
+  //
+  //    L'état est relu sur `_predictions[idx]` (l'état FRAIS, jamais
+  //    l'instantané de l'appelant), résolu, décidé et fusionné DANS UN SEUL
+  //    BLOC SYNCHRONE. L'isolate Dart est mono-thread : sans point de
+  //    suspension, aucune opération concurrente ne peut s'intercaler, donc
+  //    aucun état ne peut devenir périmé entre la lecture et l'affectation.
+  //    C'est exactement ce qu'une « relecture avant écriture » séparée par un
+  //    `await` ne garantirait PAS.
+  //
+  //    ⚠️ AUCUNE RÈGLE MÉTIER N'EST REPRODUITE ICI. La politique d'écriture
+  //       (idempotence, refus du verdict définitif, transition
+  //       `nonDetermine → définitif`, cohérence interne, refus d'ambiguïté)
+  //       reste ENTIÈREMENT dans `appliquerVerdictPrediction` / B-4.3, qui est
+  //       APPELÉE telle quelle. Aucun montant n'est calculé : `VerdictGain`
+  //       vient de `resoudreGainTicketDepuisDonnees` (moteur B-3).
+
+  /// Applique le verdict officiel de [resultat] au ticket [id], en RELISANT
+  /// l'état courant et en préservant INTÉGRALEMENT les champs financiers.
+  ///
+  /// Rend `true` si un verdict a été écrit en mémoire (la persistance reste à
+  /// confirmer par l'appelant via [confirmationEcriturePredictions]).
+  ///
+  /// Rend `false` — sans rien écrire — dans tous les autres cas : ticket
+  /// absent, état financier divergent, verdict déjà posé, capture
+  /// inexploitable, ou refus de la politique B-4.3.
+  bool appliquerVerdictGainPredictionSecurise(
+      String id, ResultatOfficielCourse resultat) {
+    // ⚠️ GARDE BLOQUANTE — jamais d'écriture sur un ticket dont la cohérence
+    //    mémoire/disque n'est pas prouvée (même règle que le gain manuel).
+    if (_etatFinancierDivergent.contains(id)) return false;
+
+    // ══ BLOC SYNCHRONE — AUCUN `await` DE LA LECTURE À L'AFFECTATION ══════
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return false;
+
+    // ① L'état FRAIS, relu maintenant — PAS l'instantané de l'appelant.
+    final etatFrais = _predictions[idx];
+
+    // ② Verdict déjà posé : la politique B-4.3 le refuserait de toute façon
+    //    (`refuseVerdictDefinitifExistant`) ; on évite un calcul inutile.
+    if (etatFrais.etatGain != null) return false;
+
+    // ③ Construction du ticket : refuse explicitement toute capture
+    //    incomplète. On ne complète NI numéro, NI ordre, NI mise.
+    final construit = construireTicketPrediction(etatFrais);
+    if (!construit.estExploitable) return false;
+
+    // ④ Résolution officielle — moteur B-3, synchrone, pur.
+    final verdict = resoudreGainTicketDepuisDonnees(
+      ticket: construit.ticket!,
+      resultat: resultat,
+    );
+
+    // ⑤ Politique d'écriture — B-4.3, appelée telle quelle.
+    final enregistrement = appliquerVerdictPrediction(
+      ticket: etatFrais,
+      verdict: verdict,
+      resultat: resultat,
+    );
+    if (!enregistrement.estEnregistre) return false;
+
+    // ⑥ FUSION EXPLICITE — les SEPT champs B-1 proviennent de l'enregistreur ;
+    //    les QUATRE champs financiers du lot 2-C sont repris de l'état FRAIS
+    //    (et non de l'instantané réseau). `copyWith` porte des sentinelles :
+    //    un `null` explicite est écrit tel quel.
+    final fusionnee = enregistrement.ticket.copyWith(
+      montantGainManuel: etatFrais.montantGainManuel,
+      montantOfficielPmu: etatFrais.montantOfficielPmu,
+      decisionGainPmu: etatFrais.decisionGainPmu,
+      montantGainManuelAvantDecision:
+          etatFrais.montantGainManuelAvantDecision,
+    );
+
+    // ⓖ GÉNÉRATION PARTAGÉE — une saisie manuelle en vol ne doit plus se
+    //    croire légitime : sans cette invalidation, son `_rollbackCible`
+    //    pourrait réinstaller un `montantGainManuel` APRÈS la fusion.
+    _incrementerGenerationGainManuel(id);
+
+    _predictions[idx] = fusionnee;
+    _versionMemoire++;
+    notifyListeners();
+    // ══ FIN DU BLOC SYNCHRONE ═════════════════════════════════════════════
+
+    _savePredictions();
     return true;
   }
 

@@ -1348,15 +1348,12 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
           course.numReunion, course.numCourse);
       for (final pred in predictions) {
         if (pred.etatGain != null) continue; // verdict déjà écrit : ne pas rejouer
-        final resolution = resoudrePrediction(
-          prediction: pred,
-          resultat: resultat,
-        );
-        if (resolution.enregistrement != null &&
-            resolution.enregistrement!.estEnregistre) {
-          provider.appliquerVerdictGainPrediction(
-              resolution.enregistrement!.ticket);
-        }
+        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE.
+        //   L'ancienne voie (`resoudrePrediction` sur l'instantané + remplacement
+        //   d'objet entier) écrasait une saisie manuelle survenue pendant
+        //   l'attente réseau (défaut D1, mesuré). La nouvelle relit l'état FRAIS
+        //   et fusionne les champs financiers dans un bloc synchrone.
+        provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
       }
 
       // ── 2. Le ticket SUIVI de cet écran, avec ses propres données ───────────

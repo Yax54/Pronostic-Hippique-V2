@@ -1247,13 +1247,25 @@ void main() {
               '$coupables');
 
       // Et les deux écrans portent bien le branchement B-4.5 à la place.
+      // ★ B1-T12 / LOT 2-C — ANCRE MISE À JOUR, INTENTION CONSERVÉE.
+      //   La garde exigeait `resoudrePrediction` DANS l'écran. Le défaut D1
+      //   (mesuré) a imposé de déplacer la résolution DANS le provider : un
+      //   écran résolvait sur un instantané capturé avant l'attente réseau,
+      //   puis remplaçait un objet entier — écrasant une saisie manuelle
+      //   concurrente. L'écran DÉLÈGUE désormais ; il ne sélectionne toujours
+      //   aucun dividende, ce que les deux assertions suivantes continuent
+      //   d'interdire.
       for (final ecran in <String>[
         'lib/screens/mes_paris_screen.dart',
         'lib/screens/paris_detail_screen.dart',
       ]) {
         final code = codeSansCommentaires(ecran);
-        expect(code.contains('resoudrePrediction'), isTrue, reason: ecran);
+        expect(code.contains('appliquerVerdictGainPredictionSecurise'), isTrue,
+            reason: '$ecran doit écrire le verdict via la voie sécurisée');
         expect(code.contains('resoudreSuivi'), isTrue, reason: ecran);
+        // Le chemin dangereux par instantané ne doit plus être emprunté.
+        expect(code.contains('appliquerVerdictGainPrediction('), isFalse,
+            reason: '$ecran ne doit plus remplacer un objet entier');
         // Les deux écritures de l'ancien chemin ont disparu de ces écrans.
         expect(code.contains('enregistrerDividendePmuTracked'), isFalse,
             reason: '$ecran ne doit plus écrire de dividende sélectionné');

@@ -677,13 +677,11 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
           provider.getAllPredictionsForCourse(tc.numReunion, tc.numCourse);
       for (final pred in predictions) {
         if (pred.etatGain != null) continue;
-        final resolution =
-            resoudrePrediction(prediction: pred, resultat: resultat);
-        if (resolution.enregistrement != null &&
-            resolution.enregistrement!.estEnregistre) {
-          provider.appliquerVerdictGainPrediction(
-              resolution.enregistrement!.ticket);
-        }
+        // ★ B1-T12 / LOT 2-C — ÉCRITURE SÉCURISÉE (même correctif que
+        //   `mes_paris_screen`) : relit l'état FRAIS et fusionne les champs
+        //   financiers, au lieu de remplacer un objet entier capturé avant
+        //   l'attente réseau.
+        provider.appliquerVerdictGainPredictionSecurise(pred.id, resultat);
       }
 
       // ── 2. Le ticket SUIVI affiché par cet écran ───────────────────────────

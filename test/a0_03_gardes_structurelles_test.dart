@@ -94,7 +94,18 @@ void main() {
       // qui explique sa suppression. La vérification exacte, en source NETTE de
       // commentaires, est faite par B4.3/7.5 (test/b4_3_enregistreur_verdict_test.dart).
       // Le verdict officiel remplace ce chemin.
-      expect(src.contains('resoudrePrediction('), isTrue, reason: 'B-4.5');
+      // ★ B1-T12 / LOT 2-C — ANCRE MISE À JOUR, INTENTION CONSERVÉE.
+      //   La garde exigeait `resoudrePrediction(` DANS l'écran. La résolution
+      //   a été déplacée DANS `PmuProvider.appliquerVerdictGainPredictionSecurise`
+      //   (défaut D1 : l'écran résolvait sur un instantané capturé avant
+      //   l'attente réseau, donc une saisie manuelle concurrente était écrasée).
+      //   L'écran n'exécute donc plus la résolution LUI-MÊME : il délègue.
+      //   La propriété défendue est INCHANGÉE et plus stricte — aucun dividende
+      //   n'est sélectionné par l'écran, le verdict vient toujours du moteur
+      //   officiel B-3 via l'enregistreur B-4.3.
+      expect(src.contains('appliquerVerdictGainPredictionSecurise'), isTrue,
+          reason: 'B-4.5 / 2-C — le verdict officiel est écrit via la voie '
+              'sécurisée du provider');
       expect(src.contains('resoudreSuivi('), isTrue, reason: 'B-4.5');
     });
 
@@ -110,7 +121,11 @@ void main() {
       // être cherchée ici : elle est CITÉE dans le commentaire de documentation
       // qui explique sa suppression. La vérification exacte, en source NETTE de
       // commentaires, est faite par B4.3/7.5 (test/b4_3_enregistreur_verdict_test.dart).
-      expect(src.contains('resoudrePrediction('), isTrue, reason: 'B-4.5');
+      // ★ B1-T12 / LOT 2-C — même mise à jour d'ancre que T2d, même intention :
+      //   la résolution a migré dans `PmuProvider` pour ne plus travailler sur
+      //   un instantané périmé. L'écran délègue, il ne résout plus lui-même.
+      expect(src.contains('appliquerVerdictGainPredictionSecurise'), isTrue,
+          reason: 'B-4.5 / 2-C — écriture du verdict via la voie sécurisée');
       expect(src.contains('resoudreSuivi('), isTrue, reason: 'B-4.5');
     });
 
