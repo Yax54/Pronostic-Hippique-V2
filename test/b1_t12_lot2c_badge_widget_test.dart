@@ -102,7 +102,8 @@ UserPrediction _pred({
   return UserPrediction.fromJson(base.toJson()..['etatGain'] = etatGain.name);
 }
 
-TrackedCourse _tc({double? montantGainManuel}) => TrackedCourse(
+TrackedCourse _tc({double? montantGainManuel, bool historique = false}) =>
+    TrackedCourse(
       numReunion: 1,
       numCourse: 3,
       nomCourse: 'Prix de Test',
@@ -115,6 +116,12 @@ TrackedCourse _tc({double? montantGainManuel}) => TrackedCourse(
       numerosJoues: const <int>[7],
       miseEngagee: 10.0,
       cote: 4.5,
+      // ⚠️ Un ticket HISTORIQUE porte un verdict (`isGagne`) ET un
+      //    `messageResultat`. Sans le message, `_titreResultat` reste nul et
+      //    le bandeau historique n'est PAS construit : le test ne mesurerait
+      //    alors pas le doublon. Les deux champs sont donc posés ENSEMBLE.
+      isGagne: historique ? true : null,
+      messageResultat: historique ? 'Arrivée : N°7' : null,
     );
 
 /// Monte l'écran réel « Mes Paris » sur l'onglet Suivi.
@@ -122,6 +129,7 @@ Future<PmuProvider> _monter(
   WidgetTester tester, {
   UserPrediction? pred,
   double? montantSuivi,
+  bool historique = false,
 }) async {
   final store = _Store();
   await store.setValue('StringList', 'flutter.user_predictions_v2',
@@ -129,7 +137,11 @@ Future<PmuProvider> _monter(
           ? <String>[]
           : <String>[jsonEncode(pred.toJson())]);
   await store.setValue('StringList', 'flutter.tracked_courses_v1',
-      <String>[jsonEncode(_tc(montantGainManuel: montantSuivi).toJson())]);
+      <String>[
+        jsonEncode(
+            _tc(montantGainManuel: montantSuivi, historique: historique)
+                .toJson())
+      ]);
   SharedPreferences.resetStatic();
   SharedPreferencesStorePlatform.instance = store;
   await AlertService.instance.recharger();
@@ -277,6 +289,44 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       expect(_nbGainGagne(), 0);
       expect(_nbGainDeclare(), 0);
+    });
+    testWidgets('W7 ticket HISTORIQUE (verdict ET message) + gain durable ⇒ '
+        'UN SEUL badge, jamais deux', (tester) async {
+      // ⚠️ CE TEST COMBLE UNE LACUNE MESURÉE PAR MUTATION.
+      //
+      //    La mutation M6 (retrait de `!_porteBadgeHistorique`) SURVIVAIT à
+      //    toute la suite : aucun test ne plaçait simultanément un ticket
+      //    HISTORIQUE (`isGagne` + `messageResultat`, donc le bandeau de
+      //    verdict est réellement construit) et un gain durable. Mesure du
+      //    mutant : « Gain gagné » = **2**, « 45 » = **2** — deux badges, deux
+      //    fois le même montant.
+      //
+      //    Ce test reproduit EXACTEMENT cette configuration. Il tombe sur le
+      //    mutant et passe sur le code correct.
+      await _monter(
+        tester,
+        pred: _pred(
+          montantGainManuel: 12.0,
+          montantOfficielPmu: 45.0,
+          decision: DecisionGainPmu.accepte,
+        ),
+        montantSuivi: 12.0,
+        historique: true,
+      );
+
+      // Le bandeau historique est bien construit : sans cela, le test ne
+      // mesurerait pas le doublon (prémisse vérifiée, pas supposée).
+      expect(find.textContaining('Arrivée : N°7'), findsWidgets,
+          reason: 'le ticket doit être HISTORIQUE, sinon le bandeau de '
+              'verdict n\'existe pas et le doublon est indétectable');
+
+      expect(find.textContaining('Gain gagné', findRichText: true)
+          .evaluate().length, 1,
+          reason: 'un ticket historique PLUS un gain durable ne doit produire '
+              'QU\'UN badge (mutation M6 = 2)');
+      expect(find.textContaining('45', findRichText: true).evaluate().length,
+          1,
+          reason: 'le montant ne doit pas être affiché deux fois');
     });
   });
 
