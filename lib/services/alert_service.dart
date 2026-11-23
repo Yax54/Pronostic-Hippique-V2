@@ -993,6 +993,37 @@ class AlertService extends ChangeNotifier {
     ));
   }
 
+  /// ★ B1-T12 / étape 2 (lot 2-A) — ENREGISTRE UN GAIN DÉCLARÉ PAR L'UTILISATEUR.
+  ///
+  /// Écrit `montantGainManuel` sur LE ticket désigné par sa CLÉ PERSISTANTE,
+  /// puis **persiste immédiatement** : le montant survit donc à la fermeture
+  /// de l'application et au redémarrage du téléphone.
+  ///
+  /// [storageKey] est la clé RÉELLE du ticket (`trackedCourses.keys`), jamais
+  /// une clé reconstituée : aucun rapprochement par réunion, course ou heure.
+  /// Un ticket non lié à un `UserPrediction` est donc parfaitement gérable.
+  ///
+  /// [montant] à `null` ANNULE la déclaration (retour au calcul PMU).
+  ///
+  /// ⚠️ CE QUE CETTE MÉTHODE NE FAIT PAS, ET NE PRÉTEND PAS FAIRE :
+  ///   • elle ne touche NI `dividendePmuReel`, NI les rapports attribués,
+  ///     NI les sept champs B-1, NI `etatGain`, NI `isGagne` ;
+  ///   • elle n'écrit RIEN dans le modèle de PROFIL (`UserPrediction`), qui
+  ///     est un modèle DISTINCT, persisté sous une AUTRE clé et lu par les
+  ///     écrans de statistiques. La synchronisation du PROFIL relève d'un
+  ///     autre lot et n'est PAS assurée ici.
+  ///
+  /// Rend `true` si le ticket existait et a été écrit, `false` sinon.
+  Future<bool> enregistrerGainManuel(String storageKey, double? montant) async {
+    final tc = _trackedCourses[storageKey];
+    if (tc == null) return false; // clé inconnue : on n'invente aucun ticket
+    if (tc.montantGainManuel == montant) return true; // rien à changer
+    _trackedCourses[storageKey] = tc.copieAvecGainManuel(montant);
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
   Future<void> retirerSuivi(String key) async {
     _trackedCourses.remove(key);
     notifyListeners();

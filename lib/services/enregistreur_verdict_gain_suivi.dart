@@ -268,6 +268,20 @@ extension TrackedCourseCopy on TrackedCourse {
   /// Ne touche RIEN d'autre : ni verdict, ni rapports, ni les sept champs B-1,
   /// ni `dividendePmuReel`. Un ticket délié conserve son gain manuel.
   TrackedCourse copieDeliee() => copyWith(idTicketLie: null);
+
+  /// ★ B1-T12 / étape 2 (lot 2-A) — Copie portant un GAIN MANUEL, ou l'annulant.
+  ///
+  /// Même raison d'emplacement que [copieDeliee] : le test B4.4/12.3 verrouille
+  /// l'absence de `copyWith` dans `alert_service.dart`, où vit l'écriture.
+  ///
+  /// [montant] `null` ANNULE la déclaration (le PMU redevient seul maître).
+  /// `0.0` est un montant : il reste DISTINCT de l'absence de saisie, grâce à
+  /// la sentinelle que porte `copyWith`.
+  ///
+  /// Ne modifie AUCUN autre champ : ni les rapports PMU, ni `dividendePmuReel`,
+  /// ni les sept champs B-1, ni le verdict.
+  TrackedCourse copieAvecGainManuel(double? montant) =>
+      copyWith(montantGainManuel: montant);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

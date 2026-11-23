@@ -20,6 +20,7 @@ import '../widgets/share_card_generator.dart';
 import '../widgets/paris/paris_common_widgets.dart';
 import '../widgets/paris/alert_widgets.dart';
 import '../widgets/paris/resultat_dialog.dart';
+import '../widgets/paris/gain_manuel_dialog.dart'; // ★ B1-T12 lot 2-A
 import '../widgets/paris/direct_links_sheet.dart';
 import '../widgets/paris/alert_settings_widgets.dart';
 import 'paris_detail_screen.dart';
@@ -2125,7 +2126,24 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                   //   La condition reste donc BYTE-IDENTIQUE à l'ancre A6.
                   if (_isGagnant != null && course.miseEngagee != null && course.miseEngagee! > 0) ...[
                     const SizedBox(height: 8),
-                    Container(
+                    // ★ B1-T12 / étape 2 (lot 2-A) — LE MONTANT DU GAIN DEVIENT
+                    //   CLIQUABLE. Le bloc est inchangé visuellement : on ne fait
+                    //   qu'ENVELOPPER le `Container` existant. Aucun libellé n'est
+                    //   modifié, aucun calcul n'est touché : `_calculerGainAffiche`
+                    //   reste seul maître du TEXTE affiché.
+                    //
+                    //   Le `GestureDetector` porte sur la valeur RÉELLE de la clé
+                    //   du ticket (`widget.storageKey`, la clé d'index de
+                    //   `trackedCourses`), jamais sur une clé reconstituée : un
+                    //   ancien ticket NON LIÉ à un `UserPrediction` est donc
+                    //   modifiable normalement, sans aucun rapprochement.
+                    //
+                    //   `behavior: opaque` pour que toute la surface réponde,
+                    //   pas seulement le texte.
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _ouvrirSaisieGainManuel(),
+                      child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: _isGagnant == true
@@ -2162,6 +2180,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                           ),
                         ),
                       ]),
+                    ),
                     ),
                   ],
                   // Ordre arrivée
@@ -2557,6 +2576,63 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
   /// Textes VOLONTAIREMENT COURTS : la carte doit tenir en 320 dp sans
   /// débordement (contrainte A6 mesurée). Le détail complet (retour brut,
   /// net, multiplicateur) reste disponible dans la fiche du pari.
+  /// ★ B1-T12 / étape 2 (lot 2-A) — Ouvre la saisie manuelle du gain.
+  ///
+  /// Écrit sur `widget.storageKey` : LA clé qui indexe réellement le ticket
+  /// dans `AlertService.trackedCourses`. Aucune déduction par réunion, course
+  /// ou heure, donc aucune propagation possible vers un autre ticket de la
+  /// même course, et aucun rapprochement heuristique avec un ancien ticket.
+  ///
+  /// `Navigator.push` sur un `DialogRoute` (via `showDialog`) laisse l'écran
+  /// EN PLACE sous la fenêtre : au retour, la liste, son défilement et son
+  /// état sont ceux d'avant l'ouverture. On ne pousse aucune route plein écran.
+  ///
+  /// ⚠️ CE QUE CETTE MÉTHODE N'ÉCRIT PAS : rien dans le modèle de PROFIL
+  /// (`UserPrediction`). Le PROFIL est un modèle distinct, persisté sous une
+  /// autre clé ; sa synchronisation n'est PAS assurée ici et ne doit pas être
+  /// présentée comme telle.
+  Future<void> _ouvrirSaisieGainManuel() async {
+    final resultat = await showDialog<ResultatSaisieGain>(
+      context: context,
+      builder: (_) => GainManuelDialog(
+        montantActuel: widget.course.montantGainManuel,
+        nomCourse: widget.course.nomCourse,
+        nomCheval: widget.course.nomCheval,
+      ),
+    );
+    // Annulation : on n'écrit RIEN (ni 0, ni effacement).
+    if (resultat == null || !resultat.valide) return;
+    if (!mounted) return;
+
+    final ecrit = await widget.alertSvc
+        .enregistrerGainManuel(widget.storageKey, resultat.montant);
+    if (!mounted) return;
+
+    if (!ecrit) {
+      // La clé n'existe plus (ticket retiré entre-temps) : on le DIT, plutôt
+      // que d'afficher un succès mensonger.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ticket introuvable : le gain n\'a pas été enregistré.'),
+          backgroundColor: Color(0xFFB71C1C),
+        ),
+      );
+      return;
+    }
+
+    setState(() {}); // rafraîchit le libellé du ticket, sans changer d'écran.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          resultat.montant == null
+              ? 'Gain manuel retiré : le rapport officiel fait de nouveau foi.'
+              : 'Gain manuel enregistré : ${fmtEuros(resultat.montant!)} € brut.',
+        ),
+        backgroundColor: const Color(0xFF2E7D52),
+      ),
+    );
+  }
+
   String _calculerGainAffiche(TrackedCourse c) {
     // ★ LOT B-4.5 — Vérité OFFICIELLE d'abord. Un ticket qui porte un verdict
     //   (`etatGain != null`) est décrit EXCLUSIVEMENT par ce verdict : les
