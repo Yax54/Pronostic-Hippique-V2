@@ -723,6 +723,16 @@ class PmuProvider extends ChangeNotifier {
   Future<bool> verifierGainPersiste(String id, double? montant) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // ⚠️ DÉFAUT MESURÉ, CORRIGÉ ICI — `SharedPreferences` tient un CACHE
+      //    mémoire qui est mis à jour MÊME QUAND LE SUPPORT REFUSE
+      //    L'ÉCRITURE (`setStringList` rend `false` mais le cache porte la
+      //    nouvelle valeur). Sans `reload()`, cette preuve lisait donc le
+      //    CACHE et pouvait confirmer un montant que le DISQUE ne porte pas :
+      //    un faux succès, exactement ce que ce lot doit rendre impossible.
+      //    `reload()` réaligne le cache sur le support réel avant la lecture.
+      //    Coût négligeable ; aucune donnée en mémoire applicative n'est
+      //    touchée (`_predictions` n'est pas modifiée).
+      await prefs.reload();
       final raw = prefs.getStringList(_prefsKey) ?? [];
       for (final s in raw) {
         final map = jsonDecode(s) as Map<String, dynamic>;
@@ -791,6 +801,11 @@ class PmuProvider extends ChangeNotifier {
     Map<String, dynamic>? surDisque;
     try {
       final prefs = await SharedPreferences.getInstance();
+      // ⚠️ MÊME DÉFAUT QUE DANS `verifierGainPersiste`, MÊME CORRECTIF : le
+      //    cache de `SharedPreferences` porte la valeur REFUSÉE par le
+      //    support. Comparer la mémoire à ce cache ne prouverait rien — on
+      //    compare à ce que le DISQUE contient réellement.
+      await prefs.reload();
       final raw = prefs.getStringList(_prefsKey) ?? [];
       for (final s in raw) {
         final map = jsonDecode(s) as Map<String, dynamic>;
