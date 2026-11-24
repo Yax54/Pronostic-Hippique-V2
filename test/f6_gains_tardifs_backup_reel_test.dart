@@ -183,6 +183,25 @@ void main() {
         MemoireGainsTardifsNotifies.clePrefs,
         jsonEncode({'gt1:b1': '2026-03-23T15:00:00.000'}),
       );
+      // ⚠️ LE BACKOFF DOIT RÉELLEMENT EXISTER POUR ÊTRE EXPORTÉ.
+      //
+      //   `_collecterDonnees()` n'écrit une clé dans le fichier que si elle
+      //   est PRÉSENTE dans les préférences (`_lireEntree` rend `null` sinon).
+      //   L'assertion « la clé est dans le fichier » n'est donc vérifiable que
+      //   si la donnée a été produite. On la produit ici avec l'état RÉEL d'une
+      //   course déjà tentée, au lieu d'exiger du produit qu'il invente une
+      //   clé vide — ce serait l'assertion qui mentirait, pas le produit.
+      await prefs0.setString(
+        BackoffTardifStore.clePrefs,
+        jsonEncode({
+          '23032026_R1C3': EtatSuiviCourse(
+            tentatives: 1,
+            dernierEssai: DateTime(2026, 3, 23, 15, 0),
+            derniereClassification:
+                ClassificationCourseTardive.rapportsAbsents,
+          ).toJson(),
+        }),
+      );
 
       // L'alerte elle-même a bien été émise et persistée.
       final alertSvc = _alerteService();
@@ -425,8 +444,17 @@ void main() {
       });
 
       // Émission une première fois, puis export.
+      //
+      // ⚠️ ON PURGE AVANT D'ÉMETTRE, JAMAIS APRÈS AVOIR RESTAURÉ.
+      //   `AlertService` est un SINGLETON : son état mémoire survit d'un test
+      //   à l'autre. Sans purge préalable, `_save()` réécrirait sur le disque
+      //   les alertes des tests précédents, et l'export ne représenterait plus
+      //   l'état de ce scénario. La purge est donc faite ICI, en tête, comme
+      //   dans F3 — et surtout PAS après `recharger()`, où elle détruirait
+      //   précisément ce que la restauration vient de reconstituer.
       final s1 = _alerteService();
-      await AlertService.init();      expect(
+      await s1.reinitialiserHistoriquePourTest();
+      expect(
         await s1.emettreAlerteGainTardif(
           idTicket: 'b7',
           titre: '🏆 Gain officiel disponible',
@@ -442,14 +470,17 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       await _restaurerOctets(octets);
 
-      // Un NOUVEAU service, comme après un redémarrage de l'application.
+      // Un NOUVEAU service, comme après un redémarrage de l'application :
+      // `recharger()` relit le disque restauré et REBÂTIT l'historique. On ne
+      // purge surtout pas ici.
       final s2 = _alerteService();
       await s2.recharger();
-      await s2.reinitialiserHistoriquePourTest();
       final apresChargement = s2.alerts
           .where((a) => a.type == AlertType.gainTardif)
           .length;
-      expect(apresChargement, 1);
+      expect(apresChargement, 1,
+          reason: 'la notification restaurée doit être rechargée depuis le '
+              'disque, sans doublon');
 
       // Réémission : c'est un succès idempotent, mais AUCUNE seconde entrée.
       expect(
