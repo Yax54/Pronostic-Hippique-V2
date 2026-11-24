@@ -990,6 +990,11 @@ class PmuProvider extends ChangeNotifier {
             lu.dividendeGagnant == attendu.dividendeGagnant &&
             lu.dividendePlace == attendu.dividendePlace &&
             lu.miseBaseCentimesUtilisee == attendu.miseBaseCentimesUtilisee &&
+            // ★ CHANTIER 1/3 — le remboursement est un champ ÉCRIT par cette
+            //   opération : la preuve d'alignement doit donc le couvrir. Sans
+            //   cette comparaison, un disque à `null` et une mémoire à `10.0`
+            //   seraient déclarés « alignés ».
+            lu.remboursementPmu == attendu.remboursementPmu &&
             lu.rapportsAttribues?.length == attendu.rapportsAttribues?.length;
       }
       return false;
@@ -1054,6 +1059,12 @@ class PmuProvider extends ChangeNotifier {
       miseBaseCentimesUtilisee: avantVerdict.miseBaseCentimesUtilisee,
       motifNonDetermination: avantVerdict.motifNonDetermination,
       montantOfficielPmu: avantVerdict.montantOfficielPmu,
+      // ★ CHANTIER 1/3 — le remboursement fait partie de CE que cette
+      //   opération écrit, donc de ce qu'elle doit savoir annuler. Sans cette
+      //   ligne, un échec de sauvegarde laisserait la MÉMOIRE porter un
+      //   remboursement que le DISQUE n'a jamais reçu, tout en rendant
+      //   `echec` — c'est-à-dire en affirmant un alignement faux.
+      remboursementPmu: avantVerdict.remboursementPmu,
     );
     _versionMemoire++;
     notifyListeners();

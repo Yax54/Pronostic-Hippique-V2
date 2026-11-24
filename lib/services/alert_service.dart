@@ -3562,6 +3562,24 @@ class TrackedCourse {
   /// a été établie au moment de la création du pari. `null` = non lié.
   final String? idTicketLie;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 1/3 — LE REMBOURSEMENT, DISTINCT DU GAIN (côté suivi)
+  //
+  //  Contrat STRICTEMENT IDENTIQUE à `UserPrediction.remboursementPmu` : même
+  //  signification, même distinction absence / 0 €, même alimentation
+  //  exclusivement officielle. Les deux représentations du même ticket ne
+  //  peuvent donc pas diverger sur ce montant.
+  //
+  //  ⚠️ Clé JSON ÉCRITE UNIQUEMENT si la valeur est non nulle : un ticket
+  //     historique relu puis réécrit garde EXACTEMENT ses 28 clés.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Somme des mises EFFECTIVEMENT reversées au joueur, en euros.
+  ///
+  /// `null` = aucun remboursement établi (PAS un 0 € officiel).
+  /// Ne participe JAMAIS à un gain, ni à `isGagne`, ni à `dividendePmuReel`.
+  final double? remboursementPmu;
+
   /// ★ R10 — Le ticket a-t-il de quoi identifier sa variante **sans deviner** ?
   ///
   /// CONTRAT STRICTEMENT IDENTIQUE à `UserPrediction.capturePariComplete`
@@ -3775,6 +3793,8 @@ class TrackedCourse {
     // ★ B1-T12 / étape 1 — gain manuel et liaison certaine
     this.montantGainManuel,
     this.idTicketLie,
+    // ★ CHANTIER 1/3 — remboursement officiel, distinct du gain
+    this.remboursementPmu,
   }) : addedAt = addedAt ?? DateTime.now();
 
   /// Crée une copie avec résultat mis à jour (pour persister sans muter)
@@ -4036,6 +4056,14 @@ class TrackedCourse {
             'montantGainManuel': montantGainManuel,
             'idTicketLie': idTicketLie,
           },
+    // ★ CHANTIER 1/3 — LE REMBOURSEMENT, CLÉ FACULTATIVE.
+    //
+    //   Écrite UNIQUEMENT si la valeur est non nulle. Un ticket historique
+    //   relu puis réécrit garde donc 28 clés exactement (verrou mesuré), et
+    //   l'ABSENCE de la clé se relit en `null` — jamais en `0 €` officiel.
+    ...?(remboursementPmu == null || remboursementPmu! <= 0)
+        ? null
+        : <String, dynamic>{'remboursementPmu': remboursementPmu},
   };
 
   factory TrackedCourse.fromJson(Map<String, dynamic> j) => TrackedCourse(
@@ -4110,6 +4138,10 @@ class TrackedCourse {
     //   aucun rapprochement n'est tenté (interdictions du mandat).
     montantGainManuel: (j['montantGainManuel'] as num?)?.toDouble(),
     idTicketLie: j['idTicketLie'] as String?,
+    // ★ CHANTIER 1/3 — lecture TOLÉRANTE : clé absente ⇒ `null` ⇒ « aucun
+    //   remboursement établi ». Ce `null` n'est JAMAIS converti en `0.0` :
+    //   l'absence d'information n'est pas un remboursement officiel nul.
+    remboursementPmu: (j['remboursementPmu'] as num?)?.toDouble(),
   );
 
   /// Relecture tolérante d'une liste de rapports attribués.

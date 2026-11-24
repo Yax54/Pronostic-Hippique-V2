@@ -664,6 +664,41 @@ class UserPrediction {
   /// rapport ambigu : seule une valeur officielle établie y est écrite.
   final double? montantOfficielPmu;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 1/3 — LE REMBOURSEMENT, DISTINCT DU GAIN
+  //
+  //  POURQUOI UN CHAMP À PART, ET PAS UNE LIGNE DE PLUS DANS `montantOfficielPmu`:
+  //
+  //    Un ticket Gagnant+Placé peut être MIXTE : la composante Gagnant paie
+  //    75 € et la composante Placé est remboursée de 10 €. Ce sont DEUX
+  //    résultats financiers différents du même ticket :
+  //      • « Gain gagné » = 75 €  → c'est un GAIN, imposé, acquis ;
+  //      • « Remboursement » = 10 € → c'est un RETOUR DE MISE, pas un gain.
+  //    Les additionner dans `montantOfficielPmu` rendrait « Gain gagné » faux
+  //    (85 € annoncés pour 75 € gagnés) et ferait payer un impôt sur une mise
+  //    rendue. Les confondre est précisément l'erreur que l'arbitrage interdit.
+  //
+  //  ⚠️ ABSENCE ≠ 0 €. Ce champ vaut `null` quand AUCUN remboursement n'a été
+  //     officiellement établi pour ce ticket. Il ne vaut JAMAIS `0.0` par
+  //     défaut : « je n'ai pas établi de remboursement » et « le remboursement
+  //     officiel est de 0 € » sont deux informations différentes, et la clé
+  //     JSON n'est écrite QUE si ce champ est non nul (voir `toJson`).
+  //     Conséquence assumée : un ticket historique reste à 26 ou 28 clés.
+  //
+  //  ⚠️ CE CHAMP N'EST ALIMENTÉ QUE PAR UN VERDICT OFFICIEL (moteur B-3 →
+  //     enregistreur B-4.3). Aucune saisie manuelle, aucune cote, aucune
+  //     estimation ne peut y écrire.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Somme des mises EFFECTIVEMENT reversées au joueur, en euros.
+  ///
+  /// `null` = aucun remboursement établi (information absente, PAS un 0 €
+  /// officiel). `> 0` = remboursement officiellement établi par le verdict.
+  ///
+  /// Distinct de [montantOfficielPmu] (le gain gagné) et de [gainRetenuBrut]
+  /// (la vue de gain). Ne participe JAMAIS au calcul d'un gain.
+  final double? remboursementPmu;
+
   /// La décision de l'utilisateur, ou `null` si aucune n'a été prise.
   ///
   /// ⚠️ `null` N'EST JAMAIS UN REFUS. C'est l'état « demande en attente » ou
@@ -869,6 +904,7 @@ class UserPrediction {
     this.idTicketLie,
     // ★ B1-T12 / lot 2-C — décision de gain (tous facultatifs, null par défaut)
     this.montantOfficielPmu,
+    this.remboursementPmu,
     this.decisionGainPmu,
     this.montantGainManuelAvantDecision,
   });
@@ -990,6 +1026,73 @@ class UserPrediction {
 
   /// Un gain manuel a-t-il été déclaré ? (`0.0` compte comme déclaré.)
   bool get aGainManuel => montantGainManuel != null;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 1/3 — LES CINQ MONTANTS, SÉPARÉS JUSQU'À L'AFFICHAGE
+  //
+  //  L'arbitrage impose de conserver distinctement :
+  //    ① mise totale      → [miseTotaleEngagee]
+  //    ② gain gagné       → [gainRetenuBrut]            (déjà existant)
+  //    ③ remboursement    → [remboursementRetenu]
+  //    ④ total reversé    → [totalReverse]
+  //    ⑤ net              → [resultatNet]
+  //
+  //  TABLE DE RÉFÉRENCE DE L'ARBITRAGE (G+P mixte) — reproduite exactement :
+  //    mise Gagnant 10 € + mise Placé 10 € = mise totale 20 €
+  //    gain gagné 75 € · remboursement 10 € · total reversé 85 €
+  //    bénéfice net 65 €
+  //
+  //  ⚠️ AUCUN de ces getters ne recalcule un dividende : ils lisent des
+  //     montants DÉJÀ établis (et déjà persistés pour les deux premiers).
+  //     C'est la garantie qu'un résultat reste exact après redémarrage, export
+  //     ou import, même sans nouvelle connexion PMU.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Le remboursement retenu : `null` si aucun n'est établi, sinon le montant.
+  ///
+  /// `null` signifie « aucun remboursement officiellement établi », JAMAIS
+  /// « remboursement de 0 € ». La distinction est portée par le type.
+  double? get remboursementRetenu {
+    final r = remboursementPmu;
+    if (r == null) return null;
+    if (!r.isFinite || r <= 0) return 0.0;
+    return r;
+  }
+
+  /// Total effectivement REVERSÉ au joueur : gain gagné + remboursement.
+  ///
+  /// `null` seulement si ni le gain ni le remboursement ne sont connus — on ne
+  /// prétend pas alors un total de 0 €.
+  ///
+  /// ⚠️ Un remboursement INTÉGRAL rend donc ce total égal à la mise reversée,
+  ///    et le net vaut 0 € : ce n'est JAMAIS une perte (voir [resultatNet]).
+  double? get totalReverse {
+    final gain = gainRetenuBrut;
+    final remb = remboursementRetenu;
+    if (gain == null && remb == null) return null;
+    return (gain ?? 0.0) + (remb ?? 0.0);
+  }
+
+  /// Résultat NET du ticket : total reversé − mise totale engagée.
+  ///
+  /// `null` si la mise engagée n'est pas connue (`<= 0`), ou si aucun montant
+  /// reversé n'est établi : mieux vaut « indéterminé » qu'un net inventé.
+  ///
+  /// ⚠️ Un remboursement intégral donne un net de 0 €, et non `-mise` : un
+  ///    remboursement n'est pas une perte.
+  double? get resultatNet {
+    final reverse = totalReverse;
+    if (reverse == null) return null;
+    final mise = miseTotaleEngagee;
+    if (mise == null || mise <= 0) return null;
+    return reverse - mise;
+  }
+
+  /// Le ticket porte-t-il un remboursement officiellement établi et positif ?
+  bool get aUnRemboursementEtabli {
+    final r = remboursementPmu;
+    return r != null && r.isFinite && r > 0;
+  }
 
   /// Le ticket est-il lié à son jumeau par une association CERTAINE ?
   bool get estLieAuTicket => idTicketLie != null;
@@ -1151,6 +1254,21 @@ class UserPrediction {
             'decisionGainPmu': decisionGainPmu?.name,
             'montantGainManuelAvantDecision': montantGainManuelAvantDecision,
           },
+    // ★ CHANTIER 1/3 — LE REMBOURSEMENT, CLÉ FACULTATIVE.
+    //
+    //   ⚠️ CLÉ ÉCRITE UNIQUEMENT SI SA VALEUR EST NON NULLE — EXIGENCE
+    //   EXPLICITE DE L'ARBITRAGE. Trois conséquences, toutes voulues :
+    //     • un ticket historique relu puis réécrit garde 26 (ou 28) clés, à
+    //       l'octet près — la forme des sauvegardes ne change pas ;
+    //     • l'ABSENCE de la clé signifie « aucun remboursement établi », donc
+    //       se relit en `null`, JAMAIS en `0.0` : on n'assimile pas une
+    //       absence à un remboursement officiel nul ;
+    //     • un remboursement de `0.0` n'est pas une information utile : le
+    //       `> 0` du test ci-dessous l'empêche d'écrire la clé, ce qui est
+    //       cohérent avec le contrat « `null` = non établi ».
+    ...?(remboursementPmu == null || remboursementPmu! <= 0)
+        ? null
+        : <String, dynamic>{'remboursementPmu': remboursementPmu},
   };
 
   factory UserPrediction.fromJson(Map<String, dynamic> json) {
@@ -1221,6 +1339,12 @@ class UserPrediction {
       //   donc relue sans erreur et sans qu'aucune décision soit inventée.
       //   Une valeur inconnue ⇒ `null` : on ne DEVINE jamais une décision.
       montantOfficielPmu: (json['montantOfficielPmu'] as num?)?.toDouble(),
+      // ★ CHANTIER 1/3 — LECTURE TOLÉRANTE du remboursement.
+      //   Clé absente ⇒ `null` ⇒ « aucun remboursement établi ». Ce `null`
+      //   n'est JAMAIS converti en `0.0` : l'absence d'information n'est pas
+      //   un remboursement officiel nul, et la confondre ferait afficher
+      //   « Remboursement : 0 € » sur un ticket qui n'en a jamais eu.
+      remboursementPmu: (json['remboursementPmu'] as num?)?.toDouble(),
       decisionGainPmu: _lireDecisionGain(json['decisionGainPmu']),
       montantGainManuelAvantDecision:
           (json['montantGainManuelAvantDecision'] as num?)?.toDouble(),
@@ -1329,6 +1453,7 @@ class UserPrediction {
     //  une opération légitime, qu'un paramètre `double?`/`enum?` nu rendrait
     //  impossible en le confondant avec « non fourni ».
     Object? montantOfficielPmu = _inchange,
+    Object? remboursementPmu = _inchange,
     Object? decisionGainPmu = _inchange,
     Object? montantGainManuelAvantDecision = _inchange,
   }) {
@@ -1433,6 +1558,9 @@ class UserPrediction {
       montantOfficielPmu: identical(montantOfficielPmu, _inchange)
           ? this.montantOfficielPmu
           : montantOfficielPmu as double?,
+      remboursementPmu: identical(remboursementPmu, _inchange)
+          ? this.remboursementPmu
+          : remboursementPmu as double?,
       decisionGainPmu: identical(decisionGainPmu, _inchange)
           ? this.decisionGainPmu
           : decisionGainPmu as DecisionGainPmu?,

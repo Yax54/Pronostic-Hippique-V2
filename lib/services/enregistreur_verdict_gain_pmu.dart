@@ -463,6 +463,16 @@ class EcritureVerdict {
   final double? dividendePlace;
   final int? miseBaseCentimesUtilisee;
 
+  /// ★ CHANTIER 1/3 — Somme des mises EFFECTIVEMENT reversées au joueur.
+  ///
+  /// `null` = aucun remboursement établi — JAMAIS `0.0` par défaut, pour que
+  /// l'absence de clé JSON (et donc l'absence de champ sur le ticket) reste
+  /// distinguable d'un remboursement officiel nul.
+  ///
+  /// N'entre JAMAIS dans un gain : c'est une valeur DISTINCTE, vérifiée
+  /// séparément à l'étape « E bis » de [deciderEcritureVerdict].
+  final double? remboursement;
+
   const EcritureVerdict({
     required this.etat,
     required this.motif,
@@ -471,6 +481,7 @@ class EcritureVerdict {
     required this.dividendeGagnant,
     required this.dividendePlace,
     required this.miseBaseCentimesUtilisee,
+    this.remboursement,
   });
 
   @override
@@ -479,6 +490,7 @@ class EcritureVerdict {
       ', tirelire=${etatTirelire.name}'
       ', rapports=${rapportsAttribues?.length ?? 0}'
       ', G=${dividendeGagnant ?? "-"}, P=${dividendePlace ?? "-"}'
+      '${remboursement == null ? '' : ', remb=${remboursement!}'}'
       ', miseBase=${miseBaseCentimesUtilisee ?? "-"})';
 }
 
@@ -659,11 +671,29 @@ DecisionEcritureVerdict deciderEcritureVerdict({
       dividendeGagnant: null,
       dividendePlace: null,
       miseBaseCentimesUtilisee: miseBaseCentimesOfficielle,
+      // ★ CHANTIER 1/3 — REMBOURSEMENT SANS COMPOSANTE.
+      //
+      //   Un verdict `rembourse` porte `composantes: []` et `total: 0.0`,
+      //   mais il PORTE un `remboursement` (la mise reversée). Sans cette
+      //   ligne, un remboursement INTÉGRAL serait persisté comme un état
+      //   « rembourse » sans aucun montant : l'écran afficherait « Pari
+      //   remboursé » sans jamais dire combien, alors que le montant est
+      //   connu et démontré. C'est exactement le « résultat financier » que
+      //   l'arbitrage exige de conserver exactement.
+      //
+      //   ⚠️ `null` si `remboursement == 0` : on n'écrit pas une clé pour un
+      //      montant nul, et l'absence reste distincte d'un 0 € établi.
+      remboursement:
+          verdict.remboursement > 0 ? verdict.remboursement : null,
     ));
   }
 
   // ── D. Verdict AVEC composantes : chaque composante doit être identifiée ─
   final attribues = <RapportAttribue>[];
+  // Mises EFFECTIVEMENT reversées, composante par composante. Tenu à part du
+  // total des gains : c'est la garantie que « Gain gagné » n'absorbe jamais
+  // un remboursement.
+  final remboursements = <double>[];
 
   for (final composante in verdict.composantes) {
     // Filtrage : identité démontrée par [memeRapportOfficiel] — code PMU,
@@ -709,6 +739,42 @@ DecisionEcritureVerdict deciderEcritureVerdict({
 
     // Un seul candidat : identité démontrée. On construit la preuve.
     final retenu = candidats.single;
+
+    // ── D bis. ★ COMPOSANTE REMBOURSÉE — AUCUN GAIN À RECONSTITUER.
+    //
+    //    MESURE QUI A MOTIVÉ CE BLOC : `RapportAttribue.calculer` applique
+    //    `mise × pourUnEuro`. L'appliquer à une composante remboursée
+    //    reproduirait exactement le défaut corrigé dans le moteur (21 € de
+    //    gain inventés sur une mise de 10 € remboursée), et le contrôle
+    //    d'exactitude ci-dessous REFUSERAIT alors un verdict pourtant correct
+    //    (montantRetour = 0,0 dans le verdict, 21,0 recalculé).
+    //
+    //    Une composante remboursée ne produit AUCUN `RapportAttribue` : elle
+    //    n'entre donc pas dans `attribues`, ni dans le total reconstitué —
+    //    ce qui est exact, puisque `verdict.total` n'inclut aucun
+    //    remboursement par construction. Sa mise reversée est vérifiée
+    //    séparément à l'étape E bis.
+    if (composante.rembourse) {
+      if (!retenu.rembourse) {
+        return DecisionEcritureVerdict.refus(
+          StatutEnregistrementVerdict.refuseVerdictIncoherent,
+          'La composante « ${composante.libelleRapport} » est déclarée '
+          'remboursée, mais le rapport officiel retenu ne l\'est pas. '
+          'Le ticket reste inchangé.',
+        );
+      }
+      remboursements.add(composante.mise);
+      continue;
+    }
+    if (retenu.rembourse) {
+      return DecisionEcritureVerdict.refus(
+        StatutEnregistrementVerdict.refuseVerdictIncoherent,
+        'Le rapport officiel « ${retenu.libelle} » est remboursé, mais la '
+        'composante correspondante du verdict ne l\'est pas : un '
+        'remboursement ne peut pas fonder un gain. Le ticket reste inchangé.',
+      );
+    }
+
     final RapportAttribue attribue;
     try {
       attribue = RapportAttribue.calculer(
@@ -748,7 +814,9 @@ DecisionEcritureVerdict deciderEcritureVerdict({
   }
 
   // ── E. Contrôle FINAL : la somme doit retomber sur `verdict.total` ───────
-  final totalReconstitue = resoudreTotalDepuisRapports(attribues)!;
+  final totalReconstitue = attribues.isEmpty
+      ? 0.0
+      : resoudreTotalDepuisRapports(attribues)!;
   if (!_memeMontant(totalReconstitue, verdict.total)) {
     return DecisionEcritureVerdict.refus(
       StatutEnregistrementVerdict.refuseTotalIncoherent,
@@ -756,6 +824,29 @@ DecisionEcritureVerdict deciderEcritureVerdict({
       '(${totalReconstitue.toStringAsFixed(6)} €) ne correspond pas au '
       'total du verdict (${verdict.total.toStringAsFixed(6)} €). '
       'Aucun total n\'est reconstruit de force : le ticket reste inchangé.',
+    );
+  }
+
+  // ── E bis. ★ REMBOURSEMENTS : contrôlés SÉPARÉMENT du total des gains.
+  //
+  //    Le remboursement n'entre ni dans `verdict.total`, ni dans le total
+  //    reconstitué : les additionner ici confondrait « Gain gagné » et
+  //    « montant rendu », exactement ce que le modèle interdit. On vérifie
+  //    donc que le verdict n'annonce QUE les mises réellement remboursées par
+  //    les rapports officiels — sans jamais déduire un remboursement d'un
+  //    dividende.
+  var totalRembourse = 0.0;
+  for (final m in remboursements) {
+    totalRembourse += m;
+  }
+  if (!_memeMontant(totalRembourse, verdict.remboursement)) {
+    return DecisionEcritureVerdict.refus(
+      StatutEnregistrementVerdict.refuseTotalIncoherent,
+      'Le remboursement du verdict '
+      '(${verdict.remboursement.toStringAsFixed(6)} €) ne correspond pas aux '
+      'mises réellement remboursées par les rapports officiels '
+      '(${totalRembourse.toStringAsFixed(6)} €). Aucun remboursement n\'est '
+      'reconstruit de force : le ticket reste inchangé.',
     );
   }
 
@@ -801,6 +892,17 @@ DecisionEcritureVerdict deciderEcritureVerdict({
     dividendeGagnant: dividendeGagnant,
     dividendePlace: dividendePlace,
     miseBaseCentimesUtilisee: miseBase,
+    // ★ CHANTIER 1/3 — LE REMBOURSEMENT VÉRIFIÉ À L'ÉTAPE E BIS, ÉCRIT ICI.
+    //
+    //   C'est la valeur CONTRÔLÉE (somme des mises des composantes réellement
+    //   remboursées par les rapports officiels) qui est écrite — et non
+    //   `verdict.remboursement` recopié : l'étape E bis vient de PROUVER leur
+    //   égalité au centime. Écrire la valeur mesurée plutôt que la valeur
+    //   annoncée est la même discipline que pour le total des gains.
+    //
+    //   ⚠️ `null` quand aucun remboursement : aucune clé JSON n'est alors
+    //      produite, et le ticket garde exactement sa forme d'origine.
+    remboursement: totalRembourse > 0 ? totalRembourse : null,
   ));
 }
 
@@ -876,6 +978,13 @@ ResultatEnregistrementVerdict enregistrerVerdictGain({
       dividendeGagnant: e.dividendeGagnant,
       dividendePlace: e.dividendePlace,
       miseBaseCentimesUtilisee: e.miseBaseCentimesUtilisee,
+      // ★ CHANTIER 1/3 — LE REMBOURSEMENT SUIT LE VERDICT, LUI AUSSI.
+      //
+      //   `copyWith` porte une sentinelle : `null` est écrit EXPLICITEMENT
+      //   ici — ce qui est correct, car cette écriture REMPLACE le verdict.
+      //   Un verdict définitif n'est jamais réécrit, et un `nonDetermine`
+      //   n'établit aucun remboursement : `null` est alors la valeur juste.
+      remboursementPmu: e.remboursement,
     ),
     statut: StatutEnregistrementVerdict.enregistre,
     motif: null,
@@ -937,6 +1046,13 @@ String? _verifierCoherenceVerdict(VerdictGain v) {
         return 'Verdict « attribue » sans aucune composante : un gain sans '
             'preuve n\'est pas enregistrable.';
       }
+      // ⚠️ Un `attribue` dont TOUTES les composantes sont remboursées serait
+      //    un gain sans aucun gain : le total nul le trahit juste en dessous,
+      //    mais on nomme ici la cause exacte pour que le refus soit lisible.
+      if (v.remboursement < 0) {
+        return 'Verdict « attribue » avec un remboursement négatif '
+            '(${v.remboursement}) : contradiction.';
+      }
       if (v.total <= 0) {
         return 'Verdict « attribue » avec un total non positif (${v.total}) : '
             'aucun montant exploitable, donc aucun enregistrement.';
@@ -948,6 +1064,15 @@ String? _verifierCoherenceVerdict(VerdictGain v) {
       if (!_memeMontant(somme, v.total)) {
         return 'Le total du verdict (${v.total}) n\'égale pas la somme de ses '
             'composantes ($somme) : le verdict est incohérent.';
+      }
+      // Un remboursement ne doit JAMAIS gonfler le gain : il est vérifié
+      // qu'aucune composante remboursée ne porte de montant retour.
+      for (final c in v.composantes) {
+        if (c.rembourse && c.montantRetour != 0.0) {
+          return 'Composante remboursée « ${c.libelleRapport} » portant un '
+              'montant retour de ${c.montantRetour} : un remboursement n\'est '
+              'pas un gain.';
+        }
       }
       return null;
 

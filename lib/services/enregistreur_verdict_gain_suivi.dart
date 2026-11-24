@@ -132,6 +132,8 @@ extension TrackedCourseCopy on TrackedCourse {
     //  pour ANNULER un gain manuel (retour au calcul PMU) ou délier un ticket.
     Object? montantGainManuel = _inchangeSuivi,
     Object? idTicketLie = _inchangeSuivi,
+    // ── CHANTIER 1/3 — remboursement officiel, distinct du gain ───────────
+    Object? remboursementPmu = _inchangeSuivi,
   }) {
     return TrackedCourse(
       numReunion: numReunion ?? this.numReunion,
@@ -249,6 +251,11 @@ extension TrackedCourseCopy on TrackedCourse {
       idTicketLie: identical(idTicketLie, _inchangeSuivi)
           ? this.idTicketLie
           : idTicketLie as String?,
+      // ★ CHANTIER 1/3 — propagé avec la sentinelle : `null` explicite
+      //   possible (retour à « aucun remboursement établi »).
+      remboursementPmu: identical(remboursementPmu, _inchangeSuivi)
+          ? this.remboursementPmu
+          : remboursementPmu as double?,
     );
   }
 
@@ -384,6 +391,11 @@ ResultatEnregistrementVerdictSuivi enregistrerVerdictGainSuivi({
       dividendeGagnant: e.dividendeGagnant,
       dividendePlace: e.dividendePlace,
       miseBaseCentimesUtilisee: e.miseBaseCentimesUtilisee,
+      // ★ CHANTIER 1/3 — même propagation que pour `UserPrediction` : le
+      //   remboursement établi par le verdict doit survivre à l'écriture sur
+      //   le ticket suivi. Sans cette ligne, un remboursement démontré
+      //   disparaîtrait au premier enregistrement de verdict.
+      remboursementPmu: e.remboursement,
     ),
     statut: StatutEnregistrementVerdict.enregistre,
     motif: null,

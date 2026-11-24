@@ -262,7 +262,37 @@ class ComposanteGain {
   final double pourUnEuro;
 
   /// Retour de cette composante : `mise × pourUnEuro`, calculé une seule fois.
+  ///
+  /// ⚠️ POUR UNE COMPOSANTE REMBOURSÉE, ce champ vaut **0,0** et non
+  ///    `mise × pourUnEuro` : un remboursement n'est pas un gain. Le montant
+  ///    effectivement reversé se lit alors dans [miseRemboursee].
   final double montantRetour;
+
+  /// `true` si le rapport officiel de cette composante est marqué remboursé
+  /// par l'opérateur (non-partant, annulation, remboursement réglementaire).
+  ///
+  /// ★ MESURE QUI A MOTIVÉ CE CHAMP : un Gagnant+Placé dont la composante
+  ///   Placé est remboursée rendait `attribue` avec `pourUnEuro = 2,10`
+  ///   appliqué à la mise — soit 21,0 € comptés comme un GAIN, alors que
+  ///   l'opérateur n'a publié aucun gain sur cette composante. Le remboursement
+  ///   intégral d'une mise de 10 € doit rendre 10 €, sans jamais appliquer le
+  ///   coefficient du rapport.
+  ///
+  /// ⚠️ Un remboursement n'est NI un gain NI une perte : il est conservé
+  ///    distinct du gain jusqu'à l'affichage.
+  final bool rembourse;
+
+  /// Mise EFFECTIVEMENT reversée au joueur sur cette composante.
+  ///
+  /// Vaut [mise] si [rembourse], `0.0` sinon — un gain n'est pas un
+  /// remboursement, et réciproquement. Aucune valeur n'est déduite d'un
+  /// dividende : le remboursement réglementaire porte sur la mise engagée.
+  double get miseRemboursee => rembourse ? mise : 0.0;
+
+  /// Montant total reversé au joueur pour cette composante :
+  /// gain + remboursement. Distinct de [montantRetour], qui ne compte QUE
+  /// le gain gagné.
+  double get montantReverse => montantRetour + miseRemboursee;
 
   const ComposanteGain({
     required this.libelleRapport,
@@ -272,6 +302,7 @@ class ComposanteGain {
     required this.pourUnEuro,
     required this.montantRetour,
     this.role = RoleComposante.unique,
+    this.rembourse = false,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -282,6 +313,11 @@ class ComposanteGain {
         'mise': mise,
         'pourUnEuro': pourUnEuro,
         'montantRetour': montantRetour,
+        // ⚠️ CLÉ AJOUTÉE — ABSENTE = `false`. Les enregistrements historiques
+        //    ne portent pas cette clé et restent donc lus comme « non
+        //    remboursé », ce qui est exact pour tout verdict antérieur (aucun
+        //    d'eux ne représentait de remboursement partiel).
+        if (rembourse) 'rembourse': true,
       };
 
   static ComposanteGain? fromJson(Map<String, dynamic> j) {
@@ -295,6 +331,9 @@ class ComposanteGain {
       mise: (j['mise'] as num?)?.toDouble() ?? 0.0,
       pourUnEuro: (j['pourUnEuro'] as num?)?.toDouble() ?? 0.0,
       montantRetour: (j['montantRetour'] as num?)?.toDouble() ?? 0.0,
+      // Lecture tolérante : seule la valeur booléenne `true` active le
+      // remboursement. `null` ou absent ⇒ `false`.
+      rembourse: j['rembourse'] == true,
     );
   }
 
@@ -317,7 +356,7 @@ class ComposanteGain {
   @override
   String toString() => 'ComposanteGain(${categorie.name}/${role.name} "'
       '$libelleRapport" $combinaisonRapport | $mise € × $pourUnEuro '
-      '= $montantRetour €)';
+      '= $montantRetour €${rembourse ? " | REMBOURSÉ $mise €" : ""})';
 }
 
 /// Verdict COMPLET d'un ticket.
@@ -348,7 +387,26 @@ class VerdictGain {
   final double gainPlace;
 
   /// Gain total = somme des composantes. Jamais mise + gain.
+  ///
+  /// ⚠️ N'INCLUT AUCUN REMBOURSEMENT. C'est le « Gain gagné » de l'interface,
+  ///    strictement distinct de [montantReverse]. Un remboursement n'est pas
+  ///    un gain : les additionner ici rendrait « Gain gagné » faux.
   final double total;
+
+  /// Somme des mises EFFECTIVEMENT reversées au joueur (remboursements).
+  ///
+  /// Distinct de [total] par construction. `0.0` quand aucun remboursement.
+  /// Ce champ n'est JAMAIS versé dans `montantOfficielPmu`, dont la
+  /// signification historique est « gain gagné brut officiel ».
+  final double remboursement;
+
+  /// Total effectivement reversé au joueur : gains + remboursements.
+  ///
+  /// C'est l'assiette du BÉNÉFICE NET : `montantReverse − mises engagées`.
+  double get montantReverse => total + remboursement;
+
+  /// `true` si au moins une composante a été remboursée.
+  bool get aUnRemboursement => remboursement > 0;
 
   const VerdictGain._({
     required this.etat,
@@ -359,6 +417,7 @@ class VerdictGain {
     required this.gainGagnant,
     required this.gainPlace,
     required this.total,
+    required this.remboursement,
   });
 
   /// Aucun gain établi : un motif FERMÉ est obligatoire.
@@ -376,6 +435,7 @@ class VerdictGain {
       gainGagnant: 0.0,
       gainPlace: 0.0,
       total: 0.0,
+      remboursement: 0.0,
     );
   }
 
@@ -393,13 +453,19 @@ class VerdictGain {
       gainGagnant: 0.0,
       gainPlace: 0.0,
       total: 0.0,
+      remboursement: 0.0,
     );
   }
 
   /// Pari remboursé par l'opérateur.
+  ///
+  /// [remboursement] porte la somme EFFECTIVEMENT reversée quand elle est
+  /// connue (remboursement intégral des mises engagées). Un remboursement
+  /// n'est ni un gain ni une perte : [total] reste donc `0.0`.
   factory VerdictGain.rembourse({
     required String explication,
     EtatTirelire etatTirelire = EtatTirelire.sansObjet,
+    double remboursement = 0.0,
   }) {
     return VerdictGain._(
       etat: EtatGain.rembourse,
@@ -410,6 +476,7 @@ class VerdictGain {
       gainGagnant: 0.0,
       gainPlace: 0.0,
       total: 0.0,
+      remboursement: remboursement,
     );
   }
 
@@ -417,9 +484,17 @@ class VerdictGain {
   ///
   /// [composantes] doit être non vide : un « gain attribué » sans composante
   /// serait un montant sans preuve.
+  ///
+  /// ⚠️ Les composantes REMBOURSÉES sont acceptées : elles portent
+  ///    `montantRetour = 0,0` (donc n'entrent pas dans [total]) et leur mise
+  ///    est accumulée dans [remboursement]. Un ticket Gagnant+Placé dont le
+  ///    Placé est remboursé est ainsi `attribue` sur son seul gain, avec le
+  ///    remboursement conservé à part — conformément à la règle « un
+  ///    remboursement n'est ni un gain ni une perte ».
   factory VerdictGain.attribue({
     required List<ComposanteGain> composantes,
     EtatTirelire etatTirelire = EtatTirelire.sansObjet,
+    String explication = '',
   }) {
     if (composantes.isEmpty) {
       throw ArgumentError.value(composantes, 'composantes',
@@ -428,8 +503,15 @@ class VerdictGain {
     var gagnant = 0.0;
     var place = 0.0;
     var total = 0.0;
+    var rembourse = 0.0;
     for (final c in composantes) {
+      // Un remboursement n'entre JAMAIS dans le gain : `montantRetour` vaut
+      // déjà 0,0 pour une composante remboursée, et l'assertion ci-dessous
+      // rend la règle structurelle plutôt que conventionnelle.
+      assert(!c.rembourse || c.montantRetour == 0.0,
+          'une composante remboursée ne peut porter aucun montantRetour');
       total += c.montantRetour;
+      rembourse += c.miseRemboursee;
       switch (c.role) {
         case RoleComposante.gagnant:
           gagnant += c.montantRetour;
@@ -444,12 +526,13 @@ class VerdictGain {
     return VerdictGain._(
       etat: EtatGain.attribue,
       motif: null,
-      explication: '',
+      explication: explication,
       etatTirelire: etatTirelire,
       composantes: List<ComposanteGain>.unmodifiable(composantes),
       gainGagnant: gagnant,
       gainPlace: place,
       total: total,
+      remboursement: rembourse,
     );
   }
 
@@ -473,7 +556,8 @@ class VerdictGain {
       '${motif != null ? " / ${motif!.name}" : ""}'
       ' | tirelire=${etatTirelire.name}'
       ' | composantes=${composantes.length}'
-      ' | gagnant=$gainGagnant place=$gainPlace total=$total)';
+      ' | gagnant=$gainGagnant place=$gainPlace total=$total'
+      '${remboursement > 0 ? " rembourse=$remboursement" : ""})';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -700,6 +784,7 @@ VerdictGain resoudreGainTicket({
       arbitrage.etatTirelire,
       arbitrage.rapportsCompatibles,
       numerosJoues,
+      miseUnique,
     );
   }
 
@@ -1038,6 +1123,18 @@ bool _blocEstDemontreComplet({
   final lignes = _lignesBloc(type: type, etat: etat);
   if (lignes.isEmpty) return false;
 
+  // 3 bis. ★ PREMIER UNIQUE, SANS EX ÆQUO À LA PREMIÈRE PLACE.
+  //
+  //   L'arbitrage l'exige explicitement pour fonder une perte Simple Gagnant
+  //   sur une seule ligne. Avec un ex æquo à la 1re place, « l'ensemble des
+  //   chevaux classés premiers » est concerné : un bloc d'UNE ligne ne peut
+  //   alors pas être déclaré complet, puisqu'il devrait en publier autant que
+  //   de premiers ex æquo. On refuse donc l'exemption dans ce cas, sans jamais
+  //   prononcer de perte.
+  final premierGroupe = etat.arriveeGroupes!.first;
+  final premierUnique = premierGroupe.length == 1;
+  if (type == TypePariJoue.simpleGagnant && !premierUnique) return false;
+
   // 4. Rangs contigus 1..R.
   //
   // ⚠️ Plusieurs lignes peuvent partager un même rang (mesuré : un Couplé
@@ -1048,14 +1145,36 @@ bool _blocEstDemontreComplet({
   final rangs = <int>{};
   for (final l in lignes) {
     final r = l.rang;
-    if (r == null || r < 1) return false;
+    // ★ EXEMPTION MESURÉE — SIMPLE GAGNANT À UNE SEULE LIGNE.
+    //
+    //   MESURE QUI A MOTIVÉ CETTE EXEMPTION : le bloc Simple Gagnant d'une
+    //   arrivée normale ne publie QU'UNE ligne pour UN cheval, et le
+    //   recoupement exact de cette ligne avec le 1er cheval de l'arrivée
+    //   définitive EST la preuve de complétude — il ne peut pas exister de
+    //   seconde ligne. Exiger en plus un `rang` explicite faisait échouer la
+    //   démonstration sur des blocs corrects (mesuré : `B3/6.5`, où le cheval
+    //   4 est 2e et où seul le bloc Placé porte des rapports). L'arbitrage
+    //   énumère les conditions exigées — arrivée définitive, premier unique,
+    //   rapport définitif du 1er cheval, absence de remboursement — et le rang
+    //   n'en fait pas partie pour ce cas.
+    //
+    //   L'EXEMPTION EST STRICTEMENT BORNÉE : un seul type, une seule ligne.
+    //   Dès qu'il y a plusieurs lignes (Simple Placé, Couplé…), le rang reste
+    //   exigé, car c'est lui qui distingue un bloc complet d'un bloc tronqué.
+    if (r == null) {
+      if (type == TypePariJoue.simpleGagnant && lignes.length == 1) continue;
+      return false;
+    }
+    if (r < 1) return false;
     rangs.add(r);
   }
   final n = lignes.length;
-  final rMax = rangs.reduce((a, b) => a > b ? a : b);
-  if (rMax > n) return false;
-  for (var i = 1; i <= rMax; i++) {
-    if (!rangs.contains(i)) return false;
+  if (rangs.isNotEmpty) {
+    final rMax = rangs.reduce((a, b) => a > b ? a : b);
+    if (rMax > n) return false;
+    for (var i = 1; i <= rMax; i++) {
+      if (!rangs.contains(i)) return false;
+    }
   }
 
   // 5. Recoupement EXACT avec l'arrivée aplatie.
@@ -1219,9 +1338,161 @@ VerdictGain _resoudreGagnantPlace({
           'gagnante pour ce cheval.',
     );
   }
-  return VerdictGain.attribue(composantes: composantes);
+
+  // ── ★ CONTRÔLE D'ÉTABLISSEMENT — UNE COMPOSANTE ABSENTE N'EST PAS PERDANTE.
+  //
+  //   MESURE QUI A MOTIVÉ CE BLOC : `[O]` — Gagnant gagnant (7,50) et AUCUN
+  //   rapport Simple Placé publié — rendait `attribue` avec `total = 75,0`,
+  //   c'est-à-dire un résultat présenté comme COMPLET alors que le sort de la
+  //   composante Placé (10 € d'une mise totale de 20 €) n'était pas établi.
+  //   L'arbitrage est explicite : « Une composante absente n'est pas
+  //   automatiquement perdante ».
+  //
+  //   RÈGLE APPLIQUÉE — pour chaque composante ENGAGÉE (mise > 0), son sort
+  //   doit être CONNU, c'est-à-dire :
+  //     • avoir produit une composante (gain, ou remboursement) ; ou
+  //     • être PERDANTE de façon démontrée : aucun rapport ne correspond au
+  //       cheval joué ET le bloc de ce type est DÉMONTRÉ COMPLET — c'est la
+  //       même preuve par recoupement que celle utilisée pour la perte du
+  //       chemin mono-composante, jamais une simple absence.
+  //   Si le sort d'une composante engagée n'est ni gagné, ni remboursé, ni
+  //   perdu démontré, le ticket n'est PAS complet : `nonDetermine`.
+  //   On ne fabrique ni une perte (interdit) ni un total partiel présenté
+  //   comme définitif (mesuré ci-dessus).
+  final sortGagnantConnu = _sortComposanteConnu(
+    mise: miseG,
+    composantes: composantes,
+    role: RoleComposante.gagnant,
+    idRapport: id.gagnant.rapport,
+    type: TypePariJoue.simpleGagnant,
+    numerosJoues: numerosJoues,
+    etat: etat,
+  );
+  final sortPlaceConnu = _sortComposanteConnu(
+    mise: miseP,
+    composantes: composantes,
+    role: RoleComposante.place,
+    idRapport: id.place.rapport,
+    type: TypePariJoue.simplePlace,
+    numerosJoues: numerosJoues,
+    etat: etat,
+  );
+  if (!sortGagnantConnu || !sortPlaceConnu) {
+    return VerdictGain.nonDetermine(
+      motif: MotifNonDetermination.blocJusteAbsent,
+      explication: 'Le sort d\'une composante engagée de ce Gagnant+Placé '
+          'n\'est pas établi : ni gagnée, ni remboursée, ni démontrée '
+          'perdante${!sortGagnantConnu ? " (composante Gagnant)" : ""}'
+          '${!sortPlaceConnu ? " (composante Placé)" : ""}. Aucun total '
+          'partiel n\'est présenté comme définitif, et aucune perte n\'est '
+          'inventée.',
+    );
+  }
+
+  // Toutes les composantes engagées sont remboursées (aucun gain) : le ticket
+  // est intégralement remboursé, et le montant rendu est la somme des mises.
+  //
+  // ⚠️ MESURE QUI A MOTIVÉ CE TEST SUR `totalRembourse` ET NON SUR LE SEUL
+  //    `totalGain == 0` : un Gagnant+Placé dont les DEUX composantes sont
+  //    PERDUES a aussi un gain total nul. Conclure au remboursement dans ce
+  //    cas afficherait « remboursé » sur une perte certaine — l'inverse exact
+  //    de la règle. Le remboursement n'est donc prononcé que si une mise est
+  //    RÉELLEMENT rendue.
+  final totalGain = composantes.fold<double>(0.0, (s, c) => s + c.montantRetour);
+  final totalRembourse =
+      composantes.fold<double>(0.0, (s, c) => s + c.miseRemboursee);
+  if (totalGain == 0.0) {
+    if (totalRembourse > 0) {
+      return VerdictGain.rembourse(
+        remboursement: totalRembourse,
+        explication: 'Les composantes engagées de ce Gagnant+Placé sont '
+            'remboursées par l\'opérateur : '
+            '${totalRembourse.toStringAsFixed(2)} € sont rendus, aucun gain '
+            'n\'est établi.',
+      );
+    }
+    // Aucun gain, aucun remboursement, et le sort de chaque composante
+    // engagée est établi : la perte est DÉMONTRÉE, pas supposée.
+    return VerdictGain.perdu(
+      explication: 'Le sort de chaque composante engagée de ce Gagnant+Placé '
+          'est établi et aucune n\'est gagnante ni remboursée : la perte est '
+          'démontrée par les rapports officiels.',
+    );
+  }
+
+  return VerdictGain.attribue(
+    composantes: composantes,
+    explication: totalRembourse > 0
+        ? 'Gain officiel établi sur les composantes gagnantes ; '
+            '${totalRembourse.toStringAsFixed(2)} € de mise remboursée, '
+            'conservés distincts du gain.'
+        : '',
+  );
 }
 
+/// Le sort d'une composante ENGAGÉE est-il établi ?
+///
+/// Trois cas seulement sont probants :
+///   ① la composante a produit une entrée (gain ou remboursement) ;
+///   ② la composante est PERDANTE de façon démontrée : aucun rapport ne
+///      correspond au cheval joué pour ce type, ET le bloc officiel de ce type
+///      est démontré complet par recoupement avec l'arrivée définitive
+///      (même preuve que `_blocEstDemontreComplet`, réutilisée telle quelle) ;
+///   ③ aucune mise n'est engagée sur cette composante : son sort est sans
+///      objet, il n'y a rien à établir.
+///
+/// ⚠️ `idRapport == null` seul n'est JAMAIS une preuve de perte : c'est
+///    exactement l'erreur que l'arbitrage interdit (« Ne jamais transformer
+///    une simple absence de rapport en perte certaine »). On exige donc, en
+///    plus, la démonstration de complétude du bloc.
+bool _sortComposanteConnu({
+  required double mise,
+  required List<ComposanteGain> composantes,
+  required RoleComposante role,
+  required RapportOfficiel? idRapport,
+  required TypePariJoue type,
+  required List<int> numerosJoues,
+  required EtatCourseOfficiel etat,
+}) {
+  if (!(mise > 0)) return true; // composante non engagée : rien à établir.
+  for (final c in composantes) {
+    if (c.role == role) return true; // ① gain ou remboursement établi.
+  }
+  // ② Aucun rapport identifié pour ce cheval. La perte n'est retenue que si
+  //    elle est DÉMONTRÉE par recoupement du bloc officiel avec l'arrivée
+  //    définitive — jamais par la seule absence de rapport.
+  if (idRapport == null) {
+    return _blocEstDemontreComplet(
+      type: type,
+      numerosJoues: numerosJoues,
+      etat: etat,
+    );
+  }
+  // ③ Un rapport EXISTE pour ce cheval, mais aucune composante n'en est née :
+  //    son montant n'est pas exploitable. Le sort n'est donc PAS établi — ni
+  //    gain, ni remboursement, ni perte prouvée.
+  return false;
+}
+
+/// Une composante Gagnant ou Placé du ticket Gagnant+Placé.
+///
+/// ★ CORRECTION À LA SOURCE — LE REMBOURSEMENT EST ENFIN HONORÉ ICI.
+///
+/// MESURE QUI A MOTIVÉ CETTE CORRECTION : rapports `[gagnant 7,50 ;
+/// placé 2,10 marqué `rembourse`]`, mises 10/10 rendaient `attribue` avec
+/// `total = 96,0` et DEUX composantes, dont `« e-Simple Placé » 10 × 2,10 =
+/// 21,0`. Le coefficient du rapport était donc appliqué à une composante que
+/// l'opérateur rembourse : 21 € de GAIN inventés. Or un remboursement
+/// intégral d'une mise de 10 € rend 10 €, il ne « gagne » pas 21 €.
+///
+/// RÈGLE APPLIQUÉE (règlement PMU, remboursements et non-partants) :
+///   • composante remboursée ⇒ `montantRetour = 0,0` (aucun gain),
+///     `miseRemboursee = mise` (la mise est rendue), `rembourse = true` ;
+///   • le coefficient `pourUnEuro` n'est JAMAIS appliqué à une composante
+///     remboursée — il est conservé pour l'audit, pas pour le calcul.
+///
+/// Le gain et le remboursement restent ainsi DISTINCTS jusque dans
+/// `VerdictGain` (`.total` vs `.remboursement`), donc jusqu'à l'affichage.
 ComposanteGain? _composanteGagnantPlace({
   required RapportOfficiel? officiel,
   required List<RapportPublie> rapports,
@@ -1230,7 +1501,30 @@ ComposanteGain? _composanteGagnantPlace({
 }) {
   if (officiel == null) return null;
   final publie = _retrouverPublie(rapports, officiel);
-  if (publie == null || !publie.aUnMontantExploitable) return null;
+  if (publie == null) return null;
+
+  // ① Le rapport existe et l'opérateur le rembourse : la composante est
+  //    ÉTABLIE (son sort est connu) et elle rend sa mise, sans aucun gain.
+  //    On ne teste pas `aUnMontantExploitable` : un remboursement ne dépend
+  //    d'aucun dividende, et exiger un montant ferait perdre le
+  //    remboursement au profit d'une non-détermination — donc d'une perte
+  //    potentiellement affichée à tort.
+  if (publie.rembourse) {
+    return ComposanteGain(
+      libelleRapport: publie.libelle,
+      combinaisonRapport: publie.combinaison,
+      categorie: publie.variante,
+      role: role,
+      mise: mise,
+      pourUnEuro: publie.pourUnEuro ?? 0.0,
+      montantRetour: 0.0,
+      rembourse: true,
+    );
+  }
+
+  // ② Composante non remboursée : il faut un montant exploitable pour fonder
+  //    un gain. Sans montant, son sort n'est PAS établi — on ne fabrique rien.
+  if (!publie.aUnMontantExploitable) return null;
   return ComposanteGain(
     libelleRapport: publie.libelle,
     combinaisonRapport: publie.combinaison,
@@ -1255,10 +1549,14 @@ VerdictGain _verdictDepuisRapportPublie({
   String? complement,
 }) {
   if (publie.rembourse) {
+    // ★ Un remboursement rend la MISE ENGAGÉE : `remboursement` porte ce
+    //   montant pour que l'interface puisse l'afficher, tandis que `total`
+    //   reste `0.0` — un remboursement n'est pas un gain.
     return VerdictGain.rembourse(
       explication: 'Le rapport « ${publie.libelle} » est explicitement marqué '
           'remboursé par l\'opérateur.',
       etatTirelire: etatTirelire,
+      remboursement: mise,
     );
   }
   if (!publie.aUnMontantExploitable) {
@@ -1290,6 +1588,7 @@ VerdictGain _depuisRefusResolveur(
   EtatTirelire etatTirelire,
   List<RapportPublie> rapportsCompatibles,
   List<int> numerosJoues,
+  double mise,
 ) {
   final motif = resolution.motifRefus!;
 
@@ -1331,6 +1630,7 @@ VerdictGain _depuisRefusResolveur(
       if (rembourse != null && rembourse.rembourse) {
         return VerdictGain.rembourse(
           etatTirelire: etatTirelire,
+          remboursement: mise,
           explication: 'Le rapport « ${rembourse.libelle} » est marqué '
               'remboursé par l\'opérateur (le résolveur délègue explicitement '
               'le remboursement, il ne le refuse pas). État « remboursé », '
