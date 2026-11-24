@@ -419,11 +419,23 @@ void main() {
       expect(v.libelle, contains('en attente'));
     });
 
-    test('D9 ④ EN ATTENTE sans manuel ⇒ décision attendue, montant null', () {
+    test('D9 ④ SANS manuel ⇒ l\'officiel s\'applique (chantier 1/3)', () {
+      // ★ CETTE ASSERTION A ÉTÉ RETOURNÉE, ET C'EST LÉGITIME.
+      //
+      //   AVANT : montant `null` + « décision attendue ». Le gain officiel
+      //   était connu et persisté, mais jamais affiché tant que l'utilisateur
+      //   n'avait pas tranché — alors qu'aucun gain manuel n'existe, donc
+      //   qu'il n'y a AUCUN conflit à arbitrer.
+      //
+      //   APRÈS : l'officiel est retenu. La décision ne reste requise que
+      //   lorsqu'un montant déclaré doit être confronté à l'officiel (D8).
       final p = _pred(montantOfficielPmu: 99.0);
       final v = vueDurable(p, verdictOfficielPresent: false)!;
-      expect(v.montant, isNull);
-      expect(v.libelle, contains('décision est attendue'));
+      expect(v.montant, 99.0);
+      expect(v.estOfficiel, isTrue);
+      expect(v.libelle, contains('gain officiel PMU'));
+      // Aucune décision n'a été écrite : la lecture n'engage rien.
+      expect(p.decisionGainPmu, isNull);
     });
 
     test('D10 aucun champ 2-C ni 2-A ⇒ null (affichage historique intact)', () {

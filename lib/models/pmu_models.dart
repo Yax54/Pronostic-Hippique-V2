@@ -967,12 +967,35 @@ class UserPrediction {
     //    « indéterminé » : c'est un résultat officiel, distinct d'une absence.
     if (decisionGainPmu == DecisionGainPmu.accepte) return montantOfficielPmu;
 
-    // ① La déclaration de l'utilisateur est prioritaire. Un `0.0` explicite
-    //    est un montant : il ne retombe donc PAS sur le PMU.
-    //    Ceci couvre aussi le REFUS explicite et l'ATTENTE (`null`), qui
-    //    doivent tous deux laisser le manuel seul maître — lot 2-A inchangé.
+    // ② ★ CHANTIER 1/3 — LE GAIN OFFICIEL S'APPLIQUE, MÊME SANS DÉCISION.
+    //
+    //    ── DÉFAUT MESURÉ AVANT CORRECTION ──────────────────────────────────
+    //    Un ticket dont le PMU a établi `montantOfficielPmu` mais qui ne porte
+    //    AUCUN gain manuel et AUCUNE décision rendait `null` ici : le gain
+    //    gagné restait « indéterminé » alors qu'il est officiellement connu,
+    //    démontré et persisté. L'écran n'affichait donc jamais le gain gagné
+    //    d'un pari résolu par le PMU tant que l'utilisateur n'avait pas
+    //    explicitement « accepté » — une décision qui n'a pas d'objet, puisque
+    //    personne ne choisit un rapport officiel.
+    //
+    //    ── LA RÈGLE, ET SA LIMITE ──────────────────────────────────────────
+    //    L'officiel n'est retenu QUE s'il n'y a aucun gain manuel : sans
+    //    déclaration, il n'existe aucun conflit à arbitrer. Dès qu'un montant
+    //    manuel existe, le verrou de priorité ① reste intact et l'officiel
+    //    attend une décision — c'est le comportement validé (B3/B4/D6/D7/D8).
+    //
+    //    ⚠️ `0.0` OFFICIEL EST UNE PERTE ÉTABLIE, pas une absence : la
+    //       condition est `!= null`. La remplacer par `> 0` ferait réapparaître
+    //       « indéterminé » sur une perte officielle, c'est-à-dire exactement
+    //       la confusion que le modèle interdit.
+    //
+    //    ⚠️ AUCUNE DÉCISION N'EST PRISE ICI : `decisionGainPmu` n'est pas
+    //       modifié, et aucune écriture n'est déclenchée. On LIT un fait
+    //       officiel déjà persisté ; `gainRetenuBrut` reste une lecture pure.
     final manuel = montantGainManuel;
     if (manuel != null) return manuel;
+    final officiel = montantOfficielPmu;
+    if (officiel != null) return officiel;
 
     // ② Le PMU fait foi quand l'utilisateur n'a rien déclaré.
     //    On ne consulte le PMU QUE par des champs officiels :

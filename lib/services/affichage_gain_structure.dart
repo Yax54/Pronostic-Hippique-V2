@@ -59,11 +59,32 @@ class AffichageGain {
 
   /// Montant en euros, UNIQUEMENT quand il est démontrable. `null` sinon.
   ///
-  /// Pour [NatureAffichageGain.attribue], c'est le retour BRUT officiel.
-  /// Pour [NatureAffichageGain.rembourse], c'est le montant remboursé (déjà
-  /// égal à la somme des retours attribués). Jamais pour `perdu` ni
-  /// `indetermine`.
+  /// Pour [NatureAffichageGain.attribue], c'est le retour BRUT officiel —
+  /// c'est-à-dire le « Gain gagné », JAMAIS gonflé d'un remboursement.
+  /// Pour [NatureAffichageGain.rembourse], c'est le montant remboursé.
+  /// Jamais pour `perdu` ni `indetermine`.
   final double? montant;
+
+  /// ★ CHANTIER 1/3 — LE REMBOURSEMENT, CHAMP SÉPARÉ, JAMAIS FONDU.
+  ///
+  /// Montant de mise RESTITUÉE au joueur, distinct de [montant]. Il est
+  /// renseigné même quand un gain est aussi établi : un Gagnant+Placé dont le
+  /// Placé est remboursé affiche « Gain gagné 75 € » ET « Remboursement 10 € ».
+  ///
+  /// `null` = aucun remboursement établi (distinct d'un remboursement de 0 €,
+  /// qui n'a pas de sens officiel et n'est donc jamais produit).
+  final double? remboursement;
+
+  /// Total effectivement REVERSÉ : [montant] + [remboursement].
+  ///
+  /// `null` si aucun des deux n'est établi. C'est le montant qui doit servir
+  /// au contrôle de cohérence « Gain gagné + Remboursement », jamais au
+  /// calcul d'un bénéfice : le net se calcule en retranchant la MISE, qui est
+  /// une donnée différente.
+  double? get totalReverse {
+    if (montant == null && remboursement == null) return null;
+    return (montant ?? 0.0) + (remboursement ?? 0.0);
+  }
 
   /// Texte principal, prêt à afficher.
   final String libelle;
@@ -75,11 +96,16 @@ class AffichageGain {
     required this.nature,
     required this.libelle,
     this.montant,
+    this.remboursement,
     this.detail,
   });
 
   /// `true` si un montant positif est affiché. Sert aux tests et au rendu.
   bool get afficheUnMontant => montant != null && montant! > 0;
+
+  /// `true` si un remboursement positif est établi et doit être affiché.
+  bool get afficheUnRemboursement =>
+      remboursement != null && remboursement! > 0;
 }
 
 /// Construit l'affichage d'un ticket suivi.
@@ -105,11 +131,23 @@ AffichageGain affichageGainSuivi(TrackedCourse c) {
             detail: 'Verdict attribué mais aucun montant persisté.',
           );
         }
+        // ★ CHANTIER 1/3 — LE REMBOURSEMENT EST AFFICHÉ À PART.
+        //
+        //   `total` ne contient QUE les retours gagnés (`resoudreTotalDepuisRapports`
+        //   additionne des `montantRetour`, et une composante remboursée porte
+        //   `montantRetour = 0`). Le remboursement, lui, vit dans son propre
+        //   champ persisté. Les additionner ici rendrait « Gain gagné » faux.
+        final remb = c.remboursementPmu;
+        final aRemb = remb != null && remb > 0;
         return AffichageGain(
           nature: NatureAffichageGain.attribue,
           libelle: '🏆 Gain gagné : ${fmtEuros(total)} € brut',
           montant: total,
-          detail: _detailTirelire(c.etatTirelire),
+          remboursement: aRemb ? remb : null,
+          detail: aRemb
+              ? 'Dont ${fmtEuros(remb)} € de mise remboursée, reversée séparément '
+                  '— ce n\'est pas un gain.'
+              : _detailTirelire(c.etatTirelire),
         );
 
       case EtatGain.perdu:
@@ -120,13 +158,29 @@ AffichageGain affichageGainSuivi(TrackedCourse c) {
         );
 
       case EtatGain.rembourse:
-        final total = resoudreTotalDepuisRapports(c.rapportsAttribues);
+        // ★ CHANTIER 1/3 — SOURCE UNIQUE DU REMBOURSEMENT INTÉGRAL.
+        //
+        //   DÉFAUT MESURÉ AVANT CORRECTION : ce chemin lisait
+        //   `resoudreTotalDepuisRapports(c.rapportsAttribues)`. Or un verdict
+        //   `rembourse` n'a AUCUNE composante, donc `rapportsAttribues` vaut
+        //   `null` et le total `null` : l'écran affichait « ↩️ Pari remboursé »
+        //   SANS JAMAIS DIRE COMBIEN, alors que la somme reversée est connue,
+        //   démontrée et persistée dans `remboursementPmu`. Le résultat
+        //   financier n'était donc pas restitué.
+        //
+        //   On lit désormais le champ persisté, à la même source que le modèle,
+        //   et l'ancienne lecture reste en repli pour les tickets historiques.
+        final rembourse = c.remboursementPmu;
+        final secours = resoudreTotalDepuisRapports(c.rapportsAttribues);
+        final montantRembourse = (rembourse != null && rembourse > 0)
+            ? rembourse
+            : (secours != null && secours > 0 ? secours : null);
         return AffichageGain(
           nature: NatureAffichageGain.rembourse,
-          libelle: total != null && total > 0
-              ? '↩️ Remboursé : ${fmtEuros(total)} € (retour de mise)'
+          libelle: montantRembourse != null
+              ? '↩️ Remboursement : ${fmtEuros(montantRembourse)} € (mise restituée)'
               : '↩️ Pari remboursé',
-          montant: total != null && total > 0 ? total : null,
+          remboursement: montantRembourse,
           detail: 'Remboursement démontré — ce n\'est pas un gain.',
         );
 

@@ -52,6 +52,7 @@ class ProfileStatsTab extends StatelessWidget {
           miseTotal: provider.totalMise,
           totalGagnes: provider.totalGagnes,
           totalPerdu: provider.totalPerdu,
+          totalRemboursements: provider.totalRemboursements,
           totalPreds: provider.totalPredictions,
         ),
 
@@ -114,12 +115,20 @@ class ProfileTotauxCard extends StatelessWidget {
   final double totalPerdu;
   final int totalPreds;
 
+  /// ★ CHANTIER 1/3 — montant total des mises RESTITUÉES (remboursements).
+  ///
+  /// Statistique FINANCIÈRE distincte des gains et des pertes. Défaut `0.0`
+  /// pour que tout appelant existant compile et affiche exactement comme
+  /// avant : sans remboursement, la carte ne change pas d'un caractère.
+  final double totalRemboursements;
+
   const ProfileTotauxCard({
     required this.gainsNet,
     required this.miseTotal,
     required this.totalGagnes,
     required this.totalPerdu,
     required this.totalPreds,
+    this.totalRemboursements = 0.0,
   });
 
   @override
@@ -202,6 +211,28 @@ class ProfileTotauxCard extends StatelessWidget {
             icon: Icons.trending_down,
           ),
         ]),
+
+        // ★ CHANTIER 1/3 — LE REMBOURSEMENT, STATISTIQUE FINANCIÈRE DISTINCTE.
+        //
+        //   Rendue UNIQUEMENT si un remboursement officiel est établi : sans
+        //   remboursement, la carte est identique à l'historique.
+        //
+        //   Elle ne peut pas être confondue avec « Gains bruts » (retours
+        //   encaissés) ni avec « Pertes » : c'est une restitution de mise.
+        //   C'est aussi ce qui rend lisible la correction de `totalPerdu`, qui
+        //   ne compte plus une mise rendue comme une perte.
+        //
+        //   AUCUNE statistique d'IA n'est alimentée ici : c'est de la
+        //   comptabilité d'affichage.
+        if (totalRemboursements > 0) ...[
+          const SizedBox(height: 10),
+          ProfileMiniStat(
+            label: 'Remboursements',
+            value: '${fmtEuros(totalRemboursements)} €',
+            color: const Color(0xFF81D4FA),
+            icon: Icons.undo_outlined,
+          ),
+        ],
       ]),
     );
   }

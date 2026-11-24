@@ -1145,22 +1145,33 @@ bool _blocEstDemontreComplet({
   final rangs = <int>{};
   for (final l in lignes) {
     final r = l.rang;
-    // ★ EXEMPTION MESURÉE — SIMPLE GAGNANT À UNE SEULE LIGNE.
+    // ★ EXEMPTION MESURÉE — SIMPLE GAGNANT À UNE SEULE LIGNE, SANS RANG.
     //
-    //   MESURE QUI A MOTIVÉ CETTE EXEMPTION : le bloc Simple Gagnant d'une
-    //   arrivée normale ne publie QU'UNE ligne pour UN cheval, et le
-    //   recoupement exact de cette ligne avec le 1er cheval de l'arrivée
-    //   définitive EST la preuve de complétude — il ne peut pas exister de
-    //   seconde ligne. Exiger en plus un `rang` explicite faisait échouer la
-    //   démonstration sur des blocs corrects (mesuré : `B3/6.5`, où le cheval
-    //   4 est 2e et où seul le bloc Placé porte des rapports). L'arbitrage
-    //   énumère les conditions exigées — arrivée définitive, premier unique,
-    //   rapport définitif du 1er cheval, absence de remboursement — et le rang
-    //   n'en fait pas partie pour ce cas.
+    //   Certains blocs Simple Gagnant ne publient QU'UNE ligne, pour UN cheval,
+    //   SANS `rang` explicite. Le recoupement exact de cette ligne avec le
+    //   1er cheval de l'arrivée définitive EST alors la preuve de complétude.
     //
-    //   L'EXEMPTION EST STRICTEMENT BORNÉE : un seul type, une seule ligne.
-    //   Dès qu'il y a plusieurs lignes (Simple Placé, Couplé…), le rang reste
-    //   exigé, car c'est lui qui distingue un bloc complet d'un bloc tronqué.
+    //   ⚠️ DÉFAUT RÉEL, DIAGNOSTIQUÉ ET **NON CORRIGÉ** DANS CE LOT.
+    //
+    //   Mesure reproductible (test F3 de b1_t12_lot2c_ecriture_securisee_test,
+    //   échoue aussi en exécution isolée) : sur une course où SEUL le bloc
+    //   « e-Simple Gagnant 7 » est publié, un ticket jouant le 9 reçoit
+    //   `perdu` au lieu de `nonDetermine`. L'exemption transforme donc une
+    //   ABSENCE de rapport en DÉFAITE, ce que la règle validée interdit.
+    //
+    //   ── POURQUOI ELLE N'EST PAS RETIRÉE ICI ─────────────────────────────
+    //   L'arbitrage autorise une ligne unique à suffire, mais à quatre
+    //   conditions cumulatives, dont « le cheval joué est un PARTANT non
+    //   concerné par un remboursement ». `EtatCourseOfficiel` ne transporte
+    //   AUCUNE liste de partants ni d'état de non-partant (mesuré : aucune
+    //   occurrence de `partants` / `nonPartant` dans ce moteur). La condition
+    //   est donc INDÉMONTRABLE à cet endroit.
+    //
+    //   Retirer l'exemption a été ESSAYÉ ET MESURÉ : F3 passe, mais le verrou
+    //   protégé B3/6.5 tombe (`composantes: []` au lieu d'une composante
+    //   Placé sur le cheval 4, placé mais non gagnant). On ne remplace donc
+    //   pas un défaut par un autre : le correctif exige une source de
+    //   partants, qui n'existe pas dans ce périmètre. Décision REPORTÉE.
     if (r == null) {
       if (type == TypePariJoue.simpleGagnant && lignes.length == 1) continue;
       return false;

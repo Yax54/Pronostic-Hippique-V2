@@ -78,6 +78,50 @@ GainDurable? decisionGainDurable(
   final aUnOfficiel = p.montantOfficielPmu != null;
   if (!aUnOfficiel && p.decisionGainPmu == null && !demandeOuverte) return null;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 1/3 — LE GAIN OFFICIEL S'APPLIQUE SANS DÉCISION UTILISATEUR.
+  //
+  //  ── DÉFAUT MESURÉ AVANT CORRECTION ──────────────────────────────────────
+  //  Un ticket dont le PMU a établi un gain, sans AUCUN gain manuel et sans
+  //  décision enregistrée, tombait dans la branche « en attente » ci-dessous :
+  //
+  //      montant: m   // m == null
+  //      libelle: '⏳ Gain officiel PMU disponible — votre décision est attendue'
+  //
+  //  Le montant officiel était donc CONNU, PERSISTÉ, et jamais affiché. Le
+  //  résultat « officiel » de l'arbitrage — « le rapport affiché et le Gain
+  //  gagné doivent correspondre au pari réellement joué et au résultat
+  //  officiel » — n'était pas satisfait, et l'utilisateur devait trancher une
+  //  question qui n'en était pas une : personne ne « choisit » un rapport PMU.
+  //
+  //  ── CE QUI CHANGE, ET CE QUI NE CHANGE PAS ──────────────────────────────
+  //  La décision n'est PLUS REQUISE quand elle n'a pas d'objet :
+  //    • aucun gain manuel  → il n'y a aucun conflit à arbitrer : l'officiel
+  //      est RETENU, et le libellé dit qu'il est officiel ;
+  //    • un gain manuel existe → le conflit est RÉEL : l'officiel reste en
+  //      réserve et la décision est attendue (verrou B4 conservé).
+  //
+  //  ⚠️ AUCUNE DÉCISION N'EST PRISE ICI. On ne renseigne ni
+  //     `decisionGainPmu = accepte` ni `refuse` : ce fichier LIT, il n'écrit
+  //     rien. Le champ de décision reste donc `null`, et l'utilisateur garde
+  //     la possibilité de trancher s'il déclare un montant plus tard.
+  //
+  //  ⚠️ `0.0` OFFICIEL EST RESPECTÉ. Un rapport officiel à 0 € est une perte
+  //     ÉTABLIE, pas une absence : la condition est `!= null`, jamais `> 0`.
+  // ══════════════════════════════════════════════════════════════════════════
+  if (p.decisionGainPmu == null && p.montantGainManuel == null) {
+    final o = p.montantOfficielPmu;
+    if (o != null) {
+      return GainDurable(
+        montant: o,
+        estOfficiel: true,
+        libelle: o > 0
+            ? '🏆 Gain gagné : ${fmtEuros(o)} € brut (gain officiel PMU)'
+            : '❌ Perdu : gain officiel PMU établi à 0 €',
+      );
+    }
+  }
+
   if (p.decisionGainPmu == DecisionGainPmu.accepte) {
     final o = p.montantOfficielPmu;
     if (o == null) {

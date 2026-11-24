@@ -1067,6 +1067,41 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
                 color: Colors.white54, fontSize: 11, height: 1.4),
           ),
         ],
+        // ★ CHANTIER 1/3 — LE REMBOURSEMENT, LIGNE SÉPARÉE ET EXPLICITE.
+        //
+        //   `vue.montant` ne contient QUE le gain gagné. Le remboursement est
+        //   un montant DISTINCT, de nature différente (restitution de mise,
+        //   pas un gain) : il ne doit jamais être additionné au gain dans le
+        //   libellé principal. Il est donc annoncé sur sa propre ligne, avec
+        //   le total reversé en dessous pour que l'utilisateur puisse vérifier
+        //   lui-même la cohérence gain + remboursement.
+        //
+        //   Rendu UNIQUEMENT si un remboursement est établi et positif : sans
+        //   remboursement, le bandeau est identique à l'historique.
+        if (vue.afficheUnRemboursement) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.undo, color: Color(0xFF81D4FA), size: 14),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '↩️ Remboursement : ${fmtEuros(vue.remboursement!)} €',
+                style: const TextStyle(
+                  color: Color(0xFF81D4FA),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ]),
+          if (vue.totalReverse != null) ...[
+            const SizedBox(height: 3),
+            Text(
+              'Total reversé : ${fmtEuros(vue.totalReverse!)} €',
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+          ],
+        ],
       ]),
     );
   }

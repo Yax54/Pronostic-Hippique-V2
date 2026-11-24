@@ -190,10 +190,57 @@ class PmuProvider extends ChangeNotifier {
   /// Total perdu
   ///
   /// ★ LOT G+P : la perte d'un G+P est la mise engagée des DEUX composantes.
+  ///
+  /// ★ CHANTIER 1/3 — UN REMBOURSEMENT N'EST PAS UNE PERTE.
+  ///
+  ///   ── DÉFAUT MESURÉ AVANT CORRECTION ────────────────────────────────────
+  ///   Un remboursement INTÉGRAL est écrit par l'enregistreur avec
+  ///   `isCorrect = false` (ce n'est pas un gain), et `totalPerdu` comptait
+  ///   alors la mise entière comme PERDUE. Un ticket dont 20 € ont été rendus
+  ///   s'affichait donc « −20 € de perte » : le résultat financier affiché
+  ///   était faux, et de signe contraire à la réalité.
+  ///
+  ///   ── CE QUI CHANGE ─────────────────────────────────────────────────────
+  ///   Un ticket qui porte un remboursement ÉTABLI est compté pour sa perte
+  ///   RÉELLE : la mise engagée MOINS ce qui a été reversé. Un remboursement
+  ///   intégral donne donc 0 € de perte, un remboursement partiel donne la
+  ///   fraction réellement perdue.
+  ///
+  ///   ⚠️ HORS REMBOURSEMENT, LA FORMULE EST STRICTEMENT INCHANGÉE : la
+  ///      condition est `remboursementPmu != null`, et un ticket qui n'en
+  ///      porte pas passe exactement par le même chemin qu'avant.
+  ///
+  ///   ⚠️ `gainRetenuBrut`/`gainNet` NE SONT PAS TOUCHÉS : seule la
+  ///      contribution d'un ticket à ce total affiché est ajustée, comme pour
+  ///      le prédicat G+P existant.
   double get totalPerdu {
-    return _predictions
-        .where((p) => p.isCorrect == false)
-        .fold(0.0, (sum, p) => sum + _miseEngageeDe(p));
+    return _predictions.where((p) => p.isCorrect == false).fold(0.0, (sum, p) {
+      final mise = _miseEngageeDe(p);
+      final rembourse = p.remboursementPmu;
+      if (rembourse == null || !rembourse.isFinite || rembourse <= 0) {
+        return sum + mise; // comportement historique, à l'identique
+      }
+      final perteReelle = mise - rembourse;
+      return sum + (perteReelle > 0 ? perteReelle : 0.0);
+    });
+  }
+
+  /// ★ CHANTIER 1/3 — total des REMBOURSEMENTS officiellement établis.
+  ///
+  /// C'est une statistique FINANCIÈRE, distincte des gains. Elle ne se
+  /// confond jamais avec [totalGagnes] (retours encaissés) ni avec
+  /// [totalGainsNet] : un remboursement n'est ni un gain ni une perte, c'est
+  /// une restitution de mise.
+  ///
+  /// Aucune statistique d'IA n'est concernée : ce getter est purement
+  /// comptable et ne participe à aucun apprentissage, aucun poids, aucun
+  /// seuil.
+  double get totalRemboursements {
+    return _predictions.fold(0.0, (sum, p) {
+      final r = p.remboursementPmu;
+      if (r == null || !r.isFinite || r <= 0) return sum;
+      return sum + r;
+    });
   }
 
   /// Prédictions filtrées par plage de dates

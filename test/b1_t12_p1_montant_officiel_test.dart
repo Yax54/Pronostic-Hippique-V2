@@ -666,9 +666,18 @@ void main() {
         //   l'interface n'entre pas dans ce chantier.
         expect(m.decisionGainPmu, isNull,
             reason: 'aucune décision automatique n\'est prise');
-        expect(m.gainRetenuBrut, isNull,
-            reason: 'sans décision ni champ de repli, l\'affichage reste '
-                'indéterminé : le montant officiel est en RÉFÉRENCE, pas actif');
+        // ★ CHANTIER 1/3 — CETTE ASSERTION A ÉTÉ RETOURNÉE, ET C'EST LÉGITIME.
+        //
+        //   AVANT : `isNull`. Le gain officiel était PERSISTÉ mais jamais lu
+        //   sans décision utilisateur — le « Gain gagné » restait indéterminé
+        //   alors que le montant est démontré et en base.
+        //
+        //   APRÈS : `75.0`. L'arbitrage exige que le gain affiché corresponde
+        //   au résultat officiel ; la décision n'est requise QUE s'il existe
+        //   un gain manuel à arbitrer. Ici il n'y en a aucun : l'officiel est
+        //   retenu directement. Aucune décision n'est écrite pour autant.
+        expect(m.gainRetenuBrut, 75.0,
+            reason: 'sans gain manuel, aucun conflit : l\'officiel est retenu');
         // Le montant est bien là, sur le disque, prêt pour la décision.
         expect(store.predictionParId('p1')!['montantOfficielPmu'], 75.0);
       });

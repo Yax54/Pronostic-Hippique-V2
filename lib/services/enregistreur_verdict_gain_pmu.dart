@@ -474,20 +474,37 @@ double? _totalDemontreComplet(
 }
 
 /// Le verdict encaisse-t-il un gain sur une combinaison que l'opérateur a
-/// publiée REMBOURSÉE, sans reconnaître AUCUN remboursement ?
+/// publiée REMBOURSÉE, sans que ce gain soit expliqué par un remboursement
+/// reconnu SUR CETTE MÊME COMBINAISON ?
 ///
-/// C'est la mission EXACTE, et la seule, que le garde du `412edba` doit encore
-/// remplir. Elle est décidable sans jamais confondre Gagnant et Placé :
+/// ── CONTRÔLE COMPOSANTE PAR COMPOSANTE, ET NON GLOBAL ──────────────────────
 ///
-///   • si le verdict porte au moins une composante remboursée, il RECONNAÎT le
-///     remboursement : les combinaisons homonymes sont alors expliquées par ce
-///     remboursement, et rien ne doit être bloqué. C'est exactement le cas
-///     Gagnant+Placé mesuré (75 € gagnés + 10 € rendus, les deux composantes
-///     portant « 7 ») que l'ancien garde refusait à tort ;
-///   • si le verdict n'en porte AUCUNE, une combinaison remboursée qui reçoit
-///     malgré tout un `montantRetour > 0` est une divergence PROUVÉE entre ce
-///     verdict et les données officielles : un remboursement est en train de
-///     devenir un gain. Refus.
+/// C'est la correction du dernier défaut du garde. La version précédente
+/// sortait dès qu'UNE composante était remboursée :
+///
+/// ```dart
+/// for (final c in composantes) { if (c.rembourse) return false; }
+/// ```
+///
+/// Une composante correctement remboursée sur « 9 » neutralisait donc la
+/// protection de TOUTES les autres : une composante non remboursée encaissant
+/// un gain sur « 7 », pourtant publiée remboursée par l'opérateur, passait
+/// sans contrôle. Un remboursement légitime servait d'alibi à un gain faux.
+///
+/// Le contrôle est maintenant borné à ce qui est décidable avec l'information
+/// disponible — un ensemble de combinaisons :
+///
+///   • une composante **remboursée** est cohérente par définition : ignorée ;
+///   • une composante **qui ne verse rien** ne fonde aucun gain : ignorée ;
+///   • une composante **non remboursée qui verse un gain** sur une combinaison
+///     publiée remboursée est une divergence — SAUF si une AUTRE composante du
+///     même verdict, elle-même remboursée, porte la MÊME combinaison. Dans ce
+///     cas l'homonymie est expliquée : c'est le cas Gagnant+Placé mesuré, où
+///     « e-Simple Gagnant 7 » (payant) et « e-Simple Placé 7 » (remboursé)
+///     partagent la combinaison « 7 ».
+///
+/// L'exemption est donc attachée à la COMBINAISON, pas au verdict : elle ne
+/// peut pas déborder sur une combinaison différente.
 ///
 /// L'ensemble vide ne bloque rien : une absence de preuve de remboursement
 /// n'est pas une preuve d'absence.
@@ -496,15 +513,22 @@ bool _remboursementManqueSurCombinaison(
   Set<String> combinaisonsRemboursees,
 ) {
   if (combinaisonsRemboursees.isEmpty) return false;
-  // Le verdict reconnaît déjà un remboursement : les homonymies sont légitimes.
+
+  // Combinaisons effectivement « expliquées » par un remboursement reconnu.
+  final expliquees = <String>{
+    for (final c in composantes)
+      if (c.rembourse) c.combinaisonRapport.trim(),
+  }..removeWhere((c) => c.isEmpty);
+
   for (final c in composantes) {
-    if (c.rembourse) return false;
-  }
-  for (final c in composantes) {
+    if (c.rembourse) continue; // cohérent : rien à signaler
     if (c.montantRetour <= 0) continue; // ne fonde aucun gain
     final combinaison = c.combinaisonRapport.trim();
     if (combinaison.isEmpty) continue;
-    if (combinaisonsRemboursees.contains(combinaison)) return true;
+    if (!combinaisonsRemboursees.contains(combinaison)) continue;
+    // Homonymie expliquée par une composante remboursée de MÊME combinaison.
+    if (expliquees.contains(combinaison)) continue;
+    return true;
   }
   return false;
 }

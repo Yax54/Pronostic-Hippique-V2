@@ -2304,6 +2304,61 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                       ]),
                     ),
                     ),
+                    // ★ CHANTIER 1/3 — LE REMBOURSEMENT, SUR SA PROPRE LIGNE.
+                    //
+                    //   L'arbitrage impose un affichage SÉPARÉ du « Gain gagné »
+                    //   et du « Remboursement ». Le montant ci-dessus ne contient
+                    //   que les retours gagnés (`montantRetour` des composantes
+                    //   payées ; une composante remboursée porte 0). La mise
+                    //   restituée est donc annoncée ici, avec son propre libellé,
+                    //   pour qu'aucun total affiché ne puisse la faire passer
+                    //   pour un gain.
+                    //
+                    //   MESURE QUI A MOTIVÉ CETTE LIGNE : sur le G+P de référence
+                    //   (75 € gagnés + 10 € rendus), le ticket n'affichait que
+                    //   « 🏆 Gain gagné : 75 € brut » et TAVAIT le remboursement,
+                    //   alors que le total réellement reversé vaut 85 €.
+                    if (_remboursementAffiche(course) != null) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF64B5F6).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFF64B5F6).withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.undo,
+                              color: Color(0xFF64B5F6), size: 15),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '↩️ Remboursement : '
+                              '${fmtEuros(_remboursementAffiche(course)!)} €',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF90CAF9),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ]),
+                      ),
+                      if (_totalReverseAffiche(course) != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Total reversé : '
+                          '${fmtEuros(_totalReverseAffiche(course)!)} €',
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 11),
+                        ),
+                      ],
+                    ],
                   ],
                   // Ordre arrivée
                   if (_arrivee != null && _arrivee!.isNotEmpty) ...[
@@ -2672,6 +2727,42 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
       verdictOfficielPresent: verdictOfficielPresent,
       demandeOuverte: demandeOuverte,
     );
+  }
+
+  /// ★ CHANTIER 1/3 — LE REMBOURSEMENT À AFFICHER, OU `null`.
+  ///
+  /// SOURCE UNIQUE, dans l'ordre de priorité validé :
+  ///   ① verdict officiel sur le ticket suivi → `affichageGainSuivi` ;
+  ///   ② sinon, le champ persisté du `UserPrediction` lié (`remboursementPmu`).
+  ///
+  /// `null` signifie « aucun remboursement établi » : la ligne n'est alors PAS
+  /// rendue du tout, et l'affichage reste strictement historique. C'est ce qui
+  /// garantit qu'aucun ticket ancien ne change d'apparence.
+  ///
+  /// ⚠️ Aucun calcul, aucune sélection de dividende : on LIT un montant déjà
+  ///    démontré et déjà persisté. Un `<= 0` n'est pas un remboursement.
+  double? _remboursementAffiche(TrackedCourse c) {
+    if (c.etatGain != null) {
+      final vue = affichageGainSuivi(c);
+      final r = vue.remboursement;
+      if (r != null && r > 0) return r;
+    }
+    final pred = widget.predictionLiee;
+    final r = pred?.remboursementPmu;
+    if (r != null && r > 0) return r;
+    return null;
+  }
+
+  /// ★ CHANTIER 1/3 — le total reversé (gain + remboursement), ou `null`.
+  ///
+  /// Rend `null` quand aucun remboursement n'est établi : sans remboursement,
+  /// « total reversé » et « gain gagné » seraient deux fois le même nombre et
+  /// n'apporteraient rien à la lecture.
+  double? _totalReverseAffiche(TrackedCourse c) {
+    final remb = _remboursementAffiche(c);
+    if (remb == null) return null;
+    final gain = _gainBrut(c) ?? 0.0;
+    return gain + remb;
   }
 
   /// ★ B1-T12 / LOT 2-C — la carte porte-t-elle DÉJÀ le badge historique ?
