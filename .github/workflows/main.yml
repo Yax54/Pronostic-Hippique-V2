@@ -19,7 +19,14 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.0'
+          flutter-version: '3.35.4'
+          channel: 'stable'
+
+      - name: Verify toolchain versions
+        run: |
+          flutter --version
+          dart --version
+          java -version
 
       - name: Get dependencies
         run: flutter pub get
@@ -27,8 +34,19 @@ jobs:
       - name: Build APK
         run: flutter build apk --debug
 
+      - name: Verify APK exists
+        run: |
+          APK="build/app/outputs/flutter-apk/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK not found at $APK"
+            exit 1
+          fi
+          ls -l "$APK"
+          sha256sum "$APK"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4.6.2
         with:
           name: app-debug
           path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
