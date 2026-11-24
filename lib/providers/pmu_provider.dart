@@ -1034,6 +1034,17 @@ class PmuProvider extends ChangeNotifier {
     // ③ Rétablissement LIMITÉ aux sept champs du verdict, SUR l'état courant :
     //    les quatre champs financiers ne sont même pas transmis à `copyWith`,
     //    donc ils ne peuvent pas être écrasés.
+    //
+    //    ★ B1-T12 / P1 — SAUF `montantOfficielPmu`. MESURÉ : sans cette ligne,
+    //    un échec de sauvegarde sur le chemin `enregistrerMontantOfficiel:
+    //    true` laissait la MÉMOIRE porter le montant officiel (75,0) alors que
+    //    le DISQUE portait `null`, tout en rendant `echec` — c'est-à-dire en
+    //    AFFIRMANT un alignement faux. Le montant officiel fait donc partie du
+    //    rétablissement : c'est un champ écrit par CETTE opération, il doit
+    //    revenir à sa valeur d'avant. Les trois autres champs financiers
+    //    (`montantGainManuel`, `decisionGainPmu`,
+    //    `montantGainManuelAvantDecision`) ne sont TOUJOURS PAS transmis : ils
+    //    n'appartiennent pas à cette opération et ne doivent jamais bouger.
     _predictions[idx] = _predictions[idx].copyWith(
       etatGain: avantVerdict.etatGain,
       rapportsAttribues: avantVerdict.rapportsAttribues,
@@ -1042,6 +1053,7 @@ class PmuProvider extends ChangeNotifier {
       dividendePlace: avantVerdict.dividendePlace,
       miseBaseCentimesUtilisee: avantVerdict.miseBaseCentimesUtilisee,
       motifNonDetermination: avantVerdict.motifNonDetermination,
+      montantOfficielPmu: avantVerdict.montantOfficielPmu,
     );
     _versionMemoire++;
     notifyListeners();
@@ -1090,6 +1102,12 @@ class PmuProvider extends ChangeNotifier {
       courant.dividendeGagnant == attendu.dividendeGagnant &&
       courant.dividendePlace == attendu.dividendePlace &&
       courant.miseBaseCentimesUtilisee == attendu.miseBaseCentimesUtilisee &&
+      // ★ B1-T12 / P1 — le montant officiel fait partie de CE que cette
+      //   opération écrit, donc de ce qu'elle doit pouvoir reconnaître comme
+      //   sien. Sans cette comparaison, un échec pouvait être jugé « déjà en
+      //   place » sur la seule base des sept autres champs alors que le
+      //   montant officiel, lui, différait entre mémoire et disque.
+      courant.montantOfficielPmu == attendu.montantOfficielPmu &&
       courant.rapportsAttribues?.length == attendu.rapportsAttribues?.length;
 
   /// Rend `true` si le pronostic existait et a été remplacé, `false` sinon.
@@ -1234,8 +1252,25 @@ class PmuProvider extends ChangeNotifier {
     //      Montants IDENTIQUES : même chose, l'information d'égalité est
     //      portée par l'égalité elle-même, disponible pour la notification
     //      informative unique ultérieure — sans nouveau champ.
+    //
+    //   ⚠️ GARDE-FOU DE REMBOURSEMENT — POURQUOI IL EST ICI ET PAS AILLEURS.
+    //      Le moteur ne teste pas `publie.rembourse` dans
+    //      `_composanteGagnantPlace` : un rapport REMBOURSÉ portant
+    //      `pourUnEuro > 0` y produit un `montantRetour` compté comme gain, et
+    //      `VerdictGain.attribue` l'accepte. Le montant officiel serait alors
+    //      FAUX. Le moteur est protégé et sa correction métier relève d'un
+    //      autre lot : on n'y touche pas. On arrête donc l'erreur au dernier
+    //      point autorisé, en NOMMANT les combinaisons réellement remboursées
+    //      publiées pour cette course. `montantOfficielDepuisVerdict` rend
+    //      alors `null` : aucun montant n'est écrit, aucune perte de `0.0`
+    //      n'est inventée, aucun remboursement ne devient un gain.
+    final combinaisonsRemboursees = _combinaisonsRemboursees(verdict, resultat);
     final avecOfficiel = enregistrerMontantOfficiel
-        ? _fusionnerMontantOfficiel(fusionnee, verdict)
+        ? _fusionnerMontantOfficiel(
+            fusionnee,
+            verdict,
+            combinaisonsRemboursees: combinaisonsRemboursees,
+          )
         : fusionnee;
 
     // ⑦ Témoin d'AVANT, indispensable au rétablissement conditionnel : ce que
@@ -1297,9 +1332,72 @@ class PmuProvider extends ChangeNotifier {
   ///    démontrable), on conserve la valeur déjà présente : une absence de
   ///    preuve n'est pas une preuve d'absence, et effacer un montant officiel
   ///    antérieurement établi serait une régression.
+  /// ★ B1-T12 / P1 — combinaisons réellement remboursées ET PERTINENTES.
+  ///
+  /// Le moteur ne teste pas `publie.rembourse` : un rapport remboursé portant
+  /// `pourUnEuro > 0` fonde un `montantRetour` compté comme gain. On arrête
+  /// cette erreur ici, sans toucher au moteur protégé.
+  ///
+  /// ⚠️ PRÉCISION, PAS BLOCAGE EN MASSE. Rendre toutes les combinaisons
+  ///    remboursées de la course bloquerait un ticket VALIDE dès qu'un autre
+  ///    pari de la même course est remboursé. On n'ajoute donc la combinaison
+  ///    d'une composante que si LE rapport qui l'a fondée est remboursé :
+  ///      • correspondance sur la COMBINAISON (normalisée), ET
+  ///      • correspondance sur le LIBELLÉ officiel quand les deux côtés en
+  ///        portent un — c'est lui qui distingue « e-Simple Gagnant » de
+  ///        « e-Simple Placé » sur une même combinaison.
+  ///
+  /// ⚠️ DIRECTION SÛRE EN CAS DE DOUTE. Si la composante ne porte pas de
+  ///    libellé, on ne peut pas établir la correspondance : on retient alors
+  ///    la combinaison dès qu'un rapport remboursé la porte. Le doute bloque
+  ///    l'écriture plutôt que de laisser passer un gain faux — on ne fabrique
+  ///    jamais un montant sur une incertitude.
+  Set<String> _combinaisonsRemboursees(
+    VerdictGain verdict,
+    ResultatOfficielCourse resultat,
+  ) {
+    final rembourses = <String>{
+      for (final r in resultat.rapports)
+        if (r.rembourse) r.combinaison.trim(),
+    }..removeWhere((c) => c.isEmpty);
+    if (rembourses.isEmpty) return const <String>{};
+
+    final retenues = <String>{};
+    for (final composante in verdict.composantes) {
+      final combinaison = composante.combinaisonRapport.trim();
+      if (combinaison.isEmpty) continue;
+      if (!rembourses.contains(combinaison)) continue;
+
+      final libelle = composante.libelleRapport.trim();
+      // Rapports remboursés portant CETTE combinaison.
+      final candidats = resultat.rapports
+          .where((r) => r.rembourse && r.combinaison.trim() == combinaison)
+          .toList();
+
+      if (libelle.isEmpty) {
+        // Correspondance indémontrable : on retient (direction sûre).
+        retenues.add(combinaison);
+        continue;
+      }
+
+      final memeLibelle = candidats.any((r) {
+        final l = r.libelleOfficiel.trim();
+        return l.isEmpty || l == libelle;
+      });
+      if (memeLibelle) retenues.add(combinaison);
+    }
+    return retenues;
+  }
+
   UserPrediction _fusionnerMontantOfficiel(
-      UserPrediction base, VerdictGain verdictOfficiel) {
-    final montant = montantOfficielDepuisVerdict(verdictOfficiel);
+    UserPrediction base,
+    VerdictGain verdictOfficiel, {
+    Set<String> combinaisonsRemboursees = const <String>{},
+  }) {
+    final montant = montantOfficielDepuisVerdict(
+      verdictOfficiel,
+      combinaisonsRemboursees: combinaisonsRemboursees,
+    );
     if (montant == null) return base;
     return base.copyWith(montantOfficielPmu: montant);
   }
