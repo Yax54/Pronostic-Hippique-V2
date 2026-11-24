@@ -626,6 +626,165 @@ class PmuProvider extends ChangeNotifier {
   void invaliderPourDecisionFinanciere(String id) =>
       _invaliderOperationsGainManuel(id);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 2/3 — TRANSITIONS FINANCIÈRES Accepter / Refuser
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  //  Ce que ces deux méthodes font — et rien de plus :
+  //    • elles écrivent le SEUL champ `decisionGainPmu` (et, à l'acceptation,
+  //      `montantGainManuelAvantDecision` qui garde la trace du montant
+  //      manuel antérieur) ;
+  //    • elles ne calculent AUCUN montant : `montantOfficielPmu` et
+  //      `montantGainManuel` sont déjà persistés, elles ne les touchent pas ;
+  //    • elles n'utilisent AUCUN autre chemin d'écriture que la photographie
+  //      versionnée `_savePredictions()` du lot 2-C.
+  //
+  //  Ce qu'elles NE font PAS, et qui est l'exigence du chantier :
+  //    • une erreur de sauvegarde n'est JAMAIS présentée comme une décision
+  //      enregistrée — l'issue n'est rendue `confirme` qu'après RELECTURE du
+  //      disque ;
+  //    • une notification lue ou fermée n'est ni une acceptation ni un refus :
+  //      aucune de ces méthodes n'est appelée par le simple affichage d'une
+  //      alerte ;
+  //    • l'invalidation des écritures concurrentes est la PREMIÈRE
+  //      instruction (elle fait avancer le compteur de génération), donc une
+  //      saisie manuelle encore en vol ne peut plus se rétablir par-dessus
+  //      une décision, ni se déclarer confirmée.
+  //
+  //  ⚠️ `null` reste « aucune décision » : l'acceptation écrit `accepte`, le
+  //     refus écrit `refuse`, et aucune des deux n'écrit `null`.
+
+  /// ACCEPTER le gain officiel : il devient le gain retenu.
+  ///
+  /// Effets persistés : `decisionGainPmu = accepte`, et
+  /// `montantGainManuelAvantDecision` mémorise le montant manuel qui faisait
+  /// foi avant la décision — afin qu'il reste traçable même si le champ
+  /// manuel venait à être réédité. `montantGainManuel` et `montantOfficielPmu`
+  /// sont INTOUCHÉS : la trace du manuel et la donnée officielle coexistent.
+  ///
+  /// Rend [IssueEcritureGain] — jamais un `bool` ambigu. Seul `confirme`
+  /// signifie « décision réellement sur le disque ».
+  Future<IssueEcritureGain> accepterGainOfficiel(String id) =>
+      _ecrireDecisionGain(id, DecisionGainPmu.accepte);
+
+  /// REFUSER le gain officiel : le gain manuel reste le gain retenu.
+  ///
+  /// Effets persistés : `decisionGainPmu = refuse`. `montantOfficielPmu` est
+  /// CONSERVÉ — c'est la trace du résultat officiel, elle ne disparaît pas
+  /// parce que l'utilisateur l'a refusé. `montantGainManuel` reste inchangé,
+  /// donc `gainRetenuBrut` continue de rendre le manuel.
+  Future<IssueEcritureGain> refuserGainOfficiel(String id) =>
+      _ecrireDecisionGain(id, DecisionGainPmu.refuse);
+
+  /// Transition COMMUNE aux deux décisions — un seul chemin, donc aucune
+  /// divergence possible entre « accepter » et « refuser ».
+  Future<IssueEcritureGain> _ecrireDecisionGain(
+      String id, DecisionGainPmu decision) async {
+    // ⚠️ GARDE BLOQUANTE, identique au gain manuel : on n'écrit jamais sur un
+    //    ticket dont la cohérence mémoire/disque n'est pas prouvée.
+    if (_etatFinancierDivergent.contains(id)) {
+      return IssueEcritureGain.echecNonReconcilie;
+    }
+
+    // ① INVALIDATION DES ÉCRITURES CONCURRENTES — PREMIÈRE INSTRUCTION.
+    //    Toute saisie manuelle en vol perd son statut de « dernière
+    //    génération » : elle ne pourra ni se rétablir, ni se déclarer
+    //    confirmée. La décision, elle, prend sa propre génération juste après.
+    invaliderPourDecisionFinanciere(id);
+    final maGeneration = _incrementerGenerationGainManuel(id);
+
+    final idx = _predictions.indexWhere((p) => p.id == id);
+    if (idx == -1) return IssueEcritureGain.echec;
+
+    final avant = _predictions[idx];
+
+    // ② RÉFUS D'UNE DÉCISION SANS OBJET.
+    //    Sans résultat officiel persisté, il n'y a rien à accepter ni à
+    //    refuser. On ne fabrique pas une décision sur du vide : c'est `echec`
+    //    (rien n'a été écrit), jamais `confirme`.
+    if (avant.montantOfficielPmu == null) return IssueEcritureGain.echec;
+
+    // ③ DÉJÀ DÉCIDÉE DANS LE MÊME SENS : rien à réécrire, on confirme par
+    //    lecture du disque — une égalité mémoire ne prouve pas le disque.
+    if (avant.decisionGainPmu == decision) {
+      return _issueDepuisDisqueDecision(id, decision, maGeneration);
+    }
+
+    // ④ ÉCRITURE EN MÉMOIRE — TROIS CHAMPS, pas l'objet entier.
+    //    `montantGainManuelAvantDecision` n'est renseigné QUE s'il est encore
+    //    vide : une seconde décision ne doit pas écraser la trace d'origine.
+    final trace = avant.montantGainManuelAvantDecision ??
+        avant.montantGainManuel;
+    _predictions[idx] = avant.copyWith(
+      decisionGainPmu: decision,
+      montantGainManuelAvantDecision: trace,
+    );
+    _versionMemoire++;
+    notifyListeners();
+
+    // ⑤ PERSISTANCE PUIS PREUVE. `_savePredictions()` rend le résultat réel de
+    //    la photographie FINALE ; on ne s'en contente pas : on relit le disque.
+    final ecrit = await _savePredictions();
+    if (!ecrit) {
+      // ⚠️ On ne laisse pas la mémoire mentir : on remet l'état d'AVANT en
+      //    mémoire. Aucune règle métier n'est touchée — c'est une annulation
+      //    de notre propre écriture, qui n'a pas atteint le disque.
+      final idx2 = _predictions.indexWhere((p) => p.id == id);
+      if (idx2 != -1 &&
+          _generationGainManuel[id] == maGeneration) {
+        _predictions[idx2] = avant;
+        _versionMemoire++;
+        notifyListeners();
+      }
+      return IssueEcritureGain.echec;
+    }
+
+    return _issueDepuisDisqueDecision(id, decision, maGeneration);
+  }
+
+  /// Preuve finale : le ticket [id] porte-t-il [decision] SUR LE DISQUE ?
+  ///
+  /// Même rigueur que `_issueDepuisDisque` : la génération est contrôlée
+  /// AVANT la lecture puis REVÉRIFIÉE APRÈS, car un `await` laisse toujours
+  /// passer une opération concurrente. `verifierGainPersiste` n'est pas
+  /// réutilisée : elle est câblée sur `montantGainManuel` et prouverait donc
+  /// le mauvais champ — un faux succès de plus.
+  Future<IssueEcritureGain> _issueDepuisDisqueDecision(
+      String id, DecisionGainPmu decision, int maGeneration) async {
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    final present = await _disquePorteLaDecision(id, decision);
+    if (_generationGainManuel[id] != maGeneration) {
+      return IssueEcritureGain.remplacee;
+    }
+    return present ? IssueEcritureGain.confirme : IssueEcritureGain.echec;
+  }
+
+  /// Lecture SEULE du disque : le ticket [id] y porte-t-il exactement
+  /// [decision] dans `decisionGainPmu` ?
+  ///
+  /// `reload()` est OBLIGATOIRE pour la même raison que dans
+  /// `verifierGainPersiste` : le cache mémoire de `SharedPreferences` est mis
+  /// à jour même quand le support refuse l'écriture, donc sans rechargement
+  /// cette preuve lirait le cache et confirmerait une décision que le disque
+  /// ne porte pas.
+  Future<bool> _disquePorteLaDecision(String id, DecisionGainPmu decision) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final raw = prefs.getStringList(_prefsKey) ?? [];
+      for (final s in raw) {
+        final map = jsonDecode(s) as Map<String, dynamic>;
+        if (map['id'] != id) continue;
+        return _lireDecisionGainDepuisJson(map['decisionGainPmu']) == decision;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Invalide TOUTES les opérations de gain manuel en vol sur ce ticket :
   /// après cet appel, aucune d'elles n'est plus la dernière génération, donc
   /// aucune ne peut plus effectuer de rétablissement ni se déclarer confirmée.

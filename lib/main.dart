@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ★ v9.84 : MethodChannel deep link
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -23,6 +25,8 @@ import 'services/ia_badges_service.dart';      // ★ v9.85
 import 'services/ia_archive_service.dart';      // ★ A1/R1 — archive des pronostics évincés
 import 'services/arrivee_officielle_service.dart'; // ★ L2-1 — arrivées officielles complètes (L0)
 import 'services/quasi_gros_paris_service.dart' show QuasiGrosParisService; // ★ v10.75b
+import 'services/planificateur_gains_tardifs.dart'; // ★ CHANTIER 2/3 — déclencheurs du rattrapage
+import 'services/service_gains_tardifs.dart';        // ★ CHANTIER 2/3 — orchestrateur du rattrapage
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
 import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
 
@@ -215,9 +219,15 @@ class MainNavigation extends StatefulWidget {
   State<MainNavigation> createState() => _MainNavigationState();
 }
 
-class _MainNavigationState extends State<MainNavigation> {
+class _MainNavigationState extends State<MainNavigation>
+    with WidgetsBindingObserver {
   List<Widget> _screens = [];
   static const _deepLinkChannel = MethodChannel('com.racepredictor.predict/deep_link');
+
+  /// ★ CHANTIER 2/3 — déclencheurs du rattrapage des gains officiels tardifs.
+  /// Construit paresseusement : `SharedPreferences` n'est pas encore ouvert au
+  /// premier `initState`, la fabrique s'en charge donc à l'appel.
+  PlanificateurGainsTardifs? _planificateur;
 
   @override
   void initState() {
@@ -241,6 +251,29 @@ class _MainNavigationState extends State<MainNavigation> {
         final pmuProvider = context.read<PmuProvider>();
         AlertService.instance.setPmuProvider(pmuProvider);
       }
+    });
+
+    // ★ CHANTIER 2/3 — DÉCLENCHEURS DU RATTRAPAGE DES GAINS TARDIFS.
+    //
+    // ① OUVERTURE DE L'APPLICATION : un cycle part dès que le provider est
+    //    disponible, puis le minuteur périodique (③) est armé.
+    // ② RETOUR AU PREMIER PLAN : traité dans [didChangeAppLifecycleState].
+    //
+    // ⚠️ POURQUOI UN `microtask` ET NON UN APPEL DIRECT :
+    //    `Provider.of`/`context.read` n'est pas lisible avant que le premier
+    //    build n'ait eu lieu. Le `microtask` laisse passer le build courant.
+    //
+    // ⚠️ AUCUNE EXCEPTION NE REMONTE : `demarrer()` capture tout. Une panne
+    //    de rattrapage ne doit jamais empêcher l'application de démarrer.
+    WidgetsBinding.instance.addObserver(this);
+    Future.microtask(() async {
+      if (!mounted) return;
+      final pmuProvider = context.read<PmuProvider>();
+      final planificateur = PlanificateurGainsTardifs(
+        fabrique: () => ServiceGainsTardifs.creer(pmuProvider),
+      );
+      _planificateur = planificateur;
+      await planificateur.demarrer();
     });
 
     // ★ v10.1 : Deep link — naviguer vers le pari concerné depuis une notification
@@ -290,6 +323,33 @@ class _MainNavigationState extends State<MainNavigation> {
     _NavDef(icon: Icons.find_in_page_outlined,   activeIcon: Icons.find_in_page,     label: 'Audit',     color: Color(0xFFFFD700)), // Or — Audit IA
     _NavDef(icon: Icons.person_outline,          activeIcon: Icons.person,           label: 'Profil',    color: Color(0xFFB0BEC5)), // Argent neutre
   ];
+
+  // ★ CHANTIER 2/3 — DÉCLENCHEUR ② : RETOUR AU PREMIER PLAN.
+  //
+  // `resumed` est le seul état où l'utilisateur REGARDE l'application : c'est
+  // donc le seul moment où un gain officiel arrivé pendant l'absence a un sens
+  // à être remonté. On ne relance rien en `inactive`/`paused`/`hidden`, ce qui
+  // évite des cycles dans le dos de l'utilisateur.
+  //
+  // ⚠️ Le planificateur applique sa propre distance minimale : un aller-retour
+  //    rapide entre deux applications ne produit pas deux cycles.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    final planificateur = _planificateur;
+    if (planificateur == null) return;
+    // Aucun `await` : on ne bloque pas le cycle de vie. Les erreurs sont déjà
+    // capturées à l'intérieur du planificateur.
+    unawaited(planificateur.retourPremierPlan());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _planificateur?.arreter();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

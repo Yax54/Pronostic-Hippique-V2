@@ -75,6 +75,7 @@ enum AlertType {
   conseilIA,     // ★ v10.23 : cours entrant dans les critères Conseils IA
   coteBaisse,    // ★ v10.24 : cote qui chute ≥ 20% en 1h
   derniereChance,// ★ v10.24 : 30min avant départ, pas encore misé
+  gainTardif,    // ★ CHANTIER 2/3 : gain officiel PMU arrivé après coup
 }
 
 extension AlertTypeExt on AlertType {
@@ -89,6 +90,7 @@ extension AlertTypeExt on AlertType {
       case AlertType.conseilIA:        return '🎯 Conseil IA';
       case AlertType.coteBaisse:       return '📉 Cote qui chute';
       case AlertType.derniereChance:   return '⏰ Dernière chance';
+      case AlertType.gainTardif:       return '🏆 Gain officiel disponible';
     }
   }
 
@@ -103,6 +105,7 @@ extension AlertTypeExt on AlertType {
       case AlertType.conseilIA:        return const Color(0xFF4CAF7D);
       case AlertType.coteBaisse:       return const Color(0xFFEF5350);
       case AlertType.derniereChance:   return const Color(0xFFFF6F00);
+      case AlertType.gainTardif:       return const Color(0xFFFFD700);
     }
   }
 
@@ -117,6 +120,7 @@ extension AlertTypeExt on AlertType {
       case AlertType.conseilIA:        return Icons.stars;
       case AlertType.coteBaisse:       return Icons.trending_down;
       case AlertType.derniereChance:   return Icons.alarm;
+      case AlertType.gainTardif:       return Icons.emoji_events;
     }
   }
 }
@@ -1456,6 +1460,82 @@ class AlertService extends ChangeNotifier {
       numReunion: numR,
       numCourse:  numC,
     ));
+  }
+
+  // ★ CHANTIER 2/3 ── Alerte de GAIN OFFICIEL TARDIF ───────────────────────
+  //
+  /// Émet LA notification de remontée tardive pour le ticket [idTicket].
+  ///
+  /// Rend `true` SEULEMENT si l'alerte a réellement été enregistrée ET que sa
+  /// persistance a été confirmée par [_save]. Un `false` ne dit donc jamais
+  /// « notification produite » : l'appelant (`ServiceGainsTardifs`) s'en sert
+  /// pour décider de NE PAS poser son marqueur d'idempotence, afin que le
+  /// ticket reste renotifiable au cycle suivant.
+  ///
+  /// ⚠️ IDENTIFIANT STABLE, JAMAIS HORODATÉ.
+  ///    `signalerResultat` compose `'${courseKey}_result_${aaaa}${m}${j}'`,
+  ///    ce qui autorise UNE alerte par course et par jour. Ici l'exigence est
+  ///    « une seule par TICKET, à vie » : l'identifiant est donc dérivé du
+  ///    seul `idTicket`. Deux cycles de détection, deux rafraîchissements, un
+  ///    redémarrage ou une nouvelle récupération du même rapport produisent
+  ///    le MÊME identifiant, donc une seule entrée (`_sentAlertIds` la
+  ///    refuse, et `_addAlert` la refuse une seconde fois).
+  ///
+  /// ⚠️ CE QUE CETTE MÉTHODE NE FAIT PAS — ET NE DOIT JAMAIS FAIRE :
+  ///    • elle n'écrit AUCUN montant, ne décide RIEN (une notification lue ou
+  ///      fermée ne vaut ni acceptation ni refus) ;
+  ///    • elle n'est PAS la preuve durable de l'idempotence : `_sentAlertIds`
+  ///      et `_alerts` sont purgés (reset, plafond de 100, restauration). La
+  ///      preuve durable est `MemoireGainsTardifsNotifies`, hors de ce fichier.
+  Future<bool> emettreAlerteGainTardif({
+    required String idTicket,
+    required String titre,
+    required String message,
+    required int numReunion,
+    required int numCourse,
+    String? dateStrCourse,
+  }) async {
+    // Le filtre de configuration le plus proche du sens métier : un
+    // utilisateur qui coupe les alertes de résultats ne veut pas non plus
+    // être relancé sur un gain officiel. On n'invente pas de nouveau flag.
+    if (!_config.activerResultats) return false;
+
+    final id = 'gainTardif_$idTicket';
+    // Déjà enregistrée (mémoire ou disque rechargé) : rien à refaire. On rend
+    // `true` car la notification EXISTE — c'est un succès idempotent, pas un
+    // échec, et le marqueur durable peut donc être posé sans mentir.
+    if (_sentAlertIds.contains(id)) return true;
+
+    _addAlert(AppAlert(
+      id: id,
+      type: AlertType.gainTardif,
+      titre: titre,
+      message: message,
+      timestamp: DateTime.now(),
+      numReunion: numReunion,
+      numCourse: numCourse,
+      dateStrCourse: dateStrCourse,
+    ));
+
+    // ⚠️ `_addAlert` ne rend rien et `_save()` est lancé sans être attendu à
+    //    l'intérieur : on attend ICI la persistance réelle, puis on confirme
+    //    par une relecture du disque. Un `setStringList` refusé sans exception
+    //    est déjà transformé en `false` par `_save` (capture des six retours).
+    final persiste = await _save();
+    if (!persiste) return false;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final brut = prefs.getStringList(_alertsKey) ?? const <String>[];
+    for (final ligne in brut) {
+      try {
+        final j = json.decode(ligne) as Map<String, dynamic>;
+        if (j['id'] == id) return true;
+      } catch (_) {
+        // Ligne illisible : elle ne prouve rien, on continue.
+      }
+    }
+    return false;
   }
 
   // ★ v3.0 ── Alerte non-partant (appelée par DataRefreshService) ─────────
