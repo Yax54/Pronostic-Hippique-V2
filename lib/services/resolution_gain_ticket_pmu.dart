@@ -127,10 +127,22 @@ class ResultatOfficielCourse {
   /// Rapports officiels publiés pour cette course, TELLS QUELS.
   final List<RapportPmu> rapports;
 
+  /// ★ CHANTIER 1/3 — STATUTS OFFICIELS DES CHEVAUX, quand la source les
+  /// établit. Provient de `ResultatCourse.statutsPartants` (même réponse
+  /// réseau que l'arrivée : la correspondance avec la course est donc portée
+  /// par l'URL elle-même, sans rapprochement de contenu).
+  ///
+  /// Transmis TEL QUEL au moteur : `null` reste `null` (« information
+  /// indisponible »), une table vide reste vide. Aucune normalisation n'est
+  /// faite ici — la conversion des libellés bruts appartient à
+  /// `statutsDepuisMap`, qui laisse hors table tout statut non reconnu.
+  final Map<int, String>? statutsPartants;
+
   const ResultatOfficielCourse({
     required this.arriveeGroupes,
     required this.arriveeDefinitive,
     required this.rapports,
+    this.statutsPartants,
   });
 
   /// `true` si l'API a explicitement dit que l'arrivée n'est pas définitive.
@@ -252,6 +264,11 @@ VerdictGain resoudreGainTicketDepuisDonnees({
     // `unmodifiable` : le moteur ne peut pas modifier notre liste, et nous ne
     // pouvons pas modifier la sienne. Aucune référence partagée mutable.
     rapports: List<RapportPublie>.unmodifiable(conversion.rapports),
+    // ★ CHANTIER 1/3 : les statuts officiels accompagnent l'arrivée. Ils
+    //   permettent au moteur de distinguer un cheval qui a COURU et perdu
+    //   (`perdu` démontré) d'un cheval dont le sort reste inconnu
+    //   (`nonDetermine`) — voir `EtatCourseOfficiel.statutDe`.
+    statutsPartants: statutsDepuisMap(resultat.statutsPartants),
   );
 
   return resoudreGainTicket(
@@ -286,6 +303,8 @@ ResolutionGainAvecTrace resoudreGainTicketDepuisDonneesAvecTrace({
     arriveeGroupes: resultat.arriveeGroupes,
     arriveeDefinitive: resultat.arriveeDefinitive,
     rapports: List<RapportPublie>.unmodifiable(conversion.rapports),
+    // ★ CHANTIER 1/3 : idem — même chemin, aucune divergence possible.
+    statutsPartants: statutsDepuisMap(resultat.statutsPartants),
   );
   final verdict = resoudreGainTicket(
     libelleTypePari: ticket.libelleTypePari,

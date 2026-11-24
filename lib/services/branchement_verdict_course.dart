@@ -142,11 +142,17 @@ ResultatOfficielCourse construireResultatOfficiel({
   required List<List<int>>? arriveeGroupes,
   required bool? arriveeDefinitive,
   required List<RapportPmu> rapports,
+  Map<int, String>? statutsPartants,
 }) =>
     ResultatOfficielCourse(
       arriveeGroupes: arriveeGroupes,
       arriveeDefinitive: arriveeDefinitive,
       rapports: List<RapportPmu>.unmodifiable(rapports),
+      // ★ CHANTIER 1/3 : statuts officiels transmis TELS QUELS. `null` reste
+      //   `null` — l'information est indisponible, et le moteur ne prononcera
+      //   aucune perte fondée sur une absence de rapport. Aucune table n'est
+      //   fabriquée ici : ce serait inventer une participation.
+      statutsPartants: statutsPartants,
     );
 
 /// Charge le résultat officiel de LA course désignée par `numReunion`,
@@ -185,6 +191,12 @@ Future<ResultatOfficielCourse?> chargerResultatOfficielCourse({
     arriveeGroupes: resultat.arriveeGroupes,
     arriveeDefinitive: resultat.arriveeDefinitive,
     rapports: rapports,
+    // ★ CHANTIER 1/3 : MÊME réponse réseau que l'arrivée
+    //   (`ZoneTurfService.chargerResultatsCourseComplet`), donc la
+    //   correspondance avec CETTE course est portée par l'URL, sans
+    //   rapprochement de contenu. C'est la source PRIORITAIRE retenue par
+    //   l'arbitrage. Rien n'est re-téléchargé : aucune nouvelle chaîne.
+    statutsPartants: resultat.statutsPartants,
   );
 }
 

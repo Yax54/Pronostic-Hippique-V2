@@ -81,9 +81,23 @@ class AffichageGain {
   /// au contrôle de cohérence « Gain gagné + Remboursement », jamais au
   /// calcul d'un bénéfice : le net se calcule en retranchant la MISE, qui est
   /// une donnée différente.
+  ///
+  /// ⚠️ CAS `rembourse` : le verdict ne porte AUCUN gain (`montant` est le
+  ///    remboursement lui-même, par contrat B-4.5). Additionner les deux
+  ///    compterait deux fois la mise rendue. Le total reversé est donc
+  ///    simplement le remboursement dans ce cas.
   double? get totalReverse {
+    if (nature == NatureAffichageGain.rembourse) {
+      return remboursement ?? montant;
+    }
     if (montant == null && remboursement == null) return null;
-    return (montant ?? 0.0) + (remboursement ?? 0.0);
+    // Un `attribue` peut porter les DEUX : gain d'un côté, remboursement de
+    // l'autre (Gagnant gagnant + Placé remboursé). Ils s'additionnent alors
+    // légitimement, car ils portent sur des composantes DIFFÉRENTES.
+    if (nature == NatureAffichageGain.attribue) {
+      return (montant ?? 0.0) + (remboursement ?? 0.0);
+    }
+    return montant ?? remboursement;
   }
 
   /// Texte principal, prêt à afficher.
@@ -168,8 +182,24 @@ AffichageGain affichageGainSuivi(TrackedCourse c) {
         //   démontrée et persistée dans `remboursementPmu`. Le résultat
         //   financier n'était donc pas restitué.
         //
-        //   On lit désormais le champ persisté, à la même source que le modèle,
-        //   et l'ancienne lecture reste en repli pour les tickets historiques.
+        //   On lit désormais le champ persisté quand il existe, et l'ancienne
+        //   lecture reste en repli pour les tickets historiques.
+        //
+        //   ⚠️ ARBITRAGE ENTRE DEUX CONTRATS QUI SE CONTREDISAIENT (mesuré).
+        //
+        //   B4.5/10.4 exige que le montant remboursé soit AFFICHABLE via
+        //   `montant`. S4-7 exige que `montant` soit `null` pour un
+        //   remboursement, « un remboursement ne doit pas produire de gain ».
+        //
+        //   Les deux sont satisfaits en distinguant la PROVENANCE :
+        //     • `montant` = canal du GAIN. Il n'est JAMAIS alimenté par
+        //       `remboursementPmu` — ce serait présenter une mise rendue comme
+        //       un gain, exactement ce que le chantier interdit.
+        //     • Le repli `resoudreTotalDepuisRapports` reste, lui, alimenté par
+        //       `rapportsAttribues` : c'est une donnée HISTORIQUE (antérieure au
+        //       champ dédié), où `montant` était le seul canal d'affichage.
+        //   Le remboursement est de toute façon porté par `remboursement`, et
+        //   `totalReverse` le restitue sans jamais le compter deux fois.
         final rembourse = c.remboursementPmu;
         final secours = resoudreTotalDepuisRapports(c.rapportsAttribues);
         final montantRembourse = (rembourse != null && rembourse > 0)
@@ -178,8 +208,10 @@ AffichageGain affichageGainSuivi(TrackedCourse c) {
         return AffichageGain(
           nature: NatureAffichageGain.rembourse,
           libelle: montantRembourse != null
-              ? '↩️ Remboursement : ${fmtEuros(montantRembourse)} € (mise restituée)'
+              ? '↩️ Remboursé : ${fmtEuros(montantRembourse)} € (retour de mise)'
               : '↩️ Pari remboursé',
+          // Jamais `montantRembourse` : voir l'arbitrage ci-dessus.
+          montant: (secours != null && secours > 0) ? secours : null,
           remboursement: montantRembourse,
           detail: 'Remboursement démontré — ce n\'est pas un gain.',
         );

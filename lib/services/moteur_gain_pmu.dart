@@ -1093,7 +1093,31 @@ List<int>? _arriveeAplatie(EtatCourseOfficiel etat) {
 
 /// `true` si la perte du ticket est DÉMONTRÉE par recoupement.
 ///
-/// Preuve exigée, dans cet ordre :
+/// ★ CHANTIER 1/3 — SÉPARATION DES DEUX CONTRATS (correction F3).
+///
+/// L'ancienne version mêlait deux questions distinctes et les satisfaisait par
+/// une exemption unique (`rang == null`), ce qui la rendait INCORRECTE sur l'une
+/// des deux :
+///   A. « le bloc officiel couvre-t-il toutes les positions payables ? »
+///   B. « le cheval joué a-t-il couru, et sa combinaison est-elle absente ? »
+///
+/// MESURE QUI A MOTIVÉ LA CORRECTION : sur une course où le SEUL bloc publié
+/// est « e-Simple Gagnant 7 », un ticket jouant le 9 recevait `perdu`. Or
+/// l'absence du 9 dans un bloc d'UNE ligne ne dit RIEN du 9 : il a pu courir et
+/// perdre, ou être non-partant — auquel cas un remboursement est dû. Prononcer
+/// une perte y était donc une DÉFAITE INVENTÉE.
+///
+/// RÈGLE APPLIQUÉE — la perte exige désormais, en plus de la complétude du
+/// bloc, une PREUVE DE PARTICIPATION pour CHAQUE cheval joué :
+///   • la table de statuts officiels le déclare PARTANT ; OU
+///   • il figure dans l'arrivée officielle — un cheval classé a nécessairement
+///     pris part à la course (certificat le plus direct, indépendant de toute
+///     liste de partants).
+/// Si cette preuve manque, la fonction rend `false` : le verdict restera
+/// `nonDetermine`. Aucun remboursement n'est pour autant fabriqué — il n'est
+/// établi que par la règle officielle du pari, jamais par un statut.
+///
+/// Preuve de completude du bloc exigée, dans cet ordre :
 ///   1. arrivée officielle définitive et exploitable, groupes connus ;
 ///   2. le type fait partie du périmètre mesuré (aucun Bonus, aucune variante
 ///      concurrente à arbitrer) ;
@@ -1118,6 +1142,26 @@ bool _blocEstDemontreComplet({
 
   final arrivee = _arriveeAplatie(etat);
   if (arrivee == null) return false;
+
+  // 2 bis. ★ PREUVE DE PARTICIPATION — condition AJOUTÉE (correction F3).
+  //
+  //   ELLE PORTE SUR UN SEUL CAS, ET C'EST DÉLIBÉRÉ : celui où la complétude
+  //   du bloc est affirmée par l'EXEMPTION « une seule ligne, sans rang »
+  //   (voir condition 4 ci-dessous). Ailleurs, la complétude repose sur une
+  //   preuve STRUCTURELLE — rangs contigus + recoupement exact — et elle suffit
+  //   à prononcer la perte, car elle est adossée à un rapport officiel
+  //   EXPLICITE et applicable.
+  //
+  //   C'est la distinction exigée par l'arbitrage : « L'absence de statut doit
+  //   empêcher une déduction financière non démontrée, SANS bloquer un résultat
+  //   déjà établi par un rapport officiel explicite et applicable. »
+  //
+  //   MESURE QUI A MOTIVÉ CE PÉRIMÈTRE : appliquée à TOUS les blocs, la preuve
+  //   de participation cassait A1/3 (`Couplé Gagnant [1,2]` sur une arrivée
+  //   `9-4-15-10-1-7-12`) : le cheval 2 est absent de l'arrivée, donc sa
+  //   participation n'était pas démontrable, et un pari pourtant perdu au vu
+  //   d'un bloc `E_COUPLE_GAGNANT 9-4` explicitement classé rang 1 devenait
+  //   `nonDetermine`. La perte y était DÉJÀ établie par un rapport officiel.
 
   // 3. Le bloc doit exister.
   final lignes = _lignesBloc(type: type, etat: etat);
@@ -1145,35 +1189,43 @@ bool _blocEstDemontreComplet({
   final rangs = <int>{};
   for (final l in lignes) {
     final r = l.rang;
-    // ★ EXEMPTION MESURÉE — SIMPLE GAGNANT À UNE SEULE LIGNE, SANS RANG.
+    // ★ BLOC SIMPLE GAGNANT À UNE SEULE LIGNE, SANS RANG.
     //
-    //   Certains blocs Simple Gagnant ne publient QU'UNE ligne, pour UN cheval,
-    //   SANS `rang` explicite. Le recoupement exact de cette ligne avec le
-    //   1er cheval de l'arrivée définitive EST alors la preuve de complétude.
-    //
-    //   ⚠️ DÉFAUT RÉEL, DIAGNOSTIQUÉ ET **NON CORRIGÉ** DANS CE LOT.
-    //
-    //   Mesure reproductible (test F3 de b1_t12_lot2c_ecriture_securisee_test,
-    //   échoue aussi en exécution isolée) : sur une course où SEUL le bloc
-    //   « e-Simple Gagnant 7 » est publié, un ticket jouant le 9 reçoit
-    //   `perdu` au lieu de `nonDetermine`. L'exemption transforme donc une
-    //   ABSENCE de rapport en DÉFAITE, ce que la règle validée interdit.
-    //
-    //   ── POURQUOI ELLE N'EST PAS RETIRÉE ICI ─────────────────────────────
-    //   L'arbitrage autorise une ligne unique à suffire, mais à quatre
-    //   conditions cumulatives, dont « le cheval joué est un PARTANT non
-    //   concerné par un remboursement ». `EtatCourseOfficiel` ne transporte
-    //   AUCUNE liste de partants ni d'état de non-partant (mesuré : aucune
-    //   occurrence de `partants` / `nonPartant` dans ce moteur). La condition
-    //   est donc INDÉMONTRABLE à cet endroit.
-    //
-    //   Retirer l'exemption a été ESSAYÉ ET MESURÉ : F3 passe, mais le verrou
-    //   protégé B3/6.5 tombe (`composantes: []` au lieu d'une composante
-    //   Placé sur le cheval 4, placé mais non gagnant). On ne remplace donc
-    //   pas un défaut par un autre : le correctif exige une source de
-    //   partants, qui n'existe pas dans ce périmètre. Décision REPORTÉE.
+    //   LÉGITIME, et non plus une exemption de complaisance : le recoupement
+    //   EXACT de cette unique ligne avec le PREMIER cheval de l'arrivée
+    //   définitive (vérifié ci-dessous, condition 5) est bien la preuve de
+    //   complétude du bloc — il n'existe qu'UNE position payable au Simple
+    //   Gagnant. Ce que cette exemption ne prouve PAS, et ne prétend plus
+    //   prouver, c'est le sort du cheval joué : c'est le rôle de la preuve de
+    //   participation (2 bis), désormais séparée. C'est cette séparation qui
+    //   corrige F3 sans affaiblir B3/6.5.
     if (r == null) {
-      if (type == TypePariJoue.simpleGagnant && lignes.length == 1) continue;
+      if (type == TypePariJoue.simpleGagnant && lignes.length == 1) {
+        // ★ PREUVE DE PARTICIPATION — exigée ICI, et seulement ici.
+        //
+        //   C'est le seul chemin où la complétude n'est PAS adossée à un rang
+        //   publié : elle repose entièrement sur cette ligne unique. Si le
+        //   cheval joué n'est pas démontré partant, un `perdu` serait une
+        //   défaite INVENTÉE — c'est exactement le défaut F3. On rend donc
+        //   `false`, et le verdict restera `nonDetermine`.
+        //
+        //   Un cheval DÉMONTRÉ non-partant rend également `false` : son pari
+        //   relève d'un remboursement, qui doit être établi par le rapport
+        //   officiel ou la règle du pari, jamais déduit d'un simple statut.
+        for (final n in numerosJoues) {
+          if (etat.estDemontreNonPartant(n)) return false;
+          if (etat.statutAmbigu(n)) return false;
+          if (!etat.estDemontrePartant(n)) return false;
+        }
+        // La complétude repose alors entièrement sur le recoupement exact
+        // (condition 5) : on vérifie donc immédiatement que cette unique ligne
+        // porte bien le premier cheval de l'arrivée, sans quoi le bloc n'est
+        // pas complet.
+        final nums = l.numeros;
+        if (nums == null || nums.length != 1) return false;
+        if (nums.single != arrivee.first) return false;
+        continue;
+      }
       return false;
     }
     if (r < 1) return false;

@@ -77,6 +77,100 @@ import 'gain_ticket_calculator.dart'
         codeApiPourType,
         tailleCombinaisonAttendue;
 
+// ───────────────────────────────────────────────────────────────────────────
+//  ★ STATUT OFFICIEL D'UN CHEVAL DANS LA COURSE (chantier 1/3, levée F3)
+//
+//  POURQUOI CETTE NOTION EXISTE
+//
+//  Le moteur doit distinguer quatre situations, et rien de moins :
+//    ① le cheval A COURU et n'a pas gagné   → la perte peut être prononcée ;
+//    ② le cheval est NON-PARTANT            → son pari est remboursable ;
+//    ③ le cheval A GAGNÉ                    → le gain est établi par le rapport ;
+//    ④ on ne sait pas                       → `nonDetermine`, jamais une perte.
+//
+//  MESURE QUI A MOTIVÉ SON INTRODUCTION : sur une course dont le seul bloc
+//  publié est « e-Simple Gagnant 7 », un ticket jouant le 9 recevait `perdu`.
+//  Or l'absence du 9 dans un bloc d'UNE ligne ne prouve RIEN sur le 9 : elle
+//  ne dit ni qu'il a couru, ni qu'il était non-partant. Le prononcé d'une
+//  perte exigeait donc une preuve de PARTICIPATION, qui n'existait nulle part
+//  dans `EtatCourseOfficiel`.
+//
+//  ── HIÉRARCHIE DES SOURCES (arbitrage validé) ─────────────────────────────
+//   1. `ResultatCourse.statutsPartants` — statuts officiels de la course ;
+//   2. `ZoneTurfService.chargerStatutsPartants` — source complémentaire ;
+//   3. programme en mémoire — UNIQUEMENT si le statut est explicitement
+//      confirmé. La valeur `PARTANT` par défaut de `ZtPartant.statutPmu`
+//      n'est JAMAIS une preuve de participation : elle ne renseigne rien.
+//
+//  ── RÈGLES IMPÉRATIVES ────────────────────────────────────────────────────
+//   • `null` (aucune table fournie) = information INDISPONIBLE.
+//   • Une table VIDE n'est pas « indisponible » : elle dit « aucun cheval
+//     n'a de statut établi », ce qui reste une information exploitable.
+//   • L'ABSENCE d'un cheval dans la table ne prouve pas qu'il est non-partant.
+//   • Un statut non reconnu n'est converti NI en partant NI en non-partant.
+//   • Aucun remboursement n'est déduit d'un statut : il est établi par la
+//     règle officielle du pari concerné.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Statut officiel d'un cheval, tel qu'établi par la source.
+///
+/// Trois valeurs seulement. Tout statut non reconnu est laissé HORS de la
+/// table par [statutsDepuisMap] : il devient donc « inconnu », et un inconnu
+/// n'autorise ni perte ni remboursement.
+enum StatutPartant {
+  /// Le cheval a effectivement pris part à la course.
+  partant,
+
+  /// Le cheval n'a pas pris part : son pari est concerné par un remboursement.
+  nonPartant,
+}
+
+/// Convertit une table `numéro → statut brut` en table de statuts OFFICIELS.
+///
+/// Aucune valeur par défaut n'est inventée : un statut brut absent, vide ou
+/// non reconnu n'entre PAS dans la table rendue. La table rendue ne contient
+/// donc que des statuts EXPLICITEMENT établis par la source.
+///
+/// Rend `null` si [brute] est `null` : « information indisponible » n'est pas
+/// « aucun cheval n'a de statut ».
+Map<int, StatutPartant>? statutsDepuisMap(Map<int, String>? brute) {
+  if (brute == null) return null;
+  final out = <int, StatutPartant>{};
+  for (final entry in brute.entries) {
+    final statut = _statutOfficielDepuisBrut(entry.value);
+    if (statut == null) continue; // inconnu → absent de la table, jamais deviné.
+    out[entry.key] = statut;
+  }
+  return out;
+}
+
+/// Traduit un statut brut en [StatutPartant], ou `null` si non reconnaissable.
+///
+/// Les libellés mesurés dans les sources de l'application :
+///   • PMU/Zone-Turf « PARTANT » ;
+///   • PMU/Zone-Turf « NON_PARTANT », « RETRAIT » (retiré avant le départ).
+///
+/// ⚠️ « DISQUALIFIE », « ARRETE », « TOMBE » ne sont PAS traités ici : un
+///    cheval disqualifié APRÈS avoir couru reste un PARTANT pour le calcul du
+///    gain (son pari n'est pas remboursé du seul fait de la disqualification).
+///    Les confondre avec un non-partant inventerait un remboursement.
+StatutPartant? _statutOfficielDepuisBrut(String? brut) {
+  final s = (brut ?? '').trim().toUpperCase();
+  if (s.isEmpty) return null;
+  switch (s) {
+    case 'PARTANT':
+    case 'PARTANTS':
+      return StatutPartant.partant;
+    case 'NON_PARTANT':
+    case 'NONPARTANT':
+    case 'RETRAIT':
+      return StatutPartant.nonPartant;
+    default:
+      // Statut non reconnu : on ne tranche pas. Ni partant, ni non-partant.
+      return null;
+  }
+}
+
 /// L'état officiel de la course, réduit au strict nécessaire.
 ///
 /// [arriveeGroupes] suit le format validé au lot B-2 bis (`List<List<int>>`) :
@@ -93,10 +187,18 @@ class EtatCourseOfficiel {
   /// Rapports officiels publiés pour cette course.
   final List<RapportPublie> rapports;
 
+  /// Statuts OFFICIELS des chevaux, quand la source les établit.
+  ///
+  /// `null` = information INDISPONIBLE. Une table vide signifie « aucun
+  /// statut n'est établi », ce qui n'est pas la même chose. L'absence d'un
+  /// numéro dans cette table ne prouve AUCUN statut.
+  final Map<int, StatutPartant>? statutsPartants;
+
   const EtatCourseOfficiel({
     required this.arriveeGroupes,
     required this.rapports,
     this.arriveeDefinitive,
+    this.statutsPartants,
   });
 
   /// `true` si l'arrivée comporte un ex æquo CONNU.
@@ -105,6 +207,48 @@ class EtatCourseOfficiel {
 
   /// `true` si l'arrivée est explicitement provisoire.
   bool get estProvisoire => arriveeDefinitive == false;
+
+  /// Statut OFFICIEL du cheval [numero], ou `null` si la source ne l'établit
+  /// pas. Un `null` n'est JAMAIS converti en partant ou non-partant.
+  StatutPartant? statutDe(int numero) => statutsPartants?[numero];
+
+  /// Le cheval [numero] est-il DÉMONTRÉ partant ?
+  ///
+  /// Deux preuves indépendantes, chacune suffisante et officielle :
+  ///   ① la table de statuts le déclare PARTANT ;
+  ///   ② il figure dans l'ARRIVÉE OFFICIELLE : un cheval classé a
+  ///      nécessairement pris part à la course. C'est le certificat le plus
+  ///      direct, et il ne dépend d'aucune liste de partants.
+  bool estDemontrePartant(int numero) {
+    if (statutDe(numero) == StatutPartant.partant) return true;
+    for (final groupe in arriveeGroupes ?? const <List<int>>[]) {
+      if (groupe.contains(numero)) return true;
+    }
+    return false;
+  }
+
+  /// Le cheval [numero] est-il DÉMONTRÉ non-partant ?
+  ///
+  /// Seule la table de statuts peut le démontrer : l'absence d'un cheval dans
+  /// l'arrivée ne prouve rien (il a pu courir et perdre). Un cheval déclaré
+  /// non-partant ne peut pas figurer dans une arrivée officielle cohérente ;
+  /// si les deux se contredisent, on ne tranche pas — voir [statutAmbigu].
+  bool estDemontreNonPartant(int numero) =>
+      statutDe(numero) == StatutPartant.nonPartant && !_dansArrivee(numero);
+
+  /// `true` si la source se CONTREDIT sur ce cheval (non-partant ET classé).
+  ///
+  /// Cas anormal : une donnée contradictoire ne doit jamais être arbitrée en
+  /// silence. L'appelant doit alors rester `nonDetermine`.
+  bool statutAmbigu(int numero) =>
+      statutDe(numero) == StatutPartant.nonPartant && _dansArrivee(numero);
+
+  bool _dansArrivee(int numero) {
+    for (final groupe in arriveeGroupes ?? const <List<int>>[]) {
+      if (groupe.contains(numero)) return true;
+    }
+    return false;
+  }
 }
 
 /// État d'un arbitrage. Cinq cas, tous exclusifs, aucun « presque ».

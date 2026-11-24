@@ -58,6 +58,13 @@ enum IssueEcritureGain {
   echecNonReconcilie,
 }
 
+/// Tolérance de comparaison monétaire, en euros (convention du chantier 1/3).
+///
+/// Absorbe l'erreur d'arrondi IEEE-754 sur des montants de l'ordre de 10⁵ €,
+/// sans jamais tolérer un centime : 0,01 € est 10 millions de fois plus grand
+/// que cette tolérance, donc un écart d'un centime est REFUSÉ.
+const double _toleranceMontantEuros = 1e-9;
+
 class PmuProvider extends ChangeNotifier {
   List<PmuReunion> _reunions = [];
   final List<UserPrediction> _predictions = [];
@@ -1166,7 +1173,36 @@ class PmuProvider extends ChangeNotifier {
       //   place » sur la seule base des sept autres champs alors que le
       //   montant officiel, lui, différait entre mémoire et disque.
       courant.montantOfficielPmu == attendu.montantOfficielPmu &&
+      // ★ CHANTIER 1/3 — le REMBOURSEMENT fait lui aussi partie de ce que
+      //   cette opération écrit : il doit donc être comparé. Sans cette ligne,
+      //   un échec de sauvegarde pouvait être jugé « déjà en place » alors que
+      //   le remboursement différait entre mémoire et disque — l'alignement
+      //   était alors affirmé à tort.
+      //
+      //   Comparaison au CENTIME, pas avec `==` : deux doubles issus de calculs
+      //   distincts peuvent différer d'un epsilon sans que le montant change.
+      //   `null` reste distinct de `0.0` : « remboursement non établi » n'est
+      //   pas « remboursement officiellement nul ».
+      _memeMontantOuTousDeuxNuls(
+          courant.remboursementPmu, attendu.remboursementPmu) &&
       courant.rapportsAttribues?.length == attendu.rapportsAttribues?.length;
+
+  /// Égalité monétaire au CENTIME, avec `null` traité comme une information
+  /// distincte de `0.0`.
+  ///
+  /// `null` signifie « non établi » ; `0.0` signifie « officiellement nul ».
+  /// Les confondre effacerait une distinction métier : un remboursement non
+  /// établi ne doit jamais être lu comme un remboursement nul.
+  ///
+  /// ⚠️ Tolérance `1e-9` (soit un milliardième d'euro) : elle absorbe l'erreur
+  ///    d'arrondi IEEE-754 sur des montants de l'ordre de 10⁵ €. Ce n'est PAS
+  ///    un arrondi au centime : un écart de 0,01 € est 10 millions de fois
+  ///    plus grand que cette tolérance, donc il est REFUSÉ.
+  bool _memeMontantOuTousDeuxNuls(double? a, double? b) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return (a - b).abs() <= _toleranceMontantEuros;
+  }
 
   /// Rend `true` si le pronostic existait et a été remplacé, `false` sinon.
   bool appliquerVerdictGainPrediction(UserPrediction resolue) {
