@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../main.dart' show NavigationNotifier;
 import '../models/zt_models.dart';
+import '../models/pmu_models.dart' show UserPrediction;
 import '../providers/pmu_provider.dart';
 import '../services/alert_service.dart';
 import '../services/zone_turf_service.dart';
@@ -25,6 +26,8 @@ import '../services/branchement_verdict_course.dart'; // ★ B-4.5 — verdict o
 import '../services/affichage_gain_structure.dart'; // ★ B-4.5 — affichage structuré
 import '../services/ia_pronostic_engine.dart';
 import '../services/bookmaker_service.dart';
+import '../services/decisions_en_attente_course.dart'; // ★ CHANTIER 2/3 — décisions en attente
+import '../widgets/bloc_decision_gain_tardif.dart';    // ★ CHANTIER 2/3 — bloc Accepter/Refuser
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/share_card_generator.dart';
 
@@ -482,6 +485,7 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
                 tc.nomCheval!, tc.numeroCheval, tc.miseEngagee, myPartant),
           const SizedBox(height: 16),
           _buildPariResume(tc.miseEngagee, myPartant),
+          _buildDecisionsEnAttente(),
           const SizedBox(height: 16),
           _buildInfoCourse(tc),
           const SizedBox(height: 16),
@@ -1282,6 +1286,69 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
           );
         }),
       ]),
+    );
+  }
+
+  /// ★ CHANTIER 2/3 — LE BLOC DE DÉCISION DANS LE DÉTAIL DU TICKET.
+  ///
+  /// ── POURQUOI CET EMPLACEMENT ÉTAIT VIDE, ET CE QUE ÇA COÛTAIT ────────────
+  ///   Le bloc n'existait QUE dans la carte de suivi. Un utilisateur qui ouvrait
+  ///   le détail d'un ticket — l'écran qui affiche pourtant le gain retenu et
+  ///   les rapports officiels — ne trouvait AUCUN moyen de trancher. Fermer la
+  ///   présentation initiale ou lire la notification rendait donc la décision
+  ///   introuvable pour qui suit le chemin naturel « ouvrir mon ticket ».
+  ///
+  /// ── AUCUNE LOGIQUE FINANCIÈRE ICI ────────────────────────────────────────
+  ///   • la SÉLECTION vient de `decisions_en_attente_course`, la même source que
+  ///     la carte de suivi et la présentation à l'ouverture ;
+  ///   • l'ACTION vient de `BlocDecisionGainTardif`, qui appelle
+  ///     `PmuProvider.accepterGainOfficiel` / `refuserGainOfficiel` — le chemin
+  ///     sécurisé, identique partout (invalidation des écritures concurrentes,
+  ///     attente de la persistance, relecture du disque) ;
+  ///   • les MONTANTS sont des LECTURES (`gainRetenuBrut`).
+  ///   Il n'y a donc ni second moteur, ni second convertisseur PMU, ni montant
+  ///   recalculé : seulement un second point d'entrée vers la même vérité.
+  Widget _buildDecisionsEnAttente() {
+    final tc = widget.tracked;
+    final provider = context.read<PmuProvider>();
+
+    // La liaison certaine, s'il y en a une : elle désigne UN ticket.
+    UserPrediction? lie;
+    if (tc.idTicketLie != null) {
+      for (final p in provider.predictions) {
+        if (p.id == tc.idTicketLie) {
+          lie = p;
+          break;
+        }
+      }
+    }
+
+    final decisions = decisionsEnAttenteDeCourse(
+      provider.predictions,
+      numReunion: tc.numReunion,
+      numCourse: tc.numCourse,
+      heureDepart: tc.heureDepart,
+      ticketLie: lie,
+    );
+    if (decisions.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        for (final d in decisions)
+          BlocDecisionGainTardif(
+            key: ValueKey(d.id),
+            decision: d,
+            provider: provider,
+            onDecisionConfirmee: () {
+              // Les montants viennent du provider : `notifyListeners()` a déjà
+              // eu lieu. On rafraîchit CET écran pour que le bandeau de verdict
+              // et le gain retenu reflètent la décision désormais persistée.
+              if (mounted) setState(() {});
+            },
+          ),
+      ],
     );
   }
 

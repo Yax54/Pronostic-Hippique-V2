@@ -2,10 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../main.dart' show NavigationNotifier;
 import '../../models/zt_models.dart';
+import '../../providers/pmu_provider.dart';
 import '../../services/alert_service.dart';
 import '../../services/data_refresh_service.dart';
+import '../../services/decisions_en_attente_course.dart';
 import '../../screens/paris_detail_screen.dart';
 import '../../screens/course_detail_screen.dart';
+import '../bloc_decision_gain_tardif.dart';
+
+/// Convertit le `dateStrCourse` d'une alerte (format `AAAAMMJJ`) en `DateTime`,
+/// ou rend `null` si la valeur est illisible.
+///
+/// ⚠️ AUCUNE DATE N'EST INVENTÉE : une valeur absente ou malformée rend `null`,
+///    et l'appelant ne rattache alors aucun ticket par ressemblance.
+DateTime? _jourDepuisApi(String s) {
+  if (s.length != 8) return null;
+  final a = int.tryParse(s.substring(0, 4));
+  final m = int.tryParse(s.substring(4, 6));
+  final j = int.tryParse(s.substring(6, 8));
+  if (a == null || m == null || j == null) return null;
+  final d = DateTime(a, m, j);
+  // Relecture : le constructeur de DateTime RÉÉCRIT une date impossible
+  // (le 31 avril devient le 1er mai). On refuse donc de la rattacher.
+  if (d.year != a || d.month != m || d.day != j) return null;
+  return d;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  Widget : Onglet Alertes
@@ -173,6 +194,109 @@ class AlertTile extends StatelessWidget {
                 foundTracked = tc;
                 break;
               }
+            }
+
+            // ★ CHANTIER 2/3 — UNE ALERTE DE GAIN TARDIF MÈNE À LA DÉCISION.
+            //
+            //  ── LE DÉFAUT QUE CE BLOC CORRIGE ──────────────────────────────
+            //    Une alerte `gainTardif` porte `numReunion`/`numCourse` mais
+            //    n'a pas de `TrackedCourse` garanti : le suivi temporaire est
+            //    purgé au-delà de 24 h, alors que le ticket durable, lui,
+            //    survit. Le code précédent tombait donc dans la branche
+            //    « course introuvable » et affichait un SnackBar parlant de
+            //    « résultat disponible dans l'historique PMU » : lire la
+            //    notification ne menait à AUCUNE décision.
+            //
+            //  ── CE QUE L'ON FAIT ──────────────────────────────────────────
+            //    On ouvre d'abord les décisions en attente de la course. Si le
+            //    suivi existe, on pousse le détail du ticket, qui porte le même
+            //    `BlocDecisionGainTardif` que la carte de suivi : une seule
+            //    logique financière, plusieurs points d'entrée. Si le suivi a
+            //    été purgé, on bascule sur l'onglet qui liste les décisions en
+            //    attente — la décision reste donc atteignable, jamais perdue.
+            if (alert.type == AlertType.gainTardif) {
+              alertSvc.markRead(alert.id);
+
+              if (foundTracked != null) {
+                if (context.mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ParisDetailScreen(
+                        tracked: foundTracked!,
+                        alertSvc: alertSvc,
+                      ),
+                    ),
+                  );
+                }
+                return;
+              }
+
+              final pmu = context.read<PmuProvider>();
+              final jour = alert.dateStrCourse != null
+                  ? _jourDepuisApi(alert.dateStrCourse!)
+                  : null;
+              final decisions = decisionsEnAttenteDeCourse(
+                pmu.predictions,
+                numReunion: alert.numReunion!,
+                numCourse: alert.numCourse!,
+                heureDepart: jour,
+              );
+
+              if (decisions.isNotEmpty) {
+                if (context.mounted) {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    backgroundColor: const Color(0xFF0A1628),
+                    isScrollControlled: true,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.vertical(top: Radius.circular(18)),
+                    ),
+                    builder: (ctx) => DraggableScrollableSheet(
+                      expand: false,
+                      initialChildSize: 0.6,
+                      maxChildSize: 0.92,
+                      builder: (ctx2, scroll) => ListView(
+                        controller: scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                        children: [
+                          const Text(
+                            'Décision de gain en attente',
+                            style: TextStyle(
+                                color: Color(0xFFFFD700),
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'R${alert.numReunion}C${alert.numCourse} — votre '
+                            'choix reste possible depuis Mes Paris.',
+                            style: const TextStyle(
+                                color: Colors.white54, fontSize: 12),
+                          ),
+                          const SizedBox(height: 10),
+                          for (final d in decisions)
+                            BlocDecisionGainTardif(
+                              key: ValueKey(d.id),
+                              decision: d,
+                              provider: pmu,
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                return;
+              }
+
+              // Aucune décision à présenter : l'alerte est purement
+              // informative (elle a été émise, puis la décision a été prise
+              // autrement). On route vers Mes Paris, jamais vers le vide.
+              if (context.mounted) {
+                context.read<NavigationNotifier>().goTo(6);
+              }
+              return;
             }
 
             if (foundTracked != null) {
