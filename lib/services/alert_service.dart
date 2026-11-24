@@ -1539,6 +1539,23 @@ class AlertService extends ChangeNotifier {
   }
 
   // ★ v3.0 ── Alerte non-partant (appelée par DataRefreshService) ─────────
+  //
+  // ★ CHANTIER 2/3 — VIDE L'HISTORIQUE DES ALERTES, POUR LES TESTS SEULEMENT.
+  //
+  //  Il reproduit exactement ce que fait la purge réelle sur `_alerts` et
+  //  `_sentAlertIds`, SANS toucher aux autres clés. Il permet donc de
+  //  DÉMONTRER que l'idempotence des gains tardifs ne repose pas sur
+  //  l'historique temporaire — ce qui est l'exigence du chantier.
+  //
+  //  ⚠️ Aucun écran, aucun service de production ne l'appelle.
+  @visibleForTesting
+  Future<void> reinitialiserHistoriquePourTest() async {
+    _alerts.clear();
+    _sentAlertIds.clear();
+    notifyListeners();
+    await _save();
+  }
+
   /// Envoie une notification push quand un cheval est retiré/non-partant.
   /// ★ v10.20 FIX : respecte le filtre scope (favoris / suivies / toutes)
   void ajouterAlertNonPartant({

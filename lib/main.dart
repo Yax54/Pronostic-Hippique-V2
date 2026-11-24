@@ -27,6 +27,9 @@ import 'services/arrivee_officielle_service.dart'; // ★ L2-1 — arrivées off
 import 'services/quasi_gros_paris_service.dart' show QuasiGrosParisService; // ★ v10.75b
 import 'services/planificateur_gains_tardifs.dart'; // ★ CHANTIER 2/3 — déclencheurs du rattrapage
 import 'services/service_gains_tardifs.dart';        // ★ CHANTIER 2/3 — orchestrateur du rattrapage
+import 'services/gains_tardifs_en_attente.dart'
+    show aDesDecisionsEnAttente, decisionsEnAttente; // ★ CHANTIER 2/3
+import 'widgets/bloc_decision_gain_tardif.dart'; // ★ CHANTIER 2/3 — Accepter/Refuser
 import 'widgets/ia/ia_bubble_widget.dart';      // ★ v9.85
 import 'screens/roi_value_screen.dart';          // ★ v10.46 ROI/Value
 
@@ -274,6 +277,11 @@ class _MainNavigationState extends State<MainNavigation>
       );
       _planificateur = planificateur;
       await planificateur.demarrer();
+      // ★ CHANTIER 2/3 — présentation des décisions en attente APRÈS le premier
+      //   cycle : une décision peut avoir été découverte pendant ce cycle.
+      //   `_presenterDecisionsEnAttenteSiBesoin` est idempotente par session et
+      //   ne fait rien s'il n'y a rien à décider.
+      _presenterDecisionsEnAttenteSiBesoin();
     });
 
     // ★ v10.1 : Deep link — naviguer vers le pari concerné depuis une notification
@@ -342,6 +350,90 @@ class _MainNavigationState extends State<MainNavigation>
     // Aucun `await` : on ne bloque pas le cycle de vie. Les erreurs sont déjà
     // capturées à l'intérieur du planificateur.
     unawaited(planificateur.retourPremierPlan());
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CHANTIER 2/3 — PRÉSENTATION DES DÉCISIONS EN ATTENTE À L'OUVERTURE
+  // ══════════════════════════════════════════════════════════════════════════
+  //
+  //  Exigence : « Une présentation initiale peut être fermée sans imposer une
+  //  décision immédiate ; le ticket reste accessible ensuite. »
+  //
+  //  ⚠️ FERMER CETTE FEUILLE NE DÉCIDE RIEN. Aucun appel d'écriture n'a lieu
+  //     ici. Si l'utilisateur ferme, le ticket reste dans la liste des
+  //     décisions en attente (`decisionsEnAttente`) et dans Mes Paris.
+  //
+  //  ⚠️ ELLE NE S'OUVRE QU'UNE FOIS PAR SESSION : un drapeau en mémoire suffit,
+  //     car rouvrir la feuille à chaque retour au premier plan serait
+  //     harcelant, et persister ce drapeau empêcherait la présentation au
+  //     démarrage suivant alors que la décision est toujours en attente.
+  bool _decisionsPresentees = false;
+
+  void _presenterDecisionsEnAttenteSiBesoin() {
+    if (_decisionsPresentees) return;
+    if (!mounted) return;
+    final provider = context.read<PmuProvider>();
+    final attentes = decisionsEnAttente(provider.predictions);
+    if (attentes.isEmpty) return;
+    _decisionsPresentees = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: const Color(0xFF0F1E2E),
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (ctx) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.55,
+          maxChildSize: 0.9,
+          builder: (ctx2, scrollController) => ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+            children: [
+              Row(children: [
+                const Icon(Icons.emoji_events,
+                    color: Color(0xFFFFD700), size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    attentes.length == 1
+                        ? '1 décision vous attend'
+                        : '${attentes.length} décisions vous attendent',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white54),
+                  tooltip: 'Fermer (la décision reste disponible)',
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+              ]),
+              const Text(
+                'Vous pouvez fermer cette fenêtre : votre choix reste '
+                'possible depuis Mes Paris, à tout moment.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              for (final d in attentes)
+                BlocDecisionGainTardif(
+                  decision: d,
+                  provider: provider,
+                  compact: true,
+                  onDecisionConfirmee: () {
+                    if (mounted) setState(() {});
+                  },
+                ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 
   @override
@@ -510,9 +602,15 @@ class _NavItem extends StatelessWidget {
 
     // Badge orange sur Mes Paris (index 6) — Labo=7, ROI/Value=8, Audit=9, Profil=10 ★ v10.46
     final isMesParis = index == 6;
+    // ★ CHANTIER 2/3 — une décision financière en attente compte comme un pari
+    //   « en attente » : elle attend effectivement une action de l'utilisateur.
+    //   La condition de sélection est la MÊME que celle des écrans
+    //   (`attendDecisionGain`), donc la pastille ne peut pas annoncer une
+    //   décision que les écrans ne montreraient pas — et inversement.
     final nbParisEnAttente = isMesParis
-        ? context.select<PmuProvider, int>(
-            (p) => p.predictions.where((pr) => pr.isCorrect == null).length)
+        ? context.select<PmuProvider, int>((p) =>
+            p.predictions.where((pr) => pr.isCorrect == null).length +
+            (aDesDecisionsEnAttente(p.predictions) ? 1 : 0))
         : 0;
     final showBadge = isMesParis && !isActive && nbParisEnAttente > 0;
 

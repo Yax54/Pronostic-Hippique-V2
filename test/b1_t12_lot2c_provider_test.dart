@@ -1234,9 +1234,23 @@ void main() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  //  FAMILLE L — VERROU ACCEPTER/REFUSER : NON BRANCHÉ
+  //  FAMILLE L — VERROU ACCEPTER/REFUSER : BRANCHÉ AU CHANTIER 2/3
   // ═══════════════════════════════════════════════════════════════════════
-  group('L — verrou Accepter/Refuser : statut prouvé NON BRANCHÉ', () {
+  //
+  //  ⚠️ CE QUI A CHANGÉ, ET POURQUOI CES DEUX CONSTATS SONT INVERSÉS.
+  //
+  //  Avant le chantier 2/3, L1 et L2 décrivaient un ÉTAT DU MONDE : « aucun
+  //  site n'appelle `invaliderPourDecisionFinanciere`, aucune interface
+  //  Accepter/Refuser n'existe ». C'étaient des CONSTANTS D'INVENTAIRE, pas des
+  //  règles métier. Le chantier 2/3 a précisément pour objet de BRANCHER ce
+  //  verrou et de créer cette interface : les constats sont devenus faux, sans
+  //  qu'aucune régression financière n'existe.
+  //
+  //  ⚠️ AUCUN INVARIANT MÉTIER N'EST AFFAIBLI. Les garanties réellement
+  //     protégées (aucune décision automatique, montant officiel stable) sont
+  //     CONSERVÉES à l'identique dans L3, et L2 conserve l'interdiction pour
+  //     l'ÉCRAN d'écrire lui-même une décision.
+  group('L — verrou Accepter/Refuser : BRANCHÉ au chantier 2/3', () {
     test('L1 `invaliderPourDecisionFinanciere` existe mais n\'est appelée '
         'NULLE PART en production', () {
       // Preuve de statut : la méthode est déclarée, mais aucun site de
@@ -1256,17 +1270,34 @@ void main() {
               .length;
         }
       }
-      // 1 seule occurrence attendue : la DÉCLARATION dans le provider.
-      expect(appelsEnCode, 1,
-          reason: 'aucun site ne doit l\'appeler tant que le lot n\'est pas '
-              'branché');
+      // Déclaration + AU MOINS UN APPEL de production (chantier 2/3).
+      expect(appelsEnCode, greaterThanOrEqualTo(2),
+          reason: 'la déclaration ET au moins un appel de production');
+      // Et l'appel doit PRÉCÉDER l'écriture de la décision : sinon une
+      // opération concurrente pourrait la rétablir par-dessus.
+      final idxInvalide =
+          File('lib/providers/pmu_provider.dart')
+              .readAsStringSync()
+              .indexOf('invaliderPourDecisionFinanciere(id)');
+      final idxEcriture =
+          File('lib/providers/pmu_provider.dart')
+              .readAsStringSync()
+              .indexOf('decisionGainPmu: decision');
+      expect(idxInvalide, greaterThan(0));
+      expect(idxEcriture, greaterThan(idxInvalide),
+          reason: 'invalidation AVANT écriture de la décision');
     });
 
     test('L2 aucune interface Accepter/Refuser n\'existe dans les écrans',
         () {
       final src = File('lib/screens/mes_paris_screen.dart').readAsStringSync();
-      expect(RegExp(r'Accepter le gain officiel').hasMatch(src), isFalse);
-      expect(RegExp(r'Refuser le gain officiel').hasMatch(src), isFalse);
+      // ① Les deux actions sont RÉELLES (exigence du chantier 2/3).
+      expect(RegExp(r'BlocDecisionGainTardif').hasMatch(src), isTrue,
+          reason: 'l\'écran doit proposer les deux actions');
+      // ② ⚠️ INVARIANT CONSERVÉ : l'écran n'écrit toujours AUCUNE décision.
+      //    Il appelle le chemin sécurisé du provider ; il ne pose jamais le
+      //    champ lui-même, ce qui empêcherait l'invalidation et la
+      //    confirmation par relecture du disque.
       // Aucune AFFECTATION d'une décision : `=` simple, pas `==` de lecture.
       expect(RegExp(r'decisionGainPmu\s*=(?!=)').hasMatch(src), isFalse,
           reason: 'l\'écran ne doit écrire aucune décision');

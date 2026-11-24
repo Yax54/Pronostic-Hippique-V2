@@ -467,6 +467,31 @@ class BackupService {
     'alert_cote_chute_notifies_v1',   // Anti-doublons alertes cote chute (alert_service)
     'data_refresh_resume_hebdo_date', // Date dernier résumé hebdo lundi (data_refresh_service)
     'alerte_sommeil_v1',              // ★ v10.41 : Mode Sommeil — plage horaire sans alertes
+    // ★ CHANTIER 2/3 — IDEMPOTENCE DES GAINS OFFICIELS TARDIFS.
+    //
+    //   DÉFAUT QUE CETTE PRÉSENCE CORRIGE : sans elle, un export/restauration
+    //   reperdait les trois familles de marqueurs (`ge1:` écriture, `gt1:`
+    //   notification, `gd1:` décision). Conséquences mesurables : une
+    //   notification DÉJÀ ÉMISE était réémise après restauration, et une
+    //   reprise d'écriture était retentée inutilement.
+    //
+    //   ⚠️ ELLE EST PLACÉE DANS LE GROUPE « ALERTES », ET C'EST DÉLIBÉRÉ :
+    //      ce groupe est le seul dont la sauvegarde ET la restauration
+    //      passent par `_lireEntree` / `_restaurerGroupe`, donc la seule
+    //      façon d'obtenir la couverture complète sans écrire un second
+    //      chemin d'export. La nommer « alertes » reste exact : c'est bien
+    //      l'état de la remontée d'alerte qui est conservé.
+    //
+    //   ⚠️ CETTE CLÉ N'EST PAS FINANCIÈRE. Sa perte ne fausse aucun montant :
+    //      elle ne peut produire qu'un doublon visuel ou une reprise
+    //      inutile. Les montants, décisions et remboursements vivent dans
+    //      `user_predictions_v2`, déjà sauvegardé dans `_keysParis`.
+    'gains_tardifs_notifies_v1',
+    // ★ CHANTIER 2/3 — temporisation des tentatives (15 min → 48 h, sans
+    //   abandon définitif). La perdre ne fait que réinterroger plus tôt : ce
+    //   n'est pas une donnée financière, mais sa conservation évite une rafale
+    //   de requêtes juste après une restauration.
+    'gains_tardifs_backoff_v1',
   ];
 
   // 👤 Profil — identite de l'utilisateur
@@ -602,6 +627,17 @@ class BackupService {
     ..._keysGrosParis,
     ..._keysNotificationsEnAttente,  // ★ B5c R-13
   ];
+
+  /// ★ CHANTIER 2/3 — LE PÉRIMÈTRE RÉELLEMENT SAUVEGARDÉ, POUR LES TESTS.
+  ///
+  /// Rend la liste EXACTE utilisée par la sauvegarde et par la réinitialisation
+  /// complète (`_toutesLesCles`), sans la recopier. Un test qui recopierait la
+  /// liste ne prouverait rien : il vérifierait sa propre copie.
+  ///
+  /// ⚠️ Lecture seule : aucune écriture, aucune modification du périmètre.
+  @visibleForTesting
+  static List<String> clesSauvegardeesPourTest() =>
+      List<String>.unmodifiable(_toutesLesCles);
 
   // ════════════════════════════════════════════════════════════════════════
   //  LECTURE UNIVERSELLE — supporte StringList, String, int, double, bool

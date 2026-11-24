@@ -10,14 +10,37 @@
 //    ③ `chargerResultatOfficielCourse`→ le résultat officiel d'UNE course ;
 //    ④ `PmuProvider.appliquerVerdictGainPredictionSecurise`
 //                                     → la SEULE écriture financière ;
-//    ⑤ `montantOfficielDepuisVerdict` → le SEUL convertisseur verdict → montant ;
-//    ⑥ `deciderGainTardif`            → les règles métier A/B/C du chantier ;
-//    ⑦ `MemoireGainsTardifsNotifies`  → l'unicité durable des notifications ;
-//    ⑧ `AlertService`                 → la remontée visible à l'utilisateur.
+//    ⑤ `deciderGainTardif`            → les règles métier A/B/C du chantier ;
+//    ⑥ `MemoireGainsTardifsNotifies`  → l'unicité durable des notifications ;
+//    ⑦ `AlertService`                 → la remontée visible à l'utilisateur.
 //
 //  ⚠️ AUCUN SECOND MOTEUR FINANCIER, AUCUN SECOND CONVERTISSEUR PMU.
 //     Ce fichier ne contient AUCUNE formule monétaire, AUCUN calcul de
 //     dividende, AUCUNE sélection de rapport. Il ordonne des appels.
+//
+//  ★ CORRECTION DU DÉFAUT DE `dcb4b49` — TROIS ÉTAPES DISSOCIÉES
+//
+//  DÉFAUT MESURÉ : un seul marqueur servait à la fois de preuve d'écriture et
+//  de preuve de traitement. Un ticket dont l'écriture réussissait mais dont la
+//  notification échouait (ou était refusée parce que les notifications étaient
+//  désactivées) sortait des candidats — `ticketsARattraper()` écarte tout
+//  ticket dont `etatGain != null` — et la notification attendue disparaissait
+//  DÉFINITIVEMENT.
+//
+//  CORRECTION : les trois étapes sont désormais calculées séparément par
+//  `resteAFaire(...)` (pur, testable) :
+//    ① ÉCRITURE du résultat officiel — marqueur `ge1:` ;
+//    ② NOTIFICATION — marqueur `gt1:`, calculée INDÉPENDAMMENT de ① ;
+//    ③ DÉCISION Accepter/Refuser — vérité portée par le TICKET
+//      (`decisionGainPmu`), marqueur d'audit `gd1:`.
+//
+//  ⚠️ CONSÉQUENCES DIRECTES, chacune exigée par la consigne :
+//    • une notification encore nécessaire est REPRISE SANS RÉSEAU et SANS
+//      RÉÉCRITURE du résultat officiel ([reprendreNotifications]) ;
+//    • une notification refusée par la configuration n'est PAS marquée comme
+//      émise : elle sera reprise à la réactivation ;
+//    • une décision en attente reste accessible même si l'historique des
+//      alertes est purgé, puisqu'elle se déduit du ticket.
 //
 //  ⚠️ L'IDENTIFICATION EST EXACTE ET NON HEURISTIQUE.
 //     Un ticket n'est rattaché à une course que par le tuple
@@ -66,9 +89,13 @@ enum IssueRattrapage {
   ///    notification annoncerait un gain que le disque ne porte pas.
   echecEcriture,
 
-  /// Le même ticket avait DÉJÀ été traité (marqueur d'idempotence présent) :
-  /// rien n'est réécrit et aucune notification n'est reproduite.
+  /// Le même ticket avait DÉJÀ été traité (marqueurs présents) : rien n'est
+  /// réécrit et aucune notification n'est reproduite.
   dejaTraite,
+
+  /// Une notification encore nécessaire a été REPRISE sans réseau et sans
+  /// réécriture du résultat officiel déjà persisté.
+  notificationReprise,
 }
 
 /// Résultat lisible d'un ticket traité.
@@ -158,24 +185,24 @@ class ServiceGainsTardifs {
   //  1. IDENTIFICATION — tickets durables → courses, SANS rien supposer
   // ═════════════════════════════════════════════════════════════════════════
 
-  /// Les tickets ENCORE rattrapables : ceux qui n'attendent plus qu'un
-  /// résultat officiel.
+  /// Les tickets dont l'ÉCRITURE officielle reste à faire.
   ///
   /// ⚠️ FILTRES, chacun justifié :
   ///   • `etatGain != null` ⇒ le verdict est DÉJÀ posé (définitif ou
   ///     nonDeterminé). Le retraiter rouvrirait une course réglée : c'est
   ///     exactement la boucle infinie que le chantier interdit. Un ticket
-  ///     `perdu` ou `rembourse` est donc DÉFINITIVEMENT hors périmètre.
-  ///   • `dateStr` exploitable ⇒ sinon aucune requête ne peut être construite.
+  ///     `perdu` ou `rembourse` est donc DÉFINITIVEMENT hors périmètre de
+  ///     récupération réseau — SAUF si sa notification manque encore, cas
+  ///     traité séparément par [reprendreNotifications], qui n'utilise PAS le
+  ///     réseau.
   ///
-  /// ⚠️ AUCUN FILTRE SUR `montantOfficielPmu` : un ticket qui porte déjà un
-  ///    officiel mais AUCUNE décision doit rester visible pour que la décision
-  ///    en attente soit présentée. Il n'est pas « à retenter » pour autant —
-  ///    c'est [candidatsPourCycle] qui l'écarte du réseau.
+  /// ★ CORRECTION DU DÉFAUT `dcb4b49` : ce filtre ne sert PLUS à décider de
+  ///   l'opportunité d'une notification. Il ne gouverne QUE la récupération du
+  ///   rapport officiel. La notification a son propre calcul.
   List<UserPrediction> ticketsARattraper() {
     final out = <UserPrediction>[];
     for (final p in provider.predictions) {
-      if (p.etatGain != null) continue; // verdict déjà posé : clos
+      if (p.etatGain != null) continue; // écriture faite : pas de réseau
       out.add(p);
     }
     out.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -186,6 +213,9 @@ class ServiceGainsTardifs {
   ///
   /// Dédoublonnage par `IdentiteCourseTardive.cle`, qui INCLUT la date : deux
   /// courses de dates différentes aux mêmes numéros sont deux courses.
+  ///
+  /// ⚠️ C'EST LA MUTUALISATION EXIGÉE : N tickets d'une même course ne
+  ///    produisent qu'UNE entrée ici, donc UNE requête dans `appliquerCourse`.
   List<IdentiteCourseTardive> coursesCandidates() {
     final vues = <String>{};
     final out = <IdentiteCourseTardive>[];
@@ -213,11 +243,17 @@ class ServiceGainsTardifs {
   //  2. LE CYCLE
   // ═════════════════════════════════════════════════════════════════════════
 
-  /// Exécute UN cycle borné : détection, puis application aux tickets.
+  /// Exécute UN cycle borné : reprise des notifications, puis détection et
+  /// application aux tickets.
   ///
   /// ⚠️ NON RÉENTRANT. Un second appel pendant un cycle rend immédiatement un
   ///    bilan vide, sans toucher au réseau : deux cycles concurrents
   ///    écriraient le même ticket deux fois.
+  ///
+  /// ★ ORDRE : les notifications REPRISES passent EN PREMIER, parce qu'elles
+  ///   ne coûtent aucun réseau et qu'elles sont la correction du défaut. Un
+  ///   cycle qui échouerait ensuite sur le réseau a quand même rendu le
+  ///   service attendu.
   Future<BilanRattrapage> executerCycle() async {
     if (_cycleEnCours) {
       return const BilanRattrapage(
@@ -227,9 +263,11 @@ class ServiceGainsTardifs {
     }
     _cycleEnCours = true;
     try {
+      final tickets = <ResultatRattrapageTicket>[];
+      tickets.addAll(await reprendreNotifications());
+
       final candidates = coursesCandidates();
       final detections = await detecteur.executerCycle(candidates);
-      final tickets = <ResultatRattrapageTicket>[];
 
       for (final d in detections) {
         // Le détecteur est le SEUL juge de l'exploitabilité : une arrivée
@@ -247,6 +285,59 @@ class ServiceGainsTardifs {
     } finally {
       _cycleEnCours = false;
     }
+  }
+
+  /// REPRISE DES NOTIFICATIONS ENCORE NÉCESSAIRES — SANS RÉSEAU, SANS
+  /// RÉÉCRITURE.
+  ///
+  /// ★ C'EST LA CORRECTION DU DÉFAUT. Sont concernés les tickets dont le
+  ///   résultat officiel est DÉJÀ persisté (`etatGain != null`) mais dont la
+  ///   notification manque : échec d'émission, notifications désactivées au
+  ///   moment du traitement, ou interruption entre l'écriture et la
+  ///   notification.
+  ///
+  /// ⚠️ AUCUN APPEL RÉSEAU : le montant officiel est lu sur le ticket. C'est
+  ///    ce qui rend la reprise possible même quand le rapport n'est plus
+  ///    récupérable, et ce qui évite de « réécrire inutilement le résultat
+  ///    financier officiel à chaque tentative » (exigence littérale).
+  ///
+  /// ⚠️ UN TICKET DÉJÀ NOTIFIÉ N'EST PAS RENOTIFIÉ : le marqueur `gt1:` est
+  ///    consulté AVANT toute émission.
+  Future<List<ResultatRattrapageTicket>> reprendreNotifications() async {
+    final out = <ResultatRattrapageTicket>[];
+    for (final p in provider.predictions) {
+      // L'écriture doit être faite : sinon c'est le cycle normal qui s'en
+      // charge, avec le réseau.
+      if (p.etatGain == null) continue;
+
+      final decision = deciderGainTardif(
+        gainManuel: p.montantGainManuel,
+        gainOfficiel: p.montantOfficielPmu,
+      );
+      final etapes = resteAFaire(
+        resultatOfficielPersiste: _resultatOfficielPersiste(p),
+        ecritureDejaConfirmee: memoire.dejaMarque(cleIdempotenceEcriture(p.id)),
+        notificationDejaEmise:
+            memoire.dejaMarque(cleIdempotenceNotification(p.id)),
+        decisionEnregistree: p.decisionGainPmu != null,
+        decisionRequiseParLaRegle: decision.notificationRequise,
+      );
+      if (!etapes.notification) continue;
+
+      final emise = await _notifier(p, decision);
+      if (emise) {
+        await memoire.marquer(cleIdempotenceNotification(p.id), quand: horloge());
+      }
+      out.add(ResultatRattrapageTicket(
+        idTicket: p.id,
+        issue: emise
+            ? IssueRattrapage.notificationReprise
+            : IssueRattrapage.echecEcriture,
+        gainManuel: p.montantGainManuel,
+        gainOfficiel: p.montantOfficielPmu,
+      ));
+    }
+    return List<ResultatRattrapageTicket>.unmodifiable(out);
   }
 
   /// Applique le résultat officiel à TOUS les tickets d'UNE course.
@@ -282,27 +373,36 @@ class ServiceGainsTardifs {
   /// Applique à UN ticket le résultat officiel de SA course.
   ///
   /// ORDRE IMPÉRATIF — aucun pas n'est optionnel :
-  ///   ① IDEMPOTENCE : un ticket déjà traité est rendu `dejaTraite` et n'est
-  ///      ni réécrit ni renotifié. La preuve est PERSISTÉE, pas en mémoire.
-  ///   ② ÉCRITURE SÉCURISÉE : le chemin validé au chantier 1/3, avec
-  ///      `enregistrerMontantOfficiel: true`. Aucun autre chemin d'écriture.
+  ///   ① ÉTAPES CALCULÉES : `resteAFaire` dit séparément ce qui manque.
+  ///   ② ÉCRITURE SÉCURISÉE, uniquement si elle est nécessaire : le chemin
+  ///      validé au chantier 1/3, avec `enregistrerMontantOfficiel: true`.
+  ///      Aucun autre chemin d'écriture.
   ///   ③ CONFIRMATION RÉELLE : l'issue doit être `confirme`. Un échec, un
   ///      remplacement, ou un `echecNonReconcilie` interrompt TOUT : pas de
-  ///      notification, pas de marqueur, donc nouvelle tentative plus tard.
+  ///      notification, pas de marqueur `ge1:`, donc nouvelle tentative.
   ///   ④ RÈGLE MÉTIER A/B/C sur les montants RÉELLEMENT persistés après
   ///      écriture — relus depuis le ticket, jamais recalculés.
-  ///   ⑤ NOTIFICATION UNIQUE, puis marqueur d'idempotence persisté.
-  ///      ⚠️ Le marqueur n'est posé qu'APRÈS une notification effectivement
-  ///         émise : si la notification échoue, le ticket reste notifiable.
+  ///   ⑤ NOTIFICATION UNIQUE, puis marqueur `gt1:` SEME si elle a été émise.
+  ///      ⚠️ Le marqueur n'est posé qu'APRÈS une émission réellement
+  ///         confirmée : une notification refusée n'est jamais « émise ».
   Future<ResultatRattrapageTicket> appliquerTicket(
     UserPrediction ticket,
     ResultatOfficielCourse resultat,
   ) async {
-    final cleNotification = cleIdempotenceNotification(ticket.id);
-    final cleEcriture = cleIdempotenceEcriture(ticket.id);
-
-    // ① ── IDEMPOTENCE ─────────────────────────────────────────────────────
-    if (memoire.dejaNotifie(cleEcriture)) {
+    // ① ── ÉTAPES ──────────────────────────────────────────────────────────
+    final avant = deciderGainTardif(
+      gainManuel: ticket.montantGainManuel,
+      gainOfficiel: ticket.montantOfficielPmu,
+    );
+    final etapesAvant = resteAFaire(
+      resultatOfficielPersiste: _resultatOfficielPersiste(ticket),
+      ecritureDejaConfirmee: memoire.dejaMarque(cleIdempotenceEcriture(ticket.id)),
+      notificationDejaEmise:
+          memoire.dejaMarque(cleIdempotenceNotification(ticket.id)),
+      decisionEnregistree: ticket.decisionGainPmu != null,
+      decisionRequiseParLaRegle: avant.notificationRequise,
+    );
+    if (!etapesAvant.ecriture && !etapesAvant.notification) {
       return ResultatRattrapageTicket(
         idTicket: ticket.id,
         issue: IssueRattrapage.dejaTraite,
@@ -311,24 +411,27 @@ class ServiceGainsTardifs {
       );
     }
 
-    // ② ── ÉCRITURE SÉCURISÉE ─────────────────────────────────────────────
-    final issue = await provider.appliquerVerdictGainPredictionSecurise(
-      ticket.id,
-      resultat,
-      enregistrerMontantOfficiel: true,
-    );
-
-    // ③ ── CONFIRMATION RÉELLE ────────────────────────────────────────────
-    if (issue != IssueEcritureGain.confirme) {
-      return ResultatRattrapageTicket(
-        idTicket: ticket.id,
-        issue: IssueRattrapage.echecEcriture,
-        gainManuel: ticket.montantGainManuel,
-        gainOfficiel: ticket.montantOfficielPmu,
+    // ② ── ÉCRITURE, SEULEMENT SI NÉCESSAIRE ──────────────────────────────
+    if (etapesAvant.ecriture) {
+      final issue = await provider.appliquerVerdictGainPredictionSecurise(
+        ticket.id,
+        resultat,
+        enregistrerMontantOfficiel: true,
       );
+      if (issue != IssueEcritureGain.confirme) {
+        return ResultatRattrapageTicket(
+          idTicket: ticket.id,
+          issue: IssueRattrapage.echecEcriture,
+          gainManuel: ticket.montantGainManuel,
+          gainOfficiel: ticket.montantOfficielPmu,
+        );
+      }
+      // Marqueur d'ÉCRITURE posé dès la confirmation : il dit « le résultat
+      // officiel est sur le ticket », PAS « gain trouvé » ni « notifié ».
+      await memoire.marquer(cleIdempotenceEcriture(ticket.id), quand: horloge());
     }
 
-    // ④ ── LECTURE DES MONTANTS RÉELLEMENT PERSISTÉS ───────────────────────
+    // ③ ── LECTURE DES MONTANTS RÉELLEMENT PERSISTÉS ──────────────────────
     final apres = provider.predictions.firstWhere(
       (p) => p.id == ticket.id,
       orElse: () => ticket,
@@ -340,14 +443,7 @@ class ServiceGainsTardifs {
       gainOfficiel: gainOfficiel,
     );
 
-    // Le marqueur d'ÉCRITURE est posé dès que l'écriture est confirmée, même
-    // si aucun gain n'est établi : cela évite de réécrire indéfiniment une
-    // course dont le résultat officiel est un remboursement pur, un
-    // `nonDetermine`, ou une perte. Ce marqueur dit « écriture faite », PAS
-    // « gain trouvé » — les deux informations sont distinctes.
-    await memoire.marquer(cleEcriture, quand: horloge());
-
-    // ⑤ ── NOTIFICATION ──────────────────────────────────────────────────
+    // ④ ── NOTIFICATION, CALCULÉE INDÉPENDAMMENT DE L'ÉCRITURE ────────────
     if (!decision.notificationRequise) {
       // CAS A ou AUCUN : aucune notification de gain tardif, par exigence.
       return ResultatRattrapageTicket(
@@ -360,8 +456,7 @@ class ServiceGainsTardifs {
       );
     }
 
-    final cle = cleNotification;
-    if (memoire.dejaNotifie(cle)) {
+    if (memoire.dejaMarque(cleIdempotenceNotification(ticket.id))) {
       // Une notification a déjà été émise pour ce ticket (marqueur séparé).
       return ResultatRattrapageTicket(
         idTicket: ticket.id,
@@ -371,9 +466,10 @@ class ServiceGainsTardifs {
       );
     }
 
-    final notifie = await _notifier(ticket, decision);
+    final notifie = await _notifier(apres, decision);
     if (notifie) {
-      await memoire.marquer(cle, quand: horloge());
+      await memoire.marquer(cleIdempotenceNotification(ticket.id),
+          quand: horloge());
     }
 
     return ResultatRattrapageTicket(
@@ -386,15 +482,38 @@ class ServiceGainsTardifs {
     );
   }
 
+  /// Le ticket porte-t-il un résultat officiel DÉJÀ persisté ?
+  ///
+  /// ⚠️ DEUX FORMES, toutes deux légitimes :
+  ///    • un gain officiel (`montantOfficielPmu`, y compris `0.0` = perte) ;
+  ///    • un remboursement officiel (`remboursementPmu`), qui n'est PAS un
+  ///      gain mais qui prouve que le résultat a été écrit. Sans cette
+  ///      seconde forme, un remboursement pur serait considéré comme « rien
+  ///      d'écrit » et provoquerait une récupération réseau à chaque cycle —
+  ///      exactement la boucle interdite.
+  bool _resultatOfficielPersiste(UserPrediction p) =>
+      p.montantOfficielPmu != null || p.remboursementPmu != null;
+
+  /// Mémorise qu'une décision a été CONFIRMÉE, pour l'audit.
+  ///
+  /// ⚠️ N'EST JAMAIS UNE CONDITION DE CORRECTION : la vérité financière est
+  ///    `decisionGainPmu` sur le ticket. Ce marqueur ne fait que tracer.
+  Future<bool> memoriserDecision(String idTicket) =>
+      memoire.marquer(cleIdempotenceDecision(idTicket), quand: horloge());
+
   /// Émet LA notification unique de remontée tardive.
   ///
-  /// Rend `true` seulement si l'alerte a été réellement enregistrée par
-  /// `AlertService`. Le contenu est calculé pour être LISIBLE et VÉRIDIQUE :
-  /// les deux montants sont affichés au CAS C, et l'égalité est dite au CAS B.
+  /// Rend `true` seulement si l'alerte a été réellement enregistrée ET
+  /// persistée par `AlertService`. Le contenu est calculé pour être LISIBLE et
+  /// VÉRIDIQUE : les deux montants sont affichés au CAS C, l'égalité est dite
+  /// au CAS B, et un remboursement est nommé séparément — il n'est JAMAIS
+  /// additionné au gain.
   Future<bool> _notifier(
       UserPrediction ticket, DecisionGainTardif decision) async {
     final manuel = decision.gainManuel;
     final officiel = decision.gainOfficiel;
+    final remboursement = ticket.remboursementPmu;
+
     final String message;
     if (decision.cas == CasGainTardif.identique) {
       message = 'PMU : ${_euros(officiel)} € — identique à votre gain déclaré '
@@ -404,12 +523,17 @@ class ServiceGainsTardifs {
           '${_euros(manuel)} €. Votre montant déclaré reste retenu jusqu\'à '
           'votre décision — Accepter ou Refuser le gain officiel.';
     }
+    // Remboursement : information AJOUTÉE, jamais fusionnée au gain.
+    final messageComplet = remboursement == null
+        ? message
+        : '$message\nRemboursement officiel : '
+            '${_euros(remboursement)} € (distinct du gain).';
 
     try {
       return await AlertService.instance.emettreAlerteGainTardif(
         idTicket: ticket.id,
         titre: '🏆 Gain officiel disponible',
-        message: message,
+        message: messageComplet,
         numReunion: ticket.numReunion,
         numCourse: ticket.numCourse,
         dateStrCourse: ticket.dateStr,

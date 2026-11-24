@@ -588,6 +588,23 @@ class PmuProvider extends ChangeNotifier {
   /// seule confirmation réelle disponible, et elle est utilisée telle quelle.
   /// Une exception rend `false` — jamais un succès silencieux.
   Future<bool> _ecrirePredictions() async {
+    // ★ CHANTIER 2/3 — POINT D'INJECTION DE PANNE, POUR LES TESTS SEULEMENT.
+    //
+    //  ⚠️ IL NE MODIFIE AUCUNE RÈGLE MÉTIER. Il ne fait qu'IMITER ce que le
+    //     support fait déjà tout seul : `SharedPreferences.setStringList` rend
+    //     `false` quand l'écriture est refusée. Le mock de plateforme ne sait
+    //     pas refuser, donc les scénarios « échec d'écriture » et
+    //     « réconciliation » ne pouvaient pas être démontrés sans ce point.
+    //
+    //  ⚠️ `null` PAR DÉFAUT = comportement de production INCHANGÉ. Aucun
+    //     écran, aucun service ne le renseigne.
+    //  ⚠️ `false` PAR DÉFAUT = comportement de production INCHANGÉ. Aucun
+    //     écran, aucun service ne le renseigne.
+    if (_refuserProchaineEcriture) {
+      // Consommé UNE seule fois : la reprise suivante doit pouvoir aboutir.
+      _refuserProchaineEcriture = false;
+      return false;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = _predictions.map((p) => jsonEncode(p.toJson())).toList();
@@ -597,6 +614,20 @@ class PmuProvider extends ChangeNotifier {
       return false;
     }
   }
+
+  /// ★ CHANTIER 2/3 — drapeau de test : la PROCHAINE écriture de tickets est
+  /// refusée. Consommé une seule fois, puis remis à `false`.
+  ///
+  /// Produit le même effet observable qu'un support qui refuse : `false`.
+  bool _refuserProchaineEcriture = false;
+
+  /// Arme le refus de la prochaine écriture. Réservé aux tests.
+  @visibleForTesting
+  void refuserProchaineEcriturePourTest() => _refuserProchaineEcriture = true;
+
+  /// Désarme le refus. Réservé aux tests.
+  @visibleForTesting
+  void autoriserEcriturePourTest() => _refuserProchaineEcriture = false;
 
   // ══════════════════════════════════════════════════════════════════════════
   //  ★ B1-T12 / LOT 2-C — ÉCRITURE FINANCIÈRE DURABLE, CONFIRMÉE ET REPRENABLE

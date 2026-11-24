@@ -187,3 +187,111 @@ String cleIdempotenceNotification(String idTicket) => 'gt1:$idTicket';
 /// renotifier sans réécrire, et réciproquement. Les confondre rendrait l'un des
 /// deux cas inexprimable.
 String cleIdempotenceEcriture(String idTicket) => 'ge1:$idTicket';
+
+/// Clé d'idempotence d'une DÉCISION Accepter/Refuser, TROISIÈME famille.
+///
+/// ⚠️ ELLE N'EST PAS LA VÉRITÉ FINANCIÈRE. La vérité est le champ
+///    `decisionGainPmu` du ticket persisté : c'est lui que lit l'affichage, et
+///    lui seul qui empêche de reproposer une décision tranchée. Ce marqueur
+///    n'est qu'un témoin d'audit — sa perte ne rouvre jamais une décision.
+String cleIdempotenceDecision(String idTicket) => 'gd1:$idTicket';
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  3. CE QU'IL RESTE À FAIRE POUR UN TICKET — calcul PUR, sans I/O
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Les étapes restant à accomplir pour un ticket, déduites de faits persistés.
+///
+/// ★ POURQUOI CE TYPE EXISTE (correction du défaut de `dcb4b49`)
+///
+///   Le défaut venait d'un RAISONNEMENT EN UN SEUL DRAPEAU : « ce ticket a été
+///   traité » servait à la fois à éviter une réécriture ET à éviter une
+///   renotification. Un ticket dont l'écriture avait réussi mais dont la
+///   notification avait échoué sortait donc des candidats, et la notification
+///   attendue disparaissait définitivement.
+///
+///   La correction ne consiste pas à « réessayer au hasard » : elle consiste à
+///   CALCULER SÉPARÉMENT ce qui manque, à partir de trois faits indépendants.
+///   Ce calcul est PUR : il ne lit ni le disque ni le réseau, il reçoit les
+///   faits constatés. Il est donc entièrement testable sans simulation.
+class ResteAFaire {
+  /// Le résultat officiel doit-il encore être écrit sur le ticket ?
+  final bool ecriture;
+
+  /// Une notification de remontée tardive doit-elle encore être émise ?
+  final bool notification;
+
+  /// Une décision Accepter/Refuser doit-elle encore être proposée ?
+  final bool decision;
+
+  const ResteAFaire({
+    required this.ecriture,
+    required this.notification,
+    required this.decision,
+  });
+
+  const ResteAFaire.rien()
+      : ecriture = false,
+        notification = false,
+        decision = false;
+
+  /// Y a-t-il encore au moins une étape à faire ?
+  bool get quelqueChoseAFaire => ecriture || notification || decision;
+
+  /// Seule une notification manque : aucune reprise réseau n'est nécessaire,
+  /// le rapport officiel est déjà sur le ticket.
+  bool get notificationSeule => !ecriture && notification;
+
+  @override
+  String toString() => 'ResteAFaire(ecriture=$ecriture, '
+      'notification=$notification, decision=$decision)';
+}
+
+/// Calcule ce qu'il reste à faire pour UN ticket.
+///
+/// Les CINQ faits reçus, tous indépendants :
+///   [resultatOfficielPersiste]  le ticket porte un `montantOfficielPmu`
+///                               (ou un remboursement établi) ;
+///   [ecritureDejaConfirmee]     le marqueur `ge1:` est persisté ;
+///   [notificationDejaEmise]     le marqueur `gt1:` est persisté ;
+///   [decisionEnregistree]       le ticket porte un `decisionGainPmu` ;
+///   [decisionRequiseParLaRegle] la règle A/B/C dit qu'une décision s'impose.
+///
+/// ⚠️ AUCUNE DÉCISION N'EST PRISE ICI : `decisionRequiseParLaRegle` vient de
+///    `deciderGainTardif`, appelée par l'appelant. Ce fichier ne compare aucun
+///    montant dans cette fonction.
+///
+/// ⚠️ LA NOTIFICATION MANQUANTE SURVIT À LA PERTE DU MARQUEUR D'ÉCRITURE.
+///    C'est tout l'objet de la correction : les deux faits sont lus séparément.
+ResteAFaire resteAFaire({
+  required bool resultatOfficielPersiste,
+  required bool ecritureDejaConfirmee,
+  required bool notificationDejaEmise,
+  required bool decisionEnregistree,
+  required bool decisionRequiseParLaRegle,
+}) {
+  // ① ÉCRITURE : nécessaire tant que le résultat officiel n'est pas sur le
+  //    ticket. Un marqueur `ge1:` présent NE SUFFIT PAS à lui seul si le
+  //    ticket ne porte aucun officiel : le marqueur peut avoir été écrit pour
+  //    un verdict `nonDetermine`/remboursement et le rapport peut avoir été
+  //    publié depuis. On se fie donc d'abord au FAIT financier.
+  final ecriture = !resultatOfficielPersiste && !ecritureDejaConfirmee;
+
+  // ② NOTIFICATION : due dès que la règle la requiert et qu'elle n'a pas
+  //    encore été émise. Elle est INDÉPENDANTE de l'écriture ci-dessus : c'est
+  //    la correction du défaut. Une notification peut manquer alors que
+  //    l'écriture est faite (échec de notification, notifications désactivées,
+  //    interruption entre les deux).
+  final notification = decisionRequiseParLaRegle && !notificationDejaEmise;
+
+  // ③ DÉCISION : proposée tant qu'aucune n'est enregistrée et que la règle
+  //    l'exige. Elle survit à la purge de l'historique des alertes, parce
+  //    qu'elle s'appuie sur `decisionGainPmu`, donc sur le ticket.
+  final decision = decisionRequiseParLaRegle && !decisionEnregistree;
+
+  return ResteAFaire(
+    ecriture: ecriture,
+    notification: notification,
+    decision: decision,
+  );
+}

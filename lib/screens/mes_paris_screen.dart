@@ -34,6 +34,8 @@ import '../services/branchement_verdict_course.dart'; // ★ B-4.5 — verdict o
 import '../services/affichage_gain_structure.dart'; // ★ B-4.5 — affichage structuré
 import '../services/gain_durable_vue.dart'; // ★ B1-T12 lot 2-C — vue durable
 import '../services/resultat_ecriture_gain.dart'; // ★ B1-T12 lot 2-C — issue d'écriture
+import '../services/gains_tardifs_en_attente.dart'; // ★ CHANTIER 2/3 — décisions en attente
+import '../widgets/bloc_decision_gain_tardif.dart'; // ★ CHANTIER 2/3 — Accepter/Refuser
 
 // ★ v9.85 : deepLinkCourseKeyNotifier retiré de main.dart — notifier local
 final deepLinkCourseKeyNotifier = ValueNotifier<String?>(null);
@@ -2358,6 +2360,36 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
                               color: Colors.white54, fontSize: 11),
                         ),
                       ],
+                      // ★ CHANTIER 2/3 — BLOC DE DÉCISION Accepter/Refuser.
+                      //
+                      //   Affiché UNIQUEMENT quand `gains_tardifs_en_attente`
+                      //   dit qu'une décision est réellement attendue : gain
+                      //   officiel persisté, aucune décision enregistrée, et
+                      //   montants réellement différents au centime. Le CAS B
+                      //   (montants identiques) n'affiche donc RIEN — il ne
+                      //   doit pas simuler un arbitrage qui n'a pas lieu.
+                      //
+                      //   ⚠️ Les boutons passent par les chemins sécurisés de
+                      //      `PmuProvider` (invalidation des écritures
+                      //      concurrentes + relecture disque). Un échec de
+                      //      sauvegarde laisse le bloc en place : la décision
+                      //      est reportée, jamais perdue.
+                      if (_decisionEnAttentePour(widget.predictionLiee) != null) ...[
+                        const SizedBox(height: 8),
+                        BlocDecisionGainTardif(
+                          decision: _decisionEnAttentePour(widget.predictionLiee)!,
+                          provider: context.read<PmuProvider>(),
+                          compact: true,
+                          onDecisionConfirmee: () {
+                            // Les montants affichés viennent du provider :
+                            // `notifyListeners()` a déjà eu lieu dans
+                            // `accepterGainOfficiel`. On force un rafraîchir
+                            // local pour recalculer les statistiques de CET
+                            // écran avec la décision désormais persistée.
+                            if (mounted) setState(() {});
+                          },
+                        ),
+                      ],
                     ],
                   ],
                   // Ordre arrivée
@@ -2751,6 +2783,31 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
     final r = pred?.remboursementPmu;
     if (r != null && r > 0) return r;
     return null;
+  }
+
+  /// ★ CHANTIER 2/3 — LA décision en attente de CE ticket, ou `null`.
+  ///
+  /// ⚠️ SOURCE UNIQUE : `gains_tardifs_en_attente.attendDecisionGain`, la même
+  ///    fonction que celle utilisée par la liste des décisions en attente et
+  ///    par l'indicateur de notifications. L'écran ne redéfinit donc PAS ce
+  ///    qu'est une décision en attente — deux définitions divergentes
+  ///    produiraient un écran qui propose une décision que le service ne
+  ///    reconnaît pas, ou l'inverse.
+  ///
+  /// Rend `null` — et donc n'affiche AUCUN bloc — dans les cas suivants :
+  ///   • le ticket n'a pas de prédiction durable liée ;
+  ///   • aucun gain officiel n'est persisté ;
+  ///   • une décision est déjà enregistrée (elle n'est jamais reproposée) ;
+  ///   • le gain officiel est IDENTIQUE au gain manuel au centime (CAS B).
+  DecisionEnAttente? _decisionEnAttentePour(UserPrediction? pred) {
+    if (pred == null) return null;
+    if (!attendDecisionGain(pred)) return null;
+    return DecisionEnAttente(
+      ticket: pred,
+      gainManuel: pred.montantGainManuel,
+      gainOfficiel: pred.montantOfficielPmu,
+      remboursement: pred.remboursementPmu,
+    );
   }
 
   /// ★ CHANTIER 1/3 — le total reversé (gain + remboursement), ou `null`.
