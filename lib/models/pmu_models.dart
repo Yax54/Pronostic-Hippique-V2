@@ -1256,17 +1256,20 @@ class UserPrediction {
           },
     // ★ CHANTIER 1/3 — LE REMBOURSEMENT, CLÉ FACULTATIVE.
     //
-    //   ⚠️ CLÉ ÉCRITE UNIQUEMENT SI SA VALEUR EST NON NULLE — EXIGENCE
-    //   EXPLICITE DE L'ARBITRAGE. Trois conséquences, toutes voulues :
+    //   ⚠️ CLÉ ÉCRITE DÈS QUE LA VALEUR EST NON NULLE — `0.0` COMPRIS.
+    //   Convention validée par l'arbitrage (chantier 1/3, opération 4). Trois
+    //   conséquences, toutes voulues :
     //     • un ticket historique relu puis réécrit garde 26 (ou 28) clés, à
-    //       l'octet près — la forme des sauvegardes ne change pas ;
+    //       l'octet près — la forme des sauvegardes ne change pas, puisque ces
+    //       tickets portent `null` et que `null` n'écrit RIEN ;
     //     • l'ABSENCE de la clé signifie « aucun remboursement établi », donc
     //       se relit en `null`, JAMAIS en `0.0` : on n'assimile pas une
     //       absence à un remboursement officiel nul ;
-    //     • un remboursement de `0.0` n'est pas une information utile : le
-    //       `> 0` du test ci-dessous l'empêche d'écrire la clé, ce qui est
-    //       cohérent avec le contrat « `null` = non établi ».
-    ...?(remboursementPmu == null || remboursementPmu! <= 0)
+    //     • un remboursement OFFICIELLEMENT ÉTABLI À `0.0` est une information
+    //       (l'opérateur a publié « zéro euro reversé ») et DOIT être écrit.
+    //       Le filtrer sur `> 0` la confondrait avec l'absence : c'est
+    //       exactement la confusion que l'arbitrage interdit.
+    ...?(remboursementPmu == null)
         ? null
         : <String, dynamic>{'remboursementPmu': remboursementPmu},
   };

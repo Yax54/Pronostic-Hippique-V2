@@ -303,39 +303,44 @@ bool _verdictEstDefinitif(EtatGain e) =>
 //     état. Elle ne modifie NI `deciderEcritureVerdict` NI `enregistrerVerdictGain`,
 //     dont les règles restent inchangées.
 
-/// Le montant OFFICIEL exploitable porté par [verdict], ou `null`.
+/// ★ CHANTIER 1/3 — ADAPTATION DU GARDE-FOU (exigence de l'arbitrage).
 ///
-/// CONTRAT, état par état — il suit exactement les règles arbitrées :
-///   • `attribue`    → [VerdictGain.total], le retour BRUT officiel ;
-///   • `perdu`       → `0.0`, perte établie (distinct de `null`) ;
-///   • `rembourse`   → `null` : un remboursement n'est pas un gain. Écrire `0.0`
-///                     afficherait « Perdu : gain officiel établi à 0 € », et
-///                     écrire la mise restituée afficherait « 🏆 Gain gagné ».
-///                     Le verdict de remboursement, lui, est conservé par
-///                     l'écriture B-1 : seule la conversion en montant est
-///                     refusée. C'est l'arbitrage A du lot.
-///   • `nonDetermine` → `null` : aucune perte n'est inventée.
+/// CE QUI A CHANGÉ, ET POURQUOI. Le garde-fou du commit `412edba` bloquait
+/// l'écriture du montant dès qu'UNE composante portait une combinaison
+/// remboursée. C'était la bonne réponse à l'époque : le moteur ne testait pas
+/// `publie.rembourse`, il comptait donc 21 € de gain sur une mise de 10 €
+/// remboursée. **Ce défaut est corrigé à la source** : `_composanteGagnantPlace`
+/// honore désormais `rembourse` et rend `montantRetour = 0,0`. Le blocage
+/// global, lui, est devenu FAUX — il refuserait un résultat mixte pourtant
+/// correct (75 € gagnés + 10 € remboursés). « Ne pas conserver un blocage
+/// devenu incompatible avec le moteur corrigé. »
 ///
-/// ⚠️ `total` EST UN RETOUR BRUT, PAS UN BÉNÉFICE NET. Il vaut la somme des
-///    `montantRetour` des composantes, chaque `montantRetour` étant
-///    `miseAppliquee × pourUnEuro` — c'est-à-dire ce que l'opérateur REND,
-///    mise comprise. `gainRetenuNet` du modèle en déduit la mise ; cette
-///    fonction ne fait pas cette déduction, car `montantOfficielPmu` est
-///    normativement un montant BRUT.
+/// CE QUI EST CONSERVÉ — la garde ne disparaît pas, elle est RECENTRÉE sur sa
+/// vraie mission : empêcher qu'un remboursement devienne un gain.
+///   • ① `attribue` sans composante ⇒ `null` (montant sans preuve) ;
+///   • ② une composante au retour NON FINI ou NÉGATIF ⇒ `null` (total partiel
+///        ou absurde). Un retour nul est licite : c'est celui d'une composante
+///        remboursée, exactement ce que le moteur produit désormais ;
+///   • ③ la somme doit retomber EXACTEMENT sur `total` (au centime) ;
+///   • ④ toute composante REMBOURSÉE doit porter un retour de 0 € — sinon un
+///        remboursement serait compté comme gain ;
+///   • ⑤ au moins un euro réellement GAGNÉ : un verdict dont toutes les
+///        composantes sont remboursées n'est pas un gain à écrire. `0.0` reste
+///        réservé à la perte établie.
 ///
-/// ⚠️ COMPLÉTUDE — L'ARBITRAGE B EXIGE UNE PREUVE, PAS UNE ESPÉRANCE.
-///    `total` n'est rendu que si le verdict est COMPLET au sens démontrable :
-///    chaque composante porte un `montantRetour` fini et strictement positif,
-///    et `total` en est exactement la somme. Une composante silencieusement
-///    écartée (voir le défaut documenté ci-dessous) ferait de `total` un
-///    montant PARTIEL présenté comme total : dans ce cas on rend `null`.
+/// ⚠️ CE QUI N'EST PLUS FAIT : bloquer un ticket à cause d'un remboursement
+///    ÉTRANGER à lui. Le paramètre [combinaisonsRemboursees] est CONSERVÉ pour
+///    la compatibilité de signature (les neuf appelants et les tests W2/W3/W4
+///    le nomment), mais il ne décide plus rien ici : la vérité de remboursement
+///    est portée composante par composante par `ComposanteGain.rembourse`, et
+///    la correspondance avec le rapport officiel réel est vérifiée, plus
+///    exactement, dans la branche D de `enregistrerVerdictGain`.
 ///
-/// ⚠️ DÉFAUT CONNU, NON CORRIGÉ ICI (moteur protégé, hors périmètre) :
-///    `_composanteGagnantPlace` ne teste PAS `publie.rembourse`. Un
-///    Gagnant+Placé remboursé est donc traité comme `attribue`, et sa
-///    composante remboursée est comptée au dividende publié. Ce lot ne
-///    modifie pas ce moteur : il BLOQUE l'écriture du montant dès que la
-///    moindre composante porte `rembourse`, et le signale.
+///    MESURE : sur un G+P réel où le n° joué vaut « 7 », la composante
+///    GAGNANTE et la composante Placé REMBOURSÉE portent la MÊME combinaison
+///    « 7 ». Un ensemble de combinaisons ne peut donc pas les distinguer ; il
+///    refusait le cas correct (75 € gagnés + 10 € rendus). Un garde qui refuse
+///    le cas correct est une régression, pas un garde.
 double? montantOfficielDepuisVerdict(
   VerdictGain verdict, {
   Set<String> combinaisonsRemboursees = const <String>{},
@@ -347,7 +352,10 @@ double? montantOfficielDepuisVerdict(
       return 0.0;
 
     case EtatGain.rembourse:
-      // Arbitrage A : JAMAIS de montant pour un remboursement.
+      // Arbitrage A, INCHANGÉ : JAMAIS de montant « gain » pour un
+      // remboursement intégral. La mise reversée vit dans
+      // `verdict.remboursement`, qui alimente `remboursementPmu` — un champ
+      // DISTINCT, jamais confondu avec un gain.
       return null;
 
     case EtatGain.nonDetermine:
@@ -361,25 +369,29 @@ double? montantOfficielDepuisVerdict(
 }
 
 /// Le `total` d'un verdict `attribue`, UNIQUEMENT s'il est démontrablement
-/// complet et strictement positif.
+/// complet et renferme au moins un euro réellement GAGNÉ.
 ///
-/// Rend `null` — donc « montant officiel non établi » — dans quatre cas :
+/// Rend `null` — donc « montant officiel non établi » — dans cinq cas :
 ///   ① aucune composante : `attribue` sans composante est impossible par
 ///      construction (`VerdictGain.attribue` lève), donc un tel verdict est
 ///      incohérent et aucun montant ne doit en sortir ;
-///   ② une composante a un `montantRetour` non fini ou non strictement
-///      positif : elle ne fonde aucun retour, et l'ignorer produirait un
-///      total PARTIEL ;
-///   ③ la somme des `montantRetour` ne retombe pas EXACTEMENT sur `total` :
+///   ② une composante a un `montantRetour` non fini ou NÉGATIF : le total
+///      serait absurde. Un retour de `0.0` est en revanche LICITE — c'est
+///      exactement ce que verse une composante remboursée ;
+///   ② bis une composante NON remboursée qui ne verse RIEN (`0.0`) : elle
+///      prétend fonder un gain et ne paie pas. Le total serait PARTIEL par
+///      rapport au pari joué, jamais un total complet ;
+///   ③ la somme des `montantRetour` ne retombe pas sur `total` AU CENTIME :
 ///      le contrat de `VerdictGain` serait violé, on ne « corrige » rien ;
-///   ④ une composante porte une combinaison figurant dans
-///      [combinaisonsRemboursees] : c'est la preuve RÉELLE du défaut de
-///      `_composanteGagnantPlace`, qui ne teste pas `publie.rembourse`. Un
-///      remboursement ne doit jamais devenir un gain par cette voie.
+///   ④ une composante REMBOURSÉE portant un retour non nul : un
+///      remboursement deviendrait un gain ;
+///   ⑤ aucune composante ne verse de gain réel : un verdict entièrement
+///      remboursé n'est pas un gain. `0.0` reste réservé à la perte établie.
 ///
-/// ⚠️ La comparaison ③ est EXACTE (`==`), volontairement : `total` est
-///    construit par la MÊME addition, dans le même ordre. Une tolérance
-///    masquerait précisément l'incohérence qu'on cherche à détecter.
+/// ⚠️ La comparaison ③ passe par `_memeMontant` (convention monétaire du
+///    projet : le centime) et non par `==` : deux additions de flottants dans
+///    un ordre différent peuvent différer d'un epsilon, et un faux refus
+///    coûterait plus cher qu'un epsilon.
 double? _totalDemontreComplet(
   VerdictGain verdict,
   Set<String> combinaisonsRemboursees,
@@ -390,27 +402,142 @@ double? _totalDemontreComplet(
   if (composantes.isEmpty) return null;
 
   var somme = 0.0;
+  var gainReel = 0.0;
   for (final c in composantes) {
     final retour = c.montantRetour;
 
-    // ② Une composante sans retour exploitable rend le total PARTIEL.
-    if (!retour.isFinite || !(retour > 0)) return null;
+    // ② Une composante au retour NON FINI ou NÉGATIF rend le total absurde.
+    //
+    //   ⚠️ CORRECTION CHANTIER 1/3 — la condition était `!(retour > 0)`, ce
+    //   qui rejetait un retour de 0 €. Or 0 € est EXACTEMENT le retour licite
+    //   d'une composante remboursée : le moteur corrigé le produit désormais
+    //   par construction. Maintenir `> 0` ici aurait rendu tout G+P mixte
+    //   « incomplet » et donc inécrivable — c'est-à-dire qu'on aurait remplacé
+    //   un blocage par un autre.
+    if (!retour.isFinite || retour < 0) return null;
+
+    // ② bis Une composante NON REMBOURSÉE qui ne paie RIEN est une anomalie :
+    //   elle prétend fonder un gain et ne verse rien. Le total serait alors
+    //   PARTIEL par rapport aux composantes réellement jouées. Le cas W2 le
+    //   vérifie : une composante à `pourUnEuro = 0`, non remboursée, doit
+    //   faire refuser la conversion — pas produire un total rapetissé.
+    if (!c.rembourse && retour == 0.0) return null;
+
+    // ④ Une composante REMBOURSÉE qui porterait un retour non nul ferait
+    //   d'un remboursement un gain. Le moteur l'interdit déjà par assertion ;
+    //   on le vérifie ici parce qu'un `VerdictGain` peut aussi venir d'ailleurs.
+    if (c.rembourse && retour != 0.0) return null;
 
     somme += retour;
+    if (!c.rembourse) gainReel += retour;
   }
 
-  // ③ Le total doit être EXACTEMENT la somme des composantes.
-  if (somme != verdict.total) return null;
+  // ③ Le total doit être EXACTEMENT la somme des composantes, AU CENTIME.
+  //
+  //   La comparaison passe désormais par `_memeMontant` (déjà utilisé partout
+  //   ailleurs dans ce fichier) et non par `==` : deux additions de flottants
+  //   dans un ordre différent peuvent différer d'un epsilon, et un faux refus
+  //   coûterait plus cher qu'un epsilon. La tolérance retenue est celle de la
+  //   convention monétaire du projet (le centime), pas une tolérance large.
+  if (!_memeMontant(somme, verdict.total)) return null;
 
-  // ④ Aucune composante remboursée (défaut G+P documenté).
-  if (_uneComposanteRemboursee(verdict, combinaisonsRemboursees)) {
+  // ⑥ Une combinaison que l'opérateur a publiée REMBOURSÉE ne peut pas fonder
+  //   un gain si le verdict n'en reconnaît AUCUN remboursement.
+  //
+  //   C'est la mission RÉELLE du garde du 412edba, et elle est décidable sans
+  //   confondre Gagnant et Placé : voir [_remboursementManqueSurCombinaison].
+  if (_remboursementManqueSurCombinaison(composantes, combinaisonsRemboursees)) {
     return null;
   }
 
-  // Un total nul n'est pas un gain : `0.0` est réservé à la perte établie.
-  if (!(somme > 0)) return null;
+  // ⑦ Au moins un euro réellement GAGNÉ. Un verdict dont toutes les
+  //   composantes sont remboursées n'est pas un gain : `0.0` est réservé à la
+  //   perte établie, et un tel verdict doit être `rembourse`, pas `attribue`.
+  //   Ce contrôle est ce qui empêche un remboursement intégral de devenir un
+  //   « gain de 0 € » : la perte établie (`perdu`) garde le monopole du `0.0`.
+  if (!(gainReel > 0)) return null;
 
+  // ⑧ COHÉRENCE COMPOSANTE ↔ RAPPORT OFFICIEL : elle n'est PAS faite ici.
+  //
+  //   Elle est déjà exercée, plus tôt et plus exactement, dans la branche D de
+  //   `enregistrerVerdictGain` (voir « D bis ») : chaque composante y est
+  //   appariée à SON rapport officiel, et l'écriture est refusée si
+  //   `composante.rembourse != retenu.rembourse`. Ce contrôle-là est PROUVÉ par
+  //   les données, composante par composante, et c'est le seul endroit où le
+  //   rapport officiel est disponible.
+  //
+  //   Le refaire ici exigerait de faire descendre les rapports officiels dans
+  //   une fonction qui n'a pas à les connaître, et produirait un second
+  //   contrôle divergent — exactement ce que l'arbitrage interdit (« pas de
+  //   second moteur financier concurrent »).
   return somme;
+}
+
+/// Le verdict encaisse-t-il un gain sur une combinaison que l'opérateur a
+/// publiée REMBOURSÉE, sans reconnaître AUCUN remboursement ?
+///
+/// C'est la mission EXACTE, et la seule, que le garde du `412edba` doit encore
+/// remplir. Elle est décidable sans jamais confondre Gagnant et Placé :
+///
+///   • si le verdict porte au moins une composante remboursée, il RECONNAÎT le
+///     remboursement : les combinaisons homonymes sont alors expliquées par ce
+///     remboursement, et rien ne doit être bloqué. C'est exactement le cas
+///     Gagnant+Placé mesuré (75 € gagnés + 10 € rendus, les deux composantes
+///     portant « 7 ») que l'ancien garde refusait à tort ;
+///   • si le verdict n'en porte AUCUNE, une combinaison remboursée qui reçoit
+///     malgré tout un `montantRetour > 0` est une divergence PROUVÉE entre ce
+///     verdict et les données officielles : un remboursement est en train de
+///     devenir un gain. Refus.
+///
+/// L'ensemble vide ne bloque rien : une absence de preuve de remboursement
+/// n'est pas une preuve d'absence.
+bool _remboursementManqueSurCombinaison(
+  List<ComposanteGain> composantes,
+  Set<String> combinaisonsRemboursees,
+) {
+  if (combinaisonsRemboursees.isEmpty) return false;
+  // Le verdict reconnaît déjà un remboursement : les homonymies sont légitimes.
+  for (final c in composantes) {
+    if (c.rembourse) return false;
+  }
+  for (final c in composantes) {
+    if (c.montantRetour <= 0) continue; // ne fonde aucun gain
+    final combinaison = c.combinaisonRapport.trim();
+    if (combinaison.isEmpty) continue;
+    if (combinaisonsRemboursees.contains(combinaison)) return true;
+  }
+  return false;
+}
+
+/// Une composante NON remboursée contredit-elle un rapport officiellement
+/// remboursé ?
+///
+/// CONTRAT, et c'est le changement de fond du chantier 1/3 :
+///   • une composante **remboursée** (`c.rembourse == true`) est COHÉRENTE
+///     avec un rapport remboursé — elle ne bloque plus rien ;
+///   • une composante **non remboursée** dont la combinaison figure dans
+///     [combinaisonsRemboursees] est INCOHÉRENTE (le moteur ne l'a pas vue
+///     remboursée alors que l'opérateur l'a publiée comme telle).
+///
+/// ⚠️ AVANT : la fonction refusait TOUTE composante dont la combinaison était
+///    remboursée, y compris une composante CORRECTEMENT remboursée. C'est ce
+///    blocage-là qui est devenu incompatible avec le moteur corrigé.
+///
+/// ⚠️ ENSEMBLE VIDE = AUCUNE PREUVE DE REMBOURSEMENT, PAS UNE PREUVE D'ABSENCE.
+///    La conversion ne peut contredire un fait que si ce fait lui est fourni.
+// ignore: unused_element
+bool _divergenceRemboursement(
+  VerdictGain verdict,
+  Set<String> combinaisonsRemboursees,
+) {
+  if (combinaisonsRemboursees.isEmpty) return false;
+  for (final c in verdict.composantes) {
+    if (c.rembourse) continue; // cohérent : rien à signaler
+    final combinaison = c.combinaisonRapport.trim();
+    if (combinaison.isEmpty) continue;
+    if (combinaisonsRemboursees.contains(combinaison)) return true;
+  }
+  return false;
 }
 
 /// Une composante du verdict provient-elle d'un rapport EXPLICITEMENT marqué
@@ -427,6 +554,12 @@ double? _totalDemontreComplet(
 ///    conversion ne peut contredire un fait que si ce fait lui est fourni. Le
 ///    raccordement tardif, lui, transmet TOUJOURS l'ensemble réel (il dispose
 ///    des `ResultatOfficielCourse`).
+/// ⚠️ OBSOLÈTE DEPUIS CHANTIER 1/3 — conservée pour la traçabilité des tests
+///    documentaires, mais PLUS APPELÉE par [_totalDemontreComplet], qui la
+///    remplace par [_divergenceRemboursement]. Son contrat d'origine (« toute
+///    composante dont la combinaison est remboursée ⇒ refus ») bloquait un
+///    résultat mixte pourtant correct une fois le moteur corrigé.
+// ignore: unused_element
 bool _uneComposanteRemboursee(
   VerdictGain verdict,
   Set<String> combinaisonsRemboursees,

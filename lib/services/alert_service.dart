@@ -1027,6 +1027,8 @@ class AlertService extends ChangeNotifier {
       //   gain dès le ré-ajout au suivi s'il n'était pas recopié ici.
       montantGainManuel: course.montantGainManuel,
       idTicketLie: course.idTicketLie,
+      // ★ CHANTIER 1/3 — le remboursement officiel survit au ré-ajout au suivi.
+      remboursementPmu: course.remboursementPmu,
       storageKey: storageKey,
     );
     _trackedCourses[storageKey] = courseAvecKey;
@@ -3872,6 +3874,11 @@ class TrackedCourse {
     //   déclaré par l'utilisateur — même piège que 4-F, B-1 et R1.
     montantGainManuel: montantGainManuel,
     idTicketLie: idTicketLie,
+    // ★ CHANTIER 1/3 — LE REMBOURSEMENT SURVIT À LA COPIE.
+    //   Sans cette ligne, enregistrer un résultat effacerait le remboursement
+    //   officiel : `totalReverse` et `resultatNet` deviendraient faux alors que
+    //   les rapports, eux, seraient conservés. Même piège que 4-F / B-1 / R1.
+    remboursementPmu: remboursementPmu,
     // ★ LOT R1 : `storageKey` DOIT être propagée.
     //   Sans cette ligne, la copie renvoyée par `withResultat()` perdait sa
     //   clé (mesuré : 0 occurrence de `storageKey` dans ce corps, contre 1
@@ -3935,6 +3942,18 @@ class TrackedCourse {
     varianteChoisie: varianteChoisie,
     numerosDansOrdre: numerosDansOrdre,
     formulePari: formulePari,
+    // ★ CHANTIER 1/3 — ASYMÉTRIE FERMÉE (même classe de défaut que R1).
+    //
+    //   `withResultat` propageait déjà `montantGainManuel`, `idTicketLie` et
+    //   `remboursementPmu` ; `withDividende` — l'autre reconstructeur du même
+    //   objet — ne les propageait PAS. Une simple mise à jour de dividende
+    //   effaçait donc le remboursement officiel d'un ticket déjà résolu : le
+    //   résultat financier devenait faux après une opération sans rapport.
+    //   Mesuré : 0 occurrence des trois champs dans ce corps avant correction,
+    //   contre 3 dans `withResultat()`.
+    montantGainManuel: montantGainManuel,
+    idTicketLie: idTicketLie,
+    remboursementPmu: remboursementPmu,
     storageKey: storageKey,
   );
 
@@ -4058,10 +4077,12 @@ class TrackedCourse {
           },
     // ★ CHANTIER 1/3 — LE REMBOURSEMENT, CLÉ FACULTATIVE.
     //
-    //   Écrite UNIQUEMENT si la valeur est non nulle. Un ticket historique
-    //   relu puis réécrit garde donc 28 clés exactement (verrou mesuré), et
-    //   l'ABSENCE de la clé se relit en `null` — jamais en `0 €` officiel.
-    ...?(remboursementPmu == null || remboursementPmu! <= 0)
+    //   Écrite DÈS QUE la valeur est non nulle, `0.0` COMPRIS (convention
+    //   validée, opération 4). Un ticket historique relu puis réécrit garde
+    //   donc 28 clés exactement (verrou mesuré), et l'ABSENCE de la clé se
+    //   relit en `null` — jamais en `0 €` officiel. Un remboursement
+    //   officiellement établi à `0 €` est une information : il s'écrit.
+    ...?(remboursementPmu == null)
         ? null
         : <String, dynamic>{'remboursementPmu': remboursementPmu},
   };

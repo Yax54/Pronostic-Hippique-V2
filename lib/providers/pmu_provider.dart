@@ -1409,8 +1409,32 @@ class PmuProvider extends ChangeNotifier {
       verdictOfficiel,
       combinaisonsRemboursees: combinaisonsRemboursees,
     );
-    if (montant == null) return base;
-    return base.copyWith(montantOfficielPmu: montant);
+
+    // ★ CHANTIER 1/3 — LE REMBOURSEMENT EST RACCORDÉ ICI, ET NULLE PART AILLEURS.
+    //
+    //   DÉFAUT MESURÉ AVANT D'ÉCRIRE : `_fusionnerMontantOfficiel` n'écrivait
+    //   que `montantOfficielPmu`. Un Gagnant+Placé mixte (75 € gagnés + 10 €
+    //   remboursés) persistait donc 75 € SANS les 10 € rendus : « Remboursement »
+    //   restait vide alors que le montant est démontré, et le total reversé
+    //   affiché (75 €) était FAUX — il vaut 85 €.
+    //
+    //   ⚠️ DEUX CHAMPS, DEUX SIGLES, JAMAIS FUSIONNÉS. Le remboursement ne
+    //      rentre pas dans `montantOfficielPmu` : il a son propre champ, sa
+    //      propre clé JSON, son propre libellé d'affichage. C'est la règle.
+    //
+    //   ⚠️ `null` N'ÉCRASE PAS UN REMBOURSEMENT DÉJÀ CONNU — même raisonnement
+    //      que pour le montant : si le verdict ne démontre aucun remboursement,
+    //      effacer un remboursement antérieurement établi serait une régression.
+    //      Un remboursement établi est un FAIT officiel, pas une absence.
+    final remboursement = verdictOfficiel.remboursement > 0
+        ? verdictOfficiel.remboursement
+        : null;
+
+    if (montant == null && remboursement == null) return base;
+    return base.copyWith(
+      montantOfficielPmu: montant ?? base.montantOfficielPmu,
+      remboursementPmu: remboursement ?? base.remboursementPmu,
+    );
   }
 
   /// Valide ou invalide un pronostic + enregistre la mise et le gain

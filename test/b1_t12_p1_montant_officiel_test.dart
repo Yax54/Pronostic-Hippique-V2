@@ -302,8 +302,15 @@ void main() {
       });
     });
 
-    test('R3 Gagnant + Placé dont SEULE la composante Placé est remboursée : '
-        'le montant officiel est bloqué, pas partiellement écrit', () async {
+    test('R3 ★ CHANTIER 1/3 — Gagnant + Placé dont SEULE la composante Placé '
+        'est remboursée : le montant officiel est ÉCRIT et vaut 75,0, le '
+        'remboursement 10,0 — les deux champs DISTINCTS', () async {
+      // AVANT : ce test exigeait le BLOCAGE (montant `null`). Ce blocage était
+      // la réponse au défaut du moteur, qui comptait 21 € de gain sur une mise
+      // remboursée. Le défaut étant corrigé à la source, le blocage est devenu
+      // incompatible : il refusait un résultat mixte POURTANT CORRECT.
+      // L'exigence n'est pas affaiblie, elle est REMPLACÉE par la règle
+      // financière validée (75 gagnés + 10 rendus).
       await _sansReseau(() async {
         final store = _Store();
         final pmu = await _providerAvec(store, [
@@ -312,6 +319,7 @@ void main() {
             codePmu: 'E_SIMPLE_GAGNANT',
             miseGagnant: 10.0,
             misePlace: 10.0,
+            decision: DecisionGainPmu.accepte,
           ),
         ]);
 
@@ -321,22 +329,47 @@ void main() {
           enregistrerMontantOfficiel: true,
         );
         expect(issue, IssueEcritureGain.confirme);
-        // MESURÉ sur le moteur réel : le verdict est `attribue` avec
-        // total = 96,0 = 10×7,50 (gagnant) + 10×2,10 (placé REMBOURSÉ).
-        // Ce total est FAUX : la composante Placé est remboursée, elle ne
-        // fonde aucun retour. Le garde doit bloquer l'écriture.
-        expect(_enMemoire(pmu, 'p1').montantOfficielPmu, isNull,
-            reason: 'la composante remboursée rend le total faux : rien ne '
-                'doit être écrit');
-        expect(_enMemoire(pmu, 'p1').montantOfficielPmu, isNot(96.0),
-            reason: 'les 21,0 remboursés ne sont pas un gain');
-        expect(store.predictionParId('p1')!['montantOfficielPmu'], isNull);
+
+        final memoire = _enMemoire(pmu, 'p1');
+        // 「Gain gagné」 : 10 × 7,50 = 75,0.
+        expect(memoire.montantOfficielPmu, 75.0,
+            reason: 'le gain gagné est la seule composante qui paie');
+        expect(memoire.montantOfficielPmu, isNot(96.0),
+            reason: 'les 21,0 de l\'ancien défaut ne sont pas un gain');
+        // 「Remboursement」 : 10,0 — champ DISTINCT.
+        expect(memoire.remboursementPmu, 10.0,
+            reason: 'la mise remboursée est reversée, elle n\'est pas gagnée');
+        // Total reversé et net : les cinq montants restent distincts.
+        expect(memoire.totalReverse, 85.0, reason: '75 + 10');
+        expect(memoire.miseTotaleEngagee, 20.0, reason: '10 + 10');
+        expect(memoire.resultatNet, 65.0, reason: '85 − 20');
+
+        // ── PERSISTANCE : les DEUX champs, et eux seuls ──────────────────
+        final disque = store.predictionParId('p1')!;
+        expect(disque['montantOfficielPmu'], 75.0);
+        expect(disque['remboursementPmu'], 10.0,
+            reason: 'le remboursement doit survivre au disque, sinon le '
+                'résultat financier serait faux après redémarrage');
       });
     });
 
-    test('R3bis LE DÉFAUT G+P, MESURÉ : le verdict du moteur vaut `attribue` '
-        'avec total 96,0 alors que la composante Placé est remboursée — '
-        'c\'est exactement le cas que le garde doit intercepter', () async {
+    test('R3bis ★ CHANTIER 1/3 — LE RÉSULTAT MIXTE EST DÉSORMAIS CORRECT : '
+        'le moteur rend `attribue` avec 75,0 de gain ET 10,0 de remboursement, '
+        'jamais 96,0', () async {
+      // ── CE TEST A CHANGÉ DE SENS, ET C'EST LÉGITIME ──────────────────────
+      //
+      //   AVANT : il verrouillait l'ANCIEN DÉFAUT (« total 96,0 »), parce que
+      //   `_composanteGagnantPlace` ne testait pas `publie.rembourse` et
+      //   appliquait 10 × 2,10 = 21,0 à une mise pourtant remboursée. Le
+      //   garde-fou du 412edba bloquait alors TOUTE écriture.
+      //
+      //   APRÈS : le moteur honore `rembourse` à la source. Ce n'est donc plus
+      //   le défaut qui est vérifié, mais la RÈGLE FINANCIÈRE VALIDÉE par
+      //   l'arbitrage : un G+P mixte vaut 75 € gagnés + 10 € rendus = 85 €
+      //   reversés, avec un remboursement STRICTEMENT distinct du gain.
+      //
+      //   ⚠️ L'ASSERTION N'A PAS ÉTÉ AFFAIBLIE : elle a été REMPLACÉE par des
+      //      exigences plus fortes (trois montants distincts, aucun 96,0).
       await _sansReseau(() async {
         final pmu = await _providerAvec(_Store(), [
           _ticket(
@@ -351,21 +384,36 @@ void main() {
         );
         expect(resolution.verdict, isNotNull);
         expect(resolution.verdict!.etat, EtatGain.attribue,
-            reason: 'DÉFAUT MOTEUR MESURÉ (protégé, correction = chantier 2)');
-        expect(resolution.verdict!.total, 96.0);
+            reason: 'le Gagnant paie : le ticket est attribué');
+        // 10 × 7,50 = 75,0 — le gain réel.
+        expect(resolution.verdict!.total, 75.0,
+            reason: 'gain gagné = 10 × 7,50 = 75,0');
+        expect(resolution.verdict!.total, isNot(96.0),
+            reason: '96,0 était l\'ANCIEN DÉFAUT : 21,0 de gain inventé sur '
+                'une mise remboursée');
+        // 10 € rendus — DISTINCTS du gain.
+        expect(resolution.verdict!.remboursement, 10.0,
+            reason: 'la mise Placé remboursée est reversée, pas gagnée');
+        // 85 € effectivement reversés = 75 + 10.
+        expect(resolution.verdict!.montantReverse, 85.0,
+            reason: 'total reversé = gain + remboursement');
         expect(resolution.verdict!.composantes.length, 2);
-        // Les deux composantes portent la MÊME combinaison « 7 » mais des
-        // libellés différents : c'est ce qui permet au garde de ne bloquer
-        // QUE la composante remboursée.
-        expect(
-            resolution.verdict!.composantes
-                .where((c) => c.combinaisonRapport == '7')
-                .length,
-            2);
+        // La composante remboursée porte un retour NUL : c'est structurel.
+        final place = resolution.verdict!.composantes
+            .firstWhere((c) => c.role.name == 'place');
+        expect(place.rembourse, isTrue);
+        expect(place.montantRetour, 0.0,
+            reason: 'un remboursement ne porte AUCUN retour gagné');
+        expect(place.miseRemboursee, 10.0);
       });
     });
 
-    test('R4 PLUSIEURS composantes remboursées : blocage également', () async {
+    test('R4 ★ CHANTIER 1/3 — les DEUX composantes remboursées : aucun gain '
+        'écrit, mais le REMBOURSEMENT INTÉGRAL (20,0) est écrit', () async {
+      // AVANT : ce test exigeait seulement `montantOfficielPmu == null`, sans
+      // rien dire du remboursement — un remboursement intégral était donc
+      // persisté « sans montant », alors que 20 € sont bel et bien rendus.
+      // Le résultat financier exigé par l'arbitrage impose de le conserver.
       await _sansReseau(() async {
         final store = _Store();
         final pmu = await _providerAvec(store, [
@@ -384,7 +432,19 @@ void main() {
           ]),
           enregistrerMontantOfficiel: true,
         );
-        expect(_enMemoire(pmu, 'p1').montantOfficielPmu, isNull);
+        final memoire = _enMemoire(pmu, 'p1');
+        // Aucun gain : un remboursement n'est pas un gain.
+        expect(memoire.montantOfficielPmu, isNull,
+            reason: 'aucun euro n\'est gagné : rien ne doit être écrit comme '
+                'gain');
+        // Mais 20 € sont rendus : c'est un fait financier, il est conservé.
+        expect(memoire.remboursementPmu, 20.0,
+            reason: 'remboursement intégral = 10 + 10');
+        expect(memoire.totalReverse, 20.0);
+        // Un remboursement intégral n'est JAMAIS une perte.
+        expect(memoire.resultatNet, 0.0,
+            reason: 'net = 20 − 20 = 0, jamais −20');
+        expect(store.predictionParId('p1')!['remboursementPmu'], 20.0);
       });
     });
 
