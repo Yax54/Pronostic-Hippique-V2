@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/pmu_models.dart';
 import '../models/decision_gain_pmu.dart';
+import '../utils/comparaison_monetaire.dart' show memeMontantOuTousDeuxNuls;
 import '../services/pmu_api_service.dart';
 import '../services/branchement_verdict_course.dart'
     show construireTicketPrediction, appliquerVerdictPrediction;
@@ -57,13 +58,6 @@ enum IssueEcritureGain {
   /// prouvée. Le ticket est bloqué jusqu'à récupération contrôlée.
   echecNonReconcilie,
 }
-
-/// Tolérance de comparaison monétaire, en euros (convention du chantier 1/3).
-///
-/// Absorbe l'erreur d'arrondi IEEE-754 sur des montants de l'ordre de 10⁵ €,
-/// sans jamais tolérer un centime : 0,01 € est 10 millions de fois plus grand
-/// que cette tolérance, donc un écart d'un centime est REFUSÉ.
-const double _toleranceMontantEuros = 1e-9;
 
 class PmuProvider extends ChangeNotifier {
   List<PmuReunion> _reunions = [];
@@ -1194,15 +1188,12 @@ class PmuProvider extends ChangeNotifier {
   /// Les confondre effacerait une distinction métier : un remboursement non
   /// établi ne doit jamais être lu comme un remboursement nul.
   ///
-  /// ⚠️ Tolérance `1e-9` (soit un milliardième d'euro) : elle absorbe l'erreur
-  ///    d'arrondi IEEE-754 sur des montants de l'ordre de 10⁵ €. Ce n'est PAS
-  ///    un arrondi au centime : un écart de 0,01 € est 10 millions de fois
-  ///    plus grand que cette tolérance, donc il est REFUSÉ.
-  bool _memeMontantOuTousDeuxNuls(double? a, double? b) {
-    if (a == null && b == null) return true;
-    if (a == null || b == null) return false;
-    return (a - b).abs() <= _toleranceMontantEuros;
-  }
+  /// ★ CHANTIER 1/3, point 3 — la comparaison passe désormais par une
+  ///   NORMALISATION AU CENTIME (`memesCentimes`), et non plus par une
+  ///   tolérance flottante de `1e-9` : `75.001` et `75.00` sont le même
+  ///   montant, `75.01` et `75.00` ne le sont pas.
+  bool _memeMontantOuTousDeuxNuls(double? a, double? b) =>
+      memeMontantOuTousDeuxNuls(a, b);
 
   /// Rend `true` si le pronostic existait et a été remplacé, `false` sinon.
   bool appliquerVerdictGainPrediction(UserPrediction resolue) {

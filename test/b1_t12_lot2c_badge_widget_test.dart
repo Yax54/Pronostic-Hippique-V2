@@ -38,6 +38,34 @@ import 'package:pronostic_hippique/services/data_refresh_service.dart';
 import 'package:pronostic_hippique/services/gain_durable_vue.dart';
 import 'package:pronostic_hippique/services/gain_pmu_types.dart' show EtatGain;
 
+/// ───────────────────────────────────────────────────────────────────────────
+///  DATES RELATIVES — correction d'une CORRUPTION TEMPORELLE des fixtures.
+///
+///  DÉFAUT MESURÉ : ces fixtures portaient des dates FIGÉES
+///  (`DateTime(2026, 11, 23, …)`). Or `AlertService._load()`
+///  (alert_service.dart:696) purge toute course suivie dont
+///  `now.difference(heureDepart).inHours > 24`. Le 24/11/2026 à 15:59, l'écart
+///  valait ~26 h : la course était purgée AU CHARGEMENT, `_trackedCourses`
+///  restait vide, et `enregistrerGainManuelDetaille` rendait
+///  `ticketIntrouvable` au lieu de `complet`. Ce n'était donc PAS un défaut de
+///  production : c'était le test qui datait d'hier et butait sur sa propre
+///  règle de purge.
+///
+///  ⚠️ LES ASSERTIONS MÉTIER NE SONT PAS TOUCHÉES. Seules les dates changent,
+///     et elles conservent l'ÉCART métier de 3 h 30 entre la création du
+///     pronostic et le départ de la course.
+/// ───────────────────────────────────────────────────────────────────────────
+DateTime _jourRelatif(int h, int min) {
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day, h, min);
+}
+
+/// Création du pronostic : même jour, 10 h 00.
+DateTime get _creationRelative => _jourRelatif(10, 0);
+
+/// Départ de la course : même jour, 13 h 30 (écart métier de 3 h 30 conservé).
+DateTime get _departRelatif => _jourRelatif(13, 30);
+
 const String kCle = 'R1C3_23112026_1000';
 
 /// Faux support : accepte tout. Le refus n'est pas le sujet de ce fichier.
@@ -92,7 +120,7 @@ UserPrediction _pred({
     nomCheval: 'Cheval Test',
     cote: 4.5,
     typePari: 'Simple Gagnant',
-    createdAt: DateTime(2026, 11, 23, 10),
+    createdAt: _creationRelative,
     montantGainManuel: montantGainManuel,
     idTicketLie: kCle,
     montantOfficielPmu: montantOfficielPmu,
@@ -108,7 +136,7 @@ TrackedCourse _tc({double? montantGainManuel, bool historique = false}) =>
       numCourse: 3,
       nomCourse: 'Prix de Test',
       hippodrome: 'Vincennes',
-      heureDepart: DateTime(2026, 11, 23, 13, 30),
+      heureDepart: _departRelatif,
       storageKey: kCle,
       montantGainManuel: montantGainManuel,
       idTicketLie: 'p1',

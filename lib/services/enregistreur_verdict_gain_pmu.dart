@@ -46,6 +46,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import '../models/pmu_models.dart';
+import '../utils/comparaison_monetaire.dart' show memesCentimes;
 import 'gain_pmu_types.dart';
 import 'moteur_gain_pmu.dart';
 
@@ -139,24 +140,49 @@ class ResultatEnregistrementVerdict {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  1. TOLÉRANCE MONÉTAIRE — la règle réellement employée par B-3
+//  1. COMPARAISON MONÉTAIRE — NORMALISATION AU CENTIME
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Tolérance de comparaison monétaire, en euros.
+/// Égalité monétaire au CENTIME (voir `utils/comparaison_monetaire.dart`).
 ///
-/// POURQUOI 1e-9 ET PAS `==` : `VerdictGain.attribue` additionne des `double`
-/// dans l'ordre de la liste (`total += c.montantRetour`). Refaire la même
-/// somme sur la même liste dans le même ordre donne exactement le même
-/// `double` — mais un enregistreur ne peut pas parier là-dessus, car il reçoit
-/// une liste qui peut avoir été filtrée. On accepte donc l'erreur d'arrondi
-/// d'un `double` IEEE-754 sur des montants de l'ordre de 10⁵ €, soit ~1e-9 €
-/// (un milliardième d'euro), sans jamais tolérer un centime d'écart.
+/// ★ CHANTIER 1/3, point 3 — CORRECTION D'UNE ANOMALIE RÉELLE.
 ///
-/// ⚠️ Ce n'est PAS un « arrondi » : un écart d'un centime (0,01 €) est
-/// 10 millions de fois plus grand que cette tolérance, donc il est REFUSÉ.
-const double _toleranceEuros = 1e-9;
-
-bool _memeMontant(double a, double b) => (a - b).abs() <= _toleranceEuros;
+/// La convention précédente était une tolérance flottante de `1e-9` euro.
+/// Elle était PLUS STRICTE qu'une comparaison au centime, donc FAUSSE dans le
+/// sens qui coûte : deux montants identiques au centime étaient déclarés
+/// DIFFÉRENTS dès que le calcul flottant dérivait de plus d'un milliardième.
+///
+/// Mesure : `75.001` et `75.00` — même montant au centime — étaient rejetés.
+///
+/// `75.001` vs `75.00` ⇒ égaux (7500 centimes de part et d'autre).
+/// `75.01`  vs `75.00` ⇒ différents (7501 ≠ 7500).
+///
+/// ⚠️ PORTÉE RÉELLE, MESURÉE — à ne pas surestimer.
+///
+///   Les sites d'appel effectivement atteignables par les points d'entrée
+///   publics de ce fichier sont ceux de `_verdictIdentique` (comparaison du
+///   total PERSISTÉ, relu depuis JSON, au total du verdict) et de
+///   `_totalDemontreComplet` (contrôle de cohérence interne).
+///
+///   Or ce SECOND site est STRUCTURELLEMENT INATTEIGNABLE avec un écart :
+///   `VerdictGain._` est privé, `VerdictGain.attribue` calcule `total` comme la
+///   somme exacte de ses composantes, et `VerdictGain` n'a AUCUN `fromJson`
+///   (mesuré : la seule occurrence de « fromJson » dans `moteur_gain_pmu.dart`
+///   concerne `ComposanteGain`). Il reste donc DÉFENSIF.
+///
+///   La correction est malgré tout justifiée et non cosmétique : sur le site
+///   atteignable, un total persisté dérivé d'un millième était comparé à un
+///   total exact, et la divergence était déclarée « verdict différent ». Le
+///   défaut de convention était réel ; il est prouvé par P3/3.1 et P3/3.2, et
+///   sa limite est écrite ici plutôt que passée sous silence.
+///
+///   (Une version antérieure de ce commentaire affirmait que l'ancienne
+///   convention faisait rendre `null` à `_totalDemontreComplet` en production.
+///   C'était une affirmation NON mesurée : elle est retirée.)
+///
+/// La distinction `null` / `0.0` est préservée par l'appelant : cette fonction
+/// ne reçoit que des `double` non nuls.
+bool _memeMontant(double a, double b) => memesCentimes(a, b);
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  2. IDENTITÉ D'UN RAPPORT — jamais une comparaison de montants
