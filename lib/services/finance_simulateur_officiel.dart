@@ -27,17 +27,25 @@
 import 'chaine_financiere_officielle.dart';
 import 'resultat_officiel_repository.dart';
 
-/// Sort du pari simulé. Trois états, jamais deux.
+/// Sort du pari simulé. QUATRE états, jamais trois.
 ///
 /// `nonDeterminee` n'est JAMAIS converti en perte, ni en gain nul : c'est
 /// précisément ce que le mandat interdit (« ne jamais transformer une absence
 /// de rapport en perte, en gain nul ou en dividende fictif »).
+///
+/// `rembourse` n'est NI un gain NI une perte : c'est l'état produit par
+/// `VerdictGain.rembourse` quand l'opérateur reverse la mise (non-partant,
+/// annulation, remboursement réglementaire). Le confondre avec `perdu`
+/// ferait progresser une Martingale sur une mise que le joueur a récupérée.
 enum SortPariSimule {
   /// Pari gagnant : le moteur officiel a attribué un gain.
   gagne,
 
   /// Pari perdant : le moteur officiel a établi la perte sur preuve complète.
   perdu,
+
+  /// Pari remboursé : la mise est rendue, aucun gain, aucune perte.
+  rembourse,
 
   /// Résultat officiel indisponible ou insuffisant. Ni gain ni perte.
   nonDeterminee,
@@ -83,7 +91,13 @@ class ResultatFinancierSimule {
     this.servieDepuisStockage = false,
   });
 
+  /// `true` si un montant est établi (gain, perte établie ou remboursement).
   bool get estDetermine => sort != SortPariSimule.nonDeterminee;
+
+  /// `true` si le pari a été REMBOURSÉ : la mise est rendue, il n'y a ni gain
+  /// ni perte. Un tel pari ne doit JAMAIS faire progresser une Martingale
+  /// comme s'il était perdu, ni compter comme une réussite.
+  bool get estRembourse => sort == SortPariSimule.rembourse;
 
   /// Indicateur destiné aux agrégations : ne compter que ce qui est établi.
   bool get compteDansLesStats => estDetermine;
@@ -106,9 +120,21 @@ class BilanFinancierSimule {
   final int nbPerdus;
   final int nbNonDetermines;
 
+  /// ★ CORRECTION BLOC 1 (validation financière) — quatrième compteur.
+  ///
+  /// Un pari remboursé n'est NI gagné NI perdu : sa mise revient au joueur.
+  /// Sans ce compteur, il aurait fallu le ranger quelque part, et les deux
+  /// seules places disponibles étaient « gagné » ou « perdu » — c'est-à-dire
+  /// mentir dans les deux cas.
+  final int nbRembourses;
+
   /// Somme des mises RÉELLEMENT engagées sur des paris DÉTERMINÉS.
   /// Les mises des paris indéterminés sont comptées séparément : les inclure
   /// ici reviendrait à les traiter comme des pertes.
+  ///
+  /// ⚠️ Inclut les mises des paris remboursés, puisqu'elles ont bien été
+  ///    engagées ; leur remboursement est compté à part dans
+  ///    [remboursements] et le net les neutralise exactement.
   final double misesEngagees;
   final double misesIndeterminees;
 
@@ -121,6 +147,7 @@ class BilanFinancierSimule {
     required this.nbGagnes,
     required this.nbPerdus,
     required this.nbNonDetermines,
+    this.nbRembourses = 0,
     required this.misesEngagees,
     required this.misesIndeterminees,
     required this.gainsBruts,
@@ -133,18 +160,22 @@ class BilanFinancierSimule {
         nbGagnes = 0,
         nbPerdus = 0,
         nbNonDetermines = 0,
+        nbRembourses = 0,
         misesEngagees = 0,
         misesIndeterminees = 0,
         gainsBruts = 0,
         remboursements = 0,
         resultatNet = 0;
 
+  /// Nombre de paris dont le sort est ÉTABLI (gagné, perdu ou remboursé).
+  int get nbDetermines => nbGagnes + nbPerdus + nbRembourses;
+
   /// Couverture officielle : part des paris dont le sort est ÉTABLI.
   ///
   /// C'est l'indicateur qui empêche de présenter un ROI flatteur calculé sur
   /// trois courses déterminées et cinquante indéterminées.
   double get couvertureOfficielle =>
-      nbParis == 0 ? 0.0 : (nbGagnes + nbPerdus) / nbParis * 100.0;
+      nbParis == 0 ? 0.0 : nbDetermines / nbParis * 100.0;
 
   /// ROI calculé UNIQUEMENT sur les paris déterminés. `null` si aucun.
   ///
@@ -158,7 +189,7 @@ class BilanFinancierSimule {
   bool get couvertureInsuffisante => couvertureOfficielle < 50.0;
 
   static BilanFinancierSimule depuis(List<ResultatFinancierSimule> paris) {
-    var nbG = 0, nbP = 0, nbN = 0;
+    var nbG = 0, nbP = 0, nbN = 0, nbR = 0;
     var mises = 0.0, misesInd = 0.0, gains = 0.0, rembs = 0.0, net = 0.0;
     for (final p in paris) {
       switch (p.sort) {
@@ -172,6 +203,14 @@ class BilanFinancierSimule {
           nbP++;
           mises += p.mise;
           net += p.resultatNet ?? 0.0;
+        case SortPariSimule.rembourse:
+          // La mise a été engagée PUIS rendue : elle entre dans les mises
+          // engagées ET dans les remboursements, si bien que son apport au
+          // net est exactement nul (net = remb − mise = 0).
+          nbR++;
+          mises += p.mise;
+          rembs += p.remboursement ?? 0.0;
+          net += p.resultatNet ?? 0.0;
         case SortPariSimule.nonDeterminee:
           nbN++;
           // ⚠️ La mise part dans un compteur SÉPARÉ : elle n'est ni perdue
@@ -184,6 +223,7 @@ class BilanFinancierSimule {
       nbGagnes: nbG,
       nbPerdus: nbP,
       nbNonDetermines: nbN,
+      nbRembourses: nbR,
       misesEngagees: mises,
       misesIndeterminees: misesInd,
       gainsBruts: gains,
@@ -279,12 +319,33 @@ class FinanceSimulateurOfficiel {
       typePari: typePari,
       numerosJoues: numerosJoues,
       mise: mise,
-      sort: resolution.estGagnant ? SortPariSimule.gagne : SortPariSimule.perdu,
+      sort: _sortDepuisResolution(resolution),
       gain: gain,
       remboursement: remb,
       resultatNet: net,
       servieDepuisStockage: resolution.servieDepuisStockage,
     );
+  }
+
+  /// ★ CORRECTION BLOC 1 (validation financière) — mapping des QUATRE états.
+  ///
+  /// DÉFAUT CORRIGÉ : l'ancien code écrivait
+  ///     `resolution.estGagnant ? SortPariSimule.gagne : SortPariSimule.perdu`
+  /// ce qui classait un `EtatGain.rembourse` en **perdu**, parce que
+  /// `VerdictGain.estGagne` vaut `etat == EtatGain.attribue` (donc `false`
+  /// pour un remboursement). Conséquence en Martingale : aggravation de la
+  /// progression sur une mise que l'utilisateur avait récupérée.
+  ///
+  /// Le test est explicite et exhaustif : aucun état ne tombe dans « perdu »
+  /// par défaut.
+  static SortPariSimule _sortDepuisResolution(ResolutionFinanciere r) {
+    if (r.estNonDeterminee) return SortPariSimule.nonDeterminee;
+    if (r.estGagnant) return SortPariSimule.gagne;
+    if (r.estRembourse) return SortPariSimule.rembourse;
+    if (r.estPerdant) return SortPariSimule.perdu;
+    // Aucun cinquième état n'existe dans `EtatGain`. Si le moteur en ajoutait
+    // un, on refuse de deviner : l'indétermination est la seule réponse sûre.
+    return SortPariSimule.nonDeterminee;
   }
 
   /// Simule un pari Gagnant + Placé sur une MÊME course, avec deux mises
@@ -343,7 +404,7 @@ class FinanceSimulateurOfficiel {
       typePari: 'Gagnant+Placé',
       numerosJoues: <int>[numero],
       mise: miseTotale,
-      sort: resolution.estGagnant ? SortPariSimule.gagne : SortPariSimule.perdu,
+      sort: _sortDepuisResolution(resolution),
       gain: gain,
       remboursement: remb,
       resultatNet: net,

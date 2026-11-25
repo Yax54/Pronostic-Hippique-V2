@@ -450,6 +450,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       int nbGagnes = 0;
       int nbPerdus = 0;
       int nbNonDet = 0; // renseigné seulement si la boucle va au bout
+      // ★ BLOC 1 : paris REMBOURSÉS — ni gagnés ni perdus, mise rendue.
+      int nbRembourses = 0;
       int seriePerte = 0;
       int seriePertMax = 0;
       double miseTotale = 0.0; // mises des paris DÉTERMINÉS
@@ -527,6 +529,25 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             if (doublementsCourants > doublementsMax)
               doublementsMax = doublementsCourants;
             mise = mise * 2; // doublement — règle inchangée
+          // ★ CORRECTION BLOC 1 (validation financière) — REMBOURSEMENT.
+          //
+          //   AVANT cette correction, `EtatGain.rembourse` n'avait aucune
+          //   branche : il tombait dans `perdu` (voir le mapping corrigé de
+          //   `FinanceSimulateurOfficiel._sortDepuisResolution`). Conséquence :
+          //   la mise DOUBLAIT alors que l'utilisateur avait récupéré son
+          //   argent. Une remboursement n'est pas une perte.
+          //
+          //   Traitement retenu — NEUTRE, et documenté comme tel :
+          //     • la mise est rendue : `resultatNet` vaut 0 (remb − mise) ;
+          //     • la mise suivante RESTE INCHANGÉE : on ne double pas (ce
+          //       n'est pas une perte) et on ne remet pas à la mise de base
+          //       (ce n'est pas une réussite) ;
+          //     • la série de pertes n'est ni incrémentée ni remise à zéro ;
+          //     • le remboursement est compté à part, jamais fondu au gain.
+          case SortPariSimule.rembourse:
+            capital += sim.resultatNet ?? 0.0;
+            rembsTotal += sim.remboursement ?? 0.0;
+            nbRembourses++;
           case SortPariSimule.nonDeterminee:
             // Inatteignable : traité par la règle d'arrêt ci-dessus.
             break;
@@ -539,9 +560,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
       setState(() {
         _martingaleResult = _MartingaleResult(
-          nbTotal: nbGagnes + nbPerdus + nbNonDet,
+          nbTotal: nbGagnes + nbPerdus + nbRembourses + nbNonDet,
           nbGagnes: nbGagnes,
           nbPerdus: nbPerdus,
+          nbRembourses: nbRembourses,
           nbNonDetermines: nbNonDet,
           gainNet: capital,
           miseTotale: miseTotale,
@@ -3203,6 +3225,12 @@ class _MartingaleResult {
   final int nbGagnes;
   final int nbPerdus;
 
+  /// ★ BLOC 1 — paris REMBOURSÉS : mise rendue, ni gain ni perte.
+  /// Ils n'ont fait progresser NI la série de pertes NI le retour à la mise
+  /// de base. Les ignorer, ou les compter comme des pertes, fausserait
+  /// l'intégralité de la progression.
+  final int nbRembourses;
+
   /// ★ BLOC 1 — paris dont le résultat officiel était INDISPONIBLE.
   /// S'il y en a un, la simulation s'est ARRÊTÉE : voir [interruption].
   final int nbNonDetermines;
@@ -3233,6 +3261,7 @@ class _MartingaleResult {
     required this.nbTotal,
     required this.nbGagnes,
     required this.nbPerdus,
+    this.nbRembourses = 0,
     this.nbNonDetermines = 0,
     required this.gainNet,
     required this.miseTotale,

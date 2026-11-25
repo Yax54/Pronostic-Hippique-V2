@@ -50,7 +50,10 @@ import 'branchement_verdict_course.dart' show chargerResultatOfficielCourse;
 import 'gain_calculator.dart' show RapportPmu;
 import 'moteur_gain_pmu.dart' show MiseEngagee, VerdictGain;
 import 'resolution_gain_ticket_pmu.dart'
-    show ResultatOfficielCourse, TicketAGainResoudre, resoudreGainTicketDepuisDonnees;
+    show
+        ResultatOfficielCourse,
+        TicketAGainResoudre,
+        resoudreGainTicketDepuisDonnees;
 import 'resultat_officiel_repository.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -151,6 +154,30 @@ class ResolutionFinanciere {
 
   /// `true` si le moteur a établi une PERTE (démontrée, pas supposée).
   bool get estPerdant => verdict?.etat.name == 'perdu';
+
+  /// ★ CORRECTION BLOC 1 (validation financière) — LE QUATRIÈME ÉTAT.
+  ///
+  /// DÉFAUT MESURÉ PAR LECTURE DE `moteur_gain_pmu.dart` :
+  ///   • `EtatGain` possède QUATRE valeurs : `nonDetermine`, `attribue`,
+  ///     `perdu`, `rembourse` (gain_pmu_types.dart:88-99) ;
+  ///   • `VerdictGain.estGagne` vaut `etat == EtatGain.attribue` (:540),
+  ///     donc un verdict `rembourse` rend `estGagne == false` ;
+  ///   • `estPerdant` ci-dessus vaut `etat.name == 'perdu'`, donc `false`
+  ///     pour un `rembourse`, mais tout appelant qui raisonnait en binaire
+  ///     (`estGagne ? gagné : perdu`) classait un REMBOURSEMENT INTÉGRAL en
+  ///     PERTE. En Martingale, cela doublait la mise alors que le joueur
+  ///     n'avait rien perdu : c'est précisément ce que le mandat interdit.
+  ///
+  /// Un remboursement n'est NI un gain NI une perte : c'est un état propre,
+  /// qu'aucun consommateur ne doit confondre avec l'un ou l'autre.
+  bool get estRembourse => verdict?.etat.name == 'rembourse';
+
+  /// `true` dès qu'un montant est établi (gain, perte établie ou remboursement).
+  ///
+  /// C'est LE test à utiliser avant toute agrégation financière : il exclut
+  /// uniquement `nonDetermine`, et laisse le détail à [estGagnant] /
+  /// [estPerdant] / [estRembourse].
+  bool get estResolue => estDeterminee;
 
   /// Montant reversé au joueur (gains + remboursements), en euros.
   /// `null` si non déterminé — JAMAIS 0.0.

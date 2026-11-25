@@ -153,9 +153,9 @@ class PmuApiService {
   }
 
   static Map<String, String> get _headers => {
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-  };
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
 
   static String _today() {
     final now = DateTime.now();
@@ -176,7 +176,8 @@ class PmuApiService {
         : '$_baseUrl/programme/$date?$_specialisation';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _headers)
+      final resp = await http
+          .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode != 200) {
         throw Exception('API PMU: HTTP ${resp.statusCode}');
@@ -187,7 +188,8 @@ class PmuApiService {
           .map((r) => PmuReunion.fromJson(r as Map<String, dynamic>, date))
           .where((r) => r.isFrench)
           .toList();
-      if (kDebugMode) debugPrint('✅ Programme PMU: ${result.length} réunions françaises');
+      if (kDebugMode)
+        debugPrint('✅ Programme PMU: ${result.length} réunions françaises');
       return result;
     } catch (e) {
       if (kDebugMode) debugPrint('❌ fetchProgramme error: $e');
@@ -208,12 +210,15 @@ class PmuApiService {
         : '$_baseUrl/programme/$date/R$numR/C$numC/participants?$_specialisation';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _headers)
+      final resp = await http
+          .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 15));
 
       // 404 / 204 = partants pas encore disponibles (normal avant la course)
       if (resp.statusCode == 404 || resp.statusCode == 204) {
-        if (kDebugMode) debugPrint('⏳ Partants R${numR}C$numC non disponibles (${resp.statusCode})');
+        if (kDebugMode)
+          debugPrint(
+              '⏳ Partants R${numR}C$numC non disponibles (${resp.statusCode})');
         return [];
       }
       if (resp.statusCode != 200) {
@@ -226,10 +231,12 @@ class PmuApiService {
           .where((p) => p.statut != 'NON_PARTANT')
           .toList()
         ..sort((a, b) => a.numero.compareTo(b.numero));
-      if (kDebugMode) debugPrint('✅ R${numR}C$numC: ${participants.length} partants réels');
+      if (kDebugMode)
+        debugPrint('✅ R${numR}C$numC: ${participants.length} partants réels');
       return participants;
     } catch (e) {
-      if (kDebugMode) debugPrint('❌ fetchParticipants R${numR}C$numC error: $e');
+      if (kDebugMode)
+        debugPrint('❌ fetchParticipants R${numR}C$numC error: $e');
       rethrow;
     }
   }
@@ -244,7 +251,8 @@ class PmuApiService {
         : '$_baseUrl/programme/$date/R$numR/C$numC/pronostics?$_specialisation';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _headers)
+      final resp = await http
+          .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return null;
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -286,10 +294,13 @@ class PmuApiService {
         : '$_baseUrl/programme/$date/R$numR/C$numC/rapports-definitifs?$_specialisation';
 
     try {
-      final resp = await http.get(Uri.parse(url), headers: _headers)
+      final resp = await http
+          .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
-        if (kDebugMode) debugPrint('⏳ Rapports non disponibles R${numR}C$numC: HTTP ${resp.statusCode}');
+        if (kDebugMode)
+          debugPrint(
+              '⏳ Rapports non disponibles R${numR}C$numC: HTTP ${resp.statusCode}');
         return DiagnosticRapports(
           rapports: const <RapportPmu>[],
           cause: CauseAbsenceRapports.httpNonOk,
@@ -343,13 +354,15 @@ class PmuApiService {
         lignesPubliees: lignesPubliees,
       );
     } on TimeoutException catch (e) {
-      if (kDebugMode) debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC timeout: $e');
+      if (kDebugMode)
+        debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC timeout: $e');
       return const DiagnosticRapports(
         rapports: <RapportPmu>[],
         cause: CauseAbsenceRapports.timeout,
       );
     } catch (e) {
-      if (kDebugMode) debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC error: $e');
+      if (kDebugMode)
+        debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC error: $e');
       // Toute exception non liée à la forme du corps est une défaillance
       // d'échange : le réseau n'a pas rendu de réponse exploitable.
       return const DiagnosticRapports(
@@ -399,8 +412,7 @@ class PmuApiService {
       // ── Informations portées par le BLOC (jamais par le rapport) ────────
       final rembourseBloc = item['rembourse'] == true;
       final miseBaseBrute = item['miseBase'];
-      final miseBase =
-          miseBaseBrute is num ? miseBaseBrute.toInt() : null;
+      final miseBase = miseBaseBrute is num ? miseBaseBrute.toInt() : null;
       final uniteBloc = item['dividendeUnite']?.toString() ?? '';
 
       for (final r in listeRapports) {
@@ -417,7 +429,7 @@ class PmuApiService {
         // Règle : priorité à 'dividendePourUnEuro' / 100, sinon 'dividende' / 100.
         // ⚠️ Ne JAMAIS lire le champ brut sans diviser par 100.
         final rawDivPourUnEuro = r['dividendePourUnEuro'];
-        final rawDivLegacy     = r['dividende'];
+        final rawDivLegacy = r['dividende'];
 
         double dividendeNormalise = 0.0;
         if (rawDivPourUnEuro != null) {
@@ -428,7 +440,28 @@ class PmuApiService {
           dividendeNormalise = (rawDivLegacy as num).toDouble() / 100.0;
         }
 
-        if (dividendeNormalise > 0) {
+        // ★ CORRECTION BLOC 1 (validation financière) — UNE LIGNE REMBOURSÉE
+        //   N'A PAR DÉFINITION AUCUN DIVIDENDE.
+        //
+        //   DÉFAUT MESURÉ ICI MÊME : le filtre historique `dividendeNormalise
+        //   > 0` écartait SILENCIEUSEMENT toute ligne sans dividende. Or c'est
+        //   exactement la forme d'un rapport REMBOURSÉ : l'opérateur rend la
+        //   mise, il ne publie donc aucun rapport. Conséquence en cascade :
+        //   `RapportPmu` n'était jamais construit, `RapportPublie.rembourse`
+        //   ne pouvait valoir `true`, et `VerdictGain.rembourse` —
+        //   pourtant présent dans le moteur (:465, :1469, :1618, :1694) —
+        //   était INATTEIGNABLE depuis la source officielle. Tout
+        //   remboursement était donc vu comme une absence de rapport, donc
+        //   « non déterminé », et la Martingale s'arrêtait au lieu de
+        //   poursuivre avec une mise inchangée.
+        //
+        //   Correction MINIMALE et bornée : on n'ouvre la porte QU'AUX lignes
+        //   explicitement marquées remboursées par le BLOC (`rembourse: true`,
+        //   mesuré comme porté par le bloc et jamais par le rapport). Une ligne
+        //   ordinaire sans dividende reste écartée comme avant : elle ne
+        //   prouve rien.
+        final bool ligneRemboursee = rembourseBloc && dividendeNormalise <= 0;
+        if (dividendeNormalise > 0 || ligneRemboursee) {
           // ── Rang payable : conservé tel quel, sans interprétation ───────
           final rangBrut = r['rangCombinaisonPayable'];
           final rang = rangBrut is num ? rangBrut.toInt() : null;
@@ -461,8 +494,8 @@ class PmuApiService {
             //   financière lit `RapportPublie.variante` (type `RapportAttribue`,
             //   socle de gain). Cette correction n'affecte que libellés et
             //   icônes d'affichage.
-            estOrdre: _estOrdreDepuisLibelle(libelle)
-                ?? (!combinaison.contains('NP') &&
+            estOrdre: _estOrdreDepuisLibelle(libelle) ??
+                (!combinaison.contains('NP') &&
                     !combinaison.contains('D') &&
                     !combinaison.contains('d')),
             // ── Informations officielles désormais PRÉSERVÉES ────────────
@@ -572,19 +605,20 @@ class PmuApiService {
   static List<String> _typePariApiFromLabel(String label) {
     final l = label.toLowerCase();
     // Ordre important : tester les plus spécifiques en premier
-    if (l.contains('gagnant+placé') || l.contains('gagnant + placé') ||
+    if (l.contains('gagnant+placé') ||
+        l.contains('gagnant + placé') ||
         l.contains('gagnant+place')) {
       return ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
     }
     if (l.contains('couplé gagnant')) return ['E_COUPLE_GAGNANT'];
-    if (l.contains('couplé placé'))   return ['E_COUPLE_PLACE'];
-    if (l.contains('quinté'))         return ['E_MULTI', 'E_MINI_MULTI'];
-    if (l.contains('quarté'))         return ['E_SUPER_QUATRE'];
-    if (l.contains('tiercé'))         return ['E_TRIO'];
+    if (l.contains('couplé placé')) return ['E_COUPLE_PLACE'];
+    if (l.contains('quinté')) return ['E_MULTI', 'E_MINI_MULTI'];
+    if (l.contains('quarté')) return ['E_SUPER_QUATRE'];
+    if (l.contains('tiercé')) return ['E_TRIO'];
     if (l.contains('simple gagnant')) return ['E_SIMPLE_GAGNANT'];
-    if (l.contains('simple placé'))   return ['E_SIMPLE_PLACE'];
-    if (l.contains('gagnant'))        return ['E_SIMPLE_GAGNANT'];
-    if (l.contains('placé'))          return ['E_SIMPLE_PLACE'];
+    if (l.contains('simple placé')) return ['E_SIMPLE_PLACE'];
+    if (l.contains('gagnant')) return ['E_SIMPLE_GAGNANT'];
+    if (l.contains('placé')) return ['E_SIMPLE_PLACE'];
     return [];
   }
 }

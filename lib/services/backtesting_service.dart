@@ -65,6 +65,11 @@ class BacktestCourse {
   });
 
   bool get estDetermine => sort != SortPariSimule.nonDeterminee;
+
+  /// ★ BLOC 1 (validation financière) — pari REMBOURSÉ : mise rendue,
+  /// ni gain ni perte. Un tel pari est DÉTERMINÉ (on sait ce qui s'est
+  /// passé) mais ne doit jamais être présenté comme gagné ou perdu.
+  bool get estRembourse => sort == SortPariSimule.rembourse;
 }
 
 // ─── Résultat complet d'une simulation ───────────────────────────────────────
@@ -75,6 +80,13 @@ class BacktestResult {
   final double gainNet;
   final int nbGagnes;
   final int nbPerdus;
+
+  /// ★ BLOC 1 (validation financière) — paris REMBOURSÉS (mise rendue).
+  ///
+  /// Ce sont des paris dont le sort est ÉTABLI, mais qui ne sont NI gagnés
+  /// NI perdus. Ils entrent donc dans [nbDetermines] et dans la couverture,
+  /// sans jamais apparaître comme des pertes.
+  final int nbRembourses;
   final int nbTotal;
   final double tauxReussite; // %
   final double roi; // Return on Investment %
@@ -128,6 +140,7 @@ class BacktestResult {
     required this.gainNet,
     required this.nbGagnes,
     required this.nbPerdus,
+    this.nbRembourses = 0, // ★ BLOC 1 (validation financière)
     required this.nbTotal,
     required this.tauxReussite,
     required this.roi,
@@ -204,7 +217,15 @@ class StatTypePari {
   /// ★ BLOC 1 — paris de ce type dont le résultat officiel est INDISPONIBLE.
   int nbNonDetermines = 0;
 
+  /// ★ BLOC 1 (validation financière) — paris REMBOURSÉS de ce type.
+  /// Mise rendue : ni gain ni perte, aucune série brisée.
+  int nbRembourses = 0;
+
   /// Nombre de paris réellement établis pour ce type.
+  ///
+  /// ⚠️ `nbTotal` ne compte QUE les paris déterminés (voir [ajouterPari] et
+  ///    [ajouterPariRembourse]) : un indéterminé ne dilue donc pas le taux,
+  ///    et un remboursement non plus.
   int get nbDetermines => nbTotal;
 
   /// Taux sur les paris DÉTERMINÉS. `null` si aucun : inconnu ≠ 0 %.
@@ -237,6 +258,23 @@ class StatTypePari {
       _serieCourante++;
       if (_serieCourante > maxSerie) maxSerie = _serieCourante;
     }
+  }
+
+  /// ★ BLOC 1 (validation financière) — enregistre un pari REMBOURSÉ.
+  ///
+  /// Il compte dans l'échantillon ([nbTotal], [miseTotal]) parce que sa mise a
+  /// bien été engagée puis rendue, mais il n'est NI gagné NI perdu :
+  ///   • `nbGagnes` inchangé → il ne gonfle pas le taux de réussite ;
+  ///   • `_serieCourante` inchangée → il ne brise aucune série, ni ne
+  ///     l'allonge. Le compter comme perte ferait apparaître une série
+  ///     perdante là où l'utilisateur a récupéré son argent.
+  void ajouterPariRembourse(double remboursement, double mise) {
+    nbTotal++;
+    miseTotal += mise;
+    // Le net d'un remboursement intégral est exactement nul ; on transporte
+    // néanmoins la valeur rendue par le moteur plutôt que de la supposer.
+    gainNet += remboursement - mise;
+    nbRembourses++;
   }
 }
 
@@ -322,6 +360,9 @@ class BacktestingService {
     int maxSeriePerdante = 0;
     int nbGagnes = 0;
     int nbPerdus = 0;
+    // ★ BLOC 1 (validation financière) : paris REMBOURSÉS — mise rendue,
+    //   ni gain ni perte. Compteur propre, jamais fondu dans `nbPerdus`.
+    int nbRembourses = 0;
     int nbNonDetermines = 0;
     double gainCumule = 0.0;
     double misesDeterminees = 0.0;
@@ -372,6 +413,7 @@ class BacktestingService {
       }
 
       final gagne = sim.sort == SortPariSimule.gagne;
+      final rembourse = sim.sort == SortPariSimule.rembourse;
       final estDetermine = sim.estDetermine;
 
       if (estDetermine) {
@@ -386,6 +428,17 @@ class BacktestingService {
           seriePerdante = 0;
           if (serieGagnante > maxSerieGagnante)
             maxSerieGagnante = serieGagnante;
+        } else if (rembourse) {
+          // ★ CORRECTION BLOC 1 (validation financière) — REMBOURSEMENT.
+          //
+          //   DÉFAUT CORRIGÉ : `sim.sort` pouvait valoir `rembourse` (mise
+          //   rendue) et tombait dans la branche `else` → compté PERDU et
+          //   brisait une série gagnante. Un remboursement n'est pas une
+          //   perte : le net vaut 0 (remb − mise), donc il n'entre pas dans
+          //   le résultat, et il ne doit casser AUCUNE série — sinon une
+          //   série gagnante serait interrompue par une annulation.
+          nbRembourses++;
+          // Séries INCHANGÉES : ni incrément, ni remise à zéro.
         } else {
           nbPerdus++;
           seriePerdante++;
@@ -398,6 +451,13 @@ class BacktestingService {
         //    course n'entre NI dans la courbe NI dans le résultat net, et elle
         //    ne casse aucune série. La traiter comme une perte serait un
         //    mensonge comptable.
+        //
+        //    ★ BLOC 1 : elle ne relie pas non plus deux séries. Comme elle ne
+        //    touche à `serieGagnante` NI à `seriePerdante`, une série de 3
+        //    gains avant elle et une série de 2 gains après elle ne peuvent
+        //    PAS être agrégées en « 5 gains consécutifs » : la série
+        //    enregistrée est le maximum observé DANS un segment continu, et
+        //    chaque `courbeGains` ne reçoit aucun point pour cette course.
         nbNonDetermines++;
         misesIndeterminees += sim.mise;
       }
@@ -408,14 +468,18 @@ class BacktestingService {
       parDisc[disc]!.nbTotal++;
       if (gagne) parDisc[disc]!.nbGagnes++;
       if (estDetermine) parDisc[disc]!.gainNet += sim.resultatNet ?? 0.0;
-      parDisc[disc]!.nbNonDetermines++;
+      // ★ CORRECTION BLOC 1 : ce compteur était incrémenté INCONDITIONNELLEMENT
+      //   (donc pour toutes les courses), ce qui rendait « non déterminés »
+      //   égal au nombre total de paris et faussait toute couverture par
+      //   discipline. Il ne doit compter QUE les indéterminés.
+      if (!estDetermine) parDisc[disc]!.nbNonDetermines++;
 
       final hippo = p.hippodrome.isNotEmpty ? p.hippodrome : 'Inconnu';
       parHippo.putIfAbsent(hippo, () => StatDiscipline());
       parHippo[hippo]!.nbTotal++;
       if (gagne) parHippo[hippo]!.nbGagnes++;
       if (estDetermine) parHippo[hippo]!.gainNet += sim.resultatNet ?? 0.0;
-      parHippo[hippo]!.nbNonDetermines++;
+      if (!estDetermine) parHippo[hippo]!.nbNonDetermines++;
 
       courses.add(BacktestCourse(
         courseKey: p.courseKey,
@@ -446,7 +510,11 @@ class BacktestingService {
       parType.putIfAbsent(c.typePariConseille, () => StatTypePari());
       final st = parType[c.typePariConseille]!;
       if (c.estDetermine) {
-        st.ajouterPari(c.gagne ?? false, c.gainNet ?? 0.0, c.mise);
+        if (c.sort == SortPariSimule.rembourse) {
+          st.ajouterPariRembourse(c.remboursements ?? 0.0, c.mise);
+        } else {
+          st.ajouterPari(c.gagne ?? false, c.gainNet ?? 0.0, c.mise);
+        }
       } else {
         st.nbNonDetermines++;
       }
@@ -467,7 +535,10 @@ class BacktestingService {
     //   `nbPerdus` n'est plus « total − gagnés » : ce serait compter les
     //   indéterminés comme des pertes. Il vient du moteur, pas d'une soustraction.
     final nbTotal = courses.length;
-    final nbDetermines = nbGagnes + nbPerdus;
+    // ★ BLOC 1 (validation financière) : un REMBOURSEMENT est un sort ÉTABLI.
+    //   L'oublier ici ferait baisser artificiellement la couverture officielle
+    //   et laisserait croire à des données manquantes là où le PMU a répondu.
+    final nbDetermines = nbGagnes + nbPerdus + nbRembourses;
     final miseTotal = misesDeterminees;
     final gainsTotal = gainsBrutsTotal;
     final gainNet = gainCumule;
@@ -497,6 +568,7 @@ class BacktestingService {
       gainNet: gainNet,
       nbGagnes: nbGagnes,
       nbPerdus: nbPerdus,
+      nbRembourses: nbRembourses,
       nbTotal: nbTotal,
       tauxReussite: taux,
       roi: roi,
