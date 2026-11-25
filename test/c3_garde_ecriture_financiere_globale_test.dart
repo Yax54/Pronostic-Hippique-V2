@@ -150,10 +150,10 @@ void main() {
         'lib/models/pmu_models.dart:918',
         'lib/providers/pmu_provider.dart:746',
         'lib/providers/pmu_provider.dart:917',
-        'lib/services/alert_service.dart:653',
-        'lib/services/alert_service.dart:2785',
-        'lib/services/alert_service.dart:2831',
-        'lib/services/alert_service.dart:2963',
+        'lib/services/alert_service.dart:655',
+        'lib/services/alert_service.dart:2750',
+        'lib/services/alert_service.dart:2796',
+        'lib/services/alert_service.dart:2928',
         'lib/services/enregistreur_verdict_gain_pmu.dart:555',
         'lib/services/enregistreur_verdict_gain_suivi.dart:170',
         'lib/services/enregistreur_verdict_gain_suivi.dart:259',
@@ -167,12 +167,17 @@ void main() {
         'lib/providers/pmu_provider.dart:535',
         // fusion défensive
         'lib/providers/pmu_provider.dart:833',
-        'lib/services/alert_service.dart:651',
-        'lib/services/alert_service.dart:2783',
-        'lib/services/alert_service.dart:2829',
-        'lib/services/alert_service.dart:2961',
         'lib/services/enregistreur_verdict_gain_suivi.dart:164',
         'lib/services/enregistreur_verdict_gain_suivi.dart:179',
+        // ★ BLOC 1 : sites existants mais absents de la liste (décalage de
+        //   numéros dû à la modification de `alert_service.dart` par la
+        //   délégation de cascade). Vérifiés : ce sont bien des ÉCRITURES de
+        //   copie (`copyWith` / construction de ticket), pas de nouveaux
+        //   chemins de calcul financier.
+        'lib/services/alert_service.dart:653',
+        'lib/services/alert_service.dart:2748',
+        'lib/services/alert_service.dart:2794',
+        'lib/services/alert_service.dart:2926',
       ],
       'decisionGainPmu:': <String>[
         'lib/models/pmu_models.dart:755',
