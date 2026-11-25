@@ -1,4 +1,15 @@
 // ignore_for_file: unused_element
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ BL1-A18 — FICHIER CONFIRMÉ INATTEIGNABLE. MESURE, PUIS DÉCISION.
+//
+//   MESURE (`grep -rn "ia_dialog_detail_type_pari.dart'" lib/ test/`) : 0
+//   import ailleurs dans le dépôt. `_DialogDetailTypePari` (l.84) est de
+//   surcroît PRIVÉ (préfixe `_`) : il ne pourrait pas être instancié depuis
+//   un autre fichier même si celui-ci était importé.
+//
+//   STATUT : NON RÉSOLUE — §16 interdit de supprimer sur la seule absence
+//   d'import. Le fichier est conservé tel quel, avec ce constat mesuré.
+// ═══════════════════════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../../services/ia_memory_service.dart';

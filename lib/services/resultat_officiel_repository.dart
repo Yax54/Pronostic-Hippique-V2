@@ -257,6 +257,23 @@ class EntreeResultatOfficiel {
   /// `true` si l'arrivée est explicitement provisoire.
   bool get estProvisoire => arriveeDefinitive == false;
 
+  /// ★ CORRECTION BLOC 1 (validation financière) — `true` si le caractère
+  /// définitif de l'arrivée est INCONNU, c'est-à-dire si le drapeau
+  /// `arriveeDefinitive` n'a jamais pu être lu (`null`).
+  ///
+  /// DÉFAUT MESURÉ (test `8.2`, ROUGE, trace `PMU drapeau définitif: HTTP 503
+  /// → source indisponible, valeur non inventée` puis AUCUNE requête réseau au
+  /// second appel) : `estProvisoire` vaut `arriveeDefinitive == false`, donc
+  /// une entrée à drapeau `null` renvoie **`false`**. Elle était par
+  /// conséquent jugée « non provisoire », servie depuis le stockage à l'étape
+  /// ① de `obtenirResultatOfficiel` — et le drapeau n'était PLUS JAMAIS
+  /// redemandé. Une panne momentanée de l'endpoint par course figeait donc la
+  /// course dans un état définitif par défaut, ce que rien ne démontre.
+  ///
+  /// « Inconnu » n'est ni « définitif » ni « provisoire » : c'est une ABSENCE
+  /// D'INFORMATION, et elle ne doit pas être confondue avec un fait établi.
+  bool get estDefinitiveInconnue => arriveeDefinitive == null;
+
   /// `true` si l'entrée peut fonder un calcul : arrivée + au moins un rapport.
   bool get estExploitable => porteUneArrivee && porteDesRapports;
 

@@ -1,4 +1,21 @@
 // ignore_for_file: unused_element
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ BL1-A18 — FICHIER CONFIRMÉ INATTEIGNABLE. MESURE, PUIS DÉCISION.
+//
+//   MESURE (`grep -rn "ia_precision_widget.dart'" lib/ test/`) : 0 import
+//   ailleurs dans le dépôt. En particulier, `SectionPrecisionIA` (l.245) n'a
+//   AUCUNE référence externe : les `_buildSectionPrecisionIA()` trouvés dans
+//   `ia_performance_screen.dart:2959` et `profile_profil_tab.dart:341` sont
+//   des méthodes PRIVÉES homonymes, pas ce widget. C'est exactement le piège
+//   qu'un `grep` naïf sur le nom seul ne révèle pas ; il faut vérifier la
+//   portée et l'import pour conclure.
+//
+//   STATUT : NON RÉSOLUE — voir `ia_analyse_journee_widget.dart` pour le
+//   motif : §16 interdit de supprimer sur la seule absence d'import.
+//   ⚠️ Les seuils `seuilQuarte`/`seuilQuinte` lus ici (l.756-757) sont
+//   AFFICHÉS seulement : c'est ce que documente BL1-A15. Ce fichier étant
+//   mort, ces deux lectures ne sont même pas visibles dans l'application.
+// ═══════════════════════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import '../../services/ia_memory_service.dart';
 import '../../services/ia_memory_models.dart';

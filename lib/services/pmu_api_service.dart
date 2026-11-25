@@ -611,10 +611,34 @@ class PmuApiService {
       return ['E_SIMPLE_GAGNANT', 'E_SIMPLE_PLACE'];
     }
     if (l.contains('couplé gagnant')) return ['E_COUPLE_GAGNANT'];
-    if (l.contains('couplé placé')) return ['E_COUPLE_PLACE'];
-    if (l.contains('quinté')) return ['E_MULTI', 'E_MINI_MULTI'];
-    if (l.contains('quarté')) return ['E_SUPER_QUATRE'];
-    if (l.contains('tiercé')) return ['E_TRIO'];
+    // ★ CORRECTION BLOC 1 (régression de FORME introduite par `fd8348e`) —
+    //   L'ALIGNEMENT VERTICAL DES QUATRE CORRESPONDANCES ASSIMILATRICES EST
+    //   RESTAURÉ. `etape3_centralisation_codes_test.dart:203` est un garde-fou
+    //   qui vérifie que ces quatre lignes n'ont pas été touchées : il les
+    //   compare littéralement, espaces d'alignement compris.
+    //
+    //   MESURE, et non supposition :
+    //     • à `d21fc1a` (parent du BLOC 1 validation), la forme était
+    //       `if (l.contains('tiercé'))` + 9 espaces + `return ['E_TRIO'];`
+    //       (vérifié par `awk` sur les octets : longueur du séparateur = 9) ;
+    //     • dans `fd8348e`, un `dart format` a réécrit tout le fichier et
+    //       ramené ces quatre séparateurs à 1 espace ;
+    //     • aucune ligne FONCTIONNELLE n'a été supprimée : les quatre
+    //       correspondances sont toujours là, dans le même ordre, avec les
+    //       mêmes codes de retour.
+    //   C'est donc bien une régression de forme du BLOC 1, sans effet
+    //   sémantique, mais qui faisait échouer un garde-fou légitime.
+    //
+    //   ⚠️ CES QUATRE LIGNES SONT UNE CORRESPONDANCE « ASSIMILATRICE »
+    //      VOLONTAIREMENT CONSERVÉE (Tiercé → E_TRIO seul, alors que le PMU
+    //      peut publier un Ordre ET un Désordre). Le test la déclare « fausse »
+    //      et exige qu'elle RESTE EN PLACE : la « corriger » changerait des
+    //      gains réels. Elle est ici restaurée à l'identique, PAS corrigée.
+    //      Aucun formatage automatique ne doit plus être appliqué à ce bloc.
+    if (l.contains('couplé placé'))   return ['E_COUPLE_PLACE'];
+    if (l.contains('quinté'))         return ['E_MULTI', 'E_MINI_MULTI'];
+    if (l.contains('quarté'))         return ['E_SUPER_QUATRE'];
+    if (l.contains('tiercé'))         return ['E_TRIO'];
     if (l.contains('simple gagnant')) return ['E_SIMPLE_GAGNANT'];
     if (l.contains('simple placé')) return ['E_SIMPLE_PLACE'];
     if (l.contains('gagnant')) return ['E_SIMPLE_GAGNANT'];

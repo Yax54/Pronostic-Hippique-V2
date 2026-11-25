@@ -1328,19 +1328,83 @@ class ZoneTurfService {
   /// inventée. Mesuré : `FIN_COURSE` existe (1 course sur 316 fixtures) à côté
   /// de `ARRIVEE_DEFINITIVE_COMPLETE` (93) ; les deux vocabulaires ne se
   /// traduisent pas l'un en l'autre.
+  /// ★ CORRECTION BLOC 1 (validation financière) — CACHE DES ARRIVÉES
+  ///   PROVISOIRES ET MUETTES, ET ACCÈS CONCURRENTS.
+  ///
+  /// DÉFAUT MESURÉ (test `8.1` puis `8.2` de
+  /// `b1_fin_perimetre_financier_test.dart`, tous deux ROUGES) :
+  ///   l'ancienne version mettait en cache TOUTE valeur lue, y compris
+  ///   `false` (« arrivée provisoire ») et `null` (« le PMU ne le dit pas »),
+  ///   pendant `_validiteDrapeauDefinitif` = 2 minutes. Conséquence : dès
+  ///   qu'une course était vue provisoire, sa résolution financière restait
+  ///   `nonDeterminee` pendant 2 minutes, MÊME si le PMU publiait l'arrivée
+  ///   définitive entre-temps. C'est exactement ce que le mandat interdit :
+  ///   « une indisponibilité temporaire de la source ne doit pas bloquer
+  ///   définitivement la résolution ».
+  ///
+  /// RÈGLE CORRIGÉE — asymétrie justifiée par la nature de l'information :
+  ///   • `true`  est STABLE : une arrivée définitive ne redevient pas
+  ///     provisoire. On le met en cache — mais avec la MÊME validité de 2 min,
+  ///     précisément pour préserver la possibilité d'une RECTIFICATION
+  ///     OFFICIELLE ultérieure (correction d'arrivée, disqualification
+  ///     tardive). Un cache éternel interdirait cette rectification ;
+  ///   • `false` et `null` sont INSTABLES : ils décrivent un état transitoire
+  ///     ou une ignorance. Ils ne sont JAMAIS mis en cache. Le coût est une
+  ///     requête par appel, ce qui est le prix de la justesse — et il reste
+  ///     borné, car l'appel est déjà dédupliqué par le cache de résultat
+  ///     (`chargerResultatsCourseComplet`) en amont.
+  ///
+  /// MAÎTRISE DES ACCÈS CONCURRENTS (exigée explicitement) :
+  ///   `_enVolDrapeauDefinitif` mémorise la requête EN COURS par clé. Deux
+  ///   appels simultanés sur la même course PARTAGENT la même `Future` : une
+  ///   seule requête réseau part, quel que soit le nombre d'appelants. Sans
+  ///   cela, un écran qui reconstruit sa liste pendant un rafraîchissement
+  ///   pouvait lancer N requêtes identiques.
+  static final Map<String, Future<({bool? valeur, bool sourceIndisponible})>>
+      _enVolDrapeauDefinitif = {};
+
   static Future<({bool? valeur, bool sourceIndisponible})>
       _drapeauDefinitifDepuisCourse({
     required String dateStr,
     required int numReunion,
     required int numCourse,
-  }) async {
+  }) {
     final rPad = numReunion.toString().padLeft(2, '0');
     final cPad = numCourse.toString().padLeft(2, '0');
     final cleCache = '$dateStr/R$rPad/C$cPad';
 
-    // 1. Cache court : aucune requête si l'on vient de mesurer.
+    // 0. Déduplication : si une requête est déjà en vol pour cette course,
+    //    on partage son résultat au lieu d'en lancer une seconde.
+    final enVol = _enVolDrapeauDefinitif[cleCache];
+    if (enVol != null) return enVol;
+
+    final future = _lireDrapeauDefinitifReseau(
+      cleCache: cleCache,
+      dateStr: dateStr,
+      rPad: rPad,
+      cPad: cPad,
+    );
+    _enVolDrapeauDefinitif[cleCache] = future;
+    // Nettoyage garanti, succès comme échec : sans cela, une exception
+    // laisserait la clé « en vol » pour toujours et bloquerait toute
+    // résolution ultérieure de cette course.
+    return future.whenComplete(() {
+      _enVolDrapeauDefinitif.remove(cleCache);
+    });
+  }
+
+  /// Corps réel de la lecture, après déduplication.
+  static Future<({bool? valeur, bool sourceIndisponible})>
+      _lireDrapeauDefinitifReseau({
+    required String cleCache,
+    required String dateStr,
+    required String rPad,
+    required String cPad,
+  }) async {
+    // 1. Cache court : uniquement pour une valeur STABLE (`true`).
     final enCache = _cacheDrapeauDefinitif[cleCache];
     if (enCache != null &&
+        enCache.valeur == true &&
         DateTime.now().difference(enCache.luLe) < _validiteDrapeauDefinitif) {
       return (valeur: enCache.valeur, sourceIndisponible: false);
     }
@@ -1360,8 +1424,10 @@ class ZoneTurfService {
           debugPrint('PMU drapeau définitif: HTTP ${resp.statusCode} '
               '→ source indisponible, valeur non inventée');
         }
+        // Une panne ne doit pas détruire une mesure STABLE déjà obtenue ;
+        // elle ne doit pas non plus la rafraîchir artificiellement.
         return (
-          valeur: _cacheDrapeauDefinitif[cleCache]?.valeur,
+          valeur: enCache?.valeur == true ? enCache!.valeur : null,
           sourceIndisponible: true,
         );
       }
@@ -1371,7 +1437,16 @@ class ZoneTurfService {
       // est conservé tel quel — c'est l'information qui empêche de traiter une
       // arrivée provisoire comme définitive.
       final valeur = _lireDrapeauDefinitif(data);
-      _cacheDrapeauDefinitif[cleCache] = (valeur: valeur, luLe: DateTime.now());
+
+      // ★ SEUL `true` EST CACHÉ. Voir le bloc de commentaire ci-dessus.
+      if (valeur == true) {
+        _cacheDrapeauDefinitif[cleCache] =
+            (valeur: valeur, luLe: DateTime.now());
+      } else {
+        // `false` / `null` : état instable. On PURGE toute valeur antérieure
+        // afin qu'aucune lecture suivante ne puisse resservir un état périmé.
+        _cacheDrapeauDefinitif.remove(cleCache);
+      }
       return (valeur: valeur, sourceIndisponible: false);
     } catch (e) {
       if (kDebugMode) {
@@ -1379,7 +1454,7 @@ class ZoneTurfService {
             '→ source indisponible');
       }
       return (
-        valeur: _cacheDrapeauDefinitif[cleCache]?.valeur,
+        valeur: enCache?.valeur == true ? enCache!.valeur : null,
         sourceIndisponible: true,
       );
     }
@@ -1636,6 +1711,11 @@ class ZoneTurfService {
     //   AVANT le reset pourrait être servie APRÈS — exactement ce qu'un reset
     //   doit rendre impossible.
     _cacheDrapeauDefinitif.clear();
+    // ★ CORRECTION BLOC 1 (validation financière) : les requêtes EN VOL sont
+    //   abandonnées elles aussi. Sans cette purge, une lecture lancée AVANT le
+    //   reset pourrait, à son retour, réécrire dans le cache une valeur
+    //   mesurée avant le reset — le reset ne serait alors que partiel.
+    _enVolDrapeauDefinitif.clear();
     // ★ L1 : invalide toute capture L0 EN VOL (chargement réseau en cours au
     // moment du reset). Le compteur n'est jamais décrémenté.
     _generationReset++;

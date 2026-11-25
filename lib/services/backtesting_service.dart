@@ -449,17 +449,30 @@ class BacktestingService {
       } else {
         // ⚠️ NON DÉTERMINÉ : la mise n'entre PAS dans `misesDeterminees`, la
         //    course n'entre NI dans la courbe NI dans le résultat net, et elle
-        //    ne casse aucune série. La traiter comme une perte serait un
-        //    mensonge comptable.
+        //    ne compte NI comme gain NI comme perte.
         //
-        //    ★ BLOC 1 : elle ne relie pas non plus deux séries. Comme elle ne
-        //    touche à `serieGagnante` NI à `seriePerdante`, une série de 3
-        //    gains avant elle et une série de 2 gains après elle ne peuvent
-        //    PAS être agrégées en « 5 gains consécutifs » : la série
-        //    enregistrée est le maximum observé DANS un segment continu, et
-        //    chaque `courbeGains` ne reçoit aucun point pour cette course.
+        //    ★ CORRECTION BLOC 1 (validation financière) — ELLE INTERROMPT
+        //    AUSSI LES DEUX SÉRIES.
+        //
+        //    DÉFAUT MESURÉ (test `5.1`, ROUGE) : laisser les compteurs de série
+        //    intacts (« neutre ») RELIE deux séries à travers l'inconnu. Trois
+        //    gains, une course sans résultat, deux gains → on annonçait
+        //    « 5 gains consécutifs ». C'est faux : la 4ᵉ course n'a pas de
+        //    résultat, on ne sait pas ce qui s'y est passé.
+        //
+        //    La règle correcte n'est donc pas « neutre » mais « SÉPARATEUR » :
+        //    un indéterminé clôt le segment courant sans rien y ajouter. Les
+        //    séries mesurées ne valent alors que DANS un segment continu de
+        //    courses connues — ce qui est la seule chose démontrable.
+        //
+        //    Différence avec un remboursement : celui-ci est CONNU (on sait que
+        //    la mise est rendue), il n'interrompt donc rien ; l'indéterminé,
+        //    lui, est une ignorance, et une ignorance ne peut pas servir de
+        //    pont.
         nbNonDetermines++;
         misesIndeterminees += sim.mise;
+        serieGagnante = 0;
+        seriePerdante = 0;
       }
 
       // Ventilations : les indéterminés y sont comptés SÉPARÉMENT.

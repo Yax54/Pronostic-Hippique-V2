@@ -3,6 +3,35 @@ import '../services/best_bet_engine.dart';
 import '../services/fusion_config_service.dart';
 
 /// ═════════════════════════════════════════════════════════════════════════════
+/// ⚠️ BL1-A16 — CET ÉCRAN EST INATTEIGNABLE. MESURE, PUIS DÉCISION.
+///
+///   MESURE (grep exhaustif sur `lib/`) :
+///     `FusionConfigScreen` → 0 référence hors de ce fichier
+///     `FusionConfigService` → 0 appelant (`load`, `save`, `reset`)
+///   Les 3 presets de fusion (« Conseillé », « Très sûr », « Chasseur de
+///   gains ») ne sont donc JAMAIS applicables depuis l'interface.
+///
+///   DÉTAIL QUI COMPTE POUR LA COHÉRENCE DU DIAGNOSTIC : 4 clés de
+///   configuration (`fusion_poids_confiance`, `fusion_poids_gain`,
+///   `fusion_poids_risque`, `fusion_seuil_min`) sont malgré cela SAUVEGARDÉES
+///   et RESTAURÉES par `backup_service.dart:29` — elles sont donc
+///   persistées, exportées et importées pour une configuration qu'aucun
+///   écran ne peut modifier.
+///
+///   POURQUOI AUCUNE RÉACTIVATION N'EST APPLIQUÉE : raccorder cet écran
+///   rendrait `BestBetEngine.computeAll` utilisable, or cette implémentation
+///   réintroduit trois pratiques financières interdites par la directive du
+///   BLOC 1 (cote inventée à 3,0 ; second moteur de gains par multiplicateurs ;
+///   cote Gagnant utilisée comme dividende de Tiercé/Quarté+/Quinté+).
+///   Voir l'en-tête de `best_bet_engine.dart` pour la mesure complète.
+///
+///   STATUT : DÉCISION UTILISATEUR INDISPENSABLE — soit archiver proprement
+///   l'ensemble (écran + service + moteur), soit réécrire
+///   `BestBetEngine.computeAll` sur le moteur financier officiel unique avant
+///   de le raccorder. Le code est CONSERVÉ tel quel en attendant : §16
+///   interdit de le supprimer sur la seule absence d'import.
+///
+/// ── EN-TÊTE D'ORIGINE, CONSERVÉ ─────────────────────────────────────────────
 /// Écran de configuration du moteur de fusion "Top Équilibre"
 ///
 /// Permet de :

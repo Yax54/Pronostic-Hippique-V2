@@ -35,6 +35,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/providers/pmu_provider.dart';
+// ★ CORRECTION BLOC 1 — nécessaire pour purger l'état statique du drapeau
+//   définitif entre deux tests (voir `avecReseau`).
+import 'package:pronostic_hippique/services/zone_turf_service.dart';
 import 'package:pronostic_hippique/services/affichage_gain_structure.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';
 import 'package:pronostic_hippique/services/branchement_verdict_course.dart';
@@ -261,12 +264,81 @@ String _corpsRapports() => json.encode(<Map<String, dynamic>>[
       },
     ]);
 
+/// ★ CORRECTION BLOC 1 — CORPS AUTHENTIQUE DE L'ENDPOINT **PAR COURSE**.
+///
+/// POURQUOI CETTE FABRIQUE EXISTE (défaut mesuré du faux serveur) :
+///   Le faux serveur ne répondait que sur `/participants` et
+///   `/rapports-definitifs`. Toute autre URL — dont
+///   `/programme/15112026/R01/C06` — recevait `{"programme":{"reunions":[]}}`,
+///   donc SANS `arriveeDefinitive`. Le drapeau restait `null`.
+///
+///   Or la production lit ce drapeau sur l'endpoint PAR COURSE
+///   (`ZoneTurfService._drapeauDefinitifDepuisCourse`, appelé par
+///   `chargerResultatsCourseComplet`). Le `null` observé par
+///   `B4.5/3.3` (`Expected: true / Actual: <null>`) était donc la
+///   conséquence DIRECTE de cette lacune de fixture, et non d'une régression
+///   du code de production.
+///
+/// FORME REPRISE — ET MESURÉE SUR LA FIXTURE AUTHENTIQUE DU DÉPÔT
+///   `test/fixtures/recherche_pmu/multi/prog_15112026.json`, course
+///   `numOrdre == 6` de la réunion 1 (celle que ce test interroge) :
+///     arriveeDefinitive             = true
+///     isArriveeDefinitive           = true
+///     statut                        = 'ARRIVEE_DEFINITIVE_COMPLETE'
+///     categorieStatut               = 'ARRIVEE'
+///     ordreArrivee                  = [[9],[4],[15],[10],[1],[11],[7]]
+///     nombreDeclaresPartants        = 15
+///     rapportsDefinitifsDisponibles = true
+///     participants                  = []   ← l'endpoint par course ne les porte pas
+///
+///   Les cinq premiers groupes (`9,4,15,10,1`) sont EXACTEMENT ceux que
+///   l'assertion de `B4.5/3.3` attend ; les deux suivants (`11`,`7`) sont les
+///   rangs publiés au-delà du top 5. Aucune valeur n'est inventée : la fixture
+///   est recopiée de la source authentique déjà versionnée dans le dépôt.
+///
+/// ⚠️ CE QUI N'EST **PAS** MODIFIÉ : l'assertion de `B4.5/3.3` reste
+///    `expect(res.arriveeDefinitive, isTrue)`, et le moteur financier
+///    (`moteur_gain_pmu.dart`) n'est pas touché d'une ligne.
+String _corpsProgrammeCourse() => json.encode(<String, dynamic>{
+      'arriveeDefinitive': true,
+      'isArriveeDefinitive': true,
+      'statut': 'ARRIVEE_DEFINITIVE_COMPLETE',
+      'categorieStatut': 'ARRIVEE',
+      'numReunion': 1,
+      'numOrdre': 6,
+      'nombreDeclaresPartants': 15,
+      'rapportsDefinitifsDisponibles': true,
+      'ordreArrivee': <List<int>>[
+        <int>[9],
+        <int>[4],
+        <int>[15],
+        <int>[10],
+        <int>[1],
+        <int>[11],
+        <int>[7],
+      ],
+      // L'endpoint PAR COURSE ne porte pas les participants : c'est mesuré
+      // sur la fixture authentique (liste vide) et sur la réponse réelle
+      // (5 529 octets, participants vide).
+      'participants': <Map<String, dynamic>>[],
+    });
+
 /// Intercepte TOUT le réseau PMU. `rapportsVides` sert à prouver le refus.
 Future<T> avecReseau<T>(
   Future<T> Function() action, {
   bool rapportsVides = false,
 }) {
+  // ★ CORRECTION BLOC 1 — ISOLATION DE L'ÉTAT STATIQUE ENTRE TESTS.
+  //
+  //   `ZoneTurfService` tient un cache court du drapeau définitif. Sans purge,
+  //   un test pouvait hériter du drapeau mesuré par le précédent, ce qui
+  //   rendrait toute mesure d'URL trompeuse. `viderCachePourResetComplet()`
+  //   est le mécanisme DÉJÀ utilisé par la suite (`v33`, `v34`, `v35`,
+  //   `l1_capture_officielle`, `a6_fiabilite_arrivees_pmu`) : on réutilise
+  //   l'outil existant, on n'en ajoute aucun.
+  ZoneTurfService.viderCachePourResetComplet();
   final String participants = _corpsParticipants();
+  final String programmeCourse = _corpsProgrammeCourse();
   final String rapports = rapportsVides ? '[]' : _corpsRapports();
   final client = MockClient((http.Request request) async {
     final String p = request.url.path;
@@ -277,6 +349,16 @@ Future<T> avecReseau<T>(
     }
     if (p.contains('participants')) {
       return http.Response(participants, 200, headers: entetes);
+    }
+    // ★ CORRECTION BLOC 1 — L'ENDPOINT PAR COURSE EST DÉSORMAIS SERVI.
+    //
+    //   `ZoneTurfService` y lit `arriveeDefinitive` (mesuré : c'est le SEUL
+    //   endpoint qui le publie ; `/participants` a 4 clés racine et ne le
+    //   porte pas). Le motif ci-dessous est ancré sur la forme réelle
+    //   `/programme/<ddmmyyyy>/R<rr>/C<cc>` et ne capte donc NI
+    //   `.../participants` NI `.../rapports-definitifs`, traités plus haut.
+    if (RegExp(r'/programme/\d{8}/R\d{2}/C\d{2}$').hasMatch(p)) {
+      return http.Response(programmeCourse, 200, headers: entetes);
     }
     return http.Response('{"programme":{"reunions":[]}}', 200, headers: entetes);
   });

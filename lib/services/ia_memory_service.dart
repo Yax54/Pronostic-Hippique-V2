@@ -6970,6 +6970,32 @@ class IaMemoryService extends ChangeNotifier {
   // Identique au bouton "Réinitialiser étoiles premium" du profil, mais
   // accessible directement depuis le calendrier IA.
   // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics, résultats.
+  //
+  // ★ BL1-A07 — PERTE IRRÉVERSIBLE DE TRAÇABILITÉ, DOCUMENTÉE ET NON
+  //   « CORRIGÉE » — LE COMPORTEMENT EST ANNONCÉ ET CONFIRMÉ.
+  //
+  //   MESURE : cette méthode (et `resetPremiumPourDate`) SUPPRIME des jours
+  //   PASSÉS de l'historique premium. Or `enregistrerPronosticsPremiumDuJour`
+  //   ne réécrit QUE le jour présent : les entrées supprimées ne peuvent donc
+  //   JAMAIS être reconstituées. Les deux appels sont précédés d'un
+  //   `AlertDialog` de confirmation (l.544/548 et 597/601) qui annonce
+  //   l'irréversibilité.
+  //
+  //   CE QUI EST PERDU, MESURÉ : séries premium de l'écran Home
+  //   (`home_screen:446-450`), palier OR et badges dorés, et la traçabilité
+  //   du backtesting (`ia_tab_backtesting:1480`).
+  //   CE QUI N'EST PAS TOUCHÉ, PROUVÉ : aucune mémoire IA, aucun poids,
+  //   aucun apprentissage, aucun pronostic, aucun résultat. L'apprentissage
+  //   N'EST PAS affecté.
+  //
+  //   POURQUOI AUCUNE CORRECTION N'EST APPLIQUÉE : ce n'est pas un défaut de
+  //   raccordement mais une ACTION UTILISATEUR EXPLICITE, annoncée comme
+  //   irréversible. La « corriger » reviendrait soit à interdire une fonction
+  //   voulue, soit à reconstituer des étoiles passées — ce que la consigne
+  //   interdit formellement (« ne pas reconstituer ni inventer »).
+  //   STATUT : DIFFÉRENCE MÉTIER JUSTIFIÉE. Risque résiduel à connaître :
+  //   après un reset, un backtesting lancé plus tard portera sur un
+  //   historique premium plus court, sans que l'interface ne le signale.
   // ══════════════════════════════════════════════════════════════════════════
   Future<void> resetToutesEtoilesPremium() async {
     // ★ B5c-P2 : les DEUX suppressions forment UNE SEULE unité protégée —

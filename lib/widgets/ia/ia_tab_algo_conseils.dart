@@ -1,4 +1,21 @@
 // ignore_for_file: unused_element
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ BL1-A18 — FICHIER CONFIRMÉ INATTEIGNABLE. MESURE, PUIS DÉCISION.
+//
+//   MESURE (`grep -rn "ia_tab_algo_conseils.dart'" lib/ test/`) : 0 import
+//   ailleurs dans le dépôt. Ni `_buildTabMethodologieLegacy` (l.25) ni
+//   `buildTabConseils` (l.348) ne sont atteignables.
+//
+//   POINT IMPORTANT POUR NE PAS SE TROMPER : il existe des homonymes VIVANTS
+//   dans d'autres fichiers (`IaTabMethodologie` à 19 critères a remplacé la
+//   méthode legacy à 10 critères A→J ; `buildTabConseils` a un homonyme
+//   ailleurs). Un `grep` sur le nom seul compte donc des occurrences qui ne
+//   concernent PAS ce fichier. Seule la mesure des IMPORTS prouve l'absence.
+//
+//   STATUT : NON RÉSOLUE — §16 interdit de supprimer sur la seule absence
+//   d'import. Le remplacement de la méthode legacy par `IaTabMethodologie`
+//   sur 19 critères est en revanche un remplacement DÉMONTRÉ (audit §9.3).
+// ═══════════════════════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import '../../services/ia_memory_service.dart';
 

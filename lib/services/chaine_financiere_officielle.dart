@@ -83,6 +83,33 @@ enum CauseNonDetermination {
   /// Le résultat est conservé mais ne porte aucune arrivée exploitable.
   arriveeAbsente,
 
+  /// ★ CORRECTION BLOC 1 (validation financière) — l'arrivée conservée est
+  /// explicitement PROVISOIRE (`arriveeDefinitive == false`).
+  ///
+  /// Cette cause est DISTINCTE de [rapportsAbsents] et de [resultatIndisponible]
+  /// parce qu'elle décrit une situation différente : on SAIT quelque chose, et
+  /// ce que l'on sait est provisoire. Un consommateur peut ainsi distinguer
+  /// « je n'ai rien » de « j'ai, mais ce n'est pas définitif » — distinction
+  /// indispensable pour ne pas figer une attente en ignorance définitive.
+  resultatProvisoire,
+
+  /// ★ CORRECTION BLOC 1 (validation financière) — le caractère définitif de
+  /// l'arrivée conservée n'a JAMAIS pu être établi (`arriveeDefinitive` valait
+  /// `null` lors de la récupération) et sa nouvelle vérification a échoué.
+  ///
+  /// DÉFAUT MESURÉ (test `8.2`, ROUGE) : sans cette cause, une entrée à
+  /// drapeau `null` était déclarée « non provisoire » par
+  /// `estProvisoire => arriveeDefinitive == false`, donc servie depuis le
+  /// stockage à l'étape ① POUR TOUJOURS. Trace : `PMU drapeau définitif:
+  /// HTTP 503 → source indisponible, valeur non inventée`, puis au second
+  /// appel PLUS AUCUNE requête réseau. Une panne momentanée de l'endpoint par
+  /// course figeait ainsi un résultat financier dans un état indéterminé
+  /// permanent, sur la seule base d'une information jamais obtenue.
+  ///
+  /// Elle est DISTINCTE de [resultatProvisoire] : « l'API dit que ce n'est pas
+  /// définitif » n'est pas « l'API n'a jamais rien dit ».
+  arriveeDefinitiveInconnue,
+
   /// Le ticket lui-même ne peut pas être construit : libellé hors référentiel,
   /// taille de combinaison anormale, mise nulle ou négative.
   ticketNonConstructible,
@@ -233,7 +260,66 @@ Future<RecuperationOfficielle> obtenirResultatOfficiel({
   await repo.charger();
 
   final locale = repo.entreePourIdentite(identite);
-  if (locale != null && locale.estExploitable) {
+
+  // ★ CORRECTION BLOC 1 (validation financière) — UNE ENTRÉE PROVISOIRE N'EST
+  //   PAS UNE ENTRÉE EXPLOITABLE AU SENS DE CETTE FONCTION.
+  //
+  //   DÉFAUT MESURÉ (test `8.1`, ROUGE) : `EntreeResultatOfficiel.estExploitable`
+  //   ne teste que `porteUneArrivee && porteDesRapports`. Une entrée dont
+  //   `arriveeDefinitive == false` (arrivée PROVISOIRE) était donc jugée
+  //   exploitable, rendue telle quelle à l'étape ①, et la fonction
+  //   COURT-CIRCUITAIT avant toute tentative réseau. Conséquence : dès qu'une
+  //   course avait été vue provisoire, sa résolution restait `nonDeterminee`
+  //   POUR TOUJOURS, même après publication de l'arrivée définitive — alors que
+  //   le repository sait parfaitement écrire une transition
+  //   `provisoireDevenueDefinitive` (:399). Le défaut n'était pas dans le
+  //   repository : il était ici, dans le court-circuit.
+  //
+  //   RÈGLE CORRIGÉE : on ne sert depuis le stockage que ce qui est à la fois
+  //   exploitable ET non provisoire. Une entrée provisoire suit le chemin
+  //   réseau (étape ②) si `autoriserReseau`, sinon elle est déclarée
+  //   provisoire — jamais « servie comme un fait établi ».
+  //
+  //   `estExploitable` n'est PAS modifié : il décrit une propriété de contenu
+  //   (arrivée + rapports présents) et d'autres consommateurs en dépendent.
+  //   C'est la DÉCISION de court-circuiter qui est corrigée, pas la propriété.
+  //
+  //   ★ SECONDE CORRECTION, MÊME FONCTION, AUTRE DÉFAUT (test `8.2`, ROUGE) —
+  //   L'ARRIVÉE INCONNUE GELAIT LE CACHE.
+  //
+  //   DÉFAUT MESURÉ : au premier appel, l'endpoint par course répond 503
+  //   (`PMU drapeau définitif: HTTP 503 → source indisponible, valeur non
+  //   inventée`) : `arriveeDefinitive` reste `null`, et le résultat est
+  //   persisté tel quel. Au second appel, la trace ne montre PLUS AUCUNE
+  //   requête réseau : l'entrée est servie depuis le stockage.
+  //
+  //   POURQUOI : `EntreeResultatOfficiel.estProvisoire` vaut
+  //   `arriveeDefinitive == false`. Un drapeau `null` rend donc `false` — et
+  //   `!locale.estProvisoire` devient VRAI. L'entrée est jugée « non
+  //   provisoire », servie à l'étape ①, et le drapeau n'est JAMAIS redemandé.
+  //   Une panne momentanée figeait ainsi la course dans un état indéterminé
+  //   permanent, fondé sur une information qui n'a jamais été obtenue.
+  //
+  //   RÈGLE CORRIGÉE : « inconnu » n'est pas « établi ». Une entrée dont le
+  //   drapeau n'a jamais pu être lu ne court-circuite plus le réseau ; elle le
+  //   sollicite, et elle est déclarée [CauseNonDetermination.arriveeDefinitiveInconnue]
+  //   si la vérification échoue encore. La cause est DISTINCTE de
+  //   [CauseNonDetermination.resultatProvisoire] : « l'API dit que ce n'est pas
+  //   définitif » ≠ « l'API n'a jamais rien dit ».
+  //
+  //   CE QUI N'EST PAS TOUCHÉ — et c'est délibéré : le MOTEUR continue
+  //   d'accepter un drapeau `null`. Mesuré dans `_verdictDepuisRapportPublie`
+  //   (moteur_gain_pmu.dart:1609) : un GAIN est démontré par le RAPPORT PUBLIÉ,
+  //   sans consulter le drapeau. Seule la PERTE l'exige
+  //   (`_blocEstDemontreComplet`, :1132). Cette asymétrie est SAINE : un
+  //   rapport officiel explicite suffit à établir un gain, tandis qu'une perte
+  //   ne peut se déduire que d'une arrivée définitive. La corriger ici
+  //   affaiblirait la preuve de perte, ce qui est interdit.
+  final bool localeServiable = locale != null &&
+      locale.estExploitable &&
+      !locale.estProvisoire &&
+      !locale.estDefinitiveInconnue;
+  if (localeServiable) {
     return RecuperationOfficielle.disponible(
       _versResultatOfficiel(locale),
       servieDepuisStockage: true,
@@ -241,6 +327,25 @@ Future<RecuperationOfficielle> obtenirResultatOfficiel({
   }
 
   if (!autoriserReseau) {
+    if (locale != null && locale.estProvisoire) {
+      return RecuperationOfficielle.absente(
+        CauseNonDetermination.resultatProvisoire,
+        'arrivée PROVISOIRE conservée pour ${identite.courseKey} : aucun '
+            'résultat financier ne peut être fondé dessus, et la récupération '
+            'réseau est interdite sur cet appel',
+        servieDepuisStockage: true,
+      );
+    }
+    if (locale != null && locale.estDefinitiveInconnue) {
+      return RecuperationOfficielle.absente(
+        CauseNonDetermination.arriveeDefinitiveInconnue,
+        'le caractère DÉFINITIF de l\'arrivée conservée pour '
+            '${identite.courseKey} n\'a jamais pu être établi, et la '
+            'récupération réseau est interdite sur cet appel : aucun résultat '
+            'financier n\'est fondé sur une information jamais obtenue',
+        servieDepuisStockage: true,
+      );
+    }
     return RecuperationOfficielle.absente(
       locale == null
           ? CauseNonDetermination.resultatAbsentSansRecuperation

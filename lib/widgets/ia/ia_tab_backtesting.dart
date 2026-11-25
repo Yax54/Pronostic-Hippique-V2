@@ -28,6 +28,25 @@ class IaTabBacktesting extends StatefulWidget {
 }
 
 class _IaTabBacktestingState extends State<IaTabBacktesting> {
+  // ★ BL1-A20 — LES RÉSULTATS DE BACKTESTING NE SONT PAS PERSISTÉS.
+  //   C'est une DIFFÉRENCE JUSTIFIÉE, PAS UN DÉFAUT DE RACCORDEMENT.
+  //
+  //   MESURE : `_btResult` et `_martingaleResult` sont des CHAMPS D'ÉTAT.
+  //   Aucune clé `SharedPreferences` ne les sérialise — vérifié par grep :
+  //   les seules clés `bt_*` écrites sont les PARAMÈTRES (`bt_mise`,
+  //   `bt_jours`, `bt_type`, `bt_confiance_min`, `bt_discipline`,
+  //   `bt_hippodrome`, `:91-104`), jamais un résultat.
+  //
+  //   CONSÉQUENCE ASSUMÉE : fermer l'écran perd le résultat affiché, y
+  //   compris les paramètres d'un export en cours.
+  //   POURQUOI C'EST VOULU : un backtesting est une MESURE À LA DEMANDE sur
+  //   des données qui évoluent (l'arrivée officielle d'une course peut être
+  //   rectifiée). Persister un résultat calculé hier et le réafficher
+  //   aujourd'hui reviendrait à présenter comme actuel un chiffre établi sur
+  //   un état antérieur des données — exactement le type de chiffre non
+  //   revérifiable que la consigne interdit de présenter.
+  //   Le recalcul est bon marché et toujours cohérent avec les données du
+  //   moment. Aucune persistance n'est donc ajoutée.
   BacktestResult? _btResult;
   bool _btEnCours = false;
   bool _btShowAll = false;
@@ -1807,6 +1826,30 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             fontWeight: FontWeight.bold)),
                     Text('Pré-configurer les filtres depuis ce backtesting',
                         style: TextStyle(color: Colors.white38, fontSize: 16)),
+                    // ★ BL1-A13 — L'EFFET RÉEL EST DÉSORMAIS ANNONCÉ.
+                    //
+                    //   DÉFAUT MESURÉ : ce bouton écrit les clés de PRODUCTION
+                    //   `conseils_filtres_*` et `conseils_inject_pending`
+                    //   (ia_tab_backtesting.dart:1862-1869). Deux lecteurs les
+                    //   consomment : l'écran Conseils (`conseils_screen:104`)
+                    //   ET le service de NOTIFICATIONS (`alert_service:1834`,
+                    //   `:1907`). L'ancien libellé ne citait que l'écran : un
+                    //   outil de SIMULATION modifiait donc le filtrage des
+                    //   NOTIFICATIONS sans que l'utilisateur puisse le savoir.
+                    //
+                    //   POURQUOI PAS LE NAMESPACE `simulation_` proposé par
+                    //   l'audit : le comportement est une FONCTIONNALITÉ
+                    //   VOULUE — le backtesting sert à pré-configurer les
+                    //   filtres de production. Le renommer les rendrait
+                    //   inopérants et supprimerait la fonction. Le défaut
+                    //   n'est donc pas l'écriture, c'est le SILENCE sur son
+                    //   périmètre ; il est levé ici, et une confirmation
+                    //   explicite précède désormais toute écriture.
+                    Text('⚠️ Modifie aussi les filtres des NOTIFICATIONS',
+                        style: TextStyle(
+                            color: Color(0xFFFFAB40),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -1850,6 +1893,51 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () async {
+                // ★ BL1-A13 — CONFIRMATION EXPLICITE AVANT TOUTE ÉCRITURE.
+                //
+                //   DÉFAUT CORRIGÉ, MESURÉ : les écritures ci-dessous
+                //   touchaient des clés de PRODUCTION lues non seulement par
+                //   l'écran Conseils (`conseils_screen.dart:104`) mais AUSSI
+                //   par le service de notifications (`alert_service.dart:1834`
+                //   et `:1907`). L'unique dialogue de ce bouton était affiché
+                //   APRÈS l'écriture : il informait d'un effet DÉJÀ produit,
+                //   et ne pouvait donc rien empêcher. Un refus était
+                //   impossible.
+                //
+                //   L'ordre est désormais : CONFIRMER, puis ÉCRIRE. Un refus
+                //   n'écrit rien.
+                final confirme = await showDialog<bool>(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: const Color(0xFF0D1B2A),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    title: const Text('Appliquer à la production ?',
+                        style: TextStyle(color: Colors.white, fontSize: 16)),
+                    content: const Text(
+                      'Ces réglages vont modifier les filtres de l\'écran '
+                      'Conseils IA ET ceux des NOTIFICATIONS. '
+                      'Cette action est réversible depuis l\'écran Conseils.',
+                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Annuler',
+                            style: TextStyle(color: Colors.white54)),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Appliquer',
+                            style: TextStyle(color: Color(0xFF4CAF7D))),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirme != true) return;
+                if (!mounted) return;
+
                 // Injecter les filtres dans SharedPreferences
                 // ConseilsScreen les lira automatiquement à son prochain focus
                 final prefs = await SharedPreferences.getInstance();

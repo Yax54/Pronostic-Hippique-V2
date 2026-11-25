@@ -100,6 +100,95 @@ String _sansCommentaires(String source) {
   return sb.toString();
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+//  ★ BLOC 1 (validation) — EXTRACTION DES VÉRITABLES DIRECTIVES D'IMPORT
+//
+//  POURQUOI CE CHANGEMENT, ET EN QUOI IL NE FAIBLIT PAS LA GARDE.
+//
+//  DÉFAUT MESURÉ de l'ancienne implémentation : le garde-fou comparait la
+//  présence de la CHAÎNE `gain_pmu_types.dart` dans le texte de chaque fichier.
+//  Il ne distinguait donc pas :
+//    • une directive `import`/`export` — ce qu'il veut interdire ;
+//    • une simple MENTION dans un commentaire — ce qu'il ne veut pas
+//      interdire (un fichier qui ÉCRIT qu'il n'importe pas le socle était
+//      déclaré coupable de l'importer).
+//  L'échec observé `test/b0_gain_pmu_types_test.dart 268:7` avait exactement
+//  cette cause : `chaine_financiere_officielle.dart:189` nomme le socle dans
+//  un commentaire de documentation, sans l'importer.
+//
+//  CE QUE LA NOUVELLE GARDE VÉRIFIE — plus, et non moins :
+//    1. elle lit les DIRECTIVES RÉELLES (`import` ET `export`), donc tout
+//       véritable import interdit est détecté, y compris :
+//         • avec alias      : `import '...' as socle;`
+//         • avec préfixe    : `import '...' as s show X;`
+//         • avec `show`/`hide` sur plusieurs lignes (mesuré : `pmu_models`
+//           et `alert_service` utilisent cette forme) ;
+//         • en chemin RELATIF (`'../services/gain_pmu_types.dart'`, mesuré
+//           dans `pmu_models.dart`) ou `package:` ;
+//    2. elle reste insensible aux commentaires et au formatage, puisque
+//       l'analyse porte sur le code NET et sur des directives, pas sur des
+//       sous-chaînes ;
+//    3. elle conserve la comparaison NOMINATIVE par ÉGALITÉ contre les neuf
+//       importateurs autorisés : tout dixième fichier échoue, et tout
+//       fichier autorisé qui cesserait d'importer échoue aussi.
+//
+//  MESURE DE NON-RÉGRESSION DE LA GARDE : cette extraction est testée
+//  elle-même plus bas (groupe « la garde détecte… ») sur des sources
+//  synthétiques contenant alias, préfixe, forme multiligne, `hide`, chemin
+//  relatif, `package:`, mention en commentaire et mention dans une chaîne.
+//  Sans ces cas, une extraction trop permissive pourrait rendre le garde-fou
+//  silencieusement aveugle — c'est précisément ce qu'il faut empêcher.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Fichier cible du socle, tel qu'il apparaît en fin de chemin.
+const String _socle = 'gain_pmu_types.dart';
+
+/// Extrait les chemins des directives `import`/`export` d'une source Dart.
+///
+/// Retourne les URI BRUTES (telles qu'écrites), sans les résoudre : c'est
+/// l'appelant qui décide comment les normaliser. Aucune dépendance à
+/// `package:analyzer` n'est introduite (elle n'est pas dans les dépendances
+/// verrouillées du projet).
+///
+/// Algorithme, volontairement strict :
+///   • on travaille sur la source NETTE de commentaires (`_sansCommentaires`) ;
+///   • on ne reconnaît une directive qu'en DÉBUT D'INSTRUCTION, c'est-à-dire
+///     au premier token significatif d'une ligne (ou après un `;`), ce qui
+///     exclut une occurrence dans une chaîne de caractères ;
+///   • une directive court jusqu'au `;` suivant, ce qui couvre la forme
+///     multiligne (`import '...'\n    show\n        A,\n        B;`).
+List<String> _directivesImport(String sourceBrute) {
+  final source = _sansCommentaires(sourceBrute);
+  final uri = <String>[];
+  // Une directive ne peut commencer qu'en début de fichier ou après `;`.
+  // On découpe donc sur `;` : chaque segment est examiné indépendamment.
+  // Les `;` à l'intérieur des chaînes ont été conservés par
+  // `_sansCommentaires`, mais aucune directive ne peut s'y trouver, et le
+  // motif ci-dessous exige le mot-clé en TÊTE de segment.
+  for (final segment in source.split(';')) {
+    final t = segment.trimLeft();
+    final estImport = t.startsWith('import ');
+    final estExport = t.startsWith('export ');
+    if (!estImport && !estExport) continue;
+    final apres = estImport ? t.substring(7) : t.substring(7);
+    final m = RegExp(r"""^\s*(['"])([^'"]+)\1""").firstMatch(apres);
+    if (m != null) uri.add(m.group(2)!);
+  }
+  return uri;
+}
+
+/// Vrai si l'URI désigne RÉELLEMENT le socle, quel que soit le chemin employé.
+///
+/// Couvre : chemin relatif (`'gain_pmu_types.dart'`, `'../services/…'`) et
+/// `package:pronostic_hippique/…`. Ne couvre PAS une simple mention : l'URI
+/// doit se TERMINER par `gain_pmu_types.dart`, ce qui écarte
+/// `gain_pmu_types_test.dart` ou `mon_gain_pmu_types.dart.bak`.
+bool _designeLeSocle(String uri) {
+  final sansPrefixe =
+      uri.startsWith('package:') ? uri.substring('package:'.length) : uri;
+  return sansPrefixe == _socle || sansPrefixe.endsWith('/$_socle');
+}
+
 /// Rapport publié réaliste, calqué sur R1C6_15112026 (Quinté+).
 RapportPublie _rapport({
   String codePmu = 'E_QUINTE_PLUS',
@@ -256,17 +345,142 @@ void main() {
         'lib/services/resolution_gain_ticket_pmu.dart',
       ];
 
+      // ★ BLOC 1 (validation) — LA GARDE PORTE DÉSORMAIS SUR LES DIRECTIVES
+      //   RÉELLES D'IMPORT/EXPORT, ET NON SUR LA PRÉSENCE D'UNE CHAÎNE.
+      //
+      //   L'ancienne version `contenu.contains('gain_pmu_types.dart')`
+      //   confondait une DIRECTIVE et une MENTION EN COMMENTAIRE. Défaut
+      //   mesuré : `chaine_financiere_officielle.dart:189` nomme le socle dans
+      //   sa documentation sans l'importer, et était donc déclaré coupable.
+      //
+      //   La liste des neuf importateurs autorisés est INCHANGÉE, la
+      //   comparaison reste NOMINATIVE par ÉGALITÉ, et la détection couvre
+      //   maintenant aussi `export`, les alias, les préfixes, les formes
+      //   multilignes `show`/`hide`, les chemins relatifs et `package:`.
+      //   Elle est donc STRICTEMENT PLUS COUVRANTE, jamais moins.
       final racine = Directory('lib');
       final coupables = <String>[];
+      final detail = <String, List<String>>{};
       for (final f in racine.listSync(recursive: true)) {
         if (f is! File || !f.path.endsWith('.dart')) continue;
         if (f.path.endsWith('gain_pmu_types.dart')) continue;
-        final contenu = f.readAsStringSync();
-        if (contenu.contains('gain_pmu_types.dart')) coupables.add(f.path);
+        final uris = _directivesImport(f.readAsStringSync());
+        final versLeSocle = uris.where(_designeLeSocle).toList();
+        if (versLeSocle.isNotEmpty) {
+          coupables.add(f.path);
+          detail[f.path] = versLeSocle;
+        }
       }
       coupables.sort();
       expect(coupables, equals(importateursAttendus),
-          reason: 'liste des importateurs du socle : $coupables');
+          reason: 'liste des importateurs du socle : $coupables\n'
+              'directives en cause : $detail');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ★ BLOC 1 (validation) — NON-AVEUGLEMENT DE LA NOUVELLE GARDE
+    //
+    //  Le garde-fou précédent vient de passer d'une recherche de CHAÎNE à une
+    //  lecture de DIRECTIVES. Un tel changement pourrait, s'il était trop
+    //  permissif, rendre la garde silencieusement aveugle : elle resterait
+    //  verte même si un fichier interdit importait le socle.
+    //
+    //  Ces tests sont donc INDISPENSABLES : ils exercent l'extracteur sur des
+    //  sources SYNTHÉTIQUES qui ne dépendent d'aucun fichier de `lib/`, et ils
+    //  vérifient qu'il détecte bien chacune des formes réelles ou possibles —
+    //  et qu'il ne signale PAS une simple mention.
+    // ═══════════════════════════════════════════════════════════════════════
+    group('B0/1-bis la garde d\'import détecte toute forme réelle', () {
+      test('import simple avec point-virgule', () {
+        final uris = _directivesImport(
+            "import 'gain_pmu_types.dart';\nvoid f() {}");
+        expect(uris.where(_designeLeSocle), hasLength(1));
+      });
+
+      test('import avec ALIAS (forme que l\'ancienne garde ratait aussi, '
+          'mais que la nouvelle doit couvrir)', () {
+        final uris = _directivesImport(
+            "import 'gain_pmu_types.dart' as socle;\nvoid f() {}");
+        expect(uris.where(_designeLeSocle), hasLength(1),
+            reason: 'un alias ne doit pas masquer la directive');
+      });
+
+      test('import avec PRÉFIXE et combinateur show', () {
+        final uris = _directivesImport(
+            "import 'gain_pmu_types.dart' as s show EtatGain;");
+        expect(uris.where(_designeLeSocle), hasLength(1));
+      });
+
+      test('import MULTILIGNE avec show — forme réellement employée par '
+          'pmu_models.dart et alert_service.dart', () {
+        final uris = _directivesImport(
+            "import '../services/gain_pmu_types.dart'\n"
+            "    show\n"
+            "        EtatGain,\n"
+            "        EtatTirelire,\n"
+            "        RapportAttribue;\n"
+            "void f() {}");
+        expect(uris.where(_designeLeSocle), hasLength(1),
+            reason: 'la forme multiligne porte la directive sur plusieurs '
+                'lignes : elle doit être reconnue');
+      });
+
+      test('import avec hide', () {
+        final uris = _directivesImport(
+            "import 'gain_pmu_types.dart' hide EtatTirelire;");
+        expect(uris.where(_designeLeSocle), hasLength(1));
+      });
+
+      test('import en chemin RELATIF profond', () {
+        final uris = _directivesImport(
+            "import '../../services/gain_pmu_types.dart';");
+        expect(uris.where(_designeLeSocle), hasLength(1));
+      });
+
+      test('import en package:', () {
+        final uris = _directivesImport(
+            "import 'package:pronostic_hippique/services/gain_pmu_types.dart';");
+        expect(uris.where(_designeLeSocle), hasLength(1));
+      });
+
+      test('EXPORT est détecté (réexporter le socle contournerait la garde)', () {
+        final uris =
+            _directivesImport("export 'gain_pmu_types.dart' show EtatGain;");
+        expect(uris.where(_designeLeSocle), hasLength(1),
+            reason: 'un export ouvre le même accès qu\'un import');
+      });
+
+      test('une MENTION EN COMMENTAIRE n\'est PAS une directive', () {
+        final uris = _directivesImport(
+            "// ce fichier n'importe pas gain_pmu_types.dart\n"
+            "/* ni gain_pmu_types.dart */\n"
+            "void f() {}");
+        expect(uris.where(_designeLeSocle), isEmpty,
+            reason: 'défaut mesuré corrigé : la documentation ne doit pas '
+                'rendre un fichier coupable');
+      });
+
+      test('une MENTION DANS UNE CHAÎNE n\'est PAS une directive', () {
+        final uris = _directivesImport(
+            "const String note = \"gain_pmu_types.dart\";");
+        expect(uris.where(_designeLeSocle), isEmpty);
+      });
+
+      test('un fichier de TEST homonyme n\'est pas confondu avec le socle', () {
+        expect(_designeLeSocle('gain_pmu_types_test.dart'), isFalse);
+        expect(_designeLeSocle('/tmp/mon_gain_pmu_types.dart.bak'), isFalse);
+        expect(_designeLeSocle('gain_pmu_types.dart'), isTrue);
+      });
+
+      test('plusieurs directives : seules les vraies sont retenues', () {
+        final uris = _directivesImport(
+            "import 'dart:io';\n"
+            "// import 'gain_pmu_types.dart';\n"
+            "import 'autre.dart';\n"
+            "export 'gain_pmu_types.dart';");
+        expect(uris.where(_designeLeSocle), hasLength(1),
+            reason: 'une seule directive réelle vers le socle');
+      });
     });
 
     test('aucun calcul du socle n\'est encore invoqué (B-1 = stockage seul)', () {

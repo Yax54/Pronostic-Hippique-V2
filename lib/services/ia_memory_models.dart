@@ -567,12 +567,29 @@ class IaPoidsAdaptatifs {
   PoidsIndices poidsIndices;
 
   IaPoidsAdaptatifs({
-    // v8.0 : poids rééquilibrés — somme = 1.00 ✅
-    // Base (75%) : forme 0.25 + gains 0.13 + record 0.10 + cote 0.08
-    //              + constance 0.09 + victoires 0.04 + discipline 0.02 = 0.71
-    // Enrichis (29%) : distSpec 0.08 + jockey 0.07 + repos 0.03 + hippo 0.04
-    //                  + entraineur 0.04 + elo 0.05 = 0.31 → normaliser() → ~0.29
-    this.forme      = 0.25,  // Réduit de 0.32 → libère 7% vers les enrichis
+    // ★ BL1-A19 — CE COMMENTAIRE ÉTAIT FAUX, IL EST CORRIGÉ PAR LA MESURE.
+    //
+    //   Il affirmait : « v8.0 : poids rééquilibrés — somme = 1.00 ✅ ».
+    //   MESURE des valeurs réellement déclarées ci-dessous (19 critères) :
+    //       0,25 + 0,13 + 0,10 + 0,08 + 0,09 + 0,04 + 0,02 = 0,71 (base)
+    //     + 0,08 + 0,07 + 0,03 + 0,04 + 0,04 + 0,05 + 0,05 + 0,04
+    //     + 0,03 + 0,03 + 0,06 + 0,03                     = 0,55 (enrichis)
+    //     → SOMME DÉCLARÉE = 1,26, et non 1,00.
+    //
+    //   La somme ne devient 1,00000000 qu'APRÈS `clamp()` puis `normaliser()`,
+    //   MESURÉ : base 0,71 / enrichis 0,55 → fraction enrichie 0,4365, écrêtée
+    //   à `targetEnrichi = 0,40` (plafond) → base 0,60 / enrichis 0,40, soit
+    //   une somme de 1,00000000 exactement. Répartition obtenue : forme 0,2113,
+    //   gains 0,1099, record 0,0845…
+    //
+    //   ⚠️ CE N'EST PAS UN DÉFAUT DE CALCUL, C'EST UN COMMENTAIRE FAUX : les
+    //      valeurs brutes ne sont pas normalisées « à la déclaration ». Un
+    //      lecteur qui somme les littéraux obtient 1,26 et croit à un bug.
+    //   ⚠️ AUCUN POIDS N'EST MODIFIÉ ICI : la correction est documentaire.
+    //      L'arbitrage sur l'écrêtage à 0,40 et sur la somme brute reste
+    //      une DÉCISION UTILISATEUR (BL1-A04/A06) : elle toucherait la
+    //      formule, ce qui est interdit sans autorisation.
+    this.forme      = 0.25,
     this.gains      = 0.13,
     this.record     = 0.10,
     this.cote       = 0.08,
@@ -593,7 +610,14 @@ class IaPoidsAdaptatifs {
     this.progression = 0.03,  // Progression de carrière
     this.mouvCote    = 0.06,  // ★ v9.92 : Mouvement de cote (signal informé)
     this.placeDepart = 0.03,  // ★ v9.93 : Place au départ (corde)
-    // Total brut ≈ 1.07 → normaliser() ramène à 1.00 exactement
+    // ★ BL1-A19 — CE COMMENTAIRE ÉTAIT FAUX LUI AUSSI, CORRIGÉ PAR LA MESURE.
+    //   Il affirmait : « Total brut ≈ 1.07 → normaliser() ramène à 1.00 ».
+    //   MESURE : total brut RÉEL = 1,26 (voir le commentaire en tête du
+    //   constructeur). L'écart 1,07 → 1,26 n'est pas une coquille : c'est
+    //   l'accumulation de critères ajoutés (terrain, divergence, poidsRel,
+    //   progression, mouvCote, placeDepart) dont le total n'a jamais été
+    //   réactualisé dans la documentation.
+    //   ⚠️ Aucun poids n'est modifié : la correction est documentaire.
     Map<String, Map<String, double>>? poidsParDiscipline,
     this.nbMisesAJour = 0,
     this.calibrationScore = 50.0,
@@ -854,6 +878,40 @@ class IaPoidsAdaptatifs {
   factory IaPoidsAdaptatifs.defaut() => IaPoidsAdaptatifs();
 
   // Poids par défaut pour comparaison
+  //
+  // ★ BLOC 1 — MESURE HONNÊTE DE LA SOMME (BL1-A04 / BL1-A06).
+  //
+  //   Somme de ces dix-neuf valeurs, MESURÉE par calcul et non estimée :
+  //       0,32 + 0,15 + 0,12 + 0,08 + 0,09 + 0,04 + 0,02 + 0,08 + 0,07
+  //     + 0,03 + 0,04 + 0,04 + 0,05 + 0,05 + 0,04 + 0,03 + 0,03 + 0,06
+  //     + 0,03
+  //     = 1,37  (et non 1,00)
+  //
+  //   ⚠️ CE QUE CELA CHANGE — ET CE QUE CELA NE CHANGE PAS. Il faut le dire
+  //      exactement, car l'audit annonçait « la pondération relative change
+  //      réellement » : c'est VRAI entre `defauts` et le constructeur, et FAUX
+  //      à somme constante pour `defauts` seul.
+  //
+  //      • `defauts` est un REPLI. Le seul consommateur qui l'utilise pour
+  //        calculer des poids passe par `clampDiscipline()` (appelée en fin de
+  //        `_apprendreParDiscipline`), qui RECLIPPE les 19 valeurs puis les
+  //        NORMALISE (`final total = poids.values.fold(...)`, division par le
+  //        total). Mesuré : 0 valeur sur 19 est hors de ses bornes, et la
+  //        somme normalisée vaut 1,0. Un facteur d'échelle commun s'annule
+  //        donc entièrement. Forme effective : 0,32/1,37 = 0,233577.
+  //      • `simulation_service.dart:200` utilise `defauts` comme repli d'un
+  //        repli, puis divise par `totalPoids` (:209) — même neutralisation.
+  //      • Ce qui n'est PAS neutralisé : les scores passés en REVUE (A→S) ne
+  //        sont pas des poids mais des notes 0-100 ; les multiplier par un
+  //        facteur commun n'a aucun effet sur leur classement relatif, mais le
+  //        chemin *fallback* de `ia_pronostic_engine.dart:312-332` emploie des
+  //        littéraux distincts (somme mesurée 1,10) qui, eux, ne sont jamais
+  //        normalisés.
+  //
+  //   ⚠️ AUCUNE VALEUR N'EST MODIFIÉE ICI. Changer une seule de ces dix-neuf
+  //      valeurs modifierait la formule IA — formellement interdit (BL1-A04 /
+  //      BL1-A06, DÉCISION UTILISATEUR INDISPENSABLE). Cette mesure est
+  //      documentaire.
   static const Map<String, double> defauts = {
     'forme': 0.32, 'gains': 0.15, 'record': 0.12,
     'cote': 0.08, 'constance': 0.09, 'victoires': 0.04, 'discipline': 0.02,
@@ -1493,16 +1551,57 @@ class BilanMois {
 //  et NON une correction de raccordement : décision utilisateur indispensable.
 // ─────────────────────────────────────────────────────────────────────────────
 class SeuilsConfianceAdaptatifs {
-  // Seuils par défaut (identiques aux seuils codés dans best_bet_screen)
+  // ★ BL1-A19 — CE COMMENTAIRE ÉTAIT FAUX, CORRIGÉ PAR LA MESURE.
+  //
+  //   Il affirmait : « Seuils par défaut (identiques aux seuils codés dans
+  //   best_bet_screen) ». MESURE : c'est FAUX pour `seuilGagnantPlace`, qui
+  //   vaut 50,0 ici (l.1533) alors que `best_bet_screen` utilisait 80.
+  //   L'écart est documentaire ET métier : il a déjà été traité comme
+  //   BL1-A08 (décision métier hors audit). Il est rappelé ici parce qu'un
+  //   lecteur qui croit à l'identité des deux sources se trompe.
+  //
+  //   ⚠️ AUCUNE VALEUR N'EST MODIFIÉE : la correction est documentaire.
+  //      Remonter `seuilGagnantPlace` à 80 toucherait une règle de décision
+  //      protégée (§3) : DÉCISION UTILISATEUR INDISPENSABLE.
+  //
   // Correspondent au scoreConf minimum pour conseiller ce type de pari
   double seuilSimpleGagnant;   // défaut 80 (+ cote ≤ 8)
-  double seuilGagnantPlace;    // défaut 50 (+ cote > 8) — PAS 80
+  double seuilGagnantPlace;    // défaut 50 (+ cote > 8) — PAS 80, contrairement à best_bet_screen
   double seuilSimplePlace;     // défaut 65
   double seuilCoupleGagnant;   // défaut 75 (+ équilibre)
   double seuilCouplePlace;     // défaut 60 (+ équilibre)
   double seuilTierce;          // défaut 35
   double seuilQuarte;          // défaut 80 (course Quarté officielle)
   double seuilQuinte;          // défaut 0  (course Quinté officielle → toujours)
+
+  // ★ BL1-A15 — DOCUMENTATION D'UN FONCTIONNEMENT DÉCISIONNEL, AUCUNE
+  //   MODIFICATION APPLIQUÉE (la consigne l'exige : documenter, ne pas
+  //   modifier).
+  //
+  //   MESURE (lecture de tous les sites d'appel) : `seuilQuarte` et
+  //   `seuilQuinte` sont APPRIS, PERSISTÉS et AFFICHÉS, mais n'influencent
+  //   AUCUNE décision de pari. Leurs seules lectures sont :
+  //     • `ia_performance_screen.dart:3123-3124`  — affichage
+  //     • `ia_precision_widget.dart:756-757`      — affichage
+  //   Aucune cascade de recommandation ne les consulte. `ajusterSeuil` les
+  //   modifie pourtant (`:7693` pour le Quarté ; le Quinté est déclaré non
+  //   ajustable) puis les persiste.
+  //
+  //   CONSÉQUENCE RÉELLE, ET ELLE EST BÉNIGNE : les valeurs affichées dans
+  //   les écrans de performance d'IA ÉVOLUENT avec l'apprentissage, alors
+  //   qu'elles ne changent rien au comportement. Un lecteur peut donc croire
+  //   que le Quarté/Quinté est filtré par un seuil appris : c'est faux.
+  //
+  //   POURQUOI ON NE « CORRIGE » PAS : deux voies existent, toutes deux
+  //   interdites ou hors périmètre.
+  //     ① FAIRE PRODUIRE UN EFFET à ces seuils = créer une NOUVELLE règle
+  //        métier (filtrer les paris Quarté+/Quinté+ sur un seuil appris).
+  //        §3 protège les seuils adaptatifs : c'est une DÉCISION UTILISATEUR
+  //        INDISPENSABLE, pas une correction de raccordement.
+  //     ② SUPPRIMER l'apprentissage de ces deux seuils = retirer un
+  //        mécanisme existant, ce que §3 interdit.
+  //   On documente donc, sans toucher ni aux valeurs, ni à `ajusterSeuil`,
+  //   ni à la persistance.
 
   SeuilsConfianceAdaptatifs({
     this.seuilSimpleGagnant  = 80.0,

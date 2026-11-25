@@ -4,6 +4,48 @@ import 'gain_calculator.dart';
 import 'dart:math' as math;
 
 /// ═════════════════════════════════════════════════════════════════════════════
+/// ⚠️⚠️ BL1-A17 / BL1-A16 — CE FICHIER EST INATTEIGNABLE. NE PAS LE RACCORDER
+///     TEL QUEL. LA MESURE EXPLIQUE POURQUOI, ET ELLE EST DÉCISIVE.
+///
+/// MESURES (grep exhaustif sur `lib/` et `test/`) :
+///   • `BestBetEngine.computeAll`       → 0 appelant
+///   • `FusionConfigScreen`             → 0 référence hors de son propre fichier
+///   • `FusionConfigService.load/save`  → 0 appelant
+///   • seuls importateurs de ce fichier : `fusion_config_screen.dart` et
+///     `fusion_config_service.dart`, eux-mêmes inatteignables.
+///
+/// CE N'EST DONC PAS UN OUBLI DE RACCORDEMENT. C'EST UNE IMPLÉMENTATION
+/// CONCURRENTE, et elle contredit la directive financière du BLOC 1 sur
+/// trois points précisément interdits :
+///
+///   ① COTE INVENTÉE — `coteAffichee > 0 ? coteAffichee : 3.0` (:134).
+///      Un cheval sans cote publiée reçoit une cote de 3,0. C'est exactement
+///      la fabrication que le BLOC 1 a supprimée du Best Bet
+///      (`? c : 2.5`, `(2.0 + (100.0 - scoreConfiance) / 20.0)`).
+///   ② SECOND MOTEUR FINANCIER — `GainCalculator.simpleGagnant / place /
+///      gagnantEtPlace / tierce / quarte / quinte` (:136-147) calculent des
+///      gains par MULTIPLICATEURS, sans aucun rapport PMU officiel. La
+///      directive impose UN SEUL moteur de résolution financière
+///      (`FinanceSimulateurOfficiel` → `ChaineFinanciereOfficielle`) et
+///      interdit tout calculateur parallèle.
+///   ③ COTE GAGNANT COMME DIVIDENDE D'AUTRES PARIS — `c3`, `c4`, `c5`
+///      (:139-147) réutilisent les cotes GAGNANT des chevaux pour estimer
+///      Tiercé, Quarté+ et Quinté+. C'est textuellement l'interdiction :
+///      « une cote Gagnant ne doit JAMAIS servir de dividende fictif pour
+///      Couplé, Tiercé, Quarté+ ou Quinté+ ».
+///
+/// DÉCISION PRISE, ET SON MOTIF — §16 interdit de supprimer un composant sur
+/// la seule absence d'import, et §3 exige de corriger un défaut de
+/// raccordement avéré. Ici les deux règles pointent dans le MÊME sens :
+///   • on NE SUPPRIME PAS (le composant et sa configuration sont conservés) ;
+///   • on NE RACCORDE PAS, car le raccorder réintroduirait trois pratiques
+///     financières interdites : ce serait une RÉGRESSION, pas une correction.
+///   → l'anomalie devient une DÉCISION UTILISATEUR : soit archiver cette
+///     implémentation, soit la réécrire sur le moteur officiel unique.
+///
+/// ── EN-TÊTE D'ORIGINE, CONSERVÉ : il documente l'intention d'auteur ────────
+
+/// ═════════════════════════════════════════════════════════════════════════════
 /// BestBetEngine — Moteur IA de sélection des meilleures opportunités
 ///
 /// PHILOSOPHIE : Mieux vaut ÊTRE SÛR de gagner que chercher le gros gain.

@@ -309,7 +309,22 @@ class IaPronosticEngine {
     final wMouvCote   = pe['mouvCote']    ?? w.getPoids('mouvCote');
     final wPlaceDepart= pe['placeDepart'] ?? w.getPoids('placeDepart'); // ★ v9.93
 
-    // ── Poids fallback — 19 critères, somme ≈ 1.00
+    // ── Poids fallback — 19 critères.
+    //
+    // ★ BL1-A19 — CE COMMENTAIRE AFFIRMAIT « somme ≈ 1.00 » : FAUX, MESURÉ.
+    //   Somme réelle de ce chemin fallback, avec les poids par défaut :
+    //       littéraux  0,21+0,10+0,08+0,06+0,08+0,04+0,02 = 0,59
+    //     + 4 poids lus sur `w` (distSpec 0,08 + jockey 0,07 + repos 0,03
+    //       + hippo 0,04)                                = 0,22
+    //     + 8 planchers  0,03+0,04+0,05+0,04+0,02+0,02+0,06+0,03 = 0,29
+    //     → TOTAL = 1,10, et non 1,00.
+    //
+    //   ⚠️ Conséquence à connaître : ce chemin ne normalise PAS. Un score
+    //      composite peut donc dépasser la plage 0–100 des scores d'entrée.
+    //      C'est une DIFFÉRENCE DE FORMULE ARBITRÉE, pas un défaut de
+    //      raccordement : la corriger modifierait la formule des 19 critères,
+    //      ce qui est interdit (BL1-A04/A06 — DÉCISION UTILISATEUR
+    //      INDISPENSABLE). Elle est donc DOCUMENTÉE, jamais « corrigée ».
     final score = scoreForme      * (pe['forme']      ?? 0.21)
                 + scoreGains      * (pe['gains']      ?? 0.10)
                 + scoreRecord     * (pe['record']     ?? 0.08)

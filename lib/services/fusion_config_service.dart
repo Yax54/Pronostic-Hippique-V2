@@ -2,6 +2,28 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'best_bet_engine.dart';
 
 /// Service de persistance de la configuration de fusion
+///
+/// ⚠️ BL1-A16 — SERVICE INATTEIGNABLE, CONSERVÉ ET DOCUMENTÉ.
+///
+///   MESURE (`grep -rn "FusionConfigService" lib/`) : 0 appelant. Les trois
+///   méthodes `load`, `save` et `reset` ne sont invoquées nulle part. Seule
+///   mention externe : un commentaire de `backup_service.dart:29` qui liste
+///   les 4 clés persistées ci-dessous.
+///
+///   COHÉRENCE DU CONSTAT : les clés `fusion_poids_confiance`,
+///   `fusion_poids_gain`, `fusion_poids_risque` et `fusion_seuil_min` sont
+///   donc écrites par aucune interface et restaurées par la sauvegarde — une
+///   configuration morte mais sauvegardée.
+///
+///   AUCUNE CORRECTION APPLIQUÉE : raccorder ce service suppose de raccorder
+///   `FusionConfigScreen`, donc `BestBetEngine.computeAll`, qui contredit la
+///   directive financière (voir l'en-tête de `best_bet_engine.dart`).
+///   STATUT : DÉCISION UTILISATEUR INDISPENSABLE. Le code est conservé : §16
+///   interdit de supprimer un composant sur la seule absence d'import.
+///
+///   ⚠️ La cohérence `total < 0.99 || total > 1.01` ci-dessous est SAINE et
+///   n'est pas concernée par BL1-A04/A06 : elle porte sur les 3 poids de
+///   FUSION de cet écran mort, pas sur les 19 critères de l'IA.
 class FusionConfigService {
   static const _keyConfiance = 'fusion_poids_confiance';
   static const _keyGain      = 'fusion_poids_gain';

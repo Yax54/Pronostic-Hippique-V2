@@ -1,4 +1,24 @@
 // ignore_for_file: unused_element
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ BL1-A18 — FICHIER CONFIRMÉ INATTEIGNABLE. MESURE, PUIS DÉCISION.
+//
+//   MESURE (`grep -rn "ia_analyse_journee_widget.dart'" lib/ test/`) : 0
+//   import ailleurs dans le dépôt. Le fichier n'entre donc dans AUCUN graphe
+//   de dépendances : il ne peut pas être exécuté par l'application.
+//   `buildResumeAnalyse` (l.21) est le seul point d'entrée et n'a aucun
+//   appelant ; le fichier porte déjà `ignore_for_file: unused_element`, ce
+//   qui est l'aveu de son propre statut.
+//
+//   POURQUOI IL N'EST PAS SUPPRIMÉ : §16 interdit de supprimer un composant
+//   sur la seule absence d'import. La preuve disponible est une preuve
+//   d'ABSENCE DE RÉFÉRENCE STATIQUE ; aucune référence dynamique n'a été
+//   trouvée, mais l'absence n'est pas une preuve formelle d'inutilité.
+//   STATUT : NON RÉSOLUE — la suppression reste une décision utilisateur
+//   (archiver ou retirer), pas une correction de raccordement.
+//   ⚠️ NE PAS LE RACCORDER SANS VÉRIFIER qu'il ne réintroduit pas une
+//   deuxième cascade de recommandation : la cascade unique est
+//   `cascadeRecommandation()` (`services/recommandation_pari_service.dart`).
+// ═══════════════════════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import '../../services/ia_memory_service.dart';
 
