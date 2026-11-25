@@ -240,8 +240,27 @@ void main() {
       final code = _codeSeul(src);
       expect(code.contains('arriveeGroupes: List<List<int>>.unmodifiable'),
           isTrue);
-      expect(code.contains('arriveeDefinitive: _lireDrapeauDefinitif(data)'),
-          isTrue);
+      // ★ GARDE RE-POINTÉE (BLOC 1, correction du drapeau définitif).
+      //
+      //   Ce test vérifiait auparavant la présence littérale de
+      //   `arriveeDefinitive: _lireDrapeauDefinitif(data)`, où `data` est le
+      //   corps de `/participants`. Or cette lecture était le DÉFAUT MESURÉ :
+      //   ce corps ne porte pas le drapeau (clés racine : participants,
+      //   ecuries, spriteCasaques, cached), si bien que `null` était rendu
+      //   systématiquement et qu'aucune perte ne pouvait être établie.
+      //
+      //   La garde n'est donc pas supprimée : elle est RE-POINTÉE vers
+      //   l'invariant corrigé, et COMPLÉTÉE d'une interdiction explicite.
+      //   Elle est plus exigeante qu'avant, pas moins.
+      expect(code.contains('arriveeDefinitive: lectureDrapeau.valeur'), isTrue,
+          reason: 'le drapeau doit venir de la lecture par course');
+      expect(
+          code.contains('arriveeDefinitive: _lireDrapeauDefinitif(data)'),
+          isFalse,
+          reason: 'INTERDIT : le corps de /participants ne porte pas le '
+              'drapeau — le relire là reproduirait le défaut mesuré');
+      expect(code.contains('_drapeauDefinitifDepuisCourse('), isTrue,
+          reason: 'la lecture doit cibler l\'endpoint qui publie le drapeau');
     });
 
     test('aucun tri ni départage n\'est appliqué à l\'intérieur d\'un rang', () {

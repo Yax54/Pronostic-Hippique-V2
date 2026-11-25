@@ -21,6 +21,7 @@ class IaCalibrationRegistry {
   static void update(double score) {
     _calibrationScore = score.clamp(10.0, 90.0);
   }
+
   static double get value => _calibrationScore;
 }
 
@@ -69,14 +70,14 @@ class ResultatCourse {
 // Stocké dans EloService, passé au ZtPartant lors du calcul IA
 class EloScore {
   final String nomCheval;
-  final double rating;       // Score ELO courant (défaut 1500)
-  final int    nbCourses;    // Nombre de courses analysées
+  final double rating; // Score ELO courant (défaut 1500)
+  final int nbCourses; // Nombre de courses analysées
   final double variationMois; // Variation sur les 30 derniers jours (+/-)
 
   const EloScore({
     required this.nomCheval,
-    this.rating       = 1500.0,
-    this.nbCourses    = 0,
+    this.rating = 1500.0,
+    this.nbCourses = 0,
     this.variationMois = 0.0,
   });
 
@@ -96,18 +97,18 @@ class EloScore {
   }
 
   Map<String, dynamic> toJson() => {
-    'nom': nomCheval,
-    'rating': rating,
-    'nb': nbCourses,
-    'var': variationMois,
-  };
+        'nom': nomCheval,
+        'rating': rating,
+        'nb': nbCourses,
+        'var': variationMois,
+      };
 
   factory EloScore.fromJson(Map<String, dynamic> j) => EloScore(
-    nomCheval:    j['nom']    as String? ?? '',
-    rating:       (j['rating'] as num?)?.toDouble() ?? 1500.0,
-    nbCourses:    j['nb']     as int?    ?? 0,
-    variationMois:(j['var']   as num?)?.toDouble() ?? 0.0,
-  );
+        nomCheval: j['nom'] as String? ?? '',
+        rating: (j['rating'] as num?)?.toDouble() ?? 1500.0,
+        nbCourses: j['nb'] as int? ?? 0,
+        variationMois: (j['var'] as num?)?.toDouble() ?? 0.0,
+      );
 }
 
 // ─── Tendance de forme ───────────────────────────────────────────────────────
@@ -129,8 +130,8 @@ class ZtPartant {
   // Champs enrichissement IA
   final String musiqueDistanceSpecifique;
   final double poids;
-  final int    placeDepartInt;
-  final int    joursRepos;
+  final int placeDepartInt;
+  final int joursRepos;
   final String hippodromeActuel;
   final String statsJockeyCsv;
   final String statsHippodromeCsv;
@@ -141,7 +142,7 @@ class ZtPartant {
 
   // ★ v8.0 : ELO — rating ELO du cheval (0 = inconnu)
   final double eloRating;
-  final int    eloNbCourses;
+  final int eloNbCourses;
   final double eloVariationMois;
 
   // ★ v9.0 : Nouveaux critères amélioration IA
@@ -151,7 +152,7 @@ class ZtPartant {
   final String statsTerrainCsv;
   // P — Poids porté total en kg (déjà dans poids, renommé pour clarté)
   // Q — Gains sur 12 derniers mois pour la progression (en euros)
-  final int    gainsDernierAn;
+  final int gainsDernierAn;
 
   // Scores IA calculés
   late final double scoreIA;
@@ -178,77 +179,82 @@ class ZtPartant {
     this.statsJockeyCsv = '',
     this.statsHippodromeCsv = '',
     this.statutPmu = 'PARTANT',
-    this.statsEntraineurCsv = '',   // ★ v8.0
-    this.eloRating = 0.0,           // ★ v8.0 : 0 = inconnu
-    this.eloNbCourses = 0,          // ★ v8.0
-    this.eloVariationMois = 0.0,    // ★ v8.0
-    this.statsTerrainCsv = '',      // ★ v9.0 : terrain
-    this.gainsDernierAn = 0,        // ★ v9.0 : progression
+    this.statsEntraineurCsv = '', // ★ v8.0
+    this.eloRating = 0.0, // ★ v8.0 : 0 = inconnu
+    this.eloNbCourses = 0, // ★ v8.0
+    this.eloVariationMois = 0.0, // ★ v8.0
+    this.statsTerrainCsv = '', // ★ v9.0 : terrain
+    this.gainsDernierAn = 0, // ★ v9.0 : progression
     double? scoreIA,
     String? labelIA,
     String? explicationIA,
     int? rang,
   }) {
-    this.scoreIA       = scoreIA       ?? 0.0;
-    this.labelIA       = labelIA       ?? '';
+    this.scoreIA = scoreIA ?? 0.0;
+    this.labelIA = labelIA ?? '';
     this.explicationIA = explicationIA ?? '';
-    this.rang          = rang          ?? 0;
+    this.rang = rang ?? 0;
   }
 
   factory ZtPartant.fromJson(Map<String, dynamic> j) => ZtPartant(
-    numero:                   j['num']?.toString()              ?? '?',
-    nom:                      j['cheval']          as String?   ?? '?',
-    driver:                   j['driver']          as String?   ?? '',
-    entraineur:               j['entraineur']      as String?   ?? '',
-    musiqueDistanceSpecifique:j['musique_dist']    as String?   ?? '',
-    poids:                   (j['poids']   as num?)?.toDouble() ?? 0.0,
-    placeDepartInt:           j['place_depart']    as int?      ?? 0,
-    joursRepos:               j['jours_repos']     as int?      ?? 0,
-    hippodromeActuel:         j['hippodrome_actuel'] as String? ?? '',
-    statsJockeyCsv:           j['stats_jockey_csv']  as String? ?? '',
-    statsHippodromeCsv:       j['stats_hippo_csv']   as String? ?? '',
-    statutPmu:                j['statut_pmu']      as String?   ?? 'PARTANT',
-    proprietaire:             j['proprietaire']    as String?   ?? '',
-    gains:                    j['gains']           as String?   ?? '',
-    record:                   j['record']          as String?   ?? '',
-    musique:                  j['musique']         as String?   ?? '',
-    cote:                     j['cote']            as String?   ?? '',
-    ageSexe:                  j['age_sexe']        as String?   ?? '',
-    statsEntraineurCsv:       j['stats_entr_csv']  as String?   ?? '',  // ★ v8.0
-    eloRating:               (j['elo_r']  as num?)?.toDouble()  ?? 0.0, // ★ v8.0
-    eloNbCourses:             j['elo_nb'] as int?               ?? 0,   // ★ v8.0
-    eloVariationMois:        (j['elo_v']  as num?)?.toDouble()  ?? 0.0, // ★ v8.0
-    statsTerrainCsv:          j['stats_terrain_csv'] as String? ?? '',  // ★ v9.0
-    gainsDernierAn:           j['gains_an'] as int?             ?? 0,   // ★ v9.0
-    scoreIA:                 (j['score_ia'] as num?)?.toDouble() ?? 0.0,
-    labelIA:                  j['label_ia']        as String?   ?? '',
-    explicationIA:            j['explication_ia']  as String?   ?? '',
-    rang:                     j['rang']            as int?      ?? 0,
-  );
+        numero: j['num']?.toString() ?? '?',
+        nom: j['cheval'] as String? ?? '?',
+        driver: j['driver'] as String? ?? '',
+        entraineur: j['entraineur'] as String? ?? '',
+        musiqueDistanceSpecifique: j['musique_dist'] as String? ?? '',
+        poids: (j['poids'] as num?)?.toDouble() ?? 0.0,
+        placeDepartInt: j['place_depart'] as int? ?? 0,
+        joursRepos: j['jours_repos'] as int? ?? 0,
+        hippodromeActuel: j['hippodrome_actuel'] as String? ?? '',
+        statsJockeyCsv: j['stats_jockey_csv'] as String? ?? '',
+        statsHippodromeCsv: j['stats_hippo_csv'] as String? ?? '',
+        statutPmu: j['statut_pmu'] as String? ?? 'PARTANT',
+        proprietaire: j['proprietaire'] as String? ?? '',
+        gains: j['gains'] as String? ?? '',
+        record: j['record'] as String? ?? '',
+        musique: j['musique'] as String? ?? '',
+        cote: j['cote'] as String? ?? '',
+        ageSexe: j['age_sexe'] as String? ?? '',
+        statsEntraineurCsv: j['stats_entr_csv'] as String? ?? '', // ★ v8.0
+        eloRating: (j['elo_r'] as num?)?.toDouble() ?? 0.0, // ★ v8.0
+        eloNbCourses: j['elo_nb'] as int? ?? 0, // ★ v8.0
+        eloVariationMois: (j['elo_v'] as num?)?.toDouble() ?? 0.0, // ★ v8.0
+        statsTerrainCsv: j['stats_terrain_csv'] as String? ?? '', // ★ v9.0
+        gainsDernierAn: j['gains_an'] as int? ?? 0, // ★ v9.0
+        scoreIA: (j['score_ia'] as num?)?.toDouble() ?? 0.0,
+        labelIA: j['label_ia'] as String? ?? '',
+        explicationIA: j['explication_ia'] as String? ?? '',
+        rang: j['rang'] as int? ?? 0,
+      );
 
   Map<String, dynamic> toJson() => {
-    'num': numero, 'cheval': nom, 'driver': driver,
-    'entraineur': entraineur, 'proprietaire': proprietaire,
-    'gains': gains, 'record': record, 'musique': musique,
-    'cote': cote, 'age_sexe': ageSexe,
-    'musique_dist': musiqueDistanceSpecifique,
-    'poids': poids, 'place_depart': placeDepartInt,
-    'jours_repos': joursRepos, 'hippodrome_actuel': hippodromeActuel,
-    'stats_jockey_csv': statsJockeyCsv, 'stats_hippo_csv': statsHippodromeCsv,
-    'statut_pmu': statutPmu,
-    'stats_entr_csv': statsEntraineurCsv, // ★ v8.0
-    'elo_r': eloRating,                   // ★ v8.0
-    'elo_nb': eloNbCourses,               // ★ v8.0
-    'elo_v': eloVariationMois,            // ★ v8.0
-    'stats_terrain_csv': statsTerrainCsv, // ★ v9.0
-    'gains_an': gainsDernierAn,           // ★ v9.0
-    'score_ia': scoreIA, 'label_ia': labelIA,
-    'explication_ia': explicationIA, 'rang': rang,
-  };
+        'num': numero, 'cheval': nom, 'driver': driver,
+        'entraineur': entraineur, 'proprietaire': proprietaire,
+        'gains': gains, 'record': record, 'musique': musique,
+        'cote': cote, 'age_sexe': ageSexe,
+        'musique_dist': musiqueDistanceSpecifique,
+        'poids': poids, 'place_depart': placeDepartInt,
+        'jours_repos': joursRepos, 'hippodrome_actuel': hippodromeActuel,
+        'stats_jockey_csv': statsJockeyCsv,
+        'stats_hippo_csv': statsHippodromeCsv,
+        'statut_pmu': statutPmu,
+        'stats_entr_csv': statsEntraineurCsv, // ★ v8.0
+        'elo_r': eloRating, // ★ v8.0
+        'elo_nb': eloNbCourses, // ★ v8.0
+        'elo_v': eloVariationMois, // ★ v8.0
+        'stats_terrain_csv': statsTerrainCsv, // ★ v9.0
+        'gains_an': gainsDernierAn, // ★ v9.0
+        'score_ia': scoreIA, 'label_ia': labelIA,
+        'explication_ia': explicationIA, 'rang': rang,
+      };
 
   // ── Numéro entier ──────────────────────────────────────────────────
   int get numInt {
-    try { return int.parse(numero); } catch (_) { return 999; }
+    try {
+      return int.parse(numero);
+    } catch (_) {
+      return 999;
+    }
   }
 
   // ── Gains en entier ───────────────────────────────────────────────
@@ -259,7 +265,8 @@ class ZtPartant {
 
   // ── Parseur musique unifié ─────────────────────────────────────────
   // ★ v9.92 : distinguer non-partant (0) des vrais abandons (A/D/B)
-  static List<({int position, bool estPenalite, bool estNonPartant})> _parserMusique(String musique) {
+  static List<({int position, bool estPenalite, bool estNonPartant})>
+      _parserMusique(String musique) {
     if (musique.isEmpty) return [];
     final tokenRegex = RegExp(
       r'(\()|(\))|([Aa][amhp])|([Dd][abmhp])|([Bb][amhp])|(0[amhp])|(1\d[amhp]|[2-9]\d[amhp]|[1-9][amhp])',
@@ -268,13 +275,21 @@ class ZtPartant {
     bool inParentheses = false;
     final result = <({int position, bool estPenalite, bool estNonPartant})>[];
     for (final m in tokenRegex.allMatches(musique)) {
-      if (m.group(1) != null) { inParentheses = true;  continue; }
-      if (m.group(2) != null) { inParentheses = false; continue; }
+      if (m.group(1) != null) {
+        inParentheses = true;
+        continue;
+      }
+      if (m.group(2) != null) {
+        inParentheses = false;
+        continue;
+      }
       if (inParentheses) continue;
       if (m.group(6) != null) {
         // Non-partant : zéro pénalité (retrait admin, pas une contre-perf)
         result.add((position: 99, estPenalite: false, estNonPartant: true));
-      } else if (m.group(3) != null || m.group(4) != null || m.group(5) != null) {
+      } else if (m.group(3) != null ||
+          m.group(4) != null ||
+          m.group(5) != null) {
         // Arrêté, disqualifié, tombé : pénalité réelle
         result.add((position: 99, estPenalite: true, estNonPartant: false));
       } else if (m.group(7) != null) {
@@ -293,18 +308,32 @@ class ZtPartant {
     if (sorties.isEmpty) return 30.0;
     final recent = sorties.take(5).toList();
     final weights = [1.0, 0.78, 0.60, 0.46, 0.34];
-    double total = 0; double totalWeight = 0;
+    double total = 0;
+    double totalWeight = 0;
     for (int i = 0; i < recent.length; i++) {
       final s = recent[i];
       final w = i < weights.length ? weights[i] : 0.15;
-      if (s.estNonPartant) continue;  // ★ v9.92 : non-partant ignoré
-      if (s.estPenalite) { totalWeight += w; continue; }
+      if (s.estNonPartant) continue; // ★ v9.92 : non-partant ignoré
+      if (s.estPenalite) {
+        totalWeight += w;
+        continue;
+      }
       final pos = s.position;
       double pts;
-      if (pos == 1) pts = 100; else if (pos == 2) pts = 78;
-      else if (pos == 3) pts = 60; else if (pos <= 5) pts = 35;
-      else if (pos <= 8) pts = 18; else pts = 6;
-      total += pts * w; totalWeight += w;
+      if (pos == 1)
+        pts = 100;
+      else if (pos == 2)
+        pts = 78;
+      else if (pos == 3)
+        pts = 60;
+      else if (pos <= 5)
+        pts = 35;
+      else if (pos <= 8)
+        pts = 18;
+      else
+        pts = 6;
+      total += pts * w;
+      totalWeight += w;
     }
     return (totalWeight > 0 ? total / totalWeight : 30.0).clamp(0.0, 100.0);
   }
@@ -312,7 +341,10 @@ class ZtPartant {
   // ── Nombre victoires récentes ──────────────────────────────────────
   int get nbVictoiresRecentes {
     final sorties = _parserMusique(musique);
-    return sorties.take(6).where((s) => !s.estPenalite && !s.estNonPartant && s.position == 1).length;
+    return sorties
+        .take(6)
+        .where((s) => !s.estPenalite && !s.estNonPartant && s.position == 1)
+        .length;
   }
 
   // ── Record en secondes ─────────────────────────────────────────────
@@ -320,9 +352,9 @@ class ZtPartant {
     // ★ v9.92 : supporte les dixièmes de seconde Trot ("1'15"4 ou 1'154)
     final m = RegExp(r"(\d+)'(\d{2})(?:[\x22\x27]?(\d))?").firstMatch(record);
     if (m == null) return 9999.0;
-    final minutes  = double.parse(m.group(1)!);
+    final minutes = double.parse(m.group(1)!);
     final secondes = double.parse(m.group(2)!);
-    final dixieme  = m.group(3) != null ? double.parse(m.group(3)!) / 10.0 : 0.0;
+    final dixieme = m.group(3) != null ? double.parse(m.group(3)!) / 10.0 : 0.0;
     return minutes * 60 + secondes + dixieme;
   }
 
@@ -334,16 +366,22 @@ class ZtPartant {
 
   // ── copyWith ──────────────────────────────────────────────────────
   ZtPartant copyWith({
-    double? scoreIA, String? labelIA, String? explicationIA, int? rang,
-    String? musiqueDistanceSpecifique, int? joursRepos,
-    String? hippodromeActuel, String? statsJockeyCsv,
-    String? statsHippodromeCsv, String? statutPmu,
-    String? statsEntraineurCsv,      // ★ v8.0
-    double? eloRating,               // ★ v8.0
-    int?    eloNbCourses,            // ★ v8.0
-    double? eloVariationMois,        // ★ v8.0
-    String? statsTerrainCsv,         // ★ v9.0
-    int?    gainsDernierAn,          // ★ v9.0
+    double? scoreIA,
+    String? labelIA,
+    String? explicationIA,
+    int? rang,
+    String? musiqueDistanceSpecifique,
+    int? joursRepos,
+    String? hippodromeActuel,
+    String? statsJockeyCsv,
+    String? statsHippodromeCsv,
+    String? statutPmu,
+    String? statsEntraineurCsv, // ★ v8.0
+    double? eloRating, // ★ v8.0
+    int? eloNbCourses, // ★ v8.0
+    double? eloVariationMois, // ★ v8.0
+    String? statsTerrainCsv, // ★ v9.0
+    int? gainsDernierAn, // ★ v9.0
     // ★ LOT Z2-D — le score du critère R doit SURVIVRE à la copie.
     //
     //   DÉFAUT MESURÉ (`test/z2_reproduction_n1_coursekey_test.dart`, Z2-D) :
@@ -366,29 +404,30 @@ class ZtPartant {
     //
     //   `null` = non fourni ⇒ la valeur de l'original est conservée, comme
     //   pour les autres champs de cette méthode.
-    double? scoreMouvementCote,     // ★ LOT Z2-D
+    double? scoreMouvementCote, // ★ LOT Z2-D
   }) {
     return ZtPartant(
       numero: numero, nom: nom, driver: driver, entraineur: entraineur,
       proprietaire: proprietaire, gains: gains, record: record,
       musique: musique, cote: cote, ageSexe: ageSexe, poids: poids,
       placeDepartInt: placeDepartInt,
-      musiqueDistanceSpecifique: musiqueDistanceSpecifique ?? this.musiqueDistanceSpecifique,
-      joursRepos:       joursRepos       ?? this.joursRepos,
+      musiqueDistanceSpecifique:
+          musiqueDistanceSpecifique ?? this.musiqueDistanceSpecifique,
+      joursRepos: joursRepos ?? this.joursRepos,
       hippodromeActuel: hippodromeActuel ?? this.hippodromeActuel,
-      statsJockeyCsv:   statsJockeyCsv   ?? this.statsJockeyCsv,
+      statsJockeyCsv: statsJockeyCsv ?? this.statsJockeyCsv,
       statsHippodromeCsv: statsHippodromeCsv ?? this.statsHippodromeCsv,
-      statutPmu:        statutPmu        ?? this.statutPmu,
+      statutPmu: statutPmu ?? this.statutPmu,
       statsEntraineurCsv: statsEntraineurCsv ?? this.statsEntraineurCsv,
-      eloRating:        eloRating        ?? this.eloRating,
-      eloNbCourses:     eloNbCourses     ?? this.eloNbCourses,
+      eloRating: eloRating ?? this.eloRating,
+      eloNbCourses: eloNbCourses ?? this.eloNbCourses,
       eloVariationMois: eloVariationMois ?? this.eloVariationMois,
-      statsTerrainCsv:  statsTerrainCsv  ?? this.statsTerrainCsv,  // ★ v9.0
-      gainsDernierAn:   gainsDernierAn   ?? this.gainsDernierAn,   // ★ v9.0
-      scoreIA:          scoreIA          ?? this.scoreIA,
-      labelIA:          labelIA          ?? this.labelIA,
-      explicationIA:    explicationIA    ?? this.explicationIA,
-      rang:             rang             ?? this.rang,
+      statsTerrainCsv: statsTerrainCsv ?? this.statsTerrainCsv, // ★ v9.0
+      gainsDernierAn: gainsDernierAn ?? this.gainsDernierAn, // ★ v9.0
+      scoreIA: scoreIA ?? this.scoreIA,
+      labelIA: labelIA ?? this.labelIA,
+      explicationIA: explicationIA ?? this.explicationIA,
+      rang: rang ?? this.rang,
     )
       // ★ LOT Z2-D — recopie HORS du constructeur : `scoreMouvementCote`
       //   n'est pas un paramètre du constructeur `ZtPartant` mais un champ
@@ -401,30 +440,52 @@ class ZtPartant {
   // ── estHorsCourse ─────────────────────────────────────────────────
   bool get estHorsCourse {
     final s = statutPmu.toUpperCase();
-    return s == 'DISQUALIFIE' || s == 'NON_PARTANT' || s == 'ARRETE' ||
-           s == 'TOMBE' || s == 'ABANDONNE' || s == 'DISTANCE' ||
-           s == 'DISQUALIFIED' || s == 'RETRAIT';
+    return s == 'DISQUALIFIE' ||
+        s == 'NON_PARTANT' ||
+        s == 'ARRETE' ||
+        s == 'TOMBE' ||
+        s == 'ABANDONNE' ||
+        s == 'DISTANCE' ||
+        s == 'DISQUALIFIED' ||
+        s == 'RETRAIT';
   }
 
   // ── Score forme distance spécifique ──────────────────────────────
   double get scoreFormeDistanceSpecifique {
-    final muse = musiqueDistanceSpecifique.isNotEmpty ? musiqueDistanceSpecifique : musique;
+    final muse = musiqueDistanceSpecifique.isNotEmpty
+        ? musiqueDistanceSpecifique
+        : musique;
     if (muse.isEmpty) return 40.0;
     final sorties = _parserMusique(muse);
     if (sorties.isEmpty) return 40.0;
     final recent = sorties.take(5).toList();
     final weights = [1.0, 0.80, 0.62, 0.48, 0.35];
-    double total = 0; double wTotal = 0;
+    double total = 0;
+    double wTotal = 0;
     for (int i = 0; i < recent.length; i++) {
-      final s = recent[i]; final w = i < weights.length ? weights[i] : 0.20;
-      if (s.estNonPartant) continue;  // ★ v9.92
-      if (s.estPenalite) { wTotal += w; continue; }
+      final s = recent[i];
+      final w = i < weights.length ? weights[i] : 0.20;
+      if (s.estNonPartant) continue; // ★ v9.92
+      if (s.estPenalite) {
+        wTotal += w;
+        continue;
+      }
       final pos = s.position;
       double pts;
-      if (pos == 1) pts = 100; else if (pos == 2) pts = 82;
-      else if (pos == 3) pts = 66; else if (pos <= 5) pts = 50;
-      else if (pos <= 8) pts = 33; else pts = 15;
-      total += pts * w; wTotal += w;
+      if (pos == 1)
+        pts = 100;
+      else if (pos == 2)
+        pts = 82;
+      else if (pos == 3)
+        pts = 66;
+      else if (pos <= 5)
+        pts = 50;
+      else if (pos <= 8)
+        pts = 33;
+      else
+        pts = 15;
+      total += pts * w;
+      wTotal += w;
     }
     final bonus = musiqueDistanceSpecifique.isNotEmpty ? 8.0 : 0.0;
     return ((wTotal > 0 ? total / wTotal : 40.0) + bonus).clamp(0.0, 100.0);
@@ -436,12 +497,12 @@ class ZtPartant {
     final parts = statsHippodromeCsv.split('|');
     if (parts.length < 3) return 50.0;
     final nbCourses = int.tryParse(parts[0]) ?? 0;
-    final nbVict    = int.tryParse(parts[1]) ?? 0;
-    final nbTop3    = int.tryParse(parts[2]) ?? 0;
+    final nbVict = int.tryParse(parts[1]) ?? 0;
+    final nbTop3 = int.tryParse(parts[2]) ?? 0;
     if (nbCourses <= 0) return 50.0;
-    if (nbCourses < 3)  return 55.0;
-    final tauxVict = nbVict  / nbCourses;
-    final tauxTop3 = nbTop3  / nbCourses;
+    if (nbCourses < 3) return 55.0;
+    final tauxVict = nbVict / nbCourses;
+    final tauxTop3 = nbTop3 / nbCourses;
     final scoreVict = (tauxVict * 200.0).clamp(0.0, 100.0);
     final scoreTop3 = (tauxTop3 * 125.0).clamp(0.0, 100.0);
     final score = scoreVict * 0.60 + scoreTop3 * 0.40;
@@ -453,16 +514,23 @@ class ZtPartant {
   double get scoreRepos {
     if (joursRepos <= 0) return 50.0;
     const ancres = [
-      (j: 0,   s: 50.0), (j: 7,   s: 18.0), (j: 14,  s: 72.0),
-      (j: 21,  s: 96.0), (j: 28,  s: 90.0), (j: 35,  s: 80.0),
-      (j: 50,  s: 62.0), (j: 70,  s: 40.0), (j: 90,  s: 22.0),
+      (j: 0, s: 50.0),
+      (j: 7, s: 18.0),
+      (j: 14, s: 72.0),
+      (j: 21, s: 96.0),
+      (j: 28, s: 90.0),
+      (j: 35, s: 80.0),
+      (j: 50, s: 62.0),
+      (j: 70, s: 40.0),
+      (j: 90, s: 22.0),
       (j: 120, s: 10.0),
     ];
     final d = joursRepos.toDouble();
     if (d <= ancres.first.j) return ancres.first.s;
-    if (d >= ancres.last.j)  return ancres.last.s;
+    if (d >= ancres.last.j) return ancres.last.s;
     for (int i = 0; i < ancres.length - 1; i++) {
-      final a = ancres[i]; final b = ancres[i + 1];
+      final a = ancres[i];
+      final b = ancres[i + 1];
       if (d >= a.j && d <= b.j) {
         final t = (d - a.j) / (b.j - a.j);
         return (a.s + t * (b.s - a.s)).clamp(0.0, 100.0);
@@ -498,38 +566,57 @@ class ZtPartant {
     if (parts.length < 2) return 50.0;
     final tauxVic = double.tryParse(parts[1]) ?? -1;
     if (tauxVic < 0) return 50.0;
-    final tauxPlc = parts.length >= 3 ? (double.tryParse(parts[2]) ?? 0.0) : 0.0;
-    final nb30j   = parts.length >= 4 ? (int.tryParse(parts[3]) ?? 0) : 0;
+    final tauxPlc =
+        parts.length >= 3 ? (double.tryParse(parts[2]) ?? 0.0) : 0.0;
+    final nb30j = parts.length >= 4 ? (int.tryParse(parts[3]) ?? 0) : 0;
     // ★ v9.92 : taux victoire 7 derniers jours (signal court terme)
-    final tauxVic7j = parts.length >= 5 ? (double.tryParse(parts[4]) ?? -1.0) : -1.0;
-    final nb7j      = parts.length >= 6 ? (int.tryParse(parts[5]) ?? 0) : 0;
+    final tauxVic7j =
+        parts.length >= 5 ? (double.tryParse(parts[4]) ?? -1.0) : -1.0;
+    final nb7j = parts.length >= 6 ? (int.tryParse(parts[5]) ?? 0) : 0;
 
     double score = 0.0;
     // Taux victoire 30j (contribution 55%)
-    if (tauxVic >= 22)      score += 55.0;
-    else if (tauxVic >= 18) score += 47.0;
-    else if (tauxVic >= 15) score += 40.0;
-    else if (tauxVic >= 12) score += 33.0;
-    else if (tauxVic >= 10) score += 26.0;
-    else if (tauxVic >= 7)  score += 18.0;
-    else                     score += 10.0;
+    if (tauxVic >= 22)
+      score += 55.0;
+    else if (tauxVic >= 18)
+      score += 47.0;
+    else if (tauxVic >= 15)
+      score += 40.0;
+    else if (tauxVic >= 12)
+      score += 33.0;
+    else if (tauxVic >= 10)
+      score += 26.0;
+    else if (tauxVic >= 7)
+      score += 18.0;
+    else
+      score += 10.0;
     // Taux placé (contribution 25%)
-    if (tauxPlc >= 50)      score += 25.0;
-    else if (tauxPlc >= 42) score += 21.0;
-    else if (tauxPlc >= 35) score += 17.0;
-    else if (tauxPlc >= 28) score += 13.0;
-    else                     score += 7.0;
+    if (tauxPlc >= 50)
+      score += 25.0;
+    else if (tauxPlc >= 42)
+      score += 21.0;
+    else if (tauxPlc >= 35)
+      score += 17.0;
+    else if (tauxPlc >= 28)
+      score += 13.0;
+    else
+      score += 7.0;
     // Bonus activité 30j (5%)
-    if (nb30j >= 30)      score += 5.0;
-    else if (nb30j >= 15) score += 3.0;
-    else if (nb30j >= 5)  score += 1.0;
+    if (nb30j >= 30)
+      score += 5.0;
+    else if (nb30j >= 15)
+      score += 3.0;
+    else if (nb30j >= 5) score += 1.0;
     // ★ v9.92 : Bonus forme court terme 7j (15% max)
     // Entraîneur avec ≥3 courses cette semaine et taux > historique → en forme
     if (tauxVic7j >= 0 && nb7j >= 3) {
       final surperformance = tauxVic7j - tauxVic; // écart vs historique
-      if (surperformance >= 15)     score += 15.0; // très en forme
-      else if (surperformance >= 8) score += 10.0; // en forme
-      else if (surperformance >= 3) score += 5.0;  // légèrement en forme
+      if (surperformance >= 15)
+        score += 15.0; // très en forme
+      else if (surperformance >= 8)
+        score += 10.0; // en forme
+      else if (surperformance >= 3)
+        score += 5.0; // légèrement en forme
       else if (surperformance <= -15) score -= 8.0; // en baisse de forme
     }
     return score.clamp(0.0, 100.0);
@@ -554,16 +641,16 @@ class ZtPartant {
       final parts = entry.split('|');
       if (parts.length < 4) continue;
       final terrainStocke = parts[0].toLowerCase().trim();
-      final terrainNorm   = _normaliserTerrain(terrainCourse);
+      final terrainNorm = _normaliserTerrain(terrainCourse);
       if (terrainStocke != terrainNorm) continue;
-      final nbC  = int.tryParse(parts[1]) ?? 0;
-      final nbV  = int.tryParse(parts[2]) ?? 0;
+      final nbC = int.tryParse(parts[1]) ?? 0;
+      final nbV = int.tryParse(parts[2]) ?? 0;
       final nbT3 = int.tryParse(parts[3]) ?? 0;
       if (nbC <= 0) return 50.0;
       if (nbC < 2) return 55.0; // peu de données → légèrement positif
-      final tauxVic  = nbV  / nbC;
+      final tauxVic = nbV / nbC;
       final tauxTop3 = nbT3 / nbC;
-      final scoreVic  = (tauxVic  * 200.0).clamp(0.0, 100.0);
+      final scoreVic = (tauxVic * 200.0).clamp(0.0, 100.0);
       final scoreTop3 = (tauxTop3 * 130.0).clamp(0.0, 100.0);
       final score = scoreVic * 0.55 + scoreTop3 * 0.45;
       final bonusData = nbC >= 8 ? 5.0 : (nbC >= 4 ? 2.0 : 0.0);
@@ -575,11 +662,11 @@ class ZtPartant {
   static String _normaliserTerrain(String t) {
     final lower = t.toLowerCase();
     if (lower.contains('tres') && lower.contains('lourd')) return 'tres_lourd';
-    if (lower.contains('lourd'))  return 'lourd';
+    if (lower.contains('lourd')) return 'lourd';
     if (lower.contains('souple')) return 'souple';
-    if (lower.contains('bon'))    return 'bon';
-    if (lower.contains('sable'))  return 'sable';
-    if (lower.contains('piste'))  return 'sable';
+    if (lower.contains('bon')) return 'bon';
+    if (lower.contains('sable')) return 'sable';
+    if (lower.contains('piste')) return 'sable';
     return lower.replaceAll(' ', '_');
   }
 
@@ -588,7 +675,7 @@ class ZtPartant {
   // Si scoreForme faible ET cote faible → faux favori → malus
   double get scoreDivergenceFormeCote {
     final sf = scoreFormeLong;
-    final c  = coteDecimale;
+    final c = coteDecimale;
     if (c <= 0 || c >= 99) return 50.0;
 
     // ★ v9.90 : Seuil abaissé 5.0→2.5 — les favoris modérés (cote 2.5-5) peuvent
@@ -597,8 +684,10 @@ class ZtPartant {
 
     // Cote attendue approximative selon la forme (modèle log inversé)
     // scoreForme=80 → cote attendue ~3-4, scoreForme=40 → cote attendue ~10-15
-    final coteAttendue = (100.0 / (sf.clamp(10.0, 90.0) / 10.0)).clamp(1.5, 50.0);
-    final ratio = coteAttendue / c.clamp(2.5, 99.0); // ★ v9.90 : aligné avec seuil 2.5
+    final coteAttendue =
+        (100.0 / (sf.clamp(10.0, 90.0) / 10.0)).clamp(1.5, 50.0);
+    final ratio =
+        coteAttendue / c.clamp(2.5, 99.0); // ★ v9.90 : aligné avec seuil 2.5
     // ratio > 2 : cote réelle très supérieure à ce qu'on attend → sous-coté → bonus fort
     // ratio 1.3-2 : légèrement sous-coté → petit bonus
     // ratio 0.7-1.3 : cohérent → neutre
@@ -620,9 +709,9 @@ class ZtPartant {
     if (poids <= 0 || poidsMoyenChamp <= 0) return 50.0;
     final delta = poidsMoyenChamp - poids; // positif = ce cheval est plus léger
     // Chaque kg de différence = ~2-3 longueurs en galop (règle empirique)
-    if (delta >= 4.0)  return 85.0;
-    if (delta >= 2.5)  return 73.0;
-    if (delta >= 1.0)  return 62.0;
+    if (delta >= 4.0) return 85.0;
+    if (delta >= 2.5) return 73.0;
+    if (delta >= 1.0) return 62.0;
     if (delta >= -0.5) return 50.0;
     if (delta >= -2.0) return 38.0;
     if (delta >= -3.5) return 27.0;
@@ -640,12 +729,17 @@ class ZtPartant {
     double score = 50.0;
 
     // 1. Bonus/malus âge — chevaux 3-5 ans sont en phase de progression
-    if (age == 3)      score += 12.0; // jeune en plein développement
-    else if (age == 4) score += 8.0;  // pic de progression
-    else if (age == 5) score += 4.0;  // encore en hausse possible
-    else if (age == 6) score += 0.0;  // stable
-    else if (age == 7) score -= 3.0;  // légère décrue
-    else if (age >= 8) score -= 8.0;  // déclin probable
+    if (age == 3)
+      score += 12.0; // jeune en plein développement
+    else if (age == 4)
+      score += 8.0; // pic de progression
+    else if (age == 5)
+      score += 4.0; // encore en hausse possible
+    else if (age == 6)
+      score += 0.0; // stable
+    else if (age == 7)
+      score -= 3.0; // légère décrue
+    else if (age >= 8) score -= 8.0; // déclin probable
 
     // 2. Gains dernière année vs gains totaux (ratio progression)
     final gainsTotal = gainsInt;
@@ -653,10 +747,13 @@ class ZtPartant {
       // Si les gains de l'an dernier représentent une forte fraction des gains totaux
       // → le cheval progresse vite (a beaucoup gagné récemment)
       final ratioAnnee = gainsDernierAn / gainsTotal.toDouble();
-      if (ratioAnnee >= 0.40)      score += 15.0; // 40%+ des gains en 1 an → très actif
-      else if (ratioAnnee >= 0.25) score += 8.0;
-      else if (ratioAnnee >= 0.15) score += 3.0;
-      else if (ratioAnnee < 0.05)  score -= 5.0;  // peu actif récemment
+      if (ratioAnnee >= 0.40)
+        score += 15.0; // 40%+ des gains en 1 an → très actif
+      else if (ratioAnnee >= 0.25)
+        score += 8.0;
+      else if (ratioAnnee >= 0.15)
+        score += 3.0;
+      else if (ratioAnnee < 0.05) score -= 5.0; // peu actif récemment
     }
 
     // 3. Bonus tendance forme haussière (cohérence avec scoreFormeLong)
@@ -677,12 +774,12 @@ class ZtPartant {
   // Retourne null si hors fenêtre (pas de données)
   String? get labelMouvementCote {
     if (scoreMouvementCote == 50.0) return null; // hors fenêtre
-    if (scoreMouvementCote >= 85)  return 'effondrement';
-    if (scoreMouvementCote >= 70)  return 'forte_baisse';
-    if (scoreMouvementCote >= 58)  return 'baisse';
-    if (scoreMouvementCote <= 20)  return 'forte_hausse';
-    if (scoreMouvementCote <= 32)  return 'hausse';
-    if (scoreMouvementCote <= 42)  return 'legere_hausse';
+    if (scoreMouvementCote >= 85) return 'effondrement';
+    if (scoreMouvementCote >= 70) return 'forte_baisse';
+    if (scoreMouvementCote >= 58) return 'baisse';
+    if (scoreMouvementCote <= 20) return 'forte_hausse';
+    if (scoreMouvementCote <= 32) return 'hausse';
+    if (scoreMouvementCote <= 42) return 'legere_hausse';
     return 'stable';
   }
 
@@ -690,20 +787,27 @@ class ZtPartant {
   // Analyse les 12 dernières sorties pour détecter hausse/baisse/stable
   TendanceForme get tendanceForme {
     final sorties = _parserMusique(musique);
-    final valid   = sorties.where((s) => !s.estPenalite && !s.estNonPartant).take(12).toList();  // ★ v9.92
+    final valid = sorties
+        .where((s) => !s.estPenalite && !s.estNonPartant)
+        .take(12)
+        .toList(); // ★ v9.92
     if (valid.length < 4) return TendanceForme.insuffisant;
 
     // Diviser en 2 moitiés : récente (0..n/2) vs ancienne (n/2..n)
-    final mid     = valid.length ~/ 2;
+    final mid = valid.length ~/ 2;
     final recente = valid.sublist(0, mid);
-    final ancienne= valid.sublist(mid);
+    final ancienne = valid.sublist(mid);
 
-    double moyRecente = recente.map((s) => s.position.toDouble()).reduce((a,b) => a+b) / recente.length;
-    double moyAncienne= ancienne.map((s) => s.position.toDouble()).reduce((a,b) => a+b) / ancienne.length;
+    double moyRecente =
+        recente.map((s) => s.position.toDouble()).reduce((a, b) => a + b) /
+            recente.length;
+    double moyAncienne =
+        ancienne.map((s) => s.position.toDouble()).reduce((a, b) => a + b) /
+            ancienne.length;
 
     // Position plus basse = meilleure → hausse si moyRecente < moyAncienne
     final delta = moyAncienne - moyRecente; // positif = amélioration
-    if (delta >= 2.0)  return TendanceForme.hausse;
+    if (delta >= 2.0) return TendanceForme.hausse;
     if (delta <= -2.0) return TendanceForme.baisse;
     return TendanceForme.stable;
   }
@@ -711,10 +815,14 @@ class ZtPartant {
   // Label de la tendance
   String get tendanceLabel {
     switch (tendanceForme) {
-      case TendanceForme.hausse:      return '↑ En hausse';
-      case TendanceForme.baisse:      return '↓ En baisse';
-      case TendanceForme.stable:      return '→ Stable';
-      case TendanceForme.insuffisant: return '— Données insuffisantes';
+      case TendanceForme.hausse:
+        return '↑ En hausse';
+      case TendanceForme.baisse:
+        return '↓ En baisse';
+      case TendanceForme.stable:
+        return '→ Stable';
+      case TendanceForme.insuffisant:
+        return '— Données insuffisantes';
     }
   }
 
@@ -727,12 +835,26 @@ class ZtPartant {
     if (sorties.isEmpty) return 28.0;
 
     // Prendre 12 sorties (au lieu de 8)
-    final recent  = sorties.take(12).toList();
+    final recent = sorties.take(12).toList();
     // Poids exponentiels décroissants (somme ≈ 4.5)
-    final weights = [1.0, 0.82, 0.66, 0.53, 0.42, 0.33,
-                     0.26, 0.20, 0.15, 0.11, 0.08, 0.06];
+    final weights = [
+      1.0,
+      0.82,
+      0.66,
+      0.53,
+      0.42,
+      0.33,
+      0.26,
+      0.20,
+      0.15,
+      0.11,
+      0.08,
+      0.06
+    ];
 
-    double total = 0; double weightTotal = 0; double totalPenalite = 0;
+    double total = 0;
+    double weightTotal = 0;
+    double totalPenalite = 0;
 
     for (int i = 0; i < recent.length; i++) {
       final s = recent[i];
@@ -745,16 +867,26 @@ class ZtPartant {
         totalPenalite += 15.0 * weight;
       } else {
         final pos = s.position;
-        if (pos == 1)       pts = 100.0;
-        else if (pos == 2)  pts = 78.0;
-        else if (pos == 3)  pts = 60.0;
-        else if (pos == 4)  pts = 46.0;
-        else if (pos == 5)  pts = 35.0;
-        else if (pos == 6)  pts = 26.0;
-        else if (pos <= 8)  pts = 18.0;
-        else if (pos <= 10) pts = 11.0;
-        else if (pos <= 14) pts = 6.0;
-        else                pts = 2.0;
+        if (pos == 1)
+          pts = 100.0;
+        else if (pos == 2)
+          pts = 78.0;
+        else if (pos == 3)
+          pts = 60.0;
+        else if (pos == 4)
+          pts = 46.0;
+        else if (pos == 5)
+          pts = 35.0;
+        else if (pos == 6)
+          pts = 26.0;
+        else if (pos <= 8)
+          pts = 18.0;
+        else if (pos <= 10)
+          pts = 11.0;
+        else if (pos <= 14)
+          pts = 6.0;
+        else
+          pts = 2.0;
       }
       total += pts * weight;
       weightTotal += weight;
@@ -765,16 +897,27 @@ class ZtPartant {
 
     // Bonus tendance haussière
     switch (tendanceForme) {
-      case TendanceForme.hausse: score += 8.0;  break;
-      case TendanceForme.stable: score += 2.0;  break;
-      case TendanceForme.baisse: score -= 5.0;  break;
-      default: break;
+      case TendanceForme.hausse:
+        score += 8.0;
+        break;
+      case TendanceForme.stable:
+        score += 2.0;
+        break;
+      case TendanceForme.baisse:
+        score -= 5.0;
+        break;
+      default:
+        break;
     }
 
     // Bonus continuité top3
     final top3 = sorties.take(3);
-    if (top3.every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 3)) score += 10.0;
-    else if (top3.every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 5)) score += 5.0;
+    if (top3
+        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 3))
+      score += 10.0;
+    else if (top3
+        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 5))
+      score += 5.0;
 
     return score.clamp(0.0, 100.0);
   }
@@ -792,7 +935,7 @@ class ZtCourse {
   final String heure;
   final String distance;
   final String prix;
-  final String type;       // Plat, Haies, Attelé, Monté, Steeple
+  final String type; // Plat, Haies, Attelé, Monté, Steeple
   final String piste;
   final String categorie;
   final bool isQuinte;
@@ -803,10 +946,20 @@ class ZtCourse {
   ///             ET discipline Plat ET dotation >= 80 000 €
   ///             OU nom contient GROUPE, GROUP, POULE, ARC, JOCKEY CLUB, DIANE
   final bool isClassiqueSansMultiple;
-  final List<int> pronosticZt;   // Pronostic officiel Zone-Turf
+  final List<int> pronosticZt; // Pronostic officiel Zone-Turf
   List<ZtPartant> partants;
+
   /// Date de la course au format ddmmyyyy (renseigné par ZtReunion)
   String dateStr;
+
+  /// ★ CORRECTION BLOC 1 — caractère DÉFINITIF de l'arrivée, tel que le PMU le
+  /// publie sur l'objet COURSE de `/programme/{date}`.
+  ///
+  /// Trois états, jamais deux : `true` (l'API l'affirme), `false` (l'API
+  /// l'infirme), `null` (l'API ne le dit pas — mesuré 8 fois sur 316 courses).
+  /// `null` n'est jamais converti en `true` : on n'affirme pas un caractère
+  /// définitif que la source ne publie pas.
+  final bool? arriveeDefinitive;
 
   ZtCourse({
     required this.numCourse,
@@ -824,55 +977,59 @@ class ZtCourse {
     required this.pronosticZt,
     required this.partants,
     this.dateStr = '',
+    this.arriveeDefinitive,
   });
 
   factory ZtCourse.fromJson(Map<String, dynamic> j) => ZtCourse(
-    numCourse: j['num'] as int? ?? 0,
-    anchor: j['anchor'] as String? ?? '',
-    nom: j['nom'] as String? ?? '',
-    heure: j['heure'] as String? ?? '?',
-    distance: j['distance'] as String? ?? '?',
-    prix: j['prix'] as String? ?? '?',
-    type: j['type'] as String? ?? '',
-    piste: j['piste'] as String? ?? '',
-    categorie: j['categorie'] as String? ?? '',
-    isQuinte: j['is_quinte'] as bool? ?? false,
-    isQuarte: j['is_quarte'] as bool? ?? false,
-    isClassiqueSansMultiple: j['is_classique_sans_multiple'] as bool? ?? false, // ★ v9.93
-    pronosticZt: (j['pronostic_zt'] as List<dynamic>? ?? []).map((e) => e as int).toList(),
-    partants: (j['partants'] as List<dynamic>? ?? [])
-        .map((p) => ZtPartant.fromJson(p as Map<String, dynamic>))
-        .toList(),
-    // ★ A-3-bis : sans cette clé, un aller-retour JSON (retour d'isolate,
-    //   cache local) remettait dateStr à '' → heureDateTime =
-    //   DateTime(2000,1,1,h,m) → datePronostic fictive → purge des 90 jours
-    //   → perte définitive et silencieuse du pronostic.
-    //   Absence = '' : aucune date n'est inventée. Le sentinel 2000 reste
-    //   le signal d'absence, il n'est jamais converti en date réelle.
-    dateStr: j['dateStr'] as String? ?? '',
-  );
+        numCourse: j['num'] as int? ?? 0,
+        anchor: j['anchor'] as String? ?? '',
+        nom: j['nom'] as String? ?? '',
+        heure: j['heure'] as String? ?? '?',
+        distance: j['distance'] as String? ?? '?',
+        prix: j['prix'] as String? ?? '?',
+        type: j['type'] as String? ?? '',
+        piste: j['piste'] as String? ?? '',
+        categorie: j['categorie'] as String? ?? '',
+        isQuinte: j['is_quinte'] as bool? ?? false,
+        isQuarte: j['is_quarte'] as bool? ?? false,
+        isClassiqueSansMultiple:
+            j['is_classique_sans_multiple'] as bool? ?? false, // ★ v9.93
+        pronosticZt: (j['pronostic_zt'] as List<dynamic>? ?? [])
+            .map((e) => e as int)
+            .toList(),
+        partants: (j['partants'] as List<dynamic>? ?? [])
+            .map((p) => ZtPartant.fromJson(p as Map<String, dynamic>))
+            .toList(),
+        // ★ A-3-bis : sans cette clé, un aller-retour JSON (retour d'isolate,
+        //   cache local) remettait dateStr à '' → heureDateTime =
+        //   DateTime(2000,1,1,h,m) → datePronostic fictive → purge des 90 jours
+        //   → perte définitive et silencieuse du pronostic.
+        //   Absence = '' : aucune date n'est inventée. Le sentinel 2000 reste
+        //   le signal d'absence, il n'est jamais converti en date réelle.
+        dateStr: j['dateStr'] as String? ?? '',
+      );
 
   Map<String, dynamic> toJson() => {
-    'num': numCourse,
-    'anchor': anchor,
-    'nom': nom,
-    'heure': heure,
-    'distance': distance,
-    'prix': prix,
-    'type': type,
-    'piste': piste,
-    'categorie': categorie,
-    'is_quinte': isQuinte,
-    'is_quarte': isQuarte,
-    'is_classique_sans_multiple': isClassiqueSansMultiple, // ★ v9.93
-    'pronostic_zt': pronosticZt,
-    'partants': partants.map((p) => p.toJson()).toList(),
-    // ★ A-3-bis : symétrie obligatoire avec fromJson. Clé 'dateStr' (et non
-    //   'date') pour ne pas entrer en collision avec la clé portée par
-    //   ZtReunion.toJson(). Ajout purement additif : aucune clé existante
-    //   n'est retirée ni renommée.
-    'dateStr': dateStr,
-  };
+        'num': numCourse,
+        'anchor': anchor,
+        'nom': nom,
+        'heure': heure,
+        'distance': distance,
+        'prix': prix,
+        'type': type,
+        'piste': piste,
+        'categorie': categorie,
+        'is_quinte': isQuinte,
+        'is_quarte': isQuarte,
+        'is_classique_sans_multiple': isClassiqueSansMultiple, // ★ v9.93
+        'pronostic_zt': pronosticZt,
+        'partants': partants.map((p) => p.toJson()).toList(),
+        // ★ A-3-bis : symétrie obligatoire avec fromJson. Clé 'dateStr' (et non
+        //   'date') pour ne pas entrer en collision avec la clé portée par
+        //   ZtReunion.toJson(). Ajout purement additif : aucune clé existante
+        //   n'est retirée ni renommée.
+        'dateStr': dateStr,
+      };
 
   // Heure en DateTime — utilise dateStr (ddmmyyyy) si disponible.
   // ⚠️ Si dateStr est absent, retourne null plutôt qu'aujourd'hui
@@ -883,9 +1040,9 @@ class ZtCourse {
       final h = int.parse(parts[0]);
       final m = int.parse(parts[1]);
       if (dateStr.length == 8) {
-        final day   = int.parse(dateStr.substring(0, 2));
+        final day = int.parse(dateStr.substring(0, 2));
         final month = int.parse(dateStr.substring(2, 4));
-        final year  = int.parse(dateStr.substring(4, 8));
+        final year = int.parse(dateStr.substring(4, 8));
         return DateTime(year, month, day, h, m);
       }
       // dateStr absent : on NE suppose PAS que c'est aujourd'hui
@@ -925,12 +1082,13 @@ class ZtCourse {
   /// Pronostic PMU officiel : partants triés par cote croissante (favoris en tête)
   /// Retourne les numéros des 5 premiers favoris selon les cotes PMU
   List<int> get pronosticPMU {
-    final avecCote = partants
-        .where((p) => p.coteDecimale > 0)
-        .toList()
+    final avecCote = partants.where((p) => p.coteDecimale > 0).toList()
       ..sort((a, b) => a.coteDecimale.compareTo(b.coteDecimale));
-    return avecCote.take(5).map((p) => int.tryParse(p.numero) ?? 0)
-        .where((n) => n > 0).toList();
+    return avecCote
+        .take(5)
+        .map((p) => int.tryParse(p.numero) ?? 0)
+        .where((n) => n > 0)
+        .toList();
   }
 
   /// Confiance globale IA de la course — formule enrichie v6.0
@@ -975,10 +1133,10 @@ class ZtCourse {
 
 // ─── Réunion ─────────────────────────────────────────────────────────────────
 class ZtReunion {
-  final String code;       // R1, R2, R3, R4
-  final String lieu;       // Chantilly, Vincennes...
+  final String code; // R1, R2, R3, R4
+  final String lieu; // Chantilly, Vincennes...
   final String discipline; // Plat, Trot, Obstacle
-  final String dateStr;    // ddmmyyyy
+  final String dateStr; // ddmmyyyy
   final List<ZtCourse> courses;
 
   ZtReunion({
@@ -991,14 +1149,12 @@ class ZtReunion {
 
   factory ZtReunion.fromJson(Map<String, dynamic> j) {
     final date = j['date'] as String? ?? '';
-    final courses = (j['courses'] as List<dynamic>? ?? [])
-        .map((c) {
-          final course = ZtCourse.fromJson(c as Map<String, dynamic>);
-          // Propager la date de la réunion aux courses pour heureDateTime
-          if (date.isNotEmpty) course.dateStr = date;
-          return course;
-        })
-        .toList();
+    final courses = (j['courses'] as List<dynamic>? ?? []).map((c) {
+      final course = ZtCourse.fromJson(c as Map<String, dynamic>);
+      // Propager la date de la réunion aux courses pour heureDateTime
+      if (date.isNotEmpty) course.dateStr = date;
+      return course;
+    }).toList();
     return ZtReunion(
       code: j['code'] as String? ?? '',
       lieu: j['lieu'] as String? ?? '',
@@ -1009,37 +1165,40 @@ class ZtReunion {
   }
 
   Map<String, dynamic> toJson() => {
-    'code': code,
-    'lieu': lieu,
-    'discipline': discipline,
-    'date': dateStr,
-    'courses': courses.map((c) => c.toJson()).toList(),
-  };
+        'code': code,
+        'lieu': lieu,
+        'discipline': discipline,
+        'date': dateStr,
+        'courses': courses.map((c) => c.toJson()).toList(),
+      };
 
   // Icône hippodrome selon type
   String get disciplineIcon {
     final d = discipline.toLowerCase();
     if (d.contains('trot')) return '🎠';
-    if (d.contains('obstacle') || d.contains('haies') || d.contains('steeple')) return '🚧';
+    if (d.contains('obstacle') || d.contains('haies') || d.contains('steeple'))
+      return '🚧';
     return '🏇';
   }
 
   // Couleur selon discipline
   int get disciplineColor {
     final d = discipline.toLowerCase();
-    if (d.contains('trot')) return 0xFF7B68EE;   // violet
+    if (d.contains('trot')) return 0xFF7B68EE; // violet
     if (d.contains('obstacle')) return 0xFFE67E22; // orange
     return 0xFF2E7D52; // vert plat
   }
 
   // Nombre total de partants
-  int get totalPartants =>
-      courses.fold(0, (acc, c) => acc + c.partants.length);
+  int get totalPartants => courses.fold(0, (acc, c) => acc + c.partants.length);
 
   // Course Quinté si elle existe
   ZtCourse? get quinteOrNull {
-    try { return courses.firstWhere((c) => c.isQuinte); }
-    catch (_) { return null; }
+    try {
+      return courses.firstWhere((c) => c.isQuinte);
+    } catch (_) {
+      return null;
+    }
   }
 }
 
@@ -1049,11 +1208,11 @@ class PronosticIA {
   final String nomCourse;
   final String heure;
   final String hippodrome;
-  final List<ZtPartant> top5;         // Top 5 chevaux triés par score IA
-  final String selection;             // "3-7-1-5-12"
-  final double confianceGlobale;      // 0-100
+  final List<ZtPartant> top5; // Top 5 chevaux triés par score IA
+  final String selection; // "3-7-1-5-12"
+  final double confianceGlobale; // 0-100
   final String analyseTextuelle;
-  final String conseil;               // type de pari recommandé
+  final String conseil; // type de pari recommandé
 
   PronosticIA({
     required this.numCourse,

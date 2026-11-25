@@ -579,12 +579,63 @@ class RapportPmu {
     this.dividendeUnite = '',
   });
 
+  /// ★ CORRECTION BLOC 1 (périmètre financier) — `toJson` MANQUAIT.
+  ///
+  /// MESURE, avant correction : `grep -rn "RapportPmu.fromJson" lib/ test/`
+  /// ne rendait QUE la ligne de définition (aucun appelant), et aucune
+  /// méthode `toJson` n'existait sur ce type — seule `toString()` (:601).
+  /// Un rapport officiel reçu du PMU ne pouvait donc PAS être réécrit sur le
+  /// stockage : la chaîne officielle était complète en mémoire et nulle part
+  /// sur le disque. C'était le blocage matériel de la persistance des
+  /// rapports officiels exigée par l'arbitrage.
+  ///
+  /// Ce que cette méthode fait : elle écrit les DIX champs, y compris ceux
+  /// qui étaient auparavant jetés à la lecture (`libelleOfficiel`,
+  /// `codePariOfficiel`, `rangCombinaisonPayable`, `rembourse`,
+  /// `miseBaseCentimes`, `dividendeUnite`). Aucune valeur n'est recalculée,
+  /// arrondie, normalisée ni complétée : un `null` reste `null`, une chaîne
+  /// vide reste vide.
+  ///
+  /// Ce qu'elle ne fait pas : elle n'invente aucun champ manquant, ne
+  /// convertit aucune unité et ne touche à aucun calcul. C'est une simple
+  /// recopie.
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'typePari': typePari,
+        'combinaison': combinaison,
+        'dividende': dividende,
+        'estOrdre': estOrdre,
+        'libelleOfficiel': libelleOfficiel,
+        'codePariOfficiel': codePariOfficiel,
+        'rangCombinaisonPayable': rangCombinaisonPayable,
+        'rembourse': rembourse,
+        'miseBaseCentimes': miseBaseCentimes,
+        'dividendeUnite': dividendeUnite,
+      };
+
+  /// Relit un rapport officiel écrit par [toJson].
+  ///
+  /// ⚠️ `estOrdre` est lu depuis le JSON quand il est présent ; le paramètre
+  ///    nommé reste accepté pour ne pas casser un éventuel appel historique,
+  ///    mais il ne peut plus ÉCRASER une valeur écrite : une donnée persistée
+  ///    fait foi sur une valeur par défaut.
+  ///
+  /// Aucun champ absent n'est deviné : `typePari` manquant donne `''`, ce qui
+  /// fera refuser le rapport en aval
+  /// (`rapportPublieDepuisApi` → `null`), jamais accepter par ressemblance.
   factory RapportPmu.fromJson(Map<String, dynamic> json, {bool estOrdre = false}) {
+    final ordreLu = json['estOrdre'];
     return RapportPmu(
       typePari: json['typePari'] as String? ?? '',
       combinaison: json['combinaison'] as String? ?? '',
       dividende: (json['dividende'] as num?)?.toDouble() ?? 0.0,
-      estOrdre: estOrdre,
+      estOrdre: ordreLu is bool ? ordreLu : estOrdre,
+      libelleOfficiel: json['libelleOfficiel'] as String? ?? '',
+      codePariOfficiel: json['codePariOfficiel'] as String? ?? '',
+      rangCombinaisonPayable:
+          (json['rangCombinaisonPayable'] as num?)?.toInt(),
+      rembourse: json['rembourse'] == true,
+      miseBaseCentimes: (json['miseBaseCentimes'] as num?)?.toInt(),
+      dividendeUnite: json['dividendeUnite'] as String? ?? '',
     );
   }
 
