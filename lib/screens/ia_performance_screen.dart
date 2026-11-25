@@ -1382,9 +1382,51 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                   style: const TextStyle(color: Colors.white70, fontSize: 16),
                 ),
               ),
-              // Bouton reset
+              // ── ★ CORRECTION BLOC 1 (BL1-A01) — ACTION IRRÉVERSIBLE PROTÉGÉE ──
+              //
+              //  DÉFAUT MESURÉ : ce bouton appelait `mem.resetPoids()` au
+              //  PREMIER contact, sans confirmation et sans dire ce qui était
+              //  perdu. Une pression accidentelle remettait à zéro un
+              //  apprentissage long, sans possibilité d'annulation — alors que
+              //  l'effacement TOTAL de la mémoire, juste en dessous dans le
+              //  même écran, était déjà protégé par un `AlertDialog`.
+              //
+              //  Le bouton reste, la fonction reste : on ajoute la seule chose
+              //  qui manquait — un point de non-retour explicite. Le libellé
+              //  énonce ce qui est REMIS À ZÉRO et ce qui est CONSERVÉ, pour
+              //  que le choix soit informé. Annulation ⇒ aucune modification
+              //  (aucun appel à `resetPoids`).
               GestureDetector(
                 onTap: () async {
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      backgroundColor: _card,
+                      title: const Text('Réinitialiser les poids IA ?',
+                          style: TextStyle(color: Colors.white)),
+                      content: const Text(
+                        'Cela remet les 19 critères de l\'IA à leurs valeurs '
+                        'd\'usine, ainsi que la calibration qui en dérive.\n\n'
+                        'CONSERVÉ : l\'historique des pronostics, le journal '
+                        'd\'apprentissage, les résultats officiels et les '
+                        'seuils de confiance adaptatifs.\n\n'
+                        'Cette action est irréversible.',
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Annuler'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Réinitialiser',
+                              style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (ok != true) return; // Annulation : rien n'est modifié.
                   await mem.resetPoids();
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(

@@ -6393,9 +6393,38 @@ class IaMemoryService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Remet les 19 poids IA (et la calibration qui en dérive) aux valeurs
+  /// d'usine. **Ne touche ni aux seuils adaptatifs, ni à l'historique, ni au
+  /// journal d'apprentissage.**
+  ///
+  /// ★ CORRECTION BLOC 1 (BL1-A05 — FACETTE « resetPoids ») — RESYNCHRONISATION
+  ///   DU REGISTRE DE CALIBRATION.
+  ///
+  ///   DÉFAUT MESURÉ : `executerResetComplet()` resynchronise
+  ///   `IaCalibrationRegistry` (étape 6, `IaCalibrationRegistry.update(
+  ///   _poids.calibrationScore)`) mais `resetPoids()`, lui, ne le faisait PAS.
+  ///   Or `_poids = IaPoidsAdaptatifs()` remet `calibrationScore` à 50.0
+  ///   (ia_memory_models.dart:599) alors que le registre STATIQUE conservait
+  ///   l'ancienne valeur apprise. Conséquence mesurable : `ZtCourse.
+  ///   confianceIA` (zt_models.dart:968-970) continuait d'appliquer
+  ///   `facteurCalib = registre / 50` — une confiance affichée de 84.7 restait
+  ///   84.7 au lieu de revenir à 77.0 après un reset pourtant annoncé comme
+  ///   « valeurs par défaut ».
+  ///
+  ///   `update()` est une AFFECTATION avec `clamp(10, 90)` : aucun calcul,
+  ///   aucune formule, aucune constante modifiée. C'est un pur raccordement,
+  ///   exactement la catégorie autorisée par le mandat (§3).
+  ///
+  ///   FACETTE DISTINCTE, NON CONFONDUE : BL1-A05 (resynchronisation de
+  ///   calibration après reset) n'est PAS BL3-A05 (identités de courses sans
+  ///   date). Les deux portent le même numéro d'ordre dans deux blocs
+  ///   différents et ne décrivent pas le même défaut.
   Future<void> resetPoids() async {
     await _load();
     _poids = IaPoidsAdaptatifs();
+    // Raccordement du registre statique : sans lui, la confiance affichée
+    // resterait pondérée par l'ancienne calibration (BL1-A05).
+    IaCalibrationRegistry.update(_poids.calibrationScore);
     await _save();
     notifyListeners();
   }
