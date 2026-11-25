@@ -6,9 +6,8 @@ import '../../models/pmu_models.dart';
 // alert_service — TrackedCourse non utilisé directement dans cet onglet
 import '../../services/backtesting_service.dart';
 import '../../services/ia_user_prefs_service.dart'; // ★ v9.85
-import '../../services/ia_memory_service.dart';     // ★ v9.94 : listener temps réel
+import '../../services/ia_memory_service.dart'; // ★ v9.94 : listener temps réel
 import '../../utils/format_euros.dart';
-
 
 // Onglet Progression du ProfileScreen
 
@@ -20,28 +19,35 @@ class ProfileProgressionTab extends StatefulWidget {
 }
 
 class ProfileProgressionTabState extends State<ProfileProgressionTab> {
-  static const _gold  = Color(0xFFFFD700);
+  static const _gold = Color(0xFFFFD700);
   static const _green = Color(0xFF4CAF7D);
-  static const _card  = Color(0xFF111F30);
+  static const _card = Color(0xFF111F30);
 
   // Backtesting
-  double _miseBt     = 10.0;
-  String _typePari   = 'Conseil IA';
-  int    _nbJours    = 30;
+  double _miseBt = 10.0;
+  String _typePari = 'Conseil IA';
+  int _nbJours = 30;
   BacktestResult? _resultatBt;
-  bool   _chargement = false;
+  bool _chargement = false;
 
   // ★ v9.85 : Bankroll
   double _capitalDepart = 100.0;
   static const _keyCapital = 'bankroll_capital_v1';
 
   static const _typesPari = [
-    'Conseil IA', 'Simple Gagnant', 'Simple Placé',
-    'Gagnant+Placé', 'Couplé Gagnant', 'Tiercé', 'Quinté+',
+    'Conseil IA',
+    'Simple Gagnant',
+    'Simple Placé',
+    'Gagnant+Placé',
+    'Couplé Gagnant',
+    'Tiercé',
+    'Quinté+',
   ];
 
   // ★ v9.94 : listener temps réel backtesting / stats IA
-  void _onIaChange() { if (mounted) setState(() {}); }
+  void _onIaChange() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -71,12 +77,11 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
   @override
   Widget build(BuildContext context) {
     final provider = widget.provider;
-    final preds    = provider.predictions;
+    final preds = provider.predictions;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
         // ── ★ v9.85 : Bankroll ────────────────────────────────────────────
         _buildSectionBankroll(preds),
         const SizedBox(height: 20),
@@ -114,9 +119,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
       capital += p.gainGagnantPlaceEtabli ? p.gainNet : 0.0;
     }
 
-    final gain      = capital - _capitalDepart;
+    final gain = capital - _capitalDepart;
     final gainColor = gain >= 0 ? _green : const Color(0xFFEF5350);
-    final roi       = _capitalDepart > 0 ? (gain / _capitalDepart * 100) : 0.0;
+    final roi = _capitalDepart > 0 ? (gain / _capitalDepart * 100) : 0.0;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -134,14 +139,20 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
         children: [
           Row(
             children: [
-              Icon(Icons.account_balance_wallet_outlined, color: gainColor, size: 20),
+              Icon(Icons.account_balance_wallet_outlined,
+                  color: gainColor, size: 20),
               const SizedBox(width: 8),
-              const Text('Bankroll', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              const Text('Bankroll',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
               const Spacer(),
               GestureDetector(
                 onTap: () => _editerCapital(),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(6),
@@ -151,7 +162,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
                     children: [
                       Icon(Icons.edit, color: Colors.white38, size: 12),
                       SizedBox(width: 4),
-                      Text('Capital', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                      Text('Capital',
+                          style:
+                              TextStyle(color: Colors.white38, fontSize: 11)),
                     ],
                   ),
                 ),
@@ -162,20 +175,29 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _bankrollStat('Capital départ', '${_capitalDepart.toStringAsFixed(0)} €', Colors.white54),
-              _bankrollStat('Capital actuel', '${capital.toStringAsFixed(0)} €', gainColor),
-              _bankrollStat('ROI', '${roi >= 0 ? "+" : ""}${roi.toStringAsFixed(1)}%', gainColor),
+              _bankrollStat('Capital départ',
+                  '${_capitalDepart.toStringAsFixed(0)} €', Colors.white54),
+              _bankrollStat('Capital actuel', '${capital.toStringAsFixed(0)} €',
+                  gainColor),
+              _bankrollStat(
+                  'ROI',
+                  '${roi >= 0 ? "+" : ""}${roi.toStringAsFixed(1)}%',
+                  gainColor),
             ],
           ),
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(gain >= 0 ? Icons.trending_up : Icons.trending_down, color: gainColor, size: 16),
+              Icon(gain >= 0 ? Icons.trending_up : Icons.trending_down,
+                  color: gainColor, size: 16),
               const SizedBox(width: 6),
               Text(
                 '${gain >= 0 ? "+" : ""}${gain.toStringAsFixed(0)} € depuis le départ · ${resolus.length} paris résolus',
-                style: TextStyle(color: gainColor, fontSize: 13, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: gainColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -187,9 +209,12 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
   Widget _bankrollStat(String label, String value, Color color) {
     return Column(
       children: [
-        Text(value, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(value,
+            style: TextStyle(
+                color: color, fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(height: 2),
-        Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        Text(label,
+            style: const TextStyle(color: Colors.white38, fontSize: 11)),
       ],
     );
   }
@@ -201,7 +226,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF0A1628),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Capital de départ', style: TextStyle(color: Colors.white)),
+        title: const Text('Capital de départ',
+            style: TextStyle(color: Colors.white)),
         content: TextField(
           controller: ctrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -211,13 +237,16 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             hintStyle: TextStyle(color: Colors.white38),
             suffixText: '€',
             suffixStyle: TextStyle(color: Colors.white54),
-            filled: true, fillColor: Color(0xFF111F30),
+            filled: true,
+            fillColor: Color(0xFF111F30),
             border: OutlineInputBorder(),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: const Text('Annuler', style: TextStyle(color: Colors.white38))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Annuler',
+                  style: TextStyle(color: Colors.white38))),
           TextButton(
             onPressed: () async {
               final val = double.tryParse(ctrl.text) ?? _capitalDepart;
@@ -225,7 +254,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
               await _sauvegarderCapital(_capitalDepart);
               if (ctx.mounted) Navigator.pop(ctx);
             },
-            child: const Text('Valider', style: TextStyle(color: Color(0xFF4CAF7D))),
+            child: const Text('Valider',
+                style: TextStyle(color: Color(0xFF4CAF7D))),
           ),
         ],
       ),
@@ -238,10 +268,10 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
     if (userPrefs.miseHabituelle == 0) return const SizedBox();
 
     final suggestions = [
-      (label: 'Confiance < 60%',  score: 50.0),
+      (label: 'Confiance < 60%', score: 50.0),
       (label: 'Confiance 60–75%', score: 68.0),
       (label: 'Confiance 75–88%', score: 80.0),
-      (label: 'Confiance ≥ 88%',  score: 92.0),
+      (label: 'Confiance ≥ 88%', score: 92.0),
     ];
 
     return Container(
@@ -259,11 +289,15 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
               Text('💡', style: TextStyle(fontSize: 18)),
               SizedBox(width: 8),
               Text('Mise adaptative IA',
-                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 4),
-          Text('Basée sur votre mise habituelle de ${userPrefs.miseHabituelle.toStringAsFixed(0)} €',
+          Text(
+              'Basée sur votre mise habituelle de ${userPrefs.miseHabituelle.toStringAsFixed(0)} €',
               style: const TextStyle(color: Colors.white38, fontSize: 12)),
           const SizedBox(height: 12),
           ...suggestions.map((s) {
@@ -272,17 +306,25 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
-                  Expanded(child: Text(s.label,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13))),
+                  Expanded(
+                      child: Text(s.label,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 13))),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFF00BCD4).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF00BCD4).withValues(alpha: 0.3)),
+                      border: Border.all(
+                          color:
+                              const Color(0xFF00BCD4).withValues(alpha: 0.3)),
                     ),
                     child: Text('${mise.toStringAsFixed(0)} €',
-                        style: const TextStyle(color: Color(0xFF00BCD4), fontSize: 13, fontWeight: FontWeight.bold)),
+                        style: const TextStyle(
+                            color: Color(0xFF00BCD4),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -292,7 +334,6 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
       ),
     );
   }
-
 
   Widget _buildGraphiqueGains(List<UserPrediction> preds) {
     // Construire les points du graphique : gain cumulé après chaque pari
@@ -324,7 +365,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Évolution des gains cumulés',
           style: TextStyle(
-              color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 13)),
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 13)),
       const SizedBox(height: 10),
       Container(
         padding: const EdgeInsets.all(14),
@@ -352,7 +395,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
                   style: const TextStyle(color: Colors.white38, fontSize: 12)),
               Text(
                 '${sortedPreds.where((p) => p.isCorrect == true).length} gagnes',
-                style: const TextStyle(color: _green, fontSize: 14, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                    color: _green, fontSize: 14, fontWeight: FontWeight.bold),
               ),
             ]),
           ]),
@@ -369,8 +413,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           // Axe X simplifié
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Text(
-              sortedPreds.first.createdAt.day.toString().padLeft(2,'0') +
-              '/' + sortedPreds.first.createdAt.month.toString().padLeft(2,'0'),
+              sortedPreds.first.createdAt.day.toString().padLeft(2, '0') +
+                  '/' +
+                  sortedPreds.first.createdAt.month.toString().padLeft(2, '0'),
               style: const TextStyle(color: Colors.white24, fontSize: 10),
             ),
             Text(
@@ -394,15 +439,12 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
       final gain = p.gainGagnantPlaceEtabli ? p.gainNet : 0.0;
       final s = statsParType[t];
       if (s == null) {
-        statsParType[t] = (
-          nb: 1,
-          gagnes: p.isCorrect == true ? 1 : 0,
-          gainNet: gain
-        );
+        statsParType[t] =
+            (nb: 1, gagnes: p.isCorrect == true ? 1 : 0, gainNet: gain);
       } else {
         statsParType[t] = (
-          nb:      s.nb + 1,
-          gagnes:  s.gagnes + (p.isCorrect == true ? 1 : 0),
+          nb: s.nb + 1,
+          gagnes: s.gagnes + (p.isCorrect == true ? 1 : 0),
           gainNet: s.gainNet + gain,
         );
       }
@@ -419,7 +461,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Performance par type de pari',
           style: TextStyle(
-              color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 13)),
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 13)),
       const SizedBox(height: 10),
       Container(
         padding: const EdgeInsets.all(14),
@@ -430,42 +474,56 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
         ),
         child: Column(
           children: sorted.map((e) {
-            final taux = e.value.nb > 0
-                ? e.value.gagnes / e.value.nb : 0.0;
-            final gainColor = e.value.gainNet >= 0 ? _green : const Color(0xFFEF5350);
-            final barColor = taux >= 0.4 ? _green : taux >= 0.25 ? _gold : const Color(0xFFEF5350);
+            final taux = e.value.nb > 0 ? e.value.gagnes / e.value.nb : 0.0;
+            final gainColor =
+                e.value.gainNet >= 0 ? _green : const Color(0xFFEF5350);
+            final barColor = taux >= 0.4
+                ? _green
+                : taux >= 0.25
+                    ? _gold
+                    : const Color(0xFFEF5350);
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(
-                    child: Text(e.key,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                  ),
-                  Text(
-                    '${e.value.gagnes}/${e.value.nb} — '
-                    '${(taux * 100).round()}%',
-                    style: TextStyle(color: barColor, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${e.value.gainNet >= 0 ? "+" : ""}${fmtEuros(e.value.gainNet)}€',
-                    style: TextStyle(color: gainColor, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ]),
-                const SizedBox(height: 5),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: taux.clamp(0.0, 1.0),
-                    backgroundColor: Colors.white.withValues(alpha: 0.06),
-                    valueColor: AlwaysStoppedAnimation<Color>(barColor),
-                    minHeight: 7,
-                  ),
-                ),
-              ]),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(e.key,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500)),
+                      ),
+                      Text(
+                        '${e.value.gagnes}/${e.value.nb} — '
+                        '${(taux * 100).round()}%',
+                        style: TextStyle(
+                            color: barColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${e.value.gainNet >= 0 ? "+" : ""}${fmtEuros(e.value.gainNet)}€',
+                        style: TextStyle(
+                            color: gainColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ]),
+                    const SizedBox(height: 5),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: taux.clamp(0.0, 1.0),
+                        backgroundColor: Colors.white.withValues(alpha: 0.06),
+                        valueColor: AlwaysStoppedAnimation<Color>(barColor),
+                        minHeight: 7,
+                      ),
+                    ),
+                  ]),
             );
           }).toList(),
         ),
@@ -476,13 +534,15 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
   // ── Section Backtesting ───────────────────────────────────────────────────
   Widget _buildSectionBacktesting() {
     final nbDispo = BacktestingService.instance.nbCoursesDisponibles;
-    final plage   = BacktestingService.instance.plageDisponible;
+    final plage = BacktestingService.instance.plageDisponible;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         const Text('Simulateur de stratégie',
             style: TextStyle(
-                color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 13)),
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
+                fontSize: 13)),
         const SizedBox(width: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -491,15 +551,16 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text('$nbDispo courses',
-              style: const TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.bold)),
+              style: const TextStyle(
+                  color: _gold, fontSize: 11, fontWeight: FontWeight.bold)),
         ),
       ]),
-
       if (nbDispo == 0) ...[
         const SizedBox(height: 10),
-        _emptyCard('Pas encore de données',
+        _emptyCard(
+            'Pas encore de données',
             'Le simulateur a besoin de courses avec résultats réels.'
-            ' Attendez quelques jours que l\'IA accumule de l\'historique.'),
+                ' Attendez quelques jours que l\'IA accumule de l\'historique.'),
       ] else ...[
         const SizedBox(height: 4),
         if (plage.debut != null)
@@ -529,7 +590,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             ]),
             Slider(
               value: _miseBt,
-              min: 2, max: 100,
+              min: 2,
+              max: 100,
               divisions: 49,
               activeColor: _gold,
               inactiveColor: Colors.white.withValues(alpha: 0.1),
@@ -546,24 +608,31 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             ),
             const SizedBox(height: 6),
             Wrap(
-              spacing: 6, runSpacing: 6,
+              spacing: 6,
+              runSpacing: 6,
               children: _typesPari.map((t) {
                 final sel = _typePari == t;
                 return GestureDetector(
                   onTap: () => setState(() => _typePari = t),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: sel ? _green.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+                      color: sel
+                          ? _green.withValues(alpha: 0.2)
+                          : Colors.white.withValues(alpha: 0.05),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                          color: sel ? _green : Colors.white.withValues(alpha: 0.15)),
+                          color: sel
+                              ? _green
+                              : Colors.white.withValues(alpha: 0.15)),
                     ),
                     child: Text(t,
                         style: TextStyle(
                             color: sel ? _green : Colors.white38,
                             fontSize: 12,
-                            fontWeight: sel ? FontWeight.bold : FontWeight.normal)),
+                            fontWeight:
+                                sel ? FontWeight.bold : FontWeight.normal)),
                   ),
                 );
               }).toList(),
@@ -593,14 +662,17 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
                             : Colors.white.withValues(alpha: 0.04),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: sel ? _gold : Colors.white.withValues(alpha: 0.12)),
+                            color: sel
+                                ? _gold
+                                : Colors.white.withValues(alpha: 0.12)),
                       ),
                       child: Text('${d}j',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: sel ? _gold : Colors.white38,
                               fontSize: 13,
-                              fontWeight: sel ? FontWeight.bold : FontWeight.normal)),
+                              fontWeight:
+                                  sel ? FontWeight.bold : FontWeight.normal)),
                     ),
                   ),
                 );
@@ -615,13 +687,17 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
               child: ElevatedButton.icon(
                 icon: _chargement
                     ? const SizedBox(
-                        width: 16, height: 16,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2))
                     : const Icon(Icons.play_arrow, size: 20),
                 label: Text(
-                    _chargement ? 'Simulation en cours...' : 'Lancer la simulation',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    _chargement
+                        ? 'Simulation en cours...'
+                        : 'Lancer la simulation',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1565C0),
                   foregroundColor: Colors.white,
@@ -645,19 +721,22 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
   }
 
   Future<void> _lancerBacktest() async {
-    setState(() { _chargement = true; _resultatBt = null; });
+    setState(() {
+      _chargement = true;
+      _resultatBt = null;
+    });
     try {
       final result = await BacktestingService.instance.lancer(
-        mise:     _miseBt,
+        mise: _miseBt,
         typePari: _typePari,
-        nbJours:  _nbJours,
+        nbJours: _nbJours,
       );
       setState(() => _resultatBt = result);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur simulation : $e'),
-              backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Erreur simulation : $e'),
+            backgroundColor: Colors.red));
       }
     } finally {
       setState(() => _chargement = false);
@@ -666,7 +745,7 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
 
   Widget _buildResultatBacktest(BacktestResult r) {
     final gainColor = r.gainNet >= 0 ? _green : const Color(0xFFEF5350);
-    final roiColor  = r.roi >= 0 ? _green : const Color(0xFFEF5350);
+    final roiColor = r.roi >= 0 ? _green : const Color(0xFFEF5350);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -682,7 +761,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
         // En-tête résultat
         Row(children: [
           Text(
-            r.estRentable ? '✅ Stratégie rentable !' : '📊 Résultat de la simulation',
+            r.estRentable
+                ? '✅ Stratégie rentable !'
+                : '📊 Résultat de la simulation',
             style: TextStyle(
                 color: r.estRentable ? _green : Colors.white70,
                 fontWeight: FontWeight.bold,
@@ -714,7 +795,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           ProfileMetriqueCol(
               label: 'Gagnés', valeur: '${r.nbGagnes}', couleur: _green),
           ProfileMetriqueCol(
-              label: 'Taux', valeur: '${r.tauxReussite.round()}%',
+              label: 'Taux',
+              valeur: '${r.tauxReussite.round()}%',
               couleur: r.tauxReussite >= 30 ? _green : _gold),
           ProfileMetriqueCol(
               label: 'ROI',
@@ -747,7 +829,8 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             _badge('🔥 Série max gagnante : ${r.meilleureSerieGagnante}',
                 _green.withValues(alpha: 0.15), _green),
             const SizedBox(width: 8),
-            _badge('📉 Série max perdante : ${r.pireSeriesPerdantes}',
+            _badge(
+                '📉 Série max perdante : ${r.pireSeriesPerdantes}',
                 const Color(0xFFEF5350).withValues(alpha: 0.15),
                 const Color(0xFFEF5350)),
           ]),
@@ -775,7 +858,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           const SizedBox(height: 10),
           const Text('Par discipline',
               style: TextStyle(
-                  color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600)),
+                  color: Colors.white38,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           ...r.parDiscipline.entries.map((e) {
             // ★ BLOC 1 (périmètre financier) — `taux` est désormais NULLABLE :
@@ -786,23 +871,31 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
             final taux = e.value.taux;
             final color = taux == null
                 ? Colors.white38
-                : (taux >= 35 ? _green : taux >= 20 ? _gold : Colors.white38);
+                : (taux >= 35
+                    ? _green
+                    : taux >= 20
+                        ? _gold
+                        : Colors.white38);
             return Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(children: [
                 Expanded(
                     child: Text(e.key,
-                        style: const TextStyle(color: Colors.white54, fontSize: 12))),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12))),
                 Text('${e.value.nbGagnes}/${e.value.nbTotal}',
                     style: TextStyle(color: color, fontSize: 12)),
                 const SizedBox(width: 8),
                 Text(taux == null ? '—' : '${taux.round()}%',
                     style: TextStyle(
-                        color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
                 if (e.value.nbNonDetermines > 0) ...[
                   const SizedBox(width: 6),
                   Text('(${e.value.nbNonDetermines} indét.)',
-                      style: const TextStyle(color: Colors.white24, fontSize: 10)),
+                      style:
+                          const TextStyle(color: Colors.white24, fontSize: 10)),
                 ],
               ]),
             );
@@ -825,7 +918,9 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           const SizedBox(height: 12),
           Text(titre,
               style: const TextStyle(
-                  color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 14)),
+                  color: Colors.white54,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14)),
           const SizedBox(height: 6),
           Text(message,
               style: const TextStyle(color: Colors.white38, fontSize: 12),
@@ -834,25 +929,30 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
       );
 
   Widget _badge(String txt, Color bg, Color fg) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-        child: Text(txt, style: TextStyle(color: fg, fontSize: 11)));
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+      child: Text(txt, style: TextStyle(color: fg, fontSize: 11)));
 
   String _fmt(DateTime d) =>
-      '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}';
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 }
 
 // ── Métriques column ──────────────────────────────────────────────────────────
 class ProfileMetriqueCol extends StatelessWidget {
   final String label, valeur;
-  final Color  couleur;
-  const ProfileMetriqueCol({required this.label, required this.valeur, required this.couleur});
+  final Color couleur;
+  const ProfileMetriqueCol(
+      {required this.label, required this.valeur, required this.couleur});
   @override
   Widget build(BuildContext context) => Column(children: [
-    Text(valeur, style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 18)),
-    const SizedBox(height: 2),
-    Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11)),
-  ]);
+        Text(valeur,
+            style: TextStyle(
+                color: couleur, fontWeight: FontWeight.bold, fontSize: 18)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+      ]);
 }
 
 // ── CustomPainter : courbe de gains cumulés ───────────────────────────────────
@@ -863,29 +963,36 @@ class ProfileGainsCumulsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (points.length < 2) return;
-    final n   = points.length;
+    final n = points.length;
     final min = points.reduce(math.min);
     final max = points.reduce(math.max);
     final range = (max - min).abs();
 
     // Ligne zéro
     if (min < 0 && max > 0) {
-      final zeroY = size.height - ((0 - min) / (range == 0 ? 1 : range)) * size.height * 0.85 - size.height * 0.07;
+      final zeroY = size.height -
+          ((0 - min) / (range == 0 ? 1 : range)) * size.height * 0.85 -
+          size.height * 0.07;
       canvas.drawLine(
         Offset(0, zeroY),
         Offset(size.width, zeroY),
-        Paint()..color = Colors.white.withValues(alpha: 0.12)..strokeWidth = 1,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.12)
+          ..strokeWidth = 1,
       );
     }
 
     double _y(double v) {
       if (range == 0) return size.height / 2;
-      return size.height - ((v - min) / range) * size.height * 0.85 - size.height * 0.07;
+      return size.height -
+          ((v - min) / range) * size.height * 0.85 -
+          size.height * 0.07;
     }
 
     // Chemin dégradé sous la courbe
-    final lastVal  = points.last;
-    final lineColor = lastVal >= 0 ? const Color(0xFF4CAF7D) : const Color(0xFFEF5350);
+    final lastVal = points.last;
+    final lineColor =
+        lastVal >= 0 ? const Color(0xFF4CAF7D) : const Color(0xFFEF5350);
 
     final path = Path();
     path.moveTo(0, _y(points.first));
@@ -899,10 +1006,12 @@ class ProfileGainsCumulsPainter extends CustomPainter {
     fillPath.lineTo(size.width, size.height);
     fillPath.lineTo(0, size.height);
     fillPath.close();
-    canvas.drawPath(fillPath, Paint()..color = lineColor.withValues(alpha: 0.08));
+    canvas.drawPath(
+        fillPath, Paint()..color = lineColor.withValues(alpha: 0.08));
 
     // Ligne principale
-    canvas.drawPath(path,
+    canvas.drawPath(
+        path,
         Paint()
           ..color = lineColor
           ..strokeWidth = 2
@@ -913,12 +1022,9 @@ class ProfileGainsCumulsPainter extends CustomPainter {
     final lastY = _y(lastVal);
     canvas.drawCircle(Offset(lastX, lastY), 5,
         Paint()..color = lineColor.withValues(alpha: 0.3));
-    canvas.drawCircle(Offset(lastX, lastY), 3.5,
-        Paint()..color = lineColor);
+    canvas.drawCircle(Offset(lastX, lastY), 3.5, Paint()..color = lineColor);
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
-
