@@ -126,13 +126,26 @@ class RecommandationPari {
   final String conseil;
   final int nbNumeros;
 
+  /// ★ CORRECTION BLOC 1 (§5/§12) — ÉTAT DE LA COTE AYANT SERVI À DÉCIDER.
+  ///
+  ///   `false` : aucune cote exploitable n'a été fournie (`<= 0` ou `>= 99`).
+  ///   Aucun consommateur ne doit alors présenter un GAIN CHIFFRÉ : la cote est
+  ///   un « montant inconnu », ni estimée, ni simulée, ni officielle.
+  ///
+  ///   Ce champ ne change AUCUNE décision de type : il empêche seulement un
+  ///   affichage financier fondé sur une cote absente (BL1-A11).
+  final bool coteDisponible;
+
   const RecommandationPari({
     required this.typePari,
     required this.conseil,
     required this.nbNumeros,
+    this.coteDisponible = true,
   });
 
-  bool get estAbstention => typePari == 'À surveiller' || typePari.isEmpty;
+  bool get estAbstention {
+    return typePari == 'À surveiller' || typePari.isEmpty;
+  }
 
   @override
   String toString() => 'RecommandationPari($typePari, $nbNumeros numéros)';
@@ -147,7 +160,9 @@ int regleNbNumerosPourTypePari(String typePari) {
   if (typePari == 'Quarté+') return 4;
   if (typePari == 'Tiercé' ||
       typePari == 'Tiercé Ordre' ||
-      typePari == 'Tiercé Désordre') return 3;
+      typePari == 'Tiercé Désordre') {
+    return 3;
+  }
   if (typePari == 'Couplé Gagnant' || typePari == 'Couplé Placé') return 2;
   return 1;
 }
@@ -186,6 +201,44 @@ RecommandationPari cascadeRecommandation({
   required double? score4,
   required double coteTop,
 }) {
+  final double s2 = score2nd ?? 0.0;
+  final double s3 = score3 ?? 0.0;
+  final double s4 = score4 ?? 0.0;
+  final bool coteConnue = coteTop > 0.0 && coteTop < 99.0;
+
+  final RecommandationPari brut = _cascadeBrut(
+    course: course,
+    seuils: seuils,
+    scoreConf: scoreConf,
+    s2: s2,
+    s3: s3,
+    s4: s4,
+    coteTop: coteTop,
+    coteConnue: coteConnue,
+  );
+
+  // ★ CORRECTION BLOC 1 — la disponibilité de la cote accompagne TOUJOURS la
+  //   décision. Un consommateur qui afficherait « gain estimé = mise × cote »
+  //   sur une cote absente produit un montant fictif ; il peut désormais le
+  //   savoir sans re-tester la cote lui-même.
+  return RecommandationPari(
+    typePari: brut.typePari,
+    conseil: brut.conseil,
+    nbNumeros: brut.nbNumeros,
+    coteDisponible: coteConnue,
+  );
+}
+
+RecommandationPari _cascadeBrut({
+  required ZtCourse course,
+  required SeuilsConfianceAdaptatifs seuils,
+  required double scoreConf,
+  required double s2,
+  required double s3,
+  required double s4,
+  required double coteTop,
+  required bool coteConnue,
+}) {
   // ── Garde 1 : aucune donnée de classement → abstention explicite ──────────
   if (course.partants.isEmpty) {
     return const RecommandationPari(
@@ -194,11 +247,6 @@ RecommandationPari cascadeRecommandation({
       nbNumeros: 0,
     );
   }
-
-  final double s2 = score2nd ?? 0.0;
-  final double s3 = score3 ?? 0.0;
-  final double s4 = score4 ?? 0.0;
-  final bool coteConnue = coteTop > 0.0 && coteTop < 99.0;
 
   final double ecart12 = (scoreConf - s2).abs();
   final bool estEquilibre = ecart12 <= ParametresCascade.ecartEquilibreMax &&
@@ -335,7 +383,25 @@ RecommandationPari cascadeRecommandation({
         coteTop <= ParametresCascade.coteSimpleGagnantMax) {
       return _simpleGagnant(course, scoreConf);
     }
-    if (scoreConf >= seuils.seuilSimpleGagnant) {
+    // ★ CORRECTION BLOC 1 (§12) — COTE INCONNUE : PAS DE « GAGNANT+PLACÉ »
+    //   AUTOMATIQUE.
+    //
+    //   Le Gagnant+Placé est, dans cette cascade, le pari d'un score élevé
+    //   accompagné d'une COTE LONGUE (« cote longue ×12,5 », branche
+    //   ci-dessous). Sans cote connue, cette justification est fabriquée : on
+    //   recommanderait un pari à DEUX mises dont le rapport est inconnu, en
+    //   invoquant une cote qui n'existe pas.
+    //
+    //   Donc, quand la cote est absente, le score élevé conduit au pari
+    //   SCORE-SEULEMENT le moins engageant : Simple Placé (une seule mise,
+    //   aucune dépendance à la cote). Aucune valeur de seuil n'est changée ;
+    //   seule la branche dont la prémisse (cote longue) est indémontrable est
+    //   neutralisée. La cote déclarée indisponible interdit en outre tout
+    //   affichage de gain chiffré en aval (`coteDisponible == false`).
+    if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
+      return _simplePlace(course, scoreConf);
+    }
+    if (coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
       return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
     }
     if (scoreConf >= seuils.seuilSimplePlace) return _simplePlace(course, scoreConf);
@@ -361,11 +427,16 @@ RecommandationPari cascadeRecommandation({
       coteTop <= ParametresCascade.coteSimpleGagnantMax) {
     return _simpleGagnant(course, scoreConf);
   }
-  if (scoreConf >= seuils.seuilSimpleGagnant) {
+  // ★ Même règle que ci-dessus : cote absente ⇒ pas de Gagnant+Placé déduit
+  //   d'une « cote longue » indémontrable.
+  if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
+    return _simplePlace(course, scoreConf);
+  }
+  if (coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
     return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
   }
   if (scoreConf >= seuils.seuilSimplePlace) return _simplePlace(course, scoreConf);
-  if (scoreConf >= seuils.seuilGagnantPlace) {
+  if (coteConnue && scoreConf >= seuils.seuilGagnantPlace) {
     return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
   }
   if (scoreConf >= seuils.seuilTierce) {

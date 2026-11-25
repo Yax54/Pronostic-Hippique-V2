@@ -116,6 +116,34 @@ class IaPronosticEngine {
     final partantsE = EloService.instance.enrichirAvecElo(partants,
         discipline: course.type);
 
+    // ★ CORRECTION BLOC 1 (raccordement du critère R) — 3ᵉ DÉFAUT DE LA CHAÎNE R
+    //
+    //   DÉFAUT MESURÉ : cette fonction — qui est celle utilisée par les TROIS
+    //   producteurs de pronostics persistés (`data_refresh_service.dart:101`,
+    //   `:791`, `:1046`, `ia_memory_service.dart:6197`) — n'alimentait JAMAIS
+    //   `p.scoreMouvementCote`. Contrairement à `analyserCourse()`
+    //   (l.43-55), elle n'appelait ni `cleCourseMouvements()`, ni
+    //   `CoteTrackerService.scoreCritereR()`. Le champ conservait donc sa
+    //   valeur par défaut `50.0` (« neutre, hors fenêtre »,
+    //   `zt_models.dart:674`) et `ScoresCriteres.mouvCote` valait 50.0 dans
+    //   TOUS les scores persistés, y compris pendant la fenêtre des 30 min où
+    //   un mouvement réel était disponible.
+    //
+    //   C'est le second maillon de BL3-A22 : corriger l'ancre ne suffit pas si
+    //   le consommateur n'est jamais appelé. Ajout STRICTEMENT ÉQUIVALENT à
+    //   `analyserCourse()`, sans modifier la formule du critère ni son poids.
+    final courseKey = _buildCourseKey(course);
+    final dansFenetre = CoteTrackerService.instance.estDansFenetre(course);
+    for (final p in partantsE) {
+      if (dansFenetre) {
+        final score = CoteTrackerService.instance
+            .scoreCritereR(courseKey, p.numero);
+        p.scoreMouvementCote = score ?? 50.0;
+      } else {
+        p.scoreMouvementCote = 50.0; // hors fenêtre = neutre
+      }
+    }
+
     final scores  = <String, double>{};
     final criteres = <String, ScoresCriteres>{};
 

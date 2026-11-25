@@ -32,6 +32,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/cote_tracker_service.dart';
 import 'package:pronostic_hippique/services/ia_pronostic_engine.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart'
+    show ScoresCriteres;
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
 
 // ─── Course de référence : R3 / C5, exactement le cas de l'anomalie ────────
@@ -90,7 +92,7 @@ Map<String, dynamic> _programmeJson(DateTime depart) => <String, dynamic>{
       },
     };
 
-Map<String, dynamic> _participantsJson(double cote) => <String, dynamic>{
+Map<String, dynamic> _participantsJsonZoneTurf(double cote) => <String, dynamic>{
       'participants': <Map<String, dynamic>>[
         <String, dynamic>{
           'numPmu': int.parse(kNumeroCheval),
@@ -102,22 +104,71 @@ Map<String, dynamic> _participantsJson(double cote) => <String, dynamic>{
       ],
     };
 
+/// Forme attendue par `CoteTrackerService._fetchEtStockerCotes`
+/// (`cote_tracker_service.dart:436-450`) : `rapports[]` avec un `typePari`
+/// contenant `SIMPLE_GAGNANT`.
+Map<String, dynamic> _participantsJsonWriter(double cote) => <String, dynamic>{
+      'participants': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'numPmu': int.parse(kNumeroCheval),
+          'nom': kNomCheval,
+          'rapports': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'typePari': 'E_SIMPLE_GAGNANT',
+              'rapport': cote,
+            },
+          ],
+        },
+      ],
+    };
+
 int _snapshots = 0;
 final List<Uri> _urls = <Uri>[];
 
-/// Un seul client couvre les deux endpoints réellement appelés par le
-/// producteur (`/programme/{d}` puis `/programme/{d}/R{n}/C{n}/participants`).
-http.Client _client(DateTime depart) => MockClient((http.Request req) async {
+/// Client du PRODUCTEUR (`ZoneTurfService`).
+///
+/// Il répond à DEUX endpoints, distingués sans ambiguïté par le NOMBRE de
+/// segments qui suivent « programme » :
+///   • `/…/programme/{date}`                         → le programme ;
+///   • `/…/programme/{date}/R{n}/C{n}/participants`  → les partants.
+///
+/// ⚠️ Un test sur `path.contains('R3')` serait FAUX en principe : il ne
+/// distingue pas structurellement les deux endpoints. On compte les segments.
+http.Client _clientProducteur(DateTime depart) =>
+    MockClient((http.Request req) async {
       _urls.add(req.url);
-      final String chemin = req.url.path;
-      if (!chemin.contains('R$kNumR')) {
+      final int i = req.url.pathSegments.indexOf('programme');
+      final List<String> apres =
+          i >= 0 ? req.url.pathSegments.sublist(i + 1) : const <String>[];
+      if (apres.length <= 1) {
         return http.Response(json.encode(_programmeJson(depart)), 200,
             headers: <String, String>{'content-type': 'application/json'});
       }
-      // Endpoint participants : cote d'ouverture puis cote courante.
+      return http.Response(json.encode(_participantsJsonZoneTurf(kCoteDebut)),
+          200,
+          headers: <String, String>{'content-type': 'application/json'});
+    });
+
+/// Client du WRITER (`CoteTrackerService._fetchEtStockerCotes`).
+///
+/// ⚠️ CAUSE RÉELLE DU ROUGE PRÉCÉDENT : ce writer ne lit PAS
+/// `item['dernierRapportDirect']` (forme du producteur) mais
+/// `item['rapports'][…]['rapport']` (`cote_tracker_service.dart:436-450`).
+/// Le client unique d'origine ne renvoyait que la forme « producteur » : le
+/// writer ne trouvait aucune cote, faisait `continue`, et n'écrivait donc
+/// RIEN. Le défaut était dans le HARNAIS, pas dans la production.
+///
+/// Les deux clients sont désormais DISTINCTS parce que les deux producteurs
+/// interrogent l'API avec des attentes de forme différentes. Aucune ancre,
+/// aucune cote de mouvement n'est fabriquée : seule la réponse HTTP simulée
+/// diffère, comme le font réellement les deux endpoints PMU.
+http.Client _clientWriter(List<Uri> urlsWriter) =>
+    MockClient((http.Request req) async {
+      urlsWriter.add(req.url);
       _snapshots++;
       return http.Response(
-          json.encode(_participantsJson(_snapshots <= 1 ? kCoteDebut : kCoteFin)),
+          json.encode(_participantsJsonWriter(
+              _snapshots <= 1 ? kCoteDebut : kCoteFin)),
           200,
           headers: <String, String>{'content-type': 'application/json'});
     });
@@ -142,7 +193,7 @@ void main() {
         forceRefresh: true,
         date: depart,
       );
-    }, () => _client(depart));
+    }, () => _clientProducteur(depart));
 
     // TÉMOIN — le producteur a réellement produite une course.
     expect(reunions, isNotEmpty,
@@ -191,7 +242,7 @@ void main() {
         forceRefresh: true,
         date: depart,
       );
-    }, () => _client(depart));
+    }, () => _clientProducteur(depart));
 
     final ZtCourse course = reunions.first.courses.first;
 
@@ -230,25 +281,37 @@ void main() {
     final DateTime depart = DateTime.now().add(const Duration(minutes: 10));
     final String dateStr = _ddmmyyyy(depart);
 
+    // ── PHASE 1 : le producteur réel construit les réunions ───────────────
+    //
+    //  Le client de CETTE phase est DISTINCT de celui du writer (phase 2).
+    //  Motif : les deux producteurs n'appellent pas le même endpoint de la même
+    //  façon et il ne faut pas qu'une réponse de l'un satisfasse la requête de
+    //  l'autre. `ZoneTurfService.chargerProgramme()` appelle
+    //  `/programme/{date}` puis `/programme/{date}/R{n}/C{n}/participants`,
+    //  tandis que `CoteTrackerService` appelle `/programme/{date}/R{n}/C{n}/participants`
+    //  par l'URL `_baseUrl` de `cote_tracker_service.dart:109`.
     List<ZtReunion> reunions = const <ZtReunion>[];
     await http.runWithClient(() async {
       reunions = await ZoneTurfService.chargerProgramme(
         forceRefresh: true,
         date: depart,
       );
-    }, () => _client(depart));
+    }, () => _clientProducteur(depart));
 
+    expect(reunions, isNotEmpty,
+        reason: 'TÉMOIN : le producteur doit produire au moins une réunion');
     final ZtCourse course = reunions.first.courses.first;
     final ZtReunion reunion = reunions.first;
 
-    // ── Le writer de PRODUCTION écrit les mouvements (2 snapshots) ────────
+    // ── PHASE 2 : le writer de PRODUCTION écrit les mouvements ────────────
     _snapshots = 0;
+    final List<Uri> urlsWriter = <Uri>[];
     await http.runWithClient(() async {
       CoteTrackerService.instance.demarrer(<ZtReunion>[reunion]);
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+      await Future<void>.delayed(const Duration(milliseconds: 60));
       CoteTrackerService.instance.demarrer(<ZtReunion>[reunion]);
-      await Future<void>.delayed(const Duration(milliseconds: 40));
-    }, () => _client(depart));
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }, () => _clientWriter(urlsWriter));
     CoteTrackerService.instance.arreter();
 
     // TÉMOIN — deux snapshots réels ont été obtenus.
@@ -344,5 +407,79 @@ void main() {
         reason: 'Deux courses R3C5 à deux dates différentes ne doivent JAMAIS '
             'partager la même clé de mouvements de cotes (fuite de données '
             'entre deux courses).');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  B1-A22-5 — LE CONSOMMATEUR QUI PERSISTE LES PRONOSTICS ALIMENTE AUSSI R
+  //
+  //  DÉFAUT MESURÉ : `analyserCourseAvecCriteres()` — utilisée par
+  //  `data_refresh_service.dart:101/:791/:1046` et
+  //  `ia_memory_service.dart:6197`, donc par la PRODUCTION des pronostics
+  //  persistés — n'alimentait jamais `scoreMouvementCote`. Seule
+  //  `analyserCourse()` le faisait. Le critère R restait donc à 50.0 dans
+  //  tous les scores enregistrés, même quand un mouvement réel existait.
+  // ─────────────────────────────────────────────────────────────────────────
+  test('B1-A22-5 — analyserCourseAvecCriteres() alimente le critère R', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await CoteTrackerService.instance.viderCachePourResetComplet();
+
+    final DateTime depart = DateTime.now().add(const Duration(minutes: 10));
+    final String dateStr = _ddmmyyyy(depart);
+
+    List<ZtReunion> reunions = const <ZtReunion>[];
+    await http.runWithClient(() async {
+      reunions = await ZoneTurfService.chargerProgramme(
+        forceRefresh: true,
+        date: depart,
+      );
+    }, () => _clientProducteur(depart));
+
+    final ZtCourse course = reunions.first.courses.first;
+    final ZtReunion reunion = reunions.first;
+
+    // Le writer de production écrit le mouvement réel.
+    _snapshots = 0;
+    final List<Uri> urlsWriter = <Uri>[];
+    await http.runWithClient(() async {
+      CoteTrackerService.instance.demarrer(<ZtReunion>[reunion]);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      CoteTrackerService.instance.demarrer(<ZtReunion>[reunion]);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }, () => _clientWriter(urlsWriter));
+    CoteTrackerService.instance.arreter();
+
+    expect(dateStr, isNotEmpty);
+
+    // ── CONSOMMATEUR DE PRODUCTION : la fonction qui produit les pronostics
+    final (List<ZtPartant> classes, Map<String, ScoresCriteres> criteres) =
+        IaPronosticEngine.analyserCourseAvecCriteres(course);
+
+    final ZtPartant? p = classes
+        .where((e) => e.numero == kNumeroCheval)
+        .cast<ZtPartant?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final ScoresCriteres? sc = criteres[kNumeroCheval];
+
+    // ignore: avoid_print
+    print('─── MESURE B1-A22-5 (consommateur qui persiste) ────────────');
+    // ignore: avoid_print
+    print('  scoreMouvementCote du partant rendu = ${p?.scoreMouvementCote}');
+    // ignore: avoid_print
+    print('  ScoresCriteres.mouvCote            = ${sc?.mouvCote}');
+    // ignore: avoid_print
+    print('  ATTENDU : 75.0 (mouvement −20 % réel, dans la fenêtre)');
+    // ignore: avoid_print
+    print('─────────────────────────────────────────────────────────────');
+
+    expect(p, isNotNull, reason: 'TÉMOIN : le partant doit être classé');
+    expect(p!.scoreMouvementCote, kScoreAttendu,
+        reason: 'Le partant rendu doit porter le score du mouvement réel, '
+            'sinon `copyWith` le neutralise à 50.0 dans les pronostics '
+            'persistés.');
+    expect(sc, isNotNull, reason: 'TÉMOIN : les critères doivent être rendus');
+    expect(sc!.mouvCote, kScoreAttendu,
+        reason: 'BL3-A22 (2ᵉ maillon) : `ScoresCriteres.mouvCote` doit valoir '
+            'le score réel. Avant correction, cette fonction ne lisait jamais '
+            '`CoteTrackerService` et la valeur était toujours 50.0.');
   });
 }

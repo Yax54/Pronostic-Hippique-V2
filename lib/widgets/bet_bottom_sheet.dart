@@ -22,6 +22,8 @@ import '../services/gain_mise_calculator.dart'; // ★ SOUS-LOT B : mises et gai
 import '../services/data_refresh_service.dart'; // ★ Lot 4 : fix écran gris
 import '../services/ia_memory_service.dart';
 import '../services/ia_pronostic_engine.dart';
+import '../services/recommandation_pari_service.dart'
+    show cascadeRecommandation; // ★ BLOC 1 : source unique du type de pari
 // ★ ÉTAPE 4-F (2/5) : référentiel canonique en LECTURE SEULE, uniquement pour
 //   traduire un libellé de pari en code API PMU. Ce fichier n'a aucun import :
 //   il est pur, et l'importer n'introduit aucun effet de bord.
@@ -504,212 +506,204 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
   }
 
   // ── Recommandation IA du type de pari ───────────────────────────────────────
-  // Retourne : {index, label, emoji, raison, couleur, risque}
+  //
+  // ★ CORRECTION BLOC 1 — BL3-A26 (site n° 7, LE SEUL QUI ÉCRIT UNE VALEUR
+  //   D'APPRENTISSAGE) et BL1-A02 / A08 / A14.
+  //
+  //   DÉFAUT MESURÉ : cette cascade était la 7ᵉ implémentation de « quel pari
+  //   conseiller », avec des littéraux INTERNES (80 / 75 / 65 / 50 / 35 / 15)
+  //   qui n'accédaient JAMAIS aux seuils appris. Or c'est elle qui alimente
+  //   `typePariConseille` transmis à `IaMemoryService.enregistrerPronostic()`
+  //   (plus bas dans ce fichier) : la boucle d'apprentissage des seuils
+  //   recevait donc, sur le chemin utilisateur, une valeur produite par un
+  //   barème qui n'utilise pas ces seuils. C'était le cœur de BL3-A26.
+  //
+  //   APRÈS : la DÉCISION vient de `cascadeRecommandation()` — la même source
+  //   que Conseils, Best Bet, Widget, Alertes, l'isolate de rafraîchissement et
+  //   la recréation de pronostics. Ce qui reste LOCAL est uniquement la
+  //   PRÉSENTATION (indice d'onglet, emoji, libellé de risque, phrase
+  //   explicative, probabilité et gain affichés) : ce sont des éléments d'UI
+  //   qui n'ont aucune valeur d'apprentissage.
+  //
+  //   Aucune valeur numérique de seuil n'a été changée. Les libellés produits
+  //   sont identiques (comparés par égalité de chaîne par la persistance).
   Map<String, dynamic> get _conseilIA {
     try {
-    final score  = _chevalSelectionne?.scoreIA ?? 0.0;
-    final coteG  = _coteGagnant;
-    final nb     = _nbPartants;
-    final isQ    = widget.course.isQuinte;
-    // ★ v9.93 : Grande course classique → pas de Quarté/Quinté
-    final isClassique = widget.course.isClassiqueSansMultiple;
-
-    // ── Indice de compétitivité : écart entre les 2 premiers chevaux IA ────
-    final top2 = widget.course.partantsParRangIA.take(2).toList();
-    final score2 = top2.length >= 2 ? top2[1].scoreIA : 0.0;
-    final ecartTop2 = (score - score2).abs();
-    // Si les 2 premiers sont très proches (≤15 pts) et scores ≥60 → Couplé
-    final estCourseEquilibree = !isQ && !isClassique && ecartTop2 <= 15 && score >= 60 && score2 >= 50;
-
-    // ── ★ v9.93 : Grande course classique — Quarté/Quinté impossibles ──────
-    if (isClassique) {
-      final top3 = widget.course.partantsParRangIA.take(3).toList();
-      final s3 = top3.length >= 3 ? top3[2].scoreIA : 0.0;
-      if (score >= 75 && score2 >= 55 && s3 >= 45) {
-        return {
-          'index': 5, 'emoji': '📋', 'label': 'Tiercé',
-          'risque': 'Risque modéré',
-          'risqueColor': const Color(0xFFAB47BC),
-          'raison': 'Grande course classique (Groupe 1/2) — seuls Simple, Couplé et Tiercé sont disponibles sur PMU. '
-              'L\'IA conseille le Tiercé avec N°${top3.isNotEmpty ? top3[0].numero : "?"}, '
-              '${top3.length > 1 ? "N°${top3[1].numero}" : ""}, '
-              '${top3.length > 2 ? "N°${top3[2].numero}" : ""}.',
-          'probabilite': GainCalculator.tierce(_mise, _getCotes3(), nb).probabiliteEstimee,
-          'gainEstime': GainCalculator.tierce(_mise, _getCotes3(), nb).gainNet,
-        };
+      final sorted = widget.course.partantsParRangIA;
+      if (sorted.isEmpty) {
+        return _conseilIndisponible('Aucun partant classé par l\'IA.');
       }
-      if (score >= 80 && coteG <= 8.0) {
-        return {
-          'index': 0, 'emoji': '🏆', 'label': 'Simple Gagnant',
-          'risque': 'Risque modéré',
-          'risqueColor': const Color(0xFF4CAF7D),
-          'raison': 'Grande course classique — favori IA dominant (${score.round()}/100). '
-              'Simple Gagnant recommandé (Quarté/Quinté non disponibles sur cette course).',
-          'probabilite': _coteToProbaPct(coteG),
-          'gainEstime': _mise * coteG - _mise,
-        };
+
+      final reco = cascadeRecommandation(
+        course: widget.course,
+        seuils: IaMemoryService.instance.seuilsConfiance,
+        scoreConf: sorted.first.scoreIA,
+        score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+        score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+        score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+        coteTop: sorted.first.coteDecimale,
+      );
+
+      final String label = reco.typePari;
+      final int index = _typesPari.indexOf(label);
+
+      // Libellé de cascade qui n'a pas d'onglet jouable dans cette feuille
+      // (abstention) : on n'invente pas de pari, on le dit.
+      if (index < 0) {
+        return _conseilIndisponible(reco.conseil);
       }
-      return {
-        'index': 1, 'emoji': '🎯', 'label': 'Simple Placé',
-        'risque': 'Risque faible',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison': 'Grande course classique — Paris Classiques uniquement (pas de Quarté/Quinté). '
-            'Simple Placé pour limiter le risque sur cette course de prestige.',
-        'probabilite': (_coteToProbaPct(coteG) * 2.5).clamp(5, 85),
-        'gainEstime': _mise * _cotePlacee - _mise,
+
+      final score  = sorted.first.scoreIA;
+      final coteG  = _coteGagnant;
+      final double? gainNet;
+      if (!reco.coteDisponible) {
+        // ★ BL1-A11 : sans cote, AUCUN gain chiffré — ni estimé, ni simulé.
+        gainNet = null;
+      } else {
+        gainNet = _gainEstimePour(label);
+      }
+
+      return <String, dynamic>{
+        'index': index,
+        'emoji': _emojiPourType(label),
+        'label': label,
+        'risque': _risquePourType(label),
+        'risqueColor': _couleurRisquePourType(label),
+        'raison': reco.conseil,
+        'probabilite': reco.coteDisponible
+            ? _probabilitePourType(label, coteG, score)
+            : null,
+        'gainEstime': gainNet,
+        // ★ Champs de traçabilité : la feuille peut distinguer explicitement
+        //   « montant inconnu » d'un montant nul.
+        'coteDisponible': reco.coteDisponible,
+        'scoreTop': score,
       };
-    }
-
-    // ── Règles de décision ──────────────────────────────────────────────────
-
-    // Cas Couplé : 2 chevaux IA très proches en score → Couplé Gagnant
-    if (estCourseEquilibree && score >= 75) {
-      // index 3 = 'Couplé Gagnant' dans la nouvelle liste
-      return {
-        'index': 3, // Couplé Gagnant
-        'emoji': '💑',
-        'label': 'Couplé Gagnant',
-        'risque': 'Risque modéré',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison':
-            'Les 2 favoris IA sont très proches (${score.round()} vs ${score2.round()}/100). '
-            'Le Couplé Gagnant couvre les 2 issues : '
-            '${top2.isNotEmpty ? "N°${top2[0].numero} ${top2[0].nom}" : "favori 1"} '
-            'et ${top2.length > 1 ? "N°${top2[1].numero} ${top2[1].nom}" : "favori 2"} '
-            'dans le top 2 (ordre indifférent).',
-        'probabilite': (_coteToProbaPct(coteG) * 1.8).clamp(5.0, 80.0),
-        'gainEstime': _mise * _getCoupleGagnantEstime() - _mise,
-      };
-    }
-
-    // Couplé Placé : scores bons mais moins dominants
-    if (estCourseEquilibree && score >= 60 && score < 75) {
-      return {
-        'index': 4, // Couplé Placé
-        'emoji': '💑🎯',
-        'label': 'Couplé Placé',
-        'risque': 'Risque faible',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison':
-            'Deux chevaux à niveau similaire (${score.round()} vs ${score2.round()}/100). '
-            'Le Couplé Placé est l\'option la plus sécurisée : '
-            '${top2.isNotEmpty ? "N°${top2[0].numero}" : "N°1"} et '
-            '${top2.length > 1 ? "N°${top2[1].numero}" : "N°2"} '
-            'doivent tous les deux finir dans le top 3.',
-        'probabilite': (_coteToProbaPct(coteG) * 2.2).clamp(5.0, 85.0),
-        'gainEstime': _mise * _getCouplePlaceEstime() - _mise,
-      };
-    }
-
-    // Score très élevé (≥80) + cote raisonnable (≤8) → Simple Gagnant
-    if (!isQ && score >= 80 && coteG <= 8.0) {
-      return {
-        'index': 0, // Simple Gagnant
-        'emoji': '🏆',
-        'label': 'Simple Gagnant',
-        'risque': 'Risque modéré',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison':
-            'Score IA très élevé (${score.round()}/100) — forte confiance '
-            'sur ce cheval. La cote ×${coteG.toStringAsFixed(1)} offre un '
-            'bon rapport gain/risque. Mise recommandée : $_miseAffichee.',
-        'probabilite': _coteToProbaPct(coteG),
-        'gainEstime': _mise * coteG - _mise,
-      };
-    }
-
-    // Score élevé (≥80) + cote élevée (>8) → Gagnant+Placé pour sécuriser
-    if (!isQ && score >= 80 && coteG > 8.0) {
-      return {
-        'index': 2, // Gagnant+Placé
-        'emoji': '🎯🏆',
-        'label': 'Gagnant + Placé',
-        'risque': 'Risque couvert',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison':
-            'Score IA élevé (${score.round()}/100) mais cote longue '
-            '×${coteG.toStringAsFixed(1)}. Le Gagnant+Placé vous garantit '
-            'un retour si votre cheval finit dans le top 3 (mise ×2 = '
-            '${(_mise * 2).toStringAsFixed(0)} €).',
-        'probabilite': (_coteToProbaPct(coteG) * 2.8).clamp(5, 85),
-        'gainEstime': _mise * _cotePlacee - _mise * 2,
-      };
-    }
-
-    // Score bon (65-79) → Placé pour limiter le risque
-    if (!isQ && score >= 65 && score < 80) {
-      return {
-        'index': 1, // Simple Placé
-        'emoji': '🎯',
-        'label': 'Simple Placé',
-        'risque': 'Risque faible',
-        'risqueColor': const Color(0xFF4CAF7D),
-        'raison':
-            'Score IA correct (${score.round()}/100) — confiance suffisante '
-            'pour un top 3. Le Placé (cote ×${_cotePlacee.toStringAsFixed(2)}) '
-            'réduit le risque tout en offrant un gain intéressant. '
-            'Idéal si le cheval a tendance à finir 2e ou 3e.',
-        'probabilite': (_coteToProbaPct(coteG) * 2.5).clamp(5, 85),
-        'gainEstime': _mise * _cotePlacee - _mise,
-      };
-    }
-
-    // Score moyen (50-64) → Gagnant+Placé pour couvrir les 2 cas
-    if (!isQ && score >= 50 && score < 65) {
-      return {
-        'index': 2, // Gagnant+Placé
-        'emoji': '🎯🏆',
-        'label': 'Gagnant + Placé',
-        'risque': 'Risque modéré',
-        'risqueColor': const Color(0xFFFFB74D),
-        'raison':
-            'Score IA moyen (${score.round()}/100) — résultat incertain. '
-            'Le Gagnant+Placé vous couvre : si 1er vous touchez le max, '
-            'si 2e/3e vous récupérez une partie. Mise ×2 = '
-            '${(_mise * 2).toStringAsFixed(0)} €.',
-        'probabilite': (_coteToProbaPct(coteG) * 2.0).clamp(5, 70),
-        'gainEstime': _mise * _cotePlacee - _mise * 2,
-      };
-    }
-
-    // Score faible (<50) + course Quinté → Quinté+
-    if (isQ || (score < 50 && nb >= 10)) {
-      return {
-        'index': 7, // Quinté+
-        'emoji': '🌟',
-        'label': 'Quinté+',
-        'risque': 'Risque élevé / Gros gains',
-        'risqueColor': const Color(0xFFEF5350),
-        'raison':
-            isQ
-            ? 'Course Quinté+ officielle — c\'est le pari phare de la journée. '
-              'L\'IA a sélectionné les 5 meilleurs chevaux pour maximiser vos '
-              'chances. Dividende fixé par PMU après la course.'
-            : 'Score IA faible (${score.round()}/100) — cheval incertain en '
-              'Simple. Le Quinté+ avec la sélection IA complète (5 chevaux) '
-              'offre des gains bien supérieurs pour une mise identique.',
-        'probabilite': (GainCalculator.quinte(_mise, _getCotes5(), nb).probabiliteEstimee),
-        'gainEstime': GainCalculator.quinte(_mise, _getCotes5(), nb).gainNet,
-      };
-    }
-
-    // Score très faible (<35) → Tiercé comme compromis
-    return {
-      'index': 5, // Tiercé
-      'emoji': '📋',
-      'label': 'Tiercé',
-      'risque': 'Risque élevé',
-      'risqueColor': const Color(0xFFEF5350),
-      'raison':
-          'Score IA faible (${score.round()}/100). En Simple, le risque '
-          'est trop élevé. Le Tiercé avec la sélection IA des 3 meilleurs '
-          'chevaux offre un meilleur rapport gain/probabilité.',
-      'probabilite': GainCalculator.tierce(_mise, _getCotes3(), nb).probabiliteEstimee,
-      'gainEstime': GainCalculator.tierce(_mise, _getCotes3(), nb).gainNet,
-    };
     } catch (e) {
-      debugPrint('[BetSheet] _conseilIA erreur : \$e');
-      return {'index':0,'emoji':'📊','label':'Simple Gagnant','risque':'Modéré','risqueColor':const Color(0xFF78909C),'raison':'Données insuffisantes.','probabilite':20.0,'gainEstime':_mise*2.5-_mise};
+      debugPrint('[BetSheet] _conseilIA erreur : $e');
+      return _conseilIndisponible('Données insuffisantes.');
+    }
+  }
+
+  /// Abstention / indisponibilité : aucun pari n'est inventé.
+  ///
+  /// `index: -1` est volontaire : l'appelant ne doit PAS présélectionner un
+  /// onglet de pari que la cascade n'a pas recommandé. Les montants sont
+  /// explicitement `null` (inconnus), jamais `0` ni un chiffre de repli.
+  Map<String, dynamic> _conseilIndisponible(String raison) => <String, dynamic>{
+        'index': -1,
+        'emoji': '⏸️',
+        'label': 'À surveiller',
+        'risque': 'Aucune recommandation',
+        'risqueColor': const Color(0xFF78909C),
+        'raison': raison,
+        'probabilite': null,
+        'gainEstime': null,
+        'coteDisponible': false,
+        'scoreTop': 0.0,
+      };
+
+  String _emojiPourType(String t) {
+    switch (t) {
+      case 'Simple Gagnant':  return '🏆';
+      case 'Simple Placé':    return '🎯';
+      case 'Gagnant+Placé':   return '🎯🏆';
+      case 'Couplé Gagnant':  return '💑';
+      case 'Couplé Placé':    return '💑🎯';
+      case 'Tiercé':          return '📋';
+      case 'Quarté+':         return '🟦';
+      case 'Quinté+':         return '🌟';
+      default:                return '📊';
+    }
+  }
+
+  String _risquePourType(String t) {
+    switch (t) {
+      case 'Simple Gagnant':  return 'Risque modéré';
+      case 'Simple Placé':    return 'Risque faible';
+      case 'Gagnant+Placé':   return 'Risque couvert';
+      case 'Couplé Gagnant':  return 'Risque modéré';
+      case 'Couplé Placé':    return 'Risque faible';
+      case 'Tiercé':          return 'Risque élevé';
+      case 'Quarté+':         return 'Risque très élevé';
+      case 'Quinté+':         return 'Risque élevé / Gros gains';
+      default:                return 'Indéterminé';
+    }
+  }
+
+  Color _couleurRisquePourType(String t) {
+    switch (t) {
+      case 'Simple Placé':
+      case 'Couplé Placé':
+      case 'Gagnant+Placé':
+        return const Color(0xFF4CAF7D);
+      case 'Simple Gagnant':
+      case 'Couplé Gagnant':
+      case 'Tiercé':
+        return const Color(0xFFFFB74D);
+      case 'Quarté+':
+      case 'Quinté+':
+        return const Color(0xFFEF5350);
+      default:
+        return const Color(0xFF78909C);
+    }
+  }
+
+  /// Gain net affiché pour un type DONNÉ, quand la cote est disponible.
+  ///
+  /// ⚠️ Simple Gagnant / Simple Placé / Gagnant+Placé utilisent la COTE RÉELLE.
+  ///    Couplé / Tiercé / Quarté+ / Quinté+ n'ont pas de rapport connu AVANT la
+  ///    course et ne doivent pas être calculés par `mise × cote` (BL1-A11).
+  ///    Pour eux on délègue à `GainCalculator`, chaîne PMU existante, qui rend
+  ///    un gain NET THÉORIQUE explicitement étiqueté comme tel par son
+  ///    `probabiliteEstimee` (voir `_probabilitePourType`).
+  double? _gainEstimePour(String type) {
+    switch (type) {
+      case 'Simple Gagnant':
+        return _mise * _coteGagnant - _mise;
+      case 'Simple Placé':
+        return _mise * _cotePlacee - _mise;
+      case 'Gagnant+Placé':
+        return _mise * _coteGagnant + _mise * _cotePlacee - _mise * 2;
+      case 'Couplé Gagnant':
+        return _mise * _getCoupleGagnantEstime() - _mise;
+      case 'Couplé Placé':
+        return _mise * _getCouplePlaceEstime() - _mise;
+      // ★ BL1-A11 — PAS de `mise × cote` pour les paris combinés officiels :
+      //   leur rapport est un DIVIDENDE publié après la course, jamais une cote
+      //   de marché. On ne rend donc AUCUN montant, seulement la probabilité
+      //   théorique du calculateur PMU existant.
+      case 'Tiercé':
+      case 'Quarté+':
+      case 'Quinté+':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  double? _probabilitePourType(String type, double coteG, double score) {
+    switch (type) {
+      case 'Simple Gagnant':
+        return _coteToProbaPct(coteG);
+      case 'Simple Placé':
+      case 'Couplé Placé':
+        return (_coteToProbaPct(coteG) * 2.5).clamp(5, 85);
+      case 'Gagnant+Placé':
+        return (_coteToProbaPct(coteG) * 2.8).clamp(5, 85);
+      case 'Couplé Gagnant':
+        return (_coteToProbaPct(coteG) * 1.8).clamp(5.0, 80.0);
+      case 'Tiercé':
+        return GainCalculator.tierce(_mise, _getCotes3(), _nbPartants)
+            .probabiliteEstimee;
+      case 'Quarté+':
+        return GainCalculator.quarte(_mise, _getCotes4(), _nbPartants)
+            .probabiliteEstimee;
+      case 'Quinté+':
+        return GainCalculator.quinte(_mise, _getCotes5(), _nbPartants)
+            .probabiliteEstimee;
+      default:
+        return null;
     }
   }
 
@@ -1186,18 +1180,35 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
     final raison       = conseil['raison']       as String;
     final risque       = conseil['risque']       as String;
     final risqueColor  = conseil['risqueColor']  as Color;
-    final probabilite  = (conseil['probabilite']  as num).toDouble();
-    final gainEstime   = (conseil['gainEstime']   as num).toDouble();
     final indexConseil = conseil['index']        as int;
 
-    final isDejaApplique = _typePariIndex == indexConseil;
+    // ★ CORRECTION BLOC 1 (§12 / BL1-A11) — PLUS AUCUN MONTANT FABRIQUÉ.
+    //
+    //   AVANT : `(conseil['probabilite'] as num)` et `(conseil['gainEstime'] as num)`
+    //   levaient une exception dès que la valeur était `null` (cote absente),
+    //   et le `catch` du getter renvoyait alors un repli « Simple Gagnant »
+    //   avec `_mise*2.5-_mise`. Trois défauts en un : un pari FAUX recommandé,
+    //   un montant INVENTÉ, et l'utilisateur incapable de distinguer
+    //   « inconnu » de « zéro ».
+    //
+    //   APRÈS : `null` est une information de premier ordre.
+    //     • probabilité `null`  → « probabilité inconnue » (pas de badge chiffré) ;
+    //     • gain `null`         → « montant indéterminé » (aucun chiffre) ;
+    //     • `index == -1`       → abstention : aucun bouton « Appliquer ».
+    final double? probabilite = (conseil['probabilite'] as num?)?.toDouble();
+    final double? gainEstime  = (conseil['gainEstime']  as num?)?.toDouble();
+    final bool coteDisponible = conseil['coteDisponible'] as bool? ?? false;
+
+    final isDejaApplique = indexConseil >= 0 && _typePariIndex == indexConseil;
 
     // Couleur de probabilité
-    final probaColor = probabilite >= 40
-        ? const Color(0xFF4CAF7D)
-        : probabilite >= 20
-            ? const Color(0xFFFFB74D)
-            : const Color(0xFFEF5350);
+    final probaColor = probabilite == null
+        ? const Color(0xFF78909C)
+        : probabilite >= 40
+            ? const Color(0xFF4CAF7D)
+            : probabilite >= 20
+                ? const Color(0xFFFFB74D)
+                : const Color(0xFFEF5350);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1266,7 +1277,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                           color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 4),
                   Row(children: [
-                    // Badge probabilité
+                    // Badge probabilité — « inconnue » plutôt qu'un chiffre faux.
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
@@ -1274,18 +1285,26 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        '~${probabilite.toStringAsFixed(0)}% de réussite',
+                        probabilite == null
+                            ? 'probabilité inconnue'
+                            : '~${probabilite.toStringAsFixed(0)}% de réussite',
                         style: TextStyle(color: probaColor, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // Gain estimé
+                    // Gain estimé — « indéterminé » plutôt qu'un montant inventé.
                     Text(
-                      gainEstime > 0
-                          ? '+${fmtEuros(gainEstime)} € estimé'
-                          : '${fmtEuros(gainEstime)} € estimé',
+                      gainEstime == null
+                          ? (coteDisponible
+                              ? 'montant indéterminé'
+                              : 'montant indéterminé (cote absente)')
+                          : (gainEstime > 0
+                              ? '+${fmtEuros(gainEstime)} € estimé'
+                              : '${fmtEuros(gainEstime)} € estimé'),
                       style: TextStyle(
-                        color: gainEstime > 0 ? _gold : const Color(0xFFEF5350),
+                        color: gainEstime == null
+                            ? const Color(0xFF78909C)
+                            : (gainEstime > 0 ? _gold : const Color(0xFFEF5350)),
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1312,6 +1331,28 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           const SizedBox(height: 10),
 
           // ── Bouton "Appliquer ce conseil"
+          //
+          // ★ BLOC 1 : en ABSTENTION (`indexConseil == -1`), aucun bouton
+          //   n'est proposé — appliquer « À surveiller » n'a aucun sens.
+          if (indexConseil < 0)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: const Color(0xFF78909C).withValues(alpha: 0.4)),
+              ),
+              child: const Text(
+                'Aucun pari conseillé sur cette course',
+                style: TextStyle(
+                    color: Color(0xFFB0BEC5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600),
+              ),
+            )
+          else
           SizedBox(
             width: double.infinity,
             child: isDejaApplique
