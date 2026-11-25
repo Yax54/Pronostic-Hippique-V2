@@ -129,6 +129,7 @@ import 'ia_archive_service.dart'; // ★ E3
 //   vis-à-vis de l'apprentissage). Utilisé UNIQUEMENT pour l'export et la
 //   restauration des sauvegardes, jamais pour déclencher un calcul.
 import 'arrivee_officielle_service.dart';
+import 'resultat_officiel_repository.dart'; // ★ BLOC 1 (périmètre financier)
 import 'pronostic_resultats_repository.dart'; // ★ v10.85 (B4)
 import 'quasi_gros_paris_service.dart'; // ★ v10.72
 import 'ia_badges_service.dart'; // ★ B5c
@@ -141,7 +142,8 @@ class BackupService {
   static final instance = BackupService._();
 
   // ── Numero de version du format backup ───────────────────────────────────
-  static const _backupVersion = '9.1'; // ★ E3 : +archiveIA (archive permanente des pronostics évincés)
+  static const _backupVersion =
+      '9.1'; // ★ E3 : +archiveIA (archive permanente des pronostics évincés)
 
   // ════════════════════════════════════════════════════════════════════════
   //  ★ X6 — NOM DE FICHIER DE SAUVEGARDE UNIQUE
@@ -338,21 +340,21 @@ class BackupService {
   //                      + poidsParDiscipline + nbMisesAJour + calibration
   //                      + mouvCote (R) + placeDepart (S) + atypiques_YYYY-MM
   static const _keysIA = [
-    'ia_pronostics_v2',     // 600 pronostics (non compressé — rétrocompatibilité)
-    'ia_pronostics_v2_gz',  // ★ Lot 4 : pronostics compressés gzip+base64
-    'ia_poids_v3',          // Poids adaptatifs (19 critères v10.x : +mouvCote, +placeDepart)
-    'ia_journal_v2',        // Journal gradient (150 entrées) + journées atypiques
-    'ia_rapports_v1',       // 365 rapports journaliers glissants (★ v9.91 : monté de 60→365)
+    'ia_pronostics_v2', // 600 pronostics (non compressé — rétrocompatibilité)
+    'ia_pronostics_v2_gz', // ★ Lot 4 : pronostics compressés gzip+base64
+    'ia_poids_v3', // Poids adaptatifs (19 critères v10.x : +mouvCote, +placeDepart)
+    'ia_journal_v2', // Journal gradient (150 entrées) + journées atypiques
+    'ia_rapports_v1', // 365 rapports journaliers glissants (★ v9.91 : monté de 60→365)
     'ia_bilans_semaine_v1', // ★ v9.91 : Bilans de semaine archivés
-    'ia_bilans_mois_v1',    // ★ v9.91 : Bilans de mois archivés
+    'ia_bilans_mois_v1', // ★ v9.91 : Bilans de mois archivés
     'ia_derniere_analyse_v1', // ★ v9.6 : Date dernière analyse (pour rappel Worker Kotlin)
-    'ia_stats_types_v1',    // Stats cumulatives par type de pari
-    'ia_precision_v2',      // Précision IA par type de pari
-    'ia_stats_labels_v1',   // ★ v9.0 : Stats par label IA
-    'ia_seuils_v1',         // Seuils de confiance adaptatifs
+    'ia_stats_types_v1', // Stats cumulatives par type de pari
+    'ia_precision_v2', // Précision IA par type de pari
+    'ia_stats_labels_v1', // ★ v9.0 : Stats par label IA
+    'ia_seuils_v1', // Seuils de confiance adaptatifs
     // ★ v10.38 : Historique premium calendrier (étoiles multi-jours)
     'ia_premium_historique_v1', // Historique premium calendrier étoile (non recalculable)
-    'ia_premium_du_jour_v1',    // Ancien format compat (lecture seule — migration vers _historique)
+    'ia_premium_du_jour_v1', // Ancien format compat (lecture seule — migration vers _historique)
     // ★ v10.62 : Figeage des 5 widgets premium du jour (conseilJour/meilleurPari/topEquilibre/plusSur/plusRentable)
     // Non recalculable — doit être restauré pour préserver le figeage inter-sessions.
     'premium_widgets_selection_jour_v1',
@@ -361,15 +363,15 @@ class BackupService {
 
   // 📡 ELO & Cote — données dynamiques par discipline
   static const _keysELO = [
-    'elo_ratings_v2',       // ★ v9.92 : Ratings ELO par cheval×discipline (K-factor adaptatif)
-    'elo_ratings_v2_ts',    // ★ v9.92 : Timestamp dernière mise à jour ELO
-    'elo_ratings_v1',       // ★ B5 : relique de migration — réimportée par EloService
-                            //   au démarrage (_charger l.66) si elo_ratings_v2 est
-                            //   absente. Sans cette ligne, un reset complet laisse la
-                            //   clé v1 sur le disque et les anciens ratings
-                            //   ressuscitent au prochain lancement.
+    'elo_ratings_v2', // ★ v9.92 : Ratings ELO par cheval×discipline (K-factor adaptatif)
+    'elo_ratings_v2_ts', // ★ v9.92 : Timestamp dernière mise à jour ELO
+    'elo_ratings_v1', // ★ B5 : relique de migration — réimportée par EloService
+    //   au démarrage (_charger l.66) si elo_ratings_v2 est
+    //   absente. Sans cette ligne, un reset complet laisse la
+    //   clé v1 sur le disque et les anciens ratings
+    //   ressuscitent au prochain lancement.
     'cote_tracker_mouvements_v1', // ★ v9.97 : Mouvements de cote en temps réel
-    'cote_mouvements_live_v1',    // ★ v9.97 : Sync Flutter→Kotlin Worker (alertes cote)
+    'cote_mouvements_live_v1', // ★ v9.97 : Sync Flutter→Kotlin Worker (alertes cote)
     // ★ A7 (3.1) : registre d'application ELO — clé SÉPARÉE de
     //   `elo_ratings_v2`, qui garde son format plat. Le registre est un
     //   TÉMOIN d'application : il ne duplique AUCUN rating et ne doit
@@ -381,8 +383,8 @@ class BackupService {
     //   disque — le registre témoignerait alors de courses dont les ratings
     //   n'existent plus, c'est-à-dire l'état « appliqué » sans la donnée.
     //   Le contrat de reset est donc : les deux disparaissent ensemble.
-    'elo_registre_v3',            // ★ A7 : témoin d'application ELO (jamais
-                                  //   une source de reconstruction)
+    'elo_registre_v3', // ★ A7 : témoin d'application ELO (jamais
+    //   une source de reconstruction)
   ];
 
   // 🎯 Config fusion BestBet — reglages de l'algorithme de selection
@@ -398,23 +400,23 @@ class BackupService {
     'bt_jours',
     'bt_type',
     'bt_confiance_min',
-    'bt_discipline',     // ★ v10.371-audit : filtre discipline backtesting
-    'bt_hippodrome',     // ★ v10.371-audit : filtre hippodrome backtesting
+    'bt_discipline', // ★ v10.371-audit : filtre discipline backtesting
+    'bt_hippodrome', // ★ v10.371-audit : filtre hippodrome backtesting
     // ★ v10.22 : Filtres Conseils IA (persistés dans conseils_screen.dart)
     'conseils_filtres_types_paris',
     'conseils_filtres_confiance_min',
     'conseils_filtres_hippodromes',
     'conseils_filtres_disciplines',
-    'conseils_filtres_tri_mode',    // ★ v10.24 audit
-    'conseils_filtres_actifs',      // ★ v9.93 : état ON/OFF bouton filtres
+    'conseils_filtres_tri_mode', // ★ v10.24 audit
+    'conseils_filtres_actifs', // ★ v9.93 : état ON/OFF bouton filtres
     // ★ v9.85 : Identité de l'IA
     'ia_prenom',
     'ia_avatar_id',
     'ia_date_installation',
     'ia_bulle_active',
     // ★ v9.94 : Cooldown bulle et message du jour (manquants dans v7.1)
-    'ia_derniere_bulle',          // Timestamp dernière bulle affichée (cooldown 30min)
-    'ia_dernier_message_jour',    // Message IA du jour (évite répétition)
+    'ia_derniere_bulle', // Timestamp dernière bulle affichée (cooldown 30min)
+    'ia_dernier_message_jour', // Message IA du jour (évite répétition)
     // ★ v9.85 : Préférences utilisateur et badges
     'ia_user_prefs_v1',
     'ia_badges_v1',
@@ -430,14 +432,14 @@ class BackupService {
     // En cas d'absence dans un ancien backup → reset cache uniquement, jamais bloquer la restauration
     'ia_narrative_daily_cache_v1',
     // ★ v10.371-audit : flags transitoires (one-shot — restaurer évite un recalcul inutile)
-    'elo_orphelins_purges_v1',   // Flag purge ELO orphelins (elo_service)
-    'conseils_inject_pending',   // Flag injection conseils en attente
+    'elo_orphelins_purges_v1', // Flag purge ELO orphelins (elo_service)
+    'conseils_inject_pending', // Flag injection conseils en attente
     // ★ v10.70 : Filtres Précision IA (préférences d'affichage uniquement)
     // Ces clés NE touchent PAS : apprentissage IA, poids, premium, backtesting, calendrier.
     // Si absentes dans un ancien backup → filtre par défaut '60j' utilisé. Jamais bloquant.
-    'ia_stats_filtre_actif_v1',  // Filtre actif : '60j', 'all', '7j', 'today', 'custom'
-    'ia_stats_date_debut_v1',    // Date début période personnalisée (ISO 8601)
-    'ia_stats_date_fin_v1',      // Date fin période personnalisée (ISO 8601)
+    'ia_stats_filtre_actif_v1', // Filtre actif : '60j', 'all', '7j', 'today', 'custom'
+    'ia_stats_date_debut_v1', // Date début période personnalisée (ISO 8601)
+    'ia_stats_date_fin_v1', // Date fin période personnalisée (ISO 8601)
   ];
 
   // 📋 Paris utilisateur — historique complet
@@ -452,9 +454,9 @@ class BackupService {
     'tracked_courses_v1',
     'alert_sent_ids_v1',
     'alert_resultats_verifies_v1',
-    'hippique_favorites_v1',        // ★ v9.5 : Cours favorites (FavoriButton)
+    'hippique_favorites_v1', // ★ v9.5 : Cours favorites (FavoriButton)
     // ★ v9.94 : Conseils IA notifiés (anti-spam + résumé matinal)
-    'conseil_ia_notifies_v1',         // CourseKeys déjà notifiées ce jour
+    'conseil_ia_notifies_v1', // CourseKeys déjà notifiées ce jour
     // ★ B5c R-12 : marqueur de jour associé à 'conseil_ia_notifies_v1'.
     //   Cette clé était absente de TOUS les groupes : elle survivait donc au
     //   reset complet. Conséquence : `_resetConseilIANotifiesIfNewDay()`
@@ -462,11 +464,11 @@ class BackupService {
     //   jamais le compteur anti-doublon à zéro APRÈS le vidage — tout en
     //   réécrivant la liste effacée au passage.
     'conseil_ia_notifies_v1_date',
-    'conseil_ia_resume_date',         // Date du dernier résumé matinal
+    'conseil_ia_resume_date', // Date du dernier résumé matinal
     // ★ v9.94-audit : clés manquantes
-    'alert_cote_chute_notifies_v1',   // Anti-doublons alertes cote chute (alert_service)
+    'alert_cote_chute_notifies_v1', // Anti-doublons alertes cote chute (alert_service)
     'data_refresh_resume_hebdo_date', // Date dernier résumé hebdo lundi (data_refresh_service)
-    'alerte_sommeil_v1',              // ★ v10.41 : Mode Sommeil — plage horaire sans alertes
+    'alerte_sommeil_v1', // ★ v10.41 : Mode Sommeil — plage horaire sans alertes
     // ★ CHANTIER 2/3 — IDEMPOTENCE DES GAINS OFFICIELS TARDIFS.
     //
     //   DÉFAUT QUE CETTE PRÉSENCE CORRIGE : sans elle, un export/restauration
@@ -555,19 +557,19 @@ class BackupService {
   // OBLIGATOIRE : non recalculable (signaux d'avant-course disparus après la course)
   // Rétrocompat : absent dans un ancien backup → reset à liste vide (jamais crash)
   static const _keysGrosParis = [
-    'ia_quasi_gros_paris_v1',          // ★ v10.72 : Signaux Gros paris + Quasi gagnants
-    'ia_gros_paris_resultats_v1',      // ★ v10.75b : Vrais gagnants ordre/désordre
+    'ia_quasi_gros_paris_v1', // ★ v10.72 : Signaux Gros paris + Quasi gagnants
+    'ia_gros_paris_resultats_v1', // ★ v10.75b : Vrais gagnants ordre/désordre
     // ★ v10.76 : Nouvelles clés
-    'pronostic_resultats_repository_v2',   // Repository résultats utilisateur
-    'home_best_bet_snapshot_v2',           // Snapshot "Meilleur Pari" Home
-    'home_best_bet_snapshot_date_v2',      // Date snapshot Home
+    'pronostic_resultats_repository_v2', // Repository résultats utilisateur
+    'home_best_bet_snapshot_v2', // Snapshot "Meilleur Pari" Home
+    'home_best_bet_snapshot_date_v2', // Date snapshot Home
     'ia_migration_gros_paris_desordre_v1_done', // Flag migration one-shot v10.76
     // ★ v10.77 : Migration stats — branchement PronosticResultatsRepository dans écrans stats
-    'ia_migration_gros_paris_stats_v2_done',    // Flag migration stats v10.77
+    'ia_migration_gros_paris_stats_v2_done', // Flag migration stats v10.77
     // ★ v10.79 : Migration types dérivés — évalue Tiercé/Quarté+/Quinté+ séparément
     'ia_migration_gros_paris_types_derives_v1_done', // Flag migration types dérivés v10.79
     // ★ v10.80 : Migration suite IA classique — réussites dérivées depuis topNIA figé
-    'ia_migration_suite_ia_classique_v1_done',        // Flag migration suite IA classique v10.80
+    'ia_migration_suite_ia_classique_v1_done', // Flag migration suite IA classique v10.80
   ];
 
   // 📨 File de notifications natives en attente (lue par HippiqueWorker.kt)
@@ -611,22 +613,22 @@ class BackupService {
   static const String _prefsCacheReunionsPrefix = 'cache_reunions_';
 
   static List<String> get _toutesLesCles => [
-    ..._keysIA,
-    ..._keysConfigIA,
-    ..._keysELO,        // ★ B5 : les 5 cles ELO/Cote etaient OMISES — elles
-                        //   survivaient a un reset « complet » alors qu'elles
-                        //   sont bel et bien sauvegardees dans le backup.
-                        //   ★ A7 (3.1) : le groupe compte desormais 6 cles,
-                        //   `elo_registre_v3` ayant rejoint le perimetre.
-    ..._keysParis,
-    ..._keysAlertes,
-    ..._keysProfil,
-    ..._keysWidget,
-    ..._keysLaboIA,
-    ..._keysAuditCache,
-    ..._keysGrosParis,
-    ..._keysNotificationsEnAttente,  // ★ B5c R-13
-  ];
+        ..._keysIA,
+        ..._keysConfigIA,
+        ..._keysELO, // ★ B5 : les 5 cles ELO/Cote etaient OMISES — elles
+        //   survivaient a un reset « complet » alors qu'elles
+        //   sont bel et bien sauvegardees dans le backup.
+        //   ★ A7 (3.1) : le groupe compte desormais 6 cles,
+        //   `elo_registre_v3` ayant rejoint le perimetre.
+        ..._keysParis,
+        ..._keysAlertes,
+        ..._keysProfil,
+        ..._keysWidget,
+        ..._keysLaboIA,
+        ..._keysAuditCache,
+        ..._keysGrosParis,
+        ..._keysNotificationsEnAttente, // ★ B5c R-13
+      ];
 
   /// ★ CHANTIER 2/3 — LE PÉRIMÈTRE RÉELLEMENT SAUVEGARDÉ, POUR LES TESTS.
   ///
@@ -655,11 +657,15 @@ class BackupService {
     // Priority 2 : Scalaire via prefs.get()
     final v = prefs.get(key);
     if (v == null) return null;
-    if (v is String)  return {'type': 'String',  'value': v};
-    if (v is int)     return {'type': 'int',     'value': v};
-    if (v is double)  return {'type': 'double',  'value': v};
-    if (v is bool)    return {'type': 'bool',    'value': v};
-    if (v is List)    return {'type': 'StringList', 'value': List<String>.from(v.map((e) => e.toString()))};
+    if (v is String) return {'type': 'String', 'value': v};
+    if (v is int) return {'type': 'int', 'value': v};
+    if (v is double) return {'type': 'double', 'value': v};
+    if (v is bool) return {'type': 'bool', 'value': v};
+    if (v is List)
+      return {
+        'type': 'StringList',
+        'value': List<String>.from(v.map((e) => e.toString()))
+      };
     return null;
   }
 
@@ -686,18 +692,18 @@ class BackupService {
     final avertissements = <String>[];
 
     final data = <String, dynamic>{
-      'version'    : _backupVersion,
-      'appName'    : 'Pronostic Hippique',
-      'dateBackup' : DateTime.now().toIso8601String(),
-      'ia'         : <String, dynamic>{},
-      'configIA'   : <String, dynamic>{},
-      'paris'      : <String, dynamic>{},
-      'alertes'    : <String, dynamic>{},
-      'profil'     : <String, dynamic>{},
-      'widget'     : <String, dynamic>{},
-      'laboIA'     : <String, dynamic>{},   // ★ v10.35 : Pistes Labo IA
-      'auditCache' : <String, dynamic>{},   // ★ v10.35 : Cache Audit
-      'grosParis'  : <String, dynamic>{},   // ★ v10.72 : Gros Paris à surveiller
+      'version': _backupVersion,
+      'appName': 'Pronostic Hippique',
+      'dateBackup': DateTime.now().toIso8601String(),
+      'ia': <String, dynamic>{},
+      'configIA': <String, dynamic>{},
+      'paris': <String, dynamic>{},
+      'alertes': <String, dynamic>{},
+      'profil': <String, dynamic>{},
+      'widget': <String, dynamic>{},
+      'laboIA': <String, dynamic>{}, // ★ v10.35 : Pistes Labo IA
+      'auditCache': <String, dynamic>{}, // ★ v10.35 : Cache Audit
+      'grosParis': <String, dynamic>{}, // ★ v10.72 : Gros Paris à surveiller
     };
 
     // ── 🧠 Memoire IA ────────────────────────────────────────────────────
@@ -707,7 +713,8 @@ class BackupService {
         data['ia'][key] = entry;
         if (kDebugMode) {
           final val = entry['value'];
-          final info = val is List ? '${val.length} entrees' : 'ok (${entry['type']})';
+          final info =
+              val is List ? '${val.length} entrees' : 'ok (${entry['type']})';
           debugPrint('[Backup] IA  $key -> $info');
         }
       } else {
@@ -770,7 +777,8 @@ class BackupService {
         data['laboIA'][key] = entry;
         if (kDebugMode) {
           final val = entry['value'];
-          final info = val is List ? '${val.length} pistes' : 'ok (${entry['type']})';
+          final info =
+              val is List ? '${val.length} pistes' : 'ok (${entry['type']})';
           debugPrint('[Backup] LAB $key -> $info');
         }
       } else {
@@ -798,10 +806,12 @@ class BackupService {
       if (grosParisData.isNotEmpty) {
         data['grosParis'] = grosParisData;
         if (kDebugMode) {
-          final nbSignaux  = (grosParisData['signaux']           as List? ?? []).length;
-          final nbQG       = (grosParisData['quasiGagnants']     as List? ?? []).length;
-          final nbGagnants = (grosParisData['grosParisGagnants'] as List? ?? []).length;
-          debugPrint('[Backup] GRO -> $nbSignaux signaux, $nbQG quasi-gagnants, '
+          final nbSignaux = (grosParisData['signaux'] as List? ?? []).length;
+          final nbQG = (grosParisData['quasiGagnants'] as List? ?? []).length;
+          final nbGagnants =
+              (grosParisData['grosParisGagnants'] as List? ?? []).length;
+          debugPrint(
+              '[Backup] GRO -> $nbSignaux signaux, $nbQG quasi-gagnants, '
               '$nbGagnants gagnants (ia_gros_paris_resultats_v1)');
         }
       }
@@ -880,6 +890,33 @@ class BackupService {
       if (kDebugMode) debugPrint('[Backup] ARR export partiel : $e');
     }
 
+    // ── 💰 RÉSULTATS OFFICIELS PMU ★ BLOC 1 (périmètre financier) ─────────
+    // Persistance PARTAGÉE des résultats officiels complets, indexée par
+    // identité de course (date + réunion + course) : arrivées groupées,
+    // caractère définitif / provisoire / inconnu, rapports officiels, statuts
+    // des partants.
+    //
+    // Pourquoi une entrée PAR COURSE et non des rapports dans chaque
+    // `IaPronostic` : dupliquer tous les rapports dans chaque pronostic
+    // gonflerait la mémoire et rendrait toute mise à jour incohérente. Une
+    // entrée, partagée par tous les paris de la course.
+    //
+    // Lecture seule vis-à-vis de l'apprentissage : ce bloc ne déclenche AUCUN
+    // apprentissage, ne recalcule AUCUN score historique et ne réécrit aucune
+    // donnée de `IaMemoryService`.
+    try {
+      final resultatsData =
+          await ResultatOfficielRepository.instance.exporterPourBackup();
+      data['resultatsOfficielsPmu'] = resultatsData;
+      if (kDebugMode) {
+        debugPrint('[Backup] ROP -> ${resultatsData['nbEntrees']} entrée(s), '
+            '${(resultatsData['moisConnus'] as List).length} mois');
+      }
+    } catch (e) {
+      // Clé ABSENTE en cas d'échec = règle « local préservé » à la restauration.
+      if (kDebugMode) debugPrint('[Backup] ROP export partiel : $e');
+    }
+
     // ── 🏇 ELO SERVICE ★ A7 (3.3-C11) ──────────────────────────────────────
     // `exporterPourBackupEnrichi()` rend un STATUT en plus des données. C'est
     // ce qui permet de distinguer trois situations que l'ancien code
@@ -931,12 +968,12 @@ class BackupService {
             'ELO NON SAUVEGARDÉ : ${eloEnrichi.motif ?? "motif non renseigné"}. '
             'Les ratings ELO ne figurent PAS dans cette sauvegarde.');
         if (kDebugMode) {
-          debugPrint('[Backup] ⚠️ ELO REFUSÉ — aucune clé `elo_service` écrite : '
+          debugPrint(
+              '[Backup] ⚠️ ELO REFUSÉ — aucune clé `elo_service` écrite : '
               '${eloEnrichi.motif}');
         }
       case StatutExportElo.diagnosticImpossible:
-        avertissements.add(
-            'ELO NON SAUVEGARDÉ : état ELO illisible '
+        avertissements.add('ELO NON SAUVEGARDÉ : état ELO illisible '
             '(${eloEnrichi.motif ?? "motif non renseigné"}). '
             'Les ratings ELO ne figurent PAS dans cette sauvegarde.');
         if (kDebugMode) {
@@ -976,13 +1013,16 @@ class BackupService {
 
       try {
         // Format v4.0/v5.0 : {'type': '...', 'value': ...}
-        if (raw is Map<String, dynamic> && raw.containsKey('type') && raw.containsKey('value')) {
+        if (raw is Map<String, dynamic> &&
+            raw.containsKey('type') &&
+            raw.containsKey('value')) {
           final type = raw['type'] as String;
-          final val  = raw['value'];
+          final val = raw['value'];
 
           switch (type) {
             case 'StringList':
-              final list = List<String>.from((val as List).map((e) => e.toString()));
+              final list =
+                  List<String>.from((val as List).map((e) => e.toString()));
               await prefs.setStringList(key, list);
             case 'String':
               await prefs.setString(key, val as String);
@@ -1086,11 +1126,11 @@ class BackupService {
     }
 
     final nbJson = lire('ia_pronostics_v2');
-    final nbGz   = lire('ia_pronostics_v2_gz');
+    final nbGz = lire('ia_pronostics_v2_gz');
 
     if (nbJson == null && nbGz == null) return null;
     if (nbJson == null) return nbGz;
-    if (nbGz == null)   return nbJson;
+    if (nbGz == null) return nbJson;
     return nbJson > nbGz ? nbJson : nbGz;
   }
 
@@ -1103,12 +1143,13 @@ class BackupService {
     if (groupeIA == null) return null;
 
     final aJson = groupeIA.containsKey('ia_pronostics_v2');
-    final aGz   = groupeIA.containsKey('ia_pronostics_v2_gz');
+    final aGz = groupeIA.containsKey('ia_pronostics_v2_gz');
 
     // Backup sans pronostics → ne jamais purger les données locales
     if (!aJson && !aGz) {
       if (kDebugMode) {
-        debugPrint('[Backup] Pronostics : aucun dans le backup → local préservé');
+        debugPrint(
+            '[Backup] Pronostics : aucun dans le backup → local préservé');
       }
       return null;
     }
@@ -1130,14 +1171,17 @@ class BackupService {
     }
 
     // ★ Backup HYBRIDE (les deux clés) → la plus riche gagne
-    final nbJson = _compterPronosticsBackup({'ia_pronostics_v2': groupeIA['ia_pronostics_v2']});
-    final nbGz   = _compterPronosticsBackup({'ia_pronostics_v2_gz': groupeIA['ia_pronostics_v2_gz']});
+    final nbJson = _compterPronosticsBackup(
+        {'ia_pronostics_v2': groupeIA['ia_pronostics_v2']});
+    final nbGz = _compterPronosticsBackup(
+        {'ia_pronostics_v2_gz': groupeIA['ia_pronostics_v2_gz']});
 
     if (nbJson == null && nbGz == null) {
       // Les deux versions sont illisibles → restaurer tel quel serait ambigu,
       // et purger reviendrait à détruire les données locales.
       if (kDebugMode) {
-        debugPrint('[Backup] Pronostics : 2 formats illisibles → local préservé');
+        debugPrint(
+            '[Backup] Pronostics : 2 formats illisibles → local préservé');
       }
       return null;
     }
@@ -1178,22 +1222,23 @@ class BackupService {
       // ★ A7 (3.3-C11) : `_collecterDonnees()` rend desormais les donnees ET
       // les avertissements de collecte. Le corps de l'export est INCHANGE.
       final collecte = await _collecterDonnees();
-      final data    = collecte.data;
+      final data = collecte.data;
       final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
-      final bytes   = utf8.encode(jsonStr);
+      final bytes = utf8.encode(jsonStr);
 
-      final now     = DateTime.now();
+      final now = DateTime.now();
       // ★ X6 : date + heure + millisecondes — deux exports le même jour ne
       // peuvent plus porter le même nom, donc le second n'écrase plus le
       // premier. Voir [nomFichierBackup] pour la garantie et sa justification.
       final fileName = nomFichierBackup(now);
 
       final tmpDir = await getTemporaryDirectory();
-      final file   = File('${tmpDir.path}/$fileName');
+      final file = File('${tmpDir.path}/$fileName');
       await file.writeAsBytes(bytes);
 
       if (kDebugMode) {
-        debugPrint('[Backup] Export OK -> ${file.path} (${(bytes.length / 1024).toStringAsFixed(1)} Ko)'
+        debugPrint(
+            '[Backup] Export OK -> ${file.path} (${(bytes.length / 1024).toStringAsFixed(1)} Ko)'
             '${collecte.avertissements.isEmpty ? "" : " | ${collecte.avertissements.length} avertissement(s)"}');
       }
       return ExportResult(
@@ -1223,14 +1268,15 @@ class BackupService {
   /// Lève si l'ouverture échoue : c'est à l'appelant de décider si cet échec
   /// est une erreur globale ou un simple avertissement.
   Future<void> _ouvrirPartage(ExportResult result) async {
-    final now     = DateTime.now();
-    final dateStr = '${now.day.toString().padLeft(2,'0')}/${now.month.toString().padLeft(2,'0')}/${now.year}';
+    final now = DateTime.now();
+    final dateStr =
+        '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
 
     await SharePlus.instance.share(
       ShareParams(
-        files  : [XFile(result.filePath!, mimeType: 'application/json')],
-        text   : 'Sauvegarde Pronostic Hippique du $dateStr\n'
-                 'Contient : IA (19 critères + ELO + terrain + progression + mémoire + PoidsIndices) + Paris + Alertes + Profil + Widget v2.0',
+        files: [XFile(result.filePath!, mimeType: 'application/json')],
+        text: 'Sauvegarde Pronostic Hippique du $dateStr\n'
+            'Contient : IA (19 critères + ELO + terrain + progression + mémoire + PoidsIndices) + Paris + Alertes + Profil + Widget v2.0',
         subject: 'Sauvegarde Pronostic Hippique $dateStr',
       ),
     );
@@ -1288,7 +1334,7 @@ class BackupService {
   Future<ExportResult> partagerBackupAvecResultat() async {
     // ⚠️ UN SEUL APPEL. C'est l'invariant central du lot.
     final ExportResult result = await exporterDonnees();
-    if (!result.succes) return result;   // échec de CRÉATION : rendu tel quel
+    if (!result.succes) return result; // échec de CRÉATION : rendu tel quel
 
     try {
       await _ouvrirPartage(result);
@@ -1314,9 +1360,9 @@ class BackupService {
         avertissements: <String>[
           ...result.avertissements,
           'Le fichier de sauvegarde a bien été créé '
-          '(${result.fileName}), mais le menu de partage n\'a pas pu '
-          's\'ouvrir ($e). Aucun envoi n\'est confirmé : le fichier reste '
-          'disponible sur cet appareil.',
+              '(${result.fileName}), mais le menu de partage n\'a pas pu '
+              's\'ouvrir ($e). Aucun envoi n\'est confirmé : le fichier reste '
+              'disponible sur cet appareil.',
         ],
       );
     }
@@ -1335,13 +1381,14 @@ class BackupService {
       String downloadPath;
 
       if (downloadsDir != null) {
-        final parts      = downloadsDir.path.split('/');
+        final parts = downloadsDir.path.split('/');
         final androidIdx = parts.indexOf('Android');
         downloadPath = androidIdx > 0
             ? '${parts.take(androidIdx).join('/')}/Download'
             : '${downloadsDir.path}/backup';
       } else {
-        return ExportResult(succes: false, erreur: 'Stockage externe inaccessible');
+        return ExportResult(
+            succes: false, erreur: 'Stockage externe inaccessible');
       }
 
       final destDir = Directory(downloadPath);
@@ -1375,9 +1422,9 @@ class BackupService {
   Future<ImportResult> importerDepuisFichier() async {
     try {
       final picked = await FilePicker.platform.pickFiles(
-        type             : FileType.custom,
+        type: FileType.custom,
         allowedExtensions: ['json'],
-        withData         : true,
+        withData: true,
       );
 
       if (picked == null || picked.files.isEmpty) {
@@ -1392,7 +1439,8 @@ class BackupService {
       } else if (file.path != null) {
         jsonStr = await File(file.path!).readAsString();
       } else {
-        return ImportResult(succes: false, erreur: 'Impossible de lire le fichier');
+        return ImportResult(
+            succes: false, erreur: 'Impossible de lire le fichier');
       }
 
       return await _restaurerDepuisJson(jsonStr);
@@ -1404,10 +1452,12 @@ class BackupService {
 
   Future<ImportResult> _restaurerDepuisJson(String jsonStr) async {
     try {
-      final Map<String, dynamic> data = json.decode(jsonStr) as Map<String, dynamic>;
+      final Map<String, dynamic> data =
+          json.decode(jsonStr) as Map<String, dynamic>;
 
       if (data['appName'] != 'Pronostic Hippique') {
-        return ImportResult(succes: false, erreur: 'Fichier invalide ou incompatible');
+        return ImportResult(
+            succes: false, erreur: 'Fichier invalide ou incompatible');
       }
 
       final prefs = await SharedPreferences.getInstance();
@@ -1435,12 +1485,14 @@ class BackupService {
       }
 
       // 🎯 Config Fusion
-      final nbCfg = await _restaurerGroupe(prefs, data['configIA'] as Map<String, dynamic>?);
+      final nbCfg = await _restaurerGroupe(
+          prefs, data['configIA'] as Map<String, dynamic>?);
       total += nbCfg;
       if (kDebugMode) debugPrint('[Backup] Config IA restauree : $nbCfg cles');
 
       // 📋 Paris
-      final nbParisCles = await _restaurerGroupe(prefs, data['paris'] as Map<String, dynamic>?);
+      final nbParisCles =
+          await _restaurerGroupe(prefs, data['paris'] as Map<String, dynamic>?);
       total += nbParisCles;
       // Compter le nombre reel de paris restaures
       int nbParisCount = 0;
@@ -1448,10 +1500,12 @@ class BackupService {
         final list = prefs.getStringList('user_predictions_v2') ?? [];
         nbParisCount = list.length;
       } catch (_) {}
-      if (kDebugMode) debugPrint('[Backup] Paris restaures : $nbParisCount paris');
+      if (kDebugMode)
+        debugPrint('[Backup] Paris restaures : $nbParisCount paris');
 
       // 🔔 Alertes
-      final nbAlertesCles = await _restaurerGroupe(prefs, data['alertes'] as Map<String, dynamic>?);
+      final nbAlertesCles = await _restaurerGroupe(
+          prefs, data['alertes'] as Map<String, dynamic>?);
       total += nbAlertesCles;
       // Compter le nombre reel d'alertes
       int nbAlertesCount = 0;
@@ -1459,15 +1513,19 @@ class BackupService {
         final list = prefs.getStringList('alert_history_v1') ?? [];
         nbAlertesCount = list.length;
       } catch (_) {}
-      if (kDebugMode) debugPrint('[Backup] Alertes restaurees : $nbAlertesCount alertes ($nbAlertesCles cles)');
+      if (kDebugMode)
+        debugPrint(
+            '[Backup] Alertes restaurees : $nbAlertesCount alertes ($nbAlertesCles cles)');
 
       // 👤 Profil
-      final nbProfil = await _restaurerGroupe(prefs, data['profil'] as Map<String, dynamic>?);
+      final nbProfil = await _restaurerGroupe(
+          prefs, data['profil'] as Map<String, dynamic>?);
       total += nbProfil;
       if (kDebugMode) debugPrint('[Backup] Profil restaure : $nbProfil cles');
 
       // 📱 Widget
-      final nbWidget = await _restaurerGroupe(prefs, data['widget'] as Map<String, dynamic>?);
+      final nbWidget = await _restaurerGroupe(
+          prefs, data['widget'] as Map<String, dynamic>?);
       total += nbWidget;
       if (kDebugMode) debugPrint('[Backup] Widget restaure : $nbWidget cles');
 
@@ -1491,8 +1549,8 @@ class BackupService {
       String? avertissementElo;
       if (data.containsKey('elo_service')) {
         try {
-          final EtatPersistanceElo etatElo =
-              await EloService.instance.importerDepuisBackup(
+          final EtatPersistanceElo etatElo = await EloService.instance
+              .importerDepuisBackup(
                   data['elo_service'] as Map<String, dynamic>);
           // Ratings réellement détenus en RAM après l'import. Ne prouve
           // AUCUNE persistance disque — voir la doc du champ.
@@ -1552,8 +1610,7 @@ class BackupService {
         } catch (e) {
           // Seul cas atteignable : le cast de `data['elo_service']` a levé.
           // On le SIGNALE au lieu de le noyer dans un `debugPrint`.
-          avertissementElo =
-              'Donnée ELO illisible dans la sauvegarde : $e. '
+          avertissementElo = 'Donnée ELO illisible dans la sauvegarde : $e. '
               'Les ratings ELO n\'ont pas été restaurés.';
           debugPrint('[Backup] ⚠️ ELO restauration impossible : $e');
         }
@@ -1562,15 +1619,18 @@ class BackupService {
       // ── 📡 COTE TRACKER ★ v9.97 ──────────────────────────────────────────
       // Restaurer les mouvements de cote en temps réel
       if (data.containsKey('cote')) {
-        final nbCote = await _restaurerGroupe(prefs, data['cote'] as Map<String, dynamic>?);
+        final nbCote = await _restaurerGroupe(
+            prefs, data['cote'] as Map<String, dynamic>?);
         total += nbCote;
-        if (kDebugMode) debugPrint('[Backup] CoteTracker restaure : $nbCote cles');
+        if (kDebugMode)
+          debugPrint('[Backup] CoteTracker restaure : $nbCote cles');
       }
 
       // ── 🧪 LABO IA ★ v10.35 ──────────────────────────────────────────────
       // Restaurer les pistes de simulation (obligatoire — non recalculable)
       if (data.containsKey('laboIA')) {
-        final nbLabo = await _restaurerGroupe(prefs, data['laboIA'] as Map<String, dynamic>?);
+        final nbLabo = await _restaurerGroupe(
+            prefs, data['laboIA'] as Map<String, dynamic>?);
         total += nbLabo;
         if (kDebugMode) debugPrint('[Backup] LaboIA restaure : $nbLabo cles');
       }
@@ -1578,9 +1638,11 @@ class BackupService {
       // ── 📊 CACHE AUDIT ★ v10.35 ──────────────────────────────────────────
       // Restaurer le cache Audit (optionnel — recalculable si absent)
       if (data.containsKey('auditCache')) {
-        final nbAudit = await _restaurerGroupe(prefs, data['auditCache'] as Map<String, dynamic>?);
+        final nbAudit = await _restaurerGroupe(
+            prefs, data['auditCache'] as Map<String, dynamic>?);
         total += nbAudit;
-        if (kDebugMode) debugPrint('[Backup] AuditCache restaure : $nbAudit cles');
+        if (kDebugMode)
+          debugPrint('[Backup] AuditCache restaure : $nbAudit cles');
       }
 
       // ── ⚠️ GROS PARIS ★ v10.72 ───────────────────────────────────────────
@@ -1590,27 +1652,34 @@ class BackupService {
         if (data.containsKey('grosParis')) {
           final grosParisRaw = data['grosParis'];
           if (grosParisRaw is Map<String, dynamic>) {
-            await QuasiGrosParisService.instance.importerDepuisBackup(grosParisRaw);
+            await QuasiGrosParisService.instance
+                .importerDepuisBackup(grosParisRaw);
             if (kDebugMode) {
-              final nbS = (grosParisRaw['signaux']           as List? ?? []).length;
-              final nbQ = (grosParisRaw['quasiGagnants']     as List? ?? []).length;
-              final nbG = (grosParisRaw['grosParisGagnants'] as List? ?? []).length;
-              debugPrint('[Backup] GrosParis restaure : $nbS signaux, $nbQ quasi-gagnants, '
+              final nbS = (grosParisRaw['signaux'] as List? ?? []).length;
+              final nbQ = (grosParisRaw['quasiGagnants'] as List? ?? []).length;
+              final nbG =
+                  (grosParisRaw['grosParisGagnants'] as List? ?? []).length;
+              debugPrint(
+                  '[Backup] GrosParis restaure : $nbS signaux, $nbQ quasi-gagnants, '
                   '$nbG gagnants (ia_gros_paris_resultats_v1)');
             }
           }
         } else {
           // Rétrocompat : absent dans un ancien backup → reset propre à vide
-          await QuasiGrosParisService.instance.importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
+          await QuasiGrosParisService.instance
+              .importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
           if (kDebugMode) {
-            debugPrint('[Backup] grosParis absent → reset à vide (compat v<9.0)');
+            debugPrint(
+                '[Backup] grosParis absent → reset à vide (compat v<9.0)');
           }
         }
       } catch (e) {
         // Clé corrompue : reset uniquement cette clé, ne jamais bloquer la restauration
-        if (kDebugMode) debugPrint('[Backup] GrosParis restauration partielle (reset) : $e');
+        if (kDebugMode)
+          debugPrint('[Backup] GrosParis restauration partielle (reset) : $e');
         try {
-          await QuasiGrosParisService.instance.importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
+          await QuasiGrosParisService.instance
+              .importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
         } catch (_) {}
       }
 
@@ -1632,7 +1701,8 @@ class BackupService {
             }
           }
         } catch (e) {
-          if (kDebugMode) debugPrint('[Backup] REP restauration partielle : $e');
+          if (kDebugMode)
+            debugPrint('[Backup] REP restauration partielle : $e');
         }
       } else {
         if (kDebugMode) {
@@ -1666,7 +1736,8 @@ class BackupService {
             debugPrint('[Backup] archiveIA mal typée → local préservé');
           }
         } catch (e) {
-          if (kDebugMode) debugPrint('[Backup] ARC restauration partielle : $e');
+          if (kDebugMode)
+            debugPrint('[Backup] ARC restauration partielle : $e');
         }
       } else if (kDebugMode) {
         debugPrint('[Backup] archiveIA absent → archive locale préservée '
@@ -1702,18 +1773,58 @@ class BackupService {
                   '${res.moisNonEcrits > 0 ? ', ${res.moisNonEcrits} mois non écrit(s)' : ''}');
             }
           } else if (kDebugMode) {
-            debugPrint('[Backup] arriveesOfficielles mal typée → local préservé');
+            debugPrint(
+                '[Backup] arriveesOfficielles mal typée → local préservé');
           }
         } catch (e) {
-          if (kDebugMode) debugPrint('[Backup] ARR restauration partielle : $e');
+          if (kDebugMode)
+            debugPrint('[Backup] ARR restauration partielle : $e');
         }
       } else if (kDebugMode) {
         debugPrint('[Backup] arriveesOfficielles absent → stockage local '
             'préservé (compat sauvegardes < L0)');
       }
 
+      // ── 💰 RÉSULTATS OFFICIELS PMU ★ BLOC 1 ──────────────────────────────
+      // Mêmes règles que le bloc des arrivées, volontairement :
+      //   • clé ABSENTE  → on ne touche À RIEN : les sauvegardes antérieures
+      //                    restent compatibles, le stockage local est intact ;
+      //   • clé MAL TYPÉE → local préservé ;
+      //   • clé présente → restauration ADDITIVE : une entrée locale plus
+      //                    complète n'est jamais écrasée par une plus pauvre,
+      //                    et un conflit d'arrivées définitives divergentes est
+      //                    signalé en conservant la version LOCALE.
+      // Aucune réinjection dans la mémoire active, aucun apprentissage.
+      if (data.containsKey('resultatsOfficielsPmu')) {
+        try {
+          final brut = data['resultatsOfficielsPmu'];
+          if (brut is Map<String, dynamic>) {
+            final res = await ResultatOfficielRepository.instance
+                .restaurerDepuisBackup(brut);
+            if (kDebugMode) {
+              debugPrint('[Backup] ROP restauration -> '
+                  '${res.shardsLus} shard(s) lu(s), '
+                  '${res.shardsIllisibles} illisible(s), '
+                  '${res.entreesAjoutees} entrée(s) ajoutée(s), '
+                  '${res.entreesDejaPresentes} doublon(s) évité(s)'
+                  '${res.aDesConflits ? ', ⚠️ ${res.conflits.length} CONFLIT(S) NON RÉSOLU(S) — local conservé : ${res.conflits.join(", ")}' : ''}'
+                  '${res.moisNonEcrits > 0 ? ', ${res.moisNonEcrits} mois non écrit(s)' : ''}');
+            }
+          } else if (kDebugMode) {
+            debugPrint(
+                '[Backup] resultatsOfficielsPmu mal typée → local préservé');
+          }
+        } catch (e) {
+          if (kDebugMode)
+            debugPrint('[Backup] ROP restauration partielle : $e');
+        }
+      } else if (kDebugMode) {
+        debugPrint('[Backup] resultatsOfficielsPmu absent → stockage local '
+            'préservé (compat sauvegardes antérieures au BLOC 1)');
+      }
+
       // Retrocompatibilite : anciens formats v1/v2/v3 sans certains groupes
-      final backupVer  = data['version'] as String? ?? '1.0';
+      final backupVer = data['version'] as String? ?? '1.0';
       final dateBackup = data['dateBackup'] as String? ?? '';
 
       // Compter les pronostics IA restaurés (version compressée ou non)
@@ -1746,7 +1857,8 @@ class BackupService {
         if (!hasNarrativeMemory) {
           await prefs.remove('ia_narrative_memory_v1');
           if (kDebugMode) {
-            debugPrint('[Backup] ia_narrative_memory_v1 absente → mémoire narrative vide (compat)');
+            debugPrint(
+                '[Backup] ia_narrative_memory_v1 absente → mémoire narrative vide (compat)');
           }
         }
       } catch (e) {
@@ -1766,39 +1878,45 @@ class BackupService {
         if (!hasDailyCache) {
           await prefs.remove('ia_narrative_daily_cache_v1');
           if (kDebugMode) {
-            debugPrint('[Backup] ia_narrative_daily_cache_v1 absente → cache narratif reset (compat)');
+            debugPrint(
+                '[Backup] ia_narrative_daily_cache_v1 absente → cache narratif reset (compat)');
           }
         }
       } catch (e) {
         if (kDebugMode) {
-          debugPrint('[Backup] ia_narrative_daily_cache_v1 compat (ignoré) : $e');
+          debugPrint(
+              '[Backup] ia_narrative_daily_cache_v1 compat (ignoré) : $e');
         }
       }
 
       // ★ v10.26c — Recharger la RAM IaMemoryService depuis les SharedPreferences restaurées
       // Indispensable si la restauration est appelée hors UI (appel direct au service)
       await IaMemoryService.instance.recharger();
-      if (kDebugMode) debugPrint('[Backup] IaMemoryService rechargé depuis SharedPreferences');
+      if (kDebugMode)
+        debugPrint(
+            '[Backup] IaMemoryService rechargé depuis SharedPreferences');
 
       // ★ v10.26d — Recharger AlertService (alertes, courses suivies, anti-doublons)
       await AlertService.instance.recharger();
-      if (kDebugMode) debugPrint('[Backup] AlertService rechargé depuis SharedPreferences');
+      if (kDebugMode)
+        debugPrint('[Backup] AlertService rechargé depuis SharedPreferences');
 
       return ImportResult(
-        succes             : true,
-        nbClesRestaurees   : total,
-        nbParis            : nbParisCount,
-        nbPronosticsIA     : nbPronosticsIA,
-        nbIA               : nbIA,
-        nbAlertes          : nbAlertesCount,
-        nbAlertesCles      : nbAlertesCles,
-        nbWidget           : nbWidget,
-        nbConfigIA         : nbCfg,
-        nbProfil           : nbProfil,
-        dateBackup         : dateBackup.isNotEmpty ? DateTime.tryParse(dateBackup) : null,
-        version            : backupVer,
-        nbEloRestaures     : nbEloRestaures,
-        avertissementElo   : avertissementElo,
+        succes: true,
+        nbClesRestaurees: total,
+        nbParis: nbParisCount,
+        nbPronosticsIA: nbPronosticsIA,
+        nbIA: nbIA,
+        nbAlertes: nbAlertesCount,
+        nbAlertesCles: nbAlertesCles,
+        nbWidget: nbWidget,
+        nbConfigIA: nbCfg,
+        nbProfil: nbProfil,
+        dateBackup:
+            dateBackup.isNotEmpty ? DateTime.tryParse(dateBackup) : null,
+        version: backupVer,
+        nbEloRestaures: nbEloRestaures,
+        avertissementElo: avertissementElo,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Parsing JSON : $e');
@@ -1837,13 +1955,14 @@ class BackupService {
       final nbParis = (prefs.getStringList('user_predictions_v2') ?? []).length;
 
       // ── Memoire IA ───────────────────────────────────────────────────────
-      final nbPronostics = (prefs.getStringList('ia_pronostics_v2') ?? []).length;
-      final nbJournal    = (prefs.getStringList('ia_journal_v2')    ?? []).length;
-      final nbRapports   = (prefs.getStringList('ia_rapports_v1')   ?? []).length;
+      final nbPronostics =
+          (prefs.getStringList('ia_pronostics_v2') ?? []).length;
+      final nbJournal = (prefs.getStringList('ia_journal_v2') ?? []).length;
+      final nbRapports = (prefs.getStringList('ia_rapports_v1') ?? []).length;
 
       // Poids IA — nb de mises a jour (indique si l'IA a appris)
       bool iaApprise = false;
-      int  nbAjustements = 0;
+      int nbAjustements = 0;
       Map<String, double> poidsActuels = {};
       PoidsIndicesResume? poidsIndices;
       final poidsStr = prefs.getString('ia_poids_v3');
@@ -1851,13 +1970,16 @@ class BackupService {
         try {
           final p = json.decode(poidsStr) as Map<String, dynamic>;
           nbAjustements = (p['nbMisesAJour'] as num?)?.toInt() ?? 0;
-          iaApprise     = nbAjustements > 0;
+          iaApprise = nbAjustements > 0;
           // Extraire les 19 poids adaptatifs pour affichage (v9.93)
-          for (final key in ['forme','gains','record','cote','constance','victoires',
-                             'discipline','distSpec','jockey','repos','hippo',
-                             'entraineur','elo',                                    // v8.0
-                             'terrain','divergence','poidsRel','progression',       // v9.0
-                             'mouvCote','placeDepart']) {                           // v9.92/v9.93
+          for (final key in [
+            'forme', 'gains', 'record', 'cote', 'constance', 'victoires',
+            'discipline', 'distSpec', 'jockey', 'repos', 'hippo',
+            'entraineur', 'elo', // v8.0
+            'terrain', 'divergence', 'poidsRel', 'progression', // v9.0
+            'mouvCote', 'placeDepart'
+          ]) {
+            // v9.92/v9.93
             final val = (p[key] as num?)?.toDouble();
             if (val != null) poidsActuels[key] = val;
           }
@@ -1865,9 +1987,9 @@ class BackupService {
           final piMap = p['poidsIndices'] as Map<String, dynamic>?;
           if (piMap != null) {
             poidsIndices = PoidsIndicesResume(
-              criteres : (piMap['pc']  as num?)?.toDouble() ?? 0.40,
+              criteres: (piMap['pc'] as num?)?.toDouble() ?? 0.40,
               confiance: (piMap['pco'] as num?)?.toDouble() ?? 0.35,
-              reussite : (piMap['pr']  as num?)?.toDouble() ?? 0.25,
+              reussite: (piMap['pr'] as num?)?.toDouble() ?? 0.25,
             );
           }
         } catch (_) {}
@@ -1897,65 +2019,81 @@ class BackupService {
       }
 
       // Stats par type de pari
-      final nbStatsTypes = (prefs.getStringList('ia_stats_types_v1') ?? []).length;
+      final nbStatsTypes =
+          (prefs.getStringList('ia_stats_types_v1') ?? []).length;
 
       // ── Alertes ──────────────────────────────────────────────────────────
-      final nbAlertes      = (prefs.getStringList('alert_history_v1') ?? []).length;
-      final nbCoursesTrack = (prefs.getStringList('tracked_courses_v1') ?? []).length;
+      final nbAlertes = (prefs.getStringList('alert_history_v1') ?? []).length;
+      final nbCoursesTrack =
+          (prefs.getStringList('tracked_courses_v1') ?? []).length;
 
       // ── Profil ────────────────────────────────────────────────────────────
       final nomProfil = prefs.getString('profil_nom');
-      final gmail     = prefs.getString('profil_gmail');
+      final gmail = prefs.getString('profil_gmail');
 
       // ── Config Fusion ─────────────────────────────────────────────────────
       final fusionConfiance = prefs.getDouble('fusion_poids_confiance');
-      final fusionSeuil     = prefs.getInt('fusion_seuil_min');
+      final fusionSeuil = prefs.getInt('fusion_seuil_min');
 
       // ── Widget ────────────────────────────────────────────────────────────
       final widgetUpdatedAt = prefs.getString('widget_updated_at');
-      final aWidget         = widgetUpdatedAt != null;
+      final aWidget = widgetUpdatedAt != null;
 
       // ── Taille estimee ────────────────────────────────────────────────────
       // ★ fix #6 : estimation rapide sans sérialiser tout le JSON
       // On additionne les tailles brutes des clés SharedPreferences (≈ même ordre de grandeur)
       int taille = 0;
-      for (final key in ['user_predictions_v2', 'ia_pronostics_v2', 'ia_journal_v2',
-                         'ia_rapports_v1', 'alert_history_v1', 'tracked_courses_v1',
-                         'ia_poids_v3', 'ia_seuils_v1', 'ia_precision_v2',
-                         'ia_stats_labels_v1', 'ia_stats_types_v1']) {
-        final s = prefs.getString(key) ?? (prefs.getStringList(key) ?? []).join(',');
+      for (final key in [
+        'user_predictions_v2',
+        'ia_pronostics_v2',
+        'ia_journal_v2',
+        'ia_rapports_v1',
+        'alert_history_v1',
+        'tracked_courses_v1',
+        'ia_poids_v3',
+        'ia_seuils_v1',
+        'ia_precision_v2',
+        'ia_stats_labels_v1',
+        'ia_stats_types_v1'
+      ]) {
+        final s =
+            prefs.getString(key) ?? (prefs.getStringList(key) ?? []).join(',');
         taille += utf8.encode(s).length;
       }
 
       return BackupInfo(
-        tailleOctets       : taille,
-        nbParis            : nbParis,
-        nbPronostics       : nbPronostics,
-        nbJournal          : nbJournal,
-        nbRapports         : nbRapports,
-        nbAlertes          : nbAlertes,
-        nbCoursesTrack     : nbCoursesTrack,
-        iaApprise          : iaApprise,
-        nbAjustements      : nbAjustements,
-        poidsActuels       : poidsActuels,
-        poidsIndices       : poidsIndices,
-        aSeuilsAdaptatifs  : aSeuilsAdaptatifs,
-        nbTypesPrecision   : nbTypesPrecision,
-        nbStatsTypes       : nbStatsTypes,
-        nbStatsLabels      : nbStatsLabels,  // ★ v9.0
-        gmail              : gmail,
-        nomProfil          : nomProfil,
-        aConfigFusion      : fusionConfiance != null,
-        fusionConfiance    : fusionConfiance,
-        fusionSeuil        : fusionSeuil,
-        aWidget            : aWidget,
-        widgetUpdatedAt    : widgetUpdatedAt,
+        tailleOctets: taille,
+        nbParis: nbParis,
+        nbPronostics: nbPronostics,
+        nbJournal: nbJournal,
+        nbRapports: nbRapports,
+        nbAlertes: nbAlertes,
+        nbCoursesTrack: nbCoursesTrack,
+        iaApprise: iaApprise,
+        nbAjustements: nbAjustements,
+        poidsActuels: poidsActuels,
+        poidsIndices: poidsIndices,
+        aSeuilsAdaptatifs: aSeuilsAdaptatifs,
+        nbTypesPrecision: nbTypesPrecision,
+        nbStatsTypes: nbStatsTypes,
+        nbStatsLabels: nbStatsLabels, // ★ v9.0
+        gmail: gmail,
+        nomProfil: nomProfil,
+        aConfigFusion: fusionConfiance != null,
+        fusionConfiance: fusionConfiance,
+        fusionSeuil: fusionSeuil,
+        aWidget: aWidget,
+        widgetUpdatedAt: widgetUpdatedAt,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] obtenirInfos : $e');
       return BackupInfo(
-        tailleOctets: 0, nbParis: 0, nbPronostics: 0,
-        nbJournal: 0, nbRapports: 0, nbAlertes: 0,
+        tailleOctets: 0,
+        nbParis: 0,
+        nbPronostics: 0,
+        nbJournal: 0,
+        nbRapports: 0,
+        nbAlertes: 0,
       );
     }
   }
@@ -2221,7 +2359,8 @@ class BackupService {
       await prefs.remove(key);
     }
     if (kDebugMode) {
-      debugPrint('[Backup] Paris reinitialises (${_keysParis.length} cles effacees)');
+      debugPrint(
+          '[Backup] Paris reinitialises (${_keysParis.length} cles effacees)');
     }
   }
 
@@ -2244,9 +2383,9 @@ class BackupService {
 // ── Resume PoidsIndices pour l'affichage ─────────────────────────────────────
 
 class PoidsIndicesResume {
-  final double criteres;   // Poids du score multicriteres (0-1)
-  final double confiance;  // Poids de la confiance IA (0-1)
-  final double reussite;   // Poids du taux de reussite historique (0-1)
+  final double criteres; // Poids du score multicriteres (0-1)
+  final double confiance; // Poids de la confiance IA (0-1)
+  final double reussite; // Poids du taux de reussite historique (0-1)
 
   const PoidsIndicesResume({
     required this.criteres,
@@ -2254,19 +2393,18 @@ class PoidsIndicesResume {
     required this.reussite,
   });
 
-  String get resume =>
-    'Criteres:${(criteres*100).toStringAsFixed(0)}% '
-    'Confiance:${(confiance*100).toStringAsFixed(0)}% '
-    'Reussite:${(reussite*100).toStringAsFixed(0)}%';
+  String get resume => 'Criteres:${(criteres * 100).toStringAsFixed(0)}% '
+      'Confiance:${(confiance * 100).toStringAsFixed(0)}% '
+      'Reussite:${(reussite * 100).toStringAsFixed(0)}%';
 }
 
 // ── Resultats Export ─────────────────────────────────────────────────────────
 
 class ExportResult {
-  final bool    succes;
+  final bool succes;
   final String? filePath;
   final String? fileName;
-  final int     tailleOctets;
+  final int tailleOctets;
   final String? erreur;
 
   /// ★ A7 (3.3-C11) — AVERTISSEMENTS NON BLOQUANTS.
@@ -2326,8 +2464,9 @@ class ExportResult {
   bool get complet => succes && avertissements.isEmpty;
 
   String get tailleLisible {
-    if (tailleOctets < 1024)            return '$tailleOctets o';
-    if (tailleOctets < 1024 * 1024)     return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
+    if (tailleOctets < 1024) return '$tailleOctets o';
+    if (tailleOctets < 1024 * 1024)
+      return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
     return '${(tailleOctets / (1024 * 1024)).toStringAsFixed(1)} Mo';
   }
 }
@@ -2335,19 +2474,19 @@ class ExportResult {
 // ── Resultats Import ─────────────────────────────────────────────────────────
 
 class ImportResult {
-  final bool      succes;
-  final int       nbClesRestaurees;
-  final int       nbParis;           // Nombre reel de paris restaures
-  final int       nbPronosticsIA;    // Nombre reel de pronostics IA restaures
-  final int       nbIA;              // Nombre de cles IA restaurees
-  final int       nbAlertes;         // Nombre reel d'alertes restaurees
-  final int       nbAlertesCles;     // Nombre de cles alertes restaurees
-  final int       nbWidget;          // Nombre de cles widget restaurees
-  final int       nbConfigIA;        // Nombre de cles config IA restaurees
-  final int       nbProfil;          // Nombre de cles profil restaurees
+  final bool succes;
+  final int nbClesRestaurees;
+  final int nbParis; // Nombre reel de paris restaures
+  final int nbPronosticsIA; // Nombre reel de pronostics IA restaures
+  final int nbIA; // Nombre de cles IA restaurees
+  final int nbAlertes; // Nombre reel d'alertes restaurees
+  final int nbAlertesCles; // Nombre de cles alertes restaurees
+  final int nbWidget; // Nombre de cles widget restaurees
+  final int nbConfigIA; // Nombre de cles config IA restaurees
+  final int nbProfil; // Nombre de cles profil restaurees
   final DateTime? dateBackup;
-  final String    version;
-  final String?   erreur;
+  final String version;
+  final String? erreur;
 
   // ── ★ A7 (3.2) — VOLET ELO ────────────────────────────────────────────────
   // Avant 3.2, la restauration ELO etait un `await` MUET : l'etat rendu par
@@ -2362,7 +2501,7 @@ class ImportResult {
   /// ⚠️ Ce nombre ne prouve AUCUNE persistance physique : il compte ce que
   /// [EloService] detient en RAM apres l'import, pas ce qui est ecrit sur le
   /// disque. Vaut 0 si la sauvegarde ne contenait pas de volet ELO.
-  final int     nbEloRestaures;
+  final int nbEloRestaures;
 
   /// Avertissement sur le resultat REEL du volet ELO.
   /// `null` = persistance CONFIRMEE, ou aucun volet ELO dans la sauvegarde.
@@ -2375,42 +2514,42 @@ class ImportResult {
   ///    ecriture n'a ete tentee.
   ///
   /// Ce champ ne doit JAMAIS etre lu comme « rien n'a change sur le disque ».
-  final String?   avertissementElo;
+  final String? avertissementElo;
 
   ImportResult({
     required this.succes,
     this.nbClesRestaurees = 0,
-    this.nbParis          = 0,
-    this.nbPronosticsIA   = 0,
-    this.nbIA             = 0,
-    this.nbAlertes        = 0,
-    this.nbAlertesCles    = 0,
-    this.nbWidget         = 0,
-    this.nbConfigIA       = 0,
-    this.nbProfil         = 0,
+    this.nbParis = 0,
+    this.nbPronosticsIA = 0,
+    this.nbIA = 0,
+    this.nbAlertes = 0,
+    this.nbAlertesCles = 0,
+    this.nbWidget = 0,
+    this.nbConfigIA = 0,
+    this.nbProfil = 0,
     this.dateBackup,
     this.version = '?',
     this.erreur,
-    this.nbEloRestaures   = 0,
+    this.nbEloRestaures = 0,
     this.avertissementElo,
   });
 
   String get dateBackupLisible {
     if (dateBackup == null) return 'inconnue';
     final d = dateBackup!;
-    return '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year} a ${d.hour.toString().padLeft(2,'0')}h${d.minute.toString().padLeft(2,'0')}';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} a ${d.hour.toString().padLeft(2, '0')}h${d.minute.toString().padLeft(2, '0')}';
   }
 
   /// Resume lisible du resultat de l'import
   String get resumeRestauration {
     if (!succes) return 'Echec : ${erreur ?? 'Erreur inconnue'}';
     final parts = <String>[];
-    if (nbParis > 0)          parts.add('$nbParis paris');
-    if (nbPronosticsIA > 0)   parts.add('$nbPronosticsIA pronostics IA');
-    if (nbIA > 0)             parts.add('$nbIA cles IA');
-    if (nbAlertes > 0)        parts.add('$nbAlertes alertes');
-    if (nbWidget > 0)         parts.add('widget');
-    if (nbProfil > 0)         parts.add('profil');
+    if (nbParis > 0) parts.add('$nbParis paris');
+    if (nbPronosticsIA > 0) parts.add('$nbPronosticsIA pronostics IA');
+    if (nbIA > 0) parts.add('$nbIA cles IA');
+    if (nbAlertes > 0) parts.add('$nbAlertes alertes');
+    if (nbWidget > 0) parts.add('widget');
+    if (nbProfil > 0) parts.add('profil');
     return 'Restaure : ${parts.isEmpty ? '$nbClesRestaurees cles' : parts.join(', ')}';
   }
 }
@@ -2419,37 +2558,38 @@ class ImportResult {
 
 class BackupInfo {
   // Volume de donnees
-  final int     tailleOctets;
-  final int     nbParis;
-  final int     nbPronostics;
-  final int     nbJournal;
-  final int     nbRapports;
+  final int tailleOctets;
+  final int nbParis;
+  final int nbPronostics;
+  final int nbJournal;
+  final int nbRapports;
 
   // Alertes
-  final int     nbAlertes;
-  final int     nbCoursesTrack;
+  final int nbAlertes;
+  final int nbCoursesTrack;
 
   // IA
-  final bool    iaApprise;
-  final int     nbAjustements;
-  final Map<String, double> poidsActuels;   // 19 critères adaptatifs (v10.x : +mouvCote, +placeDepart)
-  final PoidsIndicesResume? poidsIndices;   // Indices criteres/confiance/reussite
-  final bool    aSeuilsAdaptatifs;
-  final int     nbTypesPrecision;
-  final int     nbStatsTypes;
-  final int     nbStatsLabels;    // ★ v9.0 : Stats par label IA
+  final bool iaApprise;
+  final int nbAjustements;
+  final Map<String, double>
+      poidsActuels; // 19 critères adaptatifs (v10.x : +mouvCote, +placeDepart)
+  final PoidsIndicesResume? poidsIndices; // Indices criteres/confiance/reussite
+  final bool aSeuilsAdaptatifs;
+  final int nbTypesPrecision;
+  final int nbStatsTypes;
+  final int nbStatsLabels; // ★ v9.0 : Stats par label IA
 
   // Profil
   final String? gmail;
   final String? nomProfil;
 
   // Config Fusion
-  final bool    aConfigFusion;
+  final bool aConfigFusion;
   final double? fusionConfiance;
-  final int?    fusionSeuil;
+  final int? fusionSeuil;
 
   // Widget
-  final bool    aWidget;
+  final bool aWidget;
   final String? widgetUpdatedAt;
 
   BackupInfo({
@@ -2459,27 +2599,28 @@ class BackupInfo {
     required this.nbJournal,
     required this.nbRapports,
     required this.nbAlertes,
-    this.nbCoursesTrack     = 0,
-    this.iaApprise          = false,
-    this.nbAjustements      = 0,
-    this.poidsActuels       = const {},
+    this.nbCoursesTrack = 0,
+    this.iaApprise = false,
+    this.nbAjustements = 0,
+    this.poidsActuels = const {},
     this.poidsIndices,
-    this.aSeuilsAdaptatifs  = false,
-    this.nbTypesPrecision   = 0,
-    this.nbStatsTypes       = 0,
-    this.nbStatsLabels      = 0,  // ★ v9.0
+    this.aSeuilsAdaptatifs = false,
+    this.nbTypesPrecision = 0,
+    this.nbStatsTypes = 0,
+    this.nbStatsLabels = 0, // ★ v9.0
     this.gmail,
     this.nomProfil,
-    this.aConfigFusion      = false,
+    this.aConfigFusion = false,
     this.fusionConfiance,
     this.fusionSeuil,
-    this.aWidget            = false,
+    this.aWidget = false,
     this.widgetUpdatedAt,
   });
 
   String get tailleLisible {
-    if (tailleOctets < 1024)         return '$tailleOctets o';
-    if (tailleOctets < 1024 * 1024)  return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
+    if (tailleOctets < 1024) return '$tailleOctets o';
+    if (tailleOctets < 1024 * 1024)
+      return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
     return '${(tailleOctets / (1024 * 1024)).toStringAsFixed(1)} Mo';
   }
 
@@ -2487,16 +2628,16 @@ class BackupInfo {
   /// Compte les 10 categories principales presentant des donnees
   int get couverturePct {
     int couvert = 0;
-    if (nbPronostics > 0)    couvert++;  // Pronostics IA
-    if (nbJournal > 0)       couvert++;  // Journal gradient
-    if (nbRapports > 0)      couvert++;  // Rapports journaliers
-    if (nbParis > 0)         couvert++;  // Paris utilisateur
-    if (nbAlertes > 0)       couvert++;  // Alertes
-    if (iaApprise)           couvert++;  // IA a appris (poids ajustes)
-    if (aSeuilsAdaptatifs)   couvert++;  // Seuils adaptatifs
-    if (aConfigFusion)       couvert++;  // Config Fusion BestBet
-    if (gmail != null)       couvert++;  // Profil Gmail
-    if (aWidget)             couvert++;  // Widget Android
+    if (nbPronostics > 0) couvert++; // Pronostics IA
+    if (nbJournal > 0) couvert++; // Journal gradient
+    if (nbRapports > 0) couvert++; // Rapports journaliers
+    if (nbParis > 0) couvert++; // Paris utilisateur
+    if (nbAlertes > 0) couvert++; // Alertes
+    if (iaApprise) couvert++; // IA a appris (poids ajustes)
+    if (aSeuilsAdaptatifs) couvert++; // Seuils adaptatifs
+    if (aConfigFusion) couvert++; // Config Fusion BestBet
+    if (gmail != null) couvert++; // Profil Gmail
+    if (aWidget) couvert++; // Widget Android
     return couvert * 10; // /10 categories = %
   }
 
@@ -2506,13 +2647,14 @@ class BackupInfo {
     final parts = <String>[];
     void ajouter(String key, String label) {
       final v = poidsActuels[key];
-      if (v != null) parts.add('$label:${(v*100).toStringAsFixed(0)}%');
+      if (v != null) parts.add('$label:${(v * 100).toStringAsFixed(0)}%');
     }
-    ajouter('forme',     'Forme');
-    ajouter('cote',      'Cote');
-    ajouter('gains',     'Gains');
-    ajouter('jockey',    'Jockey');
-    ajouter('hippo',     'Hippo');
+
+    ajouter('forme', 'Forme');
+    ajouter('cote', 'Cote');
+    ajouter('gains', 'Gains');
+    ajouter('jockey', 'Jockey');
+    ajouter('hippo', 'Hippo');
     return parts.join(' | ');
   }
 }
