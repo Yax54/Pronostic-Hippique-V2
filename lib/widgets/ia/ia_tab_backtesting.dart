@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../services/backtesting_service.dart';
+import '../../services/finance_simulateur_officiel.dart';
 import '../../services/ia_memory_service.dart';
 import '../../main.dart' show NavigationNotifier;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,20 +29,20 @@ class IaTabBacktesting extends StatefulWidget {
 
 class _IaTabBacktestingState extends State<IaTabBacktesting> {
   BacktestResult? _btResult;
-  bool   _btEnCours      = false;
-  bool   _btShowAll      = false;
+  bool _btEnCours = false;
+  bool _btShowAll = false;
 
   // ── ★ v10.67 : Export image complet ──────────────────────────────────────
   final GlobalKey _backtestingExportKey = GlobalKey();
   bool _exportBacktestingEnCours = false;
-  double _btMise         = 10.0;
-  int    _btJours        = 30;
-  String _btType         = 'Conseil IA';
+  double _btMise = 10.0;
+  int _btJours = 30;
+  String _btType = 'Conseil IA';
   double _btConfianceMin = 0.0;
 
   // ★ v10.20 : filtres Discipline + Hippodrome
-  String? _btDiscipline;   // null = toutes
-  String? _btHippodrome;   // null = tous
+  String? _btDiscipline; // null = toutes
+  String? _btHippodrome; // null = tous
 
   // ★ v10.24 : simulation Martingale
   _MartingaleResult? _martingaleResult;
@@ -76,20 +77,21 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       );
     }
     setState(() {
-      _btMise         = mise;
-      _btJours        = (prefs.getInt   ('bt_jours')         ?? 30  ).clamp(7, 90);
-      _btType         =  prefs.getString('bt_type')          ?? 'Conseil IA';
-      _btConfianceMin = (prefs.getDouble('bt_confiance_min') ?? 0.0 ).clamp(0.0, 95.0);
-      _btDiscipline   =  prefs.getString('bt_discipline');
-      _btHippodrome   =  prefs.getString('bt_hippodrome');
+      _btMise = mise;
+      _btJours = (prefs.getInt('bt_jours') ?? 30).clamp(7, 90);
+      _btType = prefs.getString('bt_type') ?? 'Conseil IA';
+      _btConfianceMin =
+          (prefs.getDouble('bt_confiance_min') ?? 0.0).clamp(0.0, 95.0);
+      _btDiscipline = prefs.getString('bt_discipline');
+      _btHippodrome = prefs.getString('bt_hippodrome');
     });
   }
 
   Future<void> _sauvegarderPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('bt_mise',          _btMise);
-    await prefs.setInt   ('bt_jours',         _btJours);
-    await prefs.setString('bt_type',          _btType);
+    await prefs.setDouble('bt_mise', _btMise);
+    await prefs.setInt('bt_jours', _btJours);
+    await prefs.setString('bt_type', _btType);
     await prefs.setDouble('bt_confiance_min', _btConfianceMin);
     if (_btDiscipline != null) {
       await prefs.setString('bt_discipline', _btDiscipline!);
@@ -106,58 +108,75 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   // ★ v10.20 — FIX FREEZE : _btEnCours TOUJOURS remis à false dans tous les chemins
   Future<void> _lancerBacktest({String? typeOverride}) async {
     if (_btEnCours) return;
-    setState(() { _btEnCours = true; _btShowAll = false; });
+    setState(() {
+      _btEnCours = true;
+      _btShowAll = false;
+    });
     try {
       final type = typeOverride ?? _btType;
       final result = await BacktestingService.instance.lancer(
-        mise:         _btMise,
-        typePari:     type,
-        nbJours:      _btJours,
+        mise: _btMise,
+        typePari: type,
+        nbJours: _btJours,
         confianceMin: _btConfianceMin,
-        discipline:   _btDiscipline,
-        hippodrome:   _btHippodrome,
+        discipline: _btDiscipline,
+        hippodrome: _btHippodrome,
       );
       if (!mounted) return;
       if (result.nbTotal == 0) {
         // ★ FIX : _btEnCours = false AVANT le return
-        setState(() { _btResult = null; _btEnCours = false; });
+        setState(() {
+          _btResult = null;
+          _btEnCours = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
             _btConfianceMin > 0
-              ? 'Aucune course avec confiance ≥ ${_btConfianceMin.toInt()} pts sur ${_btJours}j.\nBaisse le filtre Confiance IA ou augmente la période.'
-              : 'Aucune course avec résultat réel sur ${_btJours}j.\nEnregistre des pronostics et attends les résultats PMU.',
+                ? 'Aucune course avec confiance ≥ ${_btConfianceMin.toInt()} pts sur ${_btJours}j.\nBaisse le filtre Confiance IA ou augmente la période.'
+                : 'Aucune course avec résultat réel sur ${_btJours}j.\nEnregistre des pronostics et attends les résultats PMU.',
           ),
           backgroundColor: const Color(0xFF7C4DFF),
           duration: const Duration(seconds: 5),
           action: _btConfianceMin > 0
-            ? SnackBarAction(
-                label: 'Réinitialiser',
-                textColor: Colors.white,
-                onPressed: () {
-                  setState(() { _btConfianceMin = 0; _btResult = null; });
-                  _sauvegarderPrefs();
-                },
-              )
-            : null,
+              ? SnackBarAction(
+                  label: 'Réinitialiser',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    setState(() {
+                      _btConfianceMin = 0;
+                      _btResult = null;
+                    });
+                    _sauvegarderPrefs();
+                  },
+                )
+              : null,
         ));
         return; // _btEnCours déjà false dans le setState ci-dessus
       }
       if (typeOverride != null) {
         // Appel depuis bulle Comparaison → changer le type actif ET afficher résultat
         setState(() {
-          _btType   = typeOverride;
+          _btType = typeOverride;
           _btResult = result;
           _btEnCours = false;
         });
         _sauvegarderPrefs();
       } else {
-        setState(() { _btResult = result; _btEnCours = false; });
+        setState(() {
+          _btResult = result;
+          _btEnCours = false;
+        });
       }
     } catch (e) {
       if (mounted) {
-        setState(() { _btEnCours = false; _btResult = null; });
+        setState(() {
+          _btEnCours = false;
+          _btResult = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur backtesting : $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Erreur backtesting : $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
@@ -167,13 +186,23 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     if (_btEnCours) return;
     setState(() => _btEnCours = true);
     try {
-      const types = ['Simple Gagnant', 'Simple Placé', 'Gagnant+Placé',
-                     'Couplé Gagnant', 'Tiercé', 'Quarté+', 'Quinté+'];
+      const types = [
+        'Simple Gagnant',
+        'Simple Placé',
+        'Gagnant+Placé',
+        'Couplé Gagnant',
+        'Tiercé',
+        'Quarté+',
+        'Quinté+'
+      ];
       final futures = types.map((t) => BacktestingService.instance.lancer(
-        mise: _btMise, typePari: t, nbJours: _btJours,
-        confianceMin: _btConfianceMin,
-        discipline: _btDiscipline, hippodrome: _btHippodrome,
-      ));
+            mise: _btMise,
+            typePari: t,
+            nbJours: _btJours,
+            confianceMin: _btConfianceMin,
+            discipline: _btDiscipline,
+            hippodrome: _btHippodrome,
+          ));
       final results = await Future.wait(futures);
       if (!mounted) return;
       final totalCourses = results.fold<int>(0, (s, r) => s + r.nbTotal);
@@ -182,8 +211,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
             _btConfianceMin > 0
-              ? 'Aucune course avec confiance ≥ ${_btConfianceMin.toInt()} pts.\nBaisse le filtre Confiance IA.'
-              : 'Aucune course avec résultat sur ${_btJours}j.',
+                ? 'Aucune course avec confiance ≥ ${_btConfianceMin.toInt()} pts.\nBaisse le filtre Confiance IA.'
+                : 'Aucune course avec résultat sur ${_btJours}j.',
           ),
           backgroundColor: const Color(0xFF7C4DFF),
           duration: const Duration(seconds: 4),
@@ -198,9 +227,11 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   }
 
   // ★ v10.20 — Bulles cliquables : tap → rebascule simulation avec ce type
-  void _showComparaisonDialog(List<String> types, List<BacktestResult> results) {
-    final sorted = List.generate(types.length, (i) => (type: types[i], r: results[i]))
-      ..sort((a, b) => b.r.roi.compareTo(a.r.roi));
+  void _showComparaisonDialog(
+      List<String> types, List<BacktestResult> results) {
+    final sorted =
+        List.generate(types.length, (i) => (type: types[i], r: results[i]))
+          ..sort((a, b) => b.r.roi.compareTo(a.r.roi));
 
     showModalBottomSheet(
       context: context,
@@ -219,7 +250,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             Padding(
               padding: const EdgeInsets.only(top: 10, bottom: 6),
               child: Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2),
@@ -233,7 +265,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('📊 Comparaison des stratégies',
-                      style: TextStyle(color: Colors.white, fontSize: 17,
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
@@ -245,7 +279,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   const SizedBox(height: 4),
                   const Text(
                     '👆 Touche une stratégie pour relancer la simulation avec ce type',
-                    style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 16,
+                    style: TextStyle(
+                        color: Color(0xFF7C4DFF),
+                        fontSize: 16,
                         fontStyle: FontStyle.italic),
                   ),
                   const SizedBox(height: 12),
@@ -258,13 +294,14 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 controller: scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                 children: sorted.map((item) {
-                  final roi    = item.r.roi;
-                  final isPos  = roi >= 0;
-                  final color  = isPos
-                      ? const Color(0xFF4CAF7D)
-                      : Colors.redAccent;
-                  final roiStr = '${roi >= 0 ? "+" : ""}${roi.toStringAsFixed(1)}%';
-                  final gainStr= '${item.r.gainNet >= 0 ? "+" : ""}${item.r.gainNet.toStringAsFixed(0)} €';
+                  final roi = item.r.roi;
+                  final isPos = roi >= 0;
+                  final color =
+                      isPos ? const Color(0xFF4CAF7D) : Colors.redAccent;
+                  final roiStr =
+                      '${roi >= 0 ? "+" : ""}${roi.toStringAsFixed(1)}%';
+                  final gainStr =
+                      '${item.r.gainNet >= 0 ? "+" : ""}${item.r.gainNet.toStringAsFixed(0)} €';
                   final isActif = item.type == _btType;
 
                   return GestureDetector(
@@ -275,14 +312,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                     },
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
                       decoration: BoxDecoration(
                         color: isActif
                             ? color.withValues(alpha: 0.15)
                             : color.withValues(alpha: 0.07),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                          color: isActif ? color : color.withValues(alpha: 0.25),
+                          color:
+                              isActif ? color : color.withValues(alpha: 0.25),
                           width: isActif ? 1.5 : 1.0,
                         ),
                       ),
@@ -294,7 +333,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             Expanded(
                               child: Row(children: [
                                 if (isActif) ...[
-                                  Icon(Icons.play_arrow, color: color, size: 14),
+                                  Icon(Icons.play_arrow,
+                                      color: color, size: 14),
                                   const SizedBox(width: 4),
                                 ],
                                 Text(item.type,
@@ -305,7 +345,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                               ]),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
                                 color: color.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(8),
@@ -322,15 +363,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                           Row(children: [
                             _cmpStat('Gain net', gainStr, color),
                             const SizedBox(width: 20),
-                            _cmpStat('Réussite',
+                            _cmpStat(
+                                'Réussite',
                                 '${item.r.tauxReussite.toStringAsFixed(0)}%',
                                 Colors.white60),
                             const SizedBox(width: 20),
-                            _cmpStat('Courses',
-                                '${item.r.nbTotal}',
-                                Colors.white38),
+                            _cmpStat(
+                                'Courses', '${item.r.nbTotal}', Colors.white38),
                             const Spacer(),
-                            const Icon(Icons.touch_app, color: Colors.white24, size: 14),
+                            const Icon(Icons.touch_app,
+                                color: Colors.white24, size: 14),
                           ]),
                         ],
                       ),
@@ -345,23 +387,50 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     );
   }
 
-  // ── ★ v10.24 : Simulation Martingale ──────────────────────────────────────
-  // Principe : mise initiale doublée après chaque perte, reset à la mise de base après un gain.
-  // On simule sur les pronostics avec résultat de la période sélectionnée.
+  // ═════════════════════════════════════════════════════════════════════════
+  //  ★ BLOC 1 — MARTINGALE : RÉSOLUTION FINANCIÈRE OFFICIELLE
+  //
+  //  CE QUI A ÉTÉ RETIRÉ (mesuré) :
+  //    • `final cote = (p.coteFavoriPmu != null && p.coteFavoriPmu! > 1.0)
+  //         ? p.coteFavoriPmu! : 2.5;`   → dividende inventé à 2,5 ;
+  //    • `capital += mise * (cote - 1.0);` → gain fabriqué à partir d'une cote
+  //      « gagnant » qui ne dit RIEN du Couplé, du Tiercé, du Quarté+ ni du
+  //      Quinté+ ;
+  //    • `capital -= mise;` sur TOUT non-gagnant, sans distinguer un pari
+  //      PERDU d'un pari INDÉTERMINÉ → un résultat inconnu devenait une perte.
+  //
+  //  CE QUI LE REMPLACE : `FinanceSimulateurOfficiel`, donc le moteur officiel,
+  //  donc les rapports PMU réellement publiés. Aucun second moteur.
+  //
+  //  RÈGLES DE PROGRESSION CONSERVÉES, SANS EN MODIFIER AUCUNE VALEUR :
+  //    • mise initiale = `_btMise` ; doublement après une perte ; retour à la
+  //      mise de base après un gain ;
+  //    • série perdante max, doublements max, bankroll requise
+  //      `_btMise × (2^série − 1)` : formules inchangées.
+  //
+  //  RÈGLE AJOUTÉE, exigée par le mandat : si un résultat ESSENTIEL À LA
+  //  PROGRESSION est indéterminé, la simulation S'ARRÊTE et le signale. Elle ne
+  //  continue JAMAIS avec un capital inventé.
+  // ═════════════════════════════════════════════════════════════════════════
   Future<void> _lancerMartingale() async {
     if (_btEnCours) return;
-    setState(() { _btEnCours = true; _martingaleResult = null; });
+    setState(() {
+      _btEnCours = true;
+      _martingaleResult = null;
+    });
     try {
       final limiteDate = DateTime.now().subtract(Duration(days: _btJours));
       final pronostics = IaMemoryService.instance.pronosticsAvecResultat
           .where((p) => p.datePronostic.isAfter(limiteDate))
           .where((p) {
-            if (_btDiscipline != null && p.discipline != _btDiscipline) return false;
-            if (_btHippodrome != null && p.hippodrome != _btHippodrome) return false;
-            if (_btConfianceMin > 0 && (p.confiancePredite ?? 0) < _btConfianceMin) return false;
-            return true;
-          })
-          .toList()
+        if (_btDiscipline != null && p.discipline != _btDiscipline)
+          return false;
+        if (_btHippodrome != null && p.hippodrome != _btHippodrome)
+          return false;
+        if (_btConfianceMin > 0 && (p.confiancePredite ?? 0) < _btConfianceMin)
+          return false;
+        return true;
+      }).toList()
         ..sort((a, b) => a.datePronostic.compareTo(b.datePronostic));
 
       if (pronostics.isEmpty) {
@@ -375,57 +444,115 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
         return;
       }
 
-      // Simulation séquentielle
-      double mise       = _btMise;
-      double capital    = 0.0;   // gain/perte cumulé
-      int    nbGagnes   = 0;
-      int    nbPerdus   = 0;
-      int    seriePerte = 0;
-      int    seriePertMax = 0;
-      double miseTotale = 0.0;
-      double capitalMin = 0.0;  // capital minimum atteint (pour calculer bankroll requise)
-      int    doublementsMax = 0;
-      int    doublementsCourants = 0;
+      // ── Simulation séquentielle, un pari résolu à la fois ───────────────
+      double mise = _btMise;
+      double capital = 0.0; // résultat NET cumulé, officiel uniquement
+      int nbGagnes = 0;
+      int nbPerdus = 0;
+      int nbNonDet = 0; // renseigné seulement si la boucle va au bout
+      int seriePerte = 0;
+      int seriePertMax = 0;
+      double miseTotale = 0.0; // mises des paris DÉTERMINÉS
+      double misesIndet = 0.0; // mises des paris indéterminés, À PART
+      double rembsTotal = 0.0;
+      int doublementsMax = 0;
+      int doublementsCourants = 0;
+
+      // Interruption motivée : renseignée si un résultat essentiel manque.
+      String? interruption;
+      String? courseInterruption;
 
       for (final p in pronostics) {
-        final gagne = p.rangFavoriIaDansArrivee == 1;
-        // Cote approximative : coteFavoriPmu si disponible, sinon 2.5 par défaut
-        final cote = (p.coteFavoriPmu != null && p.coteFavoriPmu! > 1.0) ? p.coteFavoriPmu! : 2.5;
+        final typeEffectif = _btType == 'Conseil IA'
+            ? (p.typePariConseille ?? 'Simple Gagnant')
+            : _btType;
 
-        miseTotale += mise;
-        if (gagne) {
-          capital += mise * (cote - 1.0);
-          nbGagnes++;
-          seriePerte = 0;
-          doublementsCourants = 0;
-          mise = _btMise; // reset
+        final nbNum = FinanceSimulateurOfficiel.nbNumerosPourType(typeEffectif);
+        final numerosJoues = p.scoresIA.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        final joues = numerosJoues
+            .take(nbNum)
+            .map((e) => int.tryParse(e.key))
+            .whereType<int>()
+            .toList();
+        if (joues.isEmpty) continue;
+
+        final ResultatFinancierSimule sim;
+        if (typeEffectif == 'Gagnant+Placé') {
+          sim = await FinanceSimulateurOfficiel.simulerGagnantPlace(
+            courseKey: p.courseKey,
+            numero: joues.first,
+            miseGagnant: mise,
+            misePlace: mise,
+          );
         } else {
-          capital -= mise;
-          nbPerdus++;
-          seriePerte++;
-          if (seriePerte > seriePertMax) seriePertMax = seriePerte;
-          doublementsCourants++;
-          if (doublementsCourants > doublementsMax) doublementsMax = doublementsCourants;
-          mise = mise * 2; // doublement
+          sim = await FinanceSimulateurOfficiel.simulerPari(
+            courseKey: p.courseKey,
+            typePari: typeEffectif,
+            numerosJoues: joues,
+            mise: mise,
+          );
         }
-        if (capital < capitalMin) capitalMin = capital;
+
+        // ── LA RÈGLE D'ARRÊT ─────────────────────────────────────────────
+        // Le sort de CE pari conditionne la PROCHAINE mise : sans lui, la
+        // progression serait une invention. On s'arrête, on ne devine pas.
+        if (!sim.estDetermine) {
+          interruption = sim.motifIndetermination ??
+              'résultat officiel indisponible pour ce pari';
+          courseInterruption = '${p.nomCourse} (${p.courseKey})';
+          // La mise de ce pari indéterminé n'est imputée NI en gain NI en perte,
+          // mais elle a bien été engagée : on la compte à part, honnêtement.
+          misesIndet += mise;
+          nbNonDet++;
+          break;
+        }
+
+        miseTotale += sim.mise;
+
+        switch (sim.sort) {
+          case SortPariSimule.gagne:
+            capital += sim.resultatNet ?? 0.0;
+            rembsTotal += sim.remboursement ?? 0.0;
+            nbGagnes++;
+            seriePerte = 0;
+            doublementsCourants = 0;
+            mise = _btMise; // retour à la mise de base — règle inchangée
+          case SortPariSimule.perdu:
+            capital += sim.resultatNet ?? 0.0; // négatif : la mise est perdue
+            nbPerdus++;
+            seriePerte++;
+            if (seriePerte > seriePertMax) seriePertMax = seriePerte;
+            doublementsCourants++;
+            if (doublementsCourants > doublementsMax)
+              doublementsMax = doublementsCourants;
+            mise = mise * 2; // doublement — règle inchangée
+          case SortPariSimule.nonDeterminee:
+            // Inatteignable : traité par la règle d'arrêt ci-dessus.
+            break;
+        }
       }
 
-      // Capital minimum nécessaire pour survivre à la pire série de pertes
-      // = mise_initiale × (2^serie_perdante_max - 1)
+      // Capital minimum nécessaire pour survivre à la pire série de pertes.
+      // Formule HISTORIQUE, inchangée : mise initiale × (2^série − 1).
       final bankrollRequise = _btMise * ((1 << seriePertMax) - 1).toDouble();
 
       setState(() {
         _martingaleResult = _MartingaleResult(
-          nbTotal:          pronostics.length,
-          nbGagnes:         nbGagnes,
-          nbPerdus:         nbPerdus,
-          gainNet:          capital,
-          miseTotale:       miseTotale,
-          seriePertMax:     seriePertMax,
-          doublementsMax:   doublementsMax,
-          bankrollRequise:  bankrollRequise,
-          miseFinale:       mise,
+          nbTotal: nbGagnes + nbPerdus + nbNonDet,
+          nbGagnes: nbGagnes,
+          nbPerdus: nbPerdus,
+          nbNonDetermines: nbNonDet,
+          gainNet: capital,
+          miseTotale: miseTotale,
+          misesIndeterminees: misesIndet,
+          remboursements: rembsTotal,
+          seriePertMax: seriePertMax,
+          doublementsMax: doublementsMax,
+          bankrollRequise: bankrollRequise,
+          miseFinale: mise,
+          interruption: interruption,
+          courseInterruption: courseInterruption,
         );
         _btEnCours = false;
       });
@@ -437,14 +564,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   Widget _buildMartingaleResultats(_MartingaleResult r) {
     final isPos = r.gainNet >= 0;
     final color = isPos ? const Color(0xFFFFB74D) : const Color(0xFFEF5350);
-    final gainStr = '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €';
+    final gainStr =
+        '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €';
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF111F30),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.4)),
+        border:
+            Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -453,7 +582,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             const Icon(Icons.trending_up, color: Color(0xFFFFB74D), size: 20),
             const SizedBox(width: 8),
             const Text('Simulation Martingale',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
             const Spacer(),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -462,21 +594,90 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(gainStr,
-                  style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14)),
+                  style: TextStyle(
+                      color: color, fontWeight: FontWeight.bold, fontSize: 14)),
             ),
           ]),
           const SizedBox(height: 12),
           // Stats en grille 2×2
+          // ★ BLOC 1 — bannière d'INTERRUPTION. Elle est affichée AVANT tout
+          //   chiffre : un résultat partiel ne doit jamais être lu comme un
+          //   résultat complet.
+          if (r.interrompue) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF5350).withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: const Color(0xFFEF5350).withValues(alpha: 0.45)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.stop_circle_outlined,
+                        color: Color(0xFFEF5350), size: 16),
+                    const SizedBox(width: 6),
+                    const Text('Simulation INTERROMPUE',
+                        style: TextStyle(
+                            color: Color(0xFFEF5350),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Résultat officiel indisponible'
+                    '${r.courseInterruption != null ? " pour ${r.courseInterruption}" : ""}. '
+                    'La progression de la martingale dépend de ce résultat : '
+                    'elle ne peut pas être poursuivie sans inventer un capital.',
+                    style: const TextStyle(
+                        color: Colors.white54, fontSize: 13, height: 1.4),
+                  ),
+                  if (r.interruption != null) ...[
+                    const SizedBox(height: 4),
+                    Text('Motif : ${r.interruption}',
+                        style: const TextStyle(
+                            color: Colors.white30, fontSize: 12)),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           Row(children: [
-            _btStatBox('Réussite', '${(r.nbGagnes / r.nbTotal * 100).round()}%', const Color(0xFF4CAF7D)),
+            // Réussite calculée sur les paris DÉTERMINÉS : un indéterminé
+            // n'est ni une réussite ni un échec.
+            _btStatBox(
+                'Réussite',
+                r.nbGagnes + r.nbPerdus == 0
+                    ? '—'
+                    : '${(r.nbGagnes / (r.nbGagnes + r.nbPerdus) * 100).round()}%',
+                const Color(0xFF4CAF7D)),
             const SizedBox(width: 8),
-            _btStatBox('Courses', '${r.nbTotal}', Colors.white60),
+            _btStatBox(
+                'Paris établis', '${r.nbGagnes + r.nbPerdus}', Colors.white60),
           ]),
+          if (r.nbNonDetermines > 0) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              _btStatBox('Non déterminés', '${r.nbNonDetermines}',
+                  const Color(0xFFFFB74D)),
+              const SizedBox(width: 8),
+              _btStatBox(
+                  'Mises non comptées',
+                  '${r.misesIndeterminees.toStringAsFixed(0)} €',
+                  Colors.white38),
+            ]),
+          ],
           const SizedBox(height: 8),
           Row(children: [
-            _btStatBox('Série perte max', '${r.seriePertMax}', const Color(0xFFEF5350)),
+            _btStatBox('Série perte max', '${r.seriePertMax}',
+                const Color(0xFFEF5350)),
             const SizedBox(width: 8),
-            _btStatBox('Doublements max', '${r.doublementsMax}', const Color(0xFFFFB74D)),
+            _btStatBox('Doublements max', '${r.doublementsMax}',
+                const Color(0xFFFFB74D)),
           ]),
           const SizedBox(height: 12),
           // Mise finale en cours
@@ -485,24 +686,76 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             decoration: BoxDecoration(
               color: const Color(0xFFFFB74D).withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.25)),
+              border: Border.all(
+                  color: const Color(0xFFFFB74D).withValues(alpha: 0.25)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  const Icon(Icons.warning_amber, color: Color(0xFFFFB74D), size: 15),
+                  const Icon(Icons.warning_amber,
+                      color: Color(0xFFFFB74D), size: 15),
                   const SizedBox(width: 6),
                   Text(
                     'Bankroll minimale requise : ${r.bankrollRequise.toStringAsFixed(0)} €',
-                    style: const TextStyle(color: Color(0xFFFFB74D), fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                        color: Color(0xFFFFB74D),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14),
                   ),
                 ]),
                 const SizedBox(height: 4),
                 Text(
                   'Pour survivre à la pire série de ${r.seriePertMax} pertes consécutives avec mise initiale de ${_btMise.toStringAsFixed(0)} €.',
-                  style: const TextStyle(color: Colors.white38, fontSize: 16, height: 1.4),
+                  style: const TextStyle(
+                      color: Colors.white38, fontSize: 16, height: 1.4),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          // ★ BLOC 1 — DÉTAIL FINANCIER OFFICIEL. Il remplace le couple
+          //   « cote × mise » inventé : mises, remboursements et résultat net
+          //   viennent du moteur, et le rendement est calculé sur les seules
+          //   mises DÉTERMINÉES.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Détail financier officiel',
+                    style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(
+                  'Mises engagées (paris établis) : '
+                  '${r.miseTotale.toStringAsFixed(2)} €\n'
+                  'Remboursements officiels : '
+                  '${r.remboursements.toStringAsFixed(2)} €\n'
+                  'Résultat net officiel : '
+                  '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(2)} €\n'
+                  'Rendement sur mises établies : '
+                  '${r.rendement == null ? "indéterminé" : "${r.rendement! >= 0 ? "+" : ""}${r.rendement!.toStringAsFixed(1)} %"}',
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 12, height: 1.5),
+                ),
+                if (r.nbNonDetermines > 0) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Les paris non déterminés ne sont comptés NI en gain NI en '
+                    'perte : les traiter comme des pertes serait un mensonge '
+                    'comptable.',
+                    style: TextStyle(
+                        color: Colors.white30, fontSize: 11, height: 1.4),
+                  ),
+                ],
               ],
             ),
           ),
@@ -526,9 +779,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 16)),
+          Text(label,
+              style: const TextStyle(color: Colors.white38, fontSize: 16)),
           const SizedBox(height: 3),
-          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+          Text(value,
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.bold, fontSize: 16)),
         ]),
       ),
     );
@@ -601,7 +857,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
       final boundary = ctx.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) {
-        if (kDebugMode) debugPrint('[Export] RenderRepaintBoundary null — annulation');
+        if (kDebugMode)
+          debugPrint('[Export] RenderRepaintBoundary null — annulation');
         return;
       }
 
@@ -610,12 +867,14 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       try {
         image = await boundary.toImage(pixelRatio: 2.5);
       } catch (e) {
-        if (kDebugMode) debugPrint('[Export] toImage(2.5) échoué → fallback 2.0 : $e');
+        if (kDebugMode)
+          debugPrint('[Export] toImage(2.5) échoué → fallback 2.0 : $e');
         // Fallback : pixelRatio réduit si OOM
         try {
           image = await boundary.toImage(pixelRatio: 2.0);
         } catch (e2) {
-          if (kDebugMode) debugPrint('[Export] toImage(2.0) échoué aussi : $e2');
+          if (kDebugMode)
+            debugPrint('[Export] toImage(2.0) échoué aussi : $e2');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -632,7 +891,7 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       if (byteData == null) return;
 
       final pngBytes = byteData.buffer.asUint8List();
-      final dir  = await getTemporaryDirectory();
+      final dir = await getTemporaryDirectory();
       final file = File(
         '${dir.path}/backtesting_ia_${DateTime.now().millisecondsSinceEpoch}.png',
       );
@@ -660,19 +919,23 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   }
 
   void _exporterResultats(BacktestResult r) {
-    final roiStr  = '${r.roi >= 0 ? "+" : ""}${r.roi.toStringAsFixed(1)}%';
-    final gainStr = '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €';
+    final roiStr = '${r.roi >= 0 ? "+" : ""}${r.roi.toStringAsFixed(1)}%';
+    final gainStr =
+        '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €';
     final buf = StringBuffer()
       ..writeln('🔬 BACKTESTING — Pronostic Hippique IA')
-      ..writeln('Période : $_btJours jours | Type : $_btType | Mise : ${_btMise.toStringAsFixed(0)} €/course')
-      ..writeln('${_btDiscipline != null ? "Discipline : $_btDiscipline | " : ""}'
-                '${_btHippodrome != null ? "Hippodrome : $_btHippodrome" : ""}')
+      ..writeln(
+          'Période : $_btJours jours | Type : $_btType | Mise : ${_btMise.toStringAsFixed(0)} €/course')
+      ..writeln(
+          '${_btDiscipline != null ? "Discipline : $_btDiscipline | " : ""}'
+          '${_btHippodrome != null ? "Hippodrome : $_btHippodrome" : ""}')
       ..writeln('')
       ..writeln('📊 RÉSULTATS')
       ..writeln('ROI : $roiStr')
       ..writeln('Gain net : $gainStr')
       ..writeln('Réussite : ${r.tauxReussite.toStringAsFixed(0)}%')
-      ..writeln('Courses : ${r.nbTotal} (${r.nbGagnes} gagnées / ${r.nbPerdus} perdues)')
+      ..writeln(
+          'Courses : ${r.nbTotal} (${r.nbGagnes} gagnées / ${r.nbPerdus} perdues)')
       ..writeln('Misé au total : ${r.miseTotal.toStringAsFixed(0)} €')
       ..writeln('')
       ..writeln('📈 SÉRIES')
@@ -681,7 +944,13 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     if (r.parDiscipline.isNotEmpty) {
       buf.writeln('\n🏇 PAR DISCIPLINE');
       r.parDiscipline.forEach((disc, stat) {
-        buf.writeln('  $disc : ${stat.taux.toStringAsFixed(0)}% réussite — ${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)}€');
+        // ★ BLOC 1 : `taux` est `double?` — un taux INCONNU n'est pas 0 %.
+        final tauxStr = stat.taux == null
+            ? 'taux indéterminé'
+            : '${stat.taux!.toStringAsFixed(0)}% réussite';
+        buf.writeln(
+            '  $disc : $tauxStr — ${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)}€'
+            '${stat.nbNonDetermines > 0 ? " (${stat.nbNonDetermines} non déterminé(s))" : ""}');
       });
     }
     buf.writeln('\nGénéré par Pronostic Hippique IA v10.20');
@@ -702,9 +971,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
   List<String> _getHippodromesDisponibles() {
     final limiteDate = DateTime.now().subtract(Duration(days: _btJours));
-    final pronostics = IaMemoryService.instance.pronostics
-        .where((p) => p.resultatsReels && p.arriveeReelle != null
-                   && p.datePronostic.isAfter(limiteDate));
+    final pronostics = IaMemoryService.instance.pronostics.where((p) =>
+        p.resultatsReels &&
+        p.arriveeReelle != null &&
+        p.datePronostic.isAfter(limiteDate));
     final map = <String, int>{};
     for (final p in pronostics) {
       if (p.hippodrome.isNotEmpty) {
@@ -719,10 +989,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
   @override
   Widget build(BuildContext context) {
-    final plage   = BacktestingService.instance.plageDisponible;
+    final plage = BacktestingService.instance.plageDisponible;
     final nbDispo = BacktestingService.instance.nbCoursesDisponibles;
-    final disciplines  = _getDisciplinesDisponibles();
-    final hippodromes  = _getHippodromesDisponibles();
+    final disciplines = _getDisciplinesDisponibles();
+    final hippodromes = _getHippodromesDisponibles();
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -735,536 +1005,719 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
-        // ── En-tête ────────────────────────────────────────────────────────
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF1A1A2E), Color(0xFF0D1B2A)],
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ★ v10.67 : Header avec bouton Export en haut à droite
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Icon(Icons.science_rounded, color: Color(0xFF7C4DFF), size: 20),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Simulateur historique',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                // ── En-tête ────────────────────────────────────────────────────────
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF1A1A2E), Color(0xFF0D1B2A)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: const Color(0xFF7C4DFF).withValues(alpha: 0.4)),
                   ),
-                  _buildExportButton(),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Rejoue les journées passées pour mesurer ce que vous auriez gagné ou perdu en suivant l\'IA avec une mise fixe.',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              Row(children: [
-                const Icon(Icons.bar_chart, color: Color(0xFF7C4DFF), size: 15),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    nbDispo == 0
-                      ? 'Aucune course avec résultat disponible'
-                      : '$nbDispo course${nbDispo > 1 ? "s" : ""} avec résultats'
-                        '${plage.debut != null ? " · du ${plage.debut!.day.toString().padLeft(2,"0")}/${plage.debut!.month.toString().padLeft(2,"0")} au ${plage.fin!.day.toString().padLeft(2,"0")}/${plage.fin!.month.toString().padLeft(2,"0")}" : ""}',
-                    style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ]),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        if (nbDispo == 0) ...[
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(color: const Color(0xFF111F30), borderRadius: BorderRadius.circular(14)),
-            child: const Column(children: [
-              Icon(Icons.hourglass_empty, color: Colors.white38, size: 48),
-              SizedBox(height: 12),
-              Text('Pas encore assez de données',
-                  style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
-              SizedBox(height: 6),
-              Text(
-                'L\'IA a besoin de pronostics avec résultats officiels pour simuler. Revenez après quelques journées de courses.',
-                style: TextStyle(color: Colors.white38, fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-            ]),
-          ),
-        ] else ...[
-
-          // ── Paramètres ────────────────────────────────────────────────────
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: const Color(0xFF111F30), borderRadius: BorderRadius.circular(14)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('⚙️ Paramètres',
-                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 14),
-
-                // ── Période ──────────────────────────────────────────────
-                const Text('Période', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8, runSpacing: 8,
-                  children: [7, 14, 30, 60, 90].map((j) {
-                    final sel = _btJours == j;
-                    return GestureDetector(
-                      onTap: () { setState(() => _btJours = j); _sauvegarderPrefs(); },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: sel ? const Color(0xFF7C4DFF) : const Color(0xFF0D1B2A),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: sel ? const Color(0xFF7C4DFF) : Colors.white24),
-                        ),
-                        child: Text('${j}j', style: TextStyle(
-                            color: sel ? Colors.white : Colors.white54,
-                            fontWeight: FontWeight.bold, fontSize: 14)),
-                      ),
-                    );
-                  }).toList(),
-                ),
-
-                const SizedBox(height: 14),
-
-                // ── Type de pari ──────────────────────────────────────────
-                const Text('Type de pari simulé', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8, runSpacing: 8,
-                  children: ['Conseil IA', 'Simple Gagnant', 'Simple Placé', 'Gagnant+Placé',
-                             'Couplé Gagnant', 'Couplé Placé', 'Tiercé', 'Quarté+', 'Quinté+'].map((t) {
-                    final sel = _btType == t;
-                    return GestureDetector(
-                      onTap: () { setState(() => _btType = t); _sauvegarderPrefs(); },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: sel ? const Color(0xFF004D40) : const Color(0xFF0D1B2A),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: sel ? const Color(0xFF00BCD4) : Colors.white24),
-                        ),
-                        child: Text(t, style: TextStyle(
-                            color: sel ? const Color(0xFF00BCD4) : Colors.white54,
-                            fontSize: 14, fontWeight: FontWeight.w600)),
-                      ),
-                    );
-                  }).toList(),
-                ),
-
-                const SizedBox(height: 14),
-
-                // ── Mise par course (saisie manuelle v10.25) ───────────
-                const Text('Mise par course',
-                    style: TextStyle(color: Colors.white54, fontSize: 14)),
-                const SizedBox(height: 8),
-                // Champ texte + raccourcis rapides
-                Row(
-                  children: [
-                    // Champ de saisie
-                    Expanded(
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0D1B2A),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFFFD700).withValues(alpha: 0.5)),
-                        ),
-                        child: Row(
-                          children: [
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextField(
-                                controller: _miseController,
-                                keyboardType: TextInputType.number,
-                                style: const TextStyle(
-                                    color: Color(0xFFFFD700),
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold),
-                                decoration: const InputDecoration(
-                                  border: InputBorder.none,
-                                  isDense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                                // ★ v10.29 : onChanged = mise à jour silencieuse SANS setState ni save
-                                // Pas de setState = pas de rebuild = pas de clignotement
-                                onChanged: (v) {
-                                  final val = double.tryParse(v);
-                                  if (val != null) {
-                                    _btMise = val.clamp(1.0, 9999.0);
-                                    // Pas de setState, pas de save — on attend la validation
-                                  }
-                                },
-                                // ★ v10.29 : onSubmitted = validation finale avec clamp + save
-                                onSubmitted: (v) {
-                                  final val = double.tryParse(v);
-                                  final clamped = (val ?? _btMise).clamp(1.0, 9999.0);
-                                  final clampedStr = clamped.toStringAsFixed(0);
-                                  // Mettre à jour controller AVANT setState
-                                  if (_miseController.text != clampedStr) {
-                                    _miseController.value = TextEditingValue(
-                                      text: clampedStr,
-                                      selection: TextSelection.collapsed(offset: clampedStr.length),
-                                    );
-                                  }
-                                  setState(() => _btMise = clamped);
-                                  _sauvegarderPrefs();
-                                },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ★ v10.67 : Header avec bouton Export en haut à droite
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.science_rounded,
+                              color: Color(0xFF7C4DFF), size: 20),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Simulateur historique',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const Padding(
-                              padding: EdgeInsets.only(right: 10),
-                              child: Text('€', style: TextStyle(
-                                  color: Color(0xFFFFD700),
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
+                          ),
+                          _buildExportButton(),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Rejoue les journées passées pour mesurer ce que vous auriez gagné ou perdu en suivant l\'IA avec une mise fixe.',
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        const Icon(Icons.bar_chart,
+                            color: Color(0xFF7C4DFF), size: 15),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            nbDispo == 0
+                                ? 'Aucune course avec résultat disponible'
+                                : '$nbDispo course${nbDispo > 1 ? "s" : ""} avec résultats'
+                                    '${plage.debut != null ? " · du ${plage.debut!.day.toString().padLeft(2, "0")}/${plage.debut!.month.toString().padLeft(2, "0")} au ${plage.fin!.day.toString().padLeft(2, "0")}/${plage.fin!.month.toString().padLeft(2, "0")}" : ""}',
+                            style: const TextStyle(
+                                color: Color(0xFF7C4DFF),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ]),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                if (nbDispo == 0) ...[
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF111F30),
+                        borderRadius: BorderRadius.circular(14)),
+                    child: const Column(children: [
+                      Icon(Icons.hourglass_empty,
+                          color: Colors.white38, size: 48),
+                      SizedBox(height: 12),
+                      Text('Pas encore assez de données',
+                          style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold)),
+                      SizedBox(height: 6),
+                      Text(
+                        'L\'IA a besoin de pronostics avec résultats officiels pour simuler. Revenez après quelques journées de courses.',
+                        style: TextStyle(color: Colors.white38, fontSize: 14),
+                        textAlign: TextAlign.center,
+                      ),
+                    ]),
+                  ),
+                ] else ...[
+                  // ── Paramètres ────────────────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF111F30),
+                        borderRadius: BorderRadius.circular(14)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('⚙️ Paramètres',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 14),
+
+                        // ── Période ──────────────────────────────────────────────
+                        const Text('Période',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 14)),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [7, 14, 30, 60, 90].map((j) {
+                            final sel = _btJours == j;
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() => _btJours = j);
+                                _sauvegarderPrefs();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: sel
+                                      ? const Color(0xFF7C4DFF)
+                                      : const Color(0xFF0D1B2A),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                      color: sel
+                                          ? const Color(0xFF7C4DFF)
+                                          : Colors.white24),
+                                ),
+                                child: Text('${j}j',
+                                    style: TextStyle(
+                                        color:
+                                            sel ? Colors.white : Colors.white54,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        // ── Type de pari ──────────────────────────────────────────
+                        const Text('Type de pari simulé',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 14)),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            'Conseil IA',
+                            'Simple Gagnant',
+                            'Simple Placé',
+                            'Gagnant+Placé',
+                            'Couplé Gagnant',
+                            'Couplé Placé',
+                            'Tiercé',
+                            'Quarté+',
+                            'Quinté+'
+                          ].map((t) {
+                            final sel = _btType == t;
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() => _btType = t);
+                                _sauvegarderPrefs();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: sel
+                                      ? const Color(0xFF004D40)
+                                      : const Color(0xFF0D1B2A),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                      color: sel
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.white24),
+                                ),
+                                child: Text(t,
+                                    style: TextStyle(
+                                        color: sel
+                                            ? const Color(0xFF00BCD4)
+                                            : Colors.white54,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        // ── Mise par course (saisie manuelle v10.25) ───────────
+                        const Text('Mise par course',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 14)),
+                        const SizedBox(height: 8),
+                        // Champ texte + raccourcis rapides
+                        Row(
+                          children: [
+                            // Champ de saisie
+                            Expanded(
+                              child: Container(
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0D1B2A),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                      color: const Color(0xFFFFD700)
+                                          .withValues(alpha: 0.5)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _miseController,
+                                        keyboardType: TextInputType.number,
+                                        style: const TextStyle(
+                                            color: Color(0xFFFFD700),
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold),
+                                        decoration: const InputDecoration(
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                        // ★ v10.29 : onChanged = mise à jour silencieuse SANS setState ni save
+                                        // Pas de setState = pas de rebuild = pas de clignotement
+                                        onChanged: (v) {
+                                          final val = double.tryParse(v);
+                                          if (val != null) {
+                                            _btMise = val.clamp(1.0, 9999.0);
+                                            // Pas de setState, pas de save — on attend la validation
+                                          }
+                                        },
+                                        // ★ v10.29 : onSubmitted = validation finale avec clamp + save
+                                        onSubmitted: (v) {
+                                          final val = double.tryParse(v);
+                                          final clamped = (val ?? _btMise)
+                                              .clamp(1.0, 9999.0);
+                                          final clampedStr =
+                                              clamped.toStringAsFixed(0);
+                                          // Mettre à jour controller AVANT setState
+                                          if (_miseController.text !=
+                                              clampedStr) {
+                                            _miseController.value =
+                                                TextEditingValue(
+                                              text: clampedStr,
+                                              selection:
+                                                  TextSelection.collapsed(
+                                                      offset:
+                                                          clampedStr.length),
+                                            );
+                                          }
+                                          setState(() => _btMise = clamped);
+                                          _sauvegarderPrefs();
+                                        },
+                                      ),
+                                    ),
+                                    const Padding(
+                                      padding: EdgeInsets.only(right: 10),
+                                      child: Text('€',
+                                          style: TextStyle(
+                                              color: Color(0xFFFFD700),
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),
+                        const SizedBox(height: 8),
+                        // Raccourcis rapides
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [2, 5, 10, 20, 50, 100, 200].map((montant) {
+                            final sel = _btMise.toStringAsFixed(0) ==
+                                montant.toString();
+                            return GestureDetector(
+                              onTap: () {
+                                _btMise = montant.toDouble();
+                                // ★ v10.28 : mise à jour propre du controller sans reset cursor
+                                _miseController.value = TextEditingValue(
+                                  text: montant.toString(),
+                                  selection: TextSelection.collapsed(
+                                      offset: montant.toString().length),
+                                );
+                                setState(() {});
+                                _sauvegarderPrefs();
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: sel
+                                      ? const Color(0xFFFFD700)
+                                          .withValues(alpha: 0.18)
+                                      : const Color(0xFF0D1B2A),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                      color: sel
+                                          ? const Color(0xFFFFD700)
+                                          : Colors.white24),
+                                ),
+                                child: Text('$montant€',
+                                    style: TextStyle(
+                                        color: sel
+                                            ? const Color(0xFFFFD700)
+                                            : Colors.white54,
+                                        fontSize: 14,
+                                        fontWeight: sel
+                                            ? FontWeight.bold
+                                            : FontWeight.normal)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        // ── Confiance IA ──────────────────────────────────────────
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Confiance IA minimale',
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 14)),
+                            Text('${_btConfianceMin.toStringAsFixed(0)} pts',
+                                style: const TextStyle(
+                                    color: Color(0xFF00BCD4),
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Slider(
+                          value: _btConfianceMin,
+                          min: 0,
+                          max: 95,
+                          divisions: 19,
+                          activeColor: const Color(0xFF00BCD4),
+                          inactiveColor: Colors.white12,
+                          onChanged: (v) {
+                            setState(() => _btConfianceMin = v.roundToDouble());
+                            _sauvegarderPrefs();
+                          },
+                        ),
+                        if (_btConfianceMin > 0)
+                          Text(
+                            'Seules les courses avec confiance ≥ ${_btConfianceMin.toStringAsFixed(0)} pts seront simulées',
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 14),
+                          ),
+
+                        // ══════════════════════════════════════════════════════════
+                        // ★ v10.20 — FILTRE DISCIPLINE
+                        // ══════════════════════════════════════════════════════════
+                        if (disciplines.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          const Text('Discipline',
+                              style: TextStyle(
+                                  color: Colors.white54, fontSize: 14)),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              // Puce "Toutes" — visible uniquement si aucun filtre actif
+                              if (_btDiscipline == null)
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() => _btDiscipline = null);
+                                    _sauvegarderPrefs();
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF3E2A6E),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                          color: const Color(0xFF7C4DFF)),
+                                    ),
+                                    child: const Text('Toutes',
+                                        style: TextStyle(
+                                            color: Color(0xFF7C4DFF),
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                ),
+                              ...disciplines.map((d) {
+                                final sel = _btDiscipline == d;
+                                return GestureDetector(
+                                  onTap: () {
+                                    setState(() => _btDiscipline = d);
+                                    _sauvegarderPrefs();
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: sel
+                                          ? const Color(0xFF3E2A6E)
+                                          : const Color(0xFF0D1B2A),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                          color: sel
+                                              ? const Color(0xFF7C4DFF)
+                                              : Colors.white24),
+                                    ),
+                                    child: Text(d,
+                                        style: TextStyle(
+                                            color: sel
+                                                ? const Color(0xFF7C4DFF)
+                                                : Colors.white54,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ],
+
+                        // ══════════════════════════════════════════════════════════
+                        // ★ v10.20 — FILTRE HIPPODROME
+                        // ══════════════════════════════════════════════════════════
+                        if (hippodromes.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          const Text('Hippodrome',
+                              style: TextStyle(
+                                  color: Colors.white54, fontSize: 14)),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              // Puce "Tous" — visible uniquement si aucun filtre actif
+                              if (_btHippodrome == null)
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() => _btHippodrome = null);
+                                    _sauvegarderPrefs();
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1A3A2E),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                          color: const Color(0xFF4CAF7D)),
+                                    ),
+                                    child: const Text('Tous',
+                                        style: TextStyle(
+                                            color: Color(0xFF4CAF7D),
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                ),
+                              ...hippodromes.map((h) {
+                                final sel = _btHippodrome == h;
+                                return GestureDetector(
+                                  onTap: () {
+                                    setState(() => _btHippodrome = h);
+                                    _sauvegarderPrefs();
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: sel
+                                          ? const Color(0xFF1A3A2E)
+                                          : const Color(0xFF0D1B2A),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                          color: sel
+                                              ? const Color(0xFF4CAF7D)
+                                              : Colors.white24),
+                                    ),
+                                    child: Text(h,
+                                        style: TextStyle(
+                                            color: sel
+                                                ? const Color(0xFF4CAF7D)
+                                                : Colors.white54,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                          if (_btDiscipline != null ||
+                              _btHippodrome != null) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF7C4DFF)
+                                          .withValues(alpha: 0.08),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: const Color(0xFF7C4DFF)
+                                              .withValues(alpha: 0.25)),
+                                    ),
+                                    child: Row(children: [
+                                      const Icon(Icons.filter_alt,
+                                          color: Color(0xFF7C4DFF), size: 14),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Filtre actif : ${[
+                                            if (_btDiscipline != null)
+                                              _btDiscipline!,
+                                            if (_btHippodrome != null)
+                                              _btHippodrome!,
+                                          ].join(" · ")}',
+                                          style: const TextStyle(
+                                              color: Color(0xFF7C4DFF),
+                                              fontSize: 14),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _btDiscipline = null;
+                                            _btHippodrome = null;
+                                          });
+                                          _sauvegarderPrefs();
+                                        },
+                                        child: const Icon(Icons.close,
+                                            color: Colors.white38, size: 14),
+                                      ),
+                                    ]),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // ── Boutons Simuler + Comparer ────────────────────────────────────
+                  Row(children: [
+                    Expanded(
+                      flex: 3,
+                      child: GestureDetector(
+                        onTap: _btEnCours ? null : () => _lancerBacktest(),
+                        child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                            gradient: _btEnCours
+                                ? const LinearGradient(colors: [
+                                    Color(0xFF263238),
+                                    Color(0xFF1C2A38)
+                                  ])
+                                : const LinearGradient(colors: [
+                                    Color(0xFF7C4DFF),
+                                    Color(0xFF512DA8)
+                                  ]),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: _btEnCours
+                                ? []
+                                : [
+                                    BoxShadow(
+                                        color: const Color(0xFF7C4DFF)
+                                            .withValues(alpha: 0.4),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4))
+                                  ],
+                          ),
+                          child: Center(
+                            child: _btEnCours
+                                ? const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                        SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                                color: Colors.white70,
+                                                strokeWidth: 2)),
+                                        SizedBox(width: 10),
+                                        Text('En cours…',
+                                            style: TextStyle(
+                                                color: Colors.white70,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.bold)),
+                                      ])
+                                : const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                        Icon(Icons.play_circle_fill,
+                                            color: Colors.white, size: 20),
+                                        SizedBox(width: 8),
+                                        Text('Simuler',
+                                            style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.bold)),
+                                      ]),
+                          ),
+                        ),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // Raccourcis rapides
-                Wrap(
-                  spacing: 6, runSpacing: 6,
-                  children: [2, 5, 10, 20, 50, 100, 200].map((montant) {
-                    final sel = _btMise.toStringAsFixed(0) == montant.toString();
-                    return GestureDetector(
-                      onTap: () {
-                        _btMise = montant.toDouble();
-                        // ★ v10.28 : mise à jour propre du controller sans reset cursor
-                        _miseController.value = TextEditingValue(
-                          text: montant.toString(),
-                          selection: TextSelection.collapsed(offset: montant.toString().length),
-                        );
-                        setState(() {});
-                        _sauvegarderPrefs();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: sel
-                              ? const Color(0xFFFFD700).withValues(alpha: 0.18)
-                              : const Color(0xFF0D1B2A),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                              color: sel
-                                  ? const Color(0xFFFFD700)
-                                  : Colors.white24),
-                        ),
-                        child: Text('$montant€',
-                            style: TextStyle(
-                                color: sel ? const Color(0xFFFFD700) : Colors.white54,
-                                fontSize: 14,
-                                fontWeight: sel ? FontWeight.bold : FontWeight.normal)),
-                      ),
-                    );
-                  }).toList(),
-                ),
-
-                // ── Confiance IA ──────────────────────────────────────────
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Confiance IA minimale', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                    Text('${_btConfianceMin.toStringAsFixed(0)} pts',
-                        style: const TextStyle(color: Color(0xFF00BCD4), fontSize: 15, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                Slider(
-                  value: _btConfianceMin, min: 0, max: 95, divisions: 19,
-                  activeColor: const Color(0xFF00BCD4),
-                  inactiveColor: Colors.white12,
-                  onChanged: (v) { setState(() => _btConfianceMin = v.roundToDouble()); _sauvegarderPrefs(); },
-                ),
-                if (_btConfianceMin > 0)
-                  Text(
-                    'Seules les courses avec confiance ≥ ${_btConfianceMin.toStringAsFixed(0)} pts seront simulées',
-                    style: const TextStyle(color: Colors.white38, fontSize: 14),
-                  ),
-
-                // ══════════════════════════════════════════════════════════
-                // ★ v10.20 — FILTRE DISCIPLINE
-                // ══════════════════════════════════════════════════════════
-                if (disciplines.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  const Text('Discipline', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8, runSpacing: 8,
-                    children: [
-                      // Puce "Toutes" — visible uniquement si aucun filtre actif
-                      if (_btDiscipline == null)
-                        GestureDetector(
-                          onTap: () { setState(() => _btDiscipline = null); _sauvegarderPrefs(); },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF3E2A6E),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: const Color(0xFF7C4DFF)),
-                            ),
-                            child: const Text('Toutes', style: TextStyle(
-                                color: Color(0xFF7C4DFF),
-                                fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: GestureDetector(
+                        onTap: _btEnCours ? null : _lancerComparaison,
+                        child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF111F30),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: const Color(0xFF7C4DFF)
+                                    .withValues(alpha: 0.5)),
                           ),
-                        ),
-                      ...disciplines.map((d) {
-                        final sel = _btDiscipline == d;
-                        return GestureDetector(
-                          onTap: () { setState(() => _btDiscipline = d); _sauvegarderPrefs(); },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: sel ? const Color(0xFF3E2A6E) : const Color(0xFF0D1B2A),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                  color: sel ? const Color(0xFF7C4DFF) : Colors.white24),
-                            ),
-                            child: Text(d, style: TextStyle(
-                                color: sel ? const Color(0xFF7C4DFF) : Colors.white54,
-                                fontSize: 14, fontWeight: FontWeight.w600)),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
-                ],
-
-                // ══════════════════════════════════════════════════════════
-                // ★ v10.20 — FILTRE HIPPODROME
-                // ══════════════════════════════════════════════════════════
-                if (hippodromes.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  const Text('Hippodrome', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8, runSpacing: 8,
-                    children: [
-                      // Puce "Tous" — visible uniquement si aucun filtre actif
-                      if (_btHippodrome == null)
-                        GestureDetector(
-                          onTap: () { setState(() => _btHippodrome = null); _sauvegarderPrefs(); },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1A3A2E),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: const Color(0xFF4CAF7D)),
-                            ),
-                            child: const Text('Tous', style: TextStyle(
-                                color: Color(0xFF4CAF7D),
-                                fontSize: 14, fontWeight: FontWeight.w600)),
-                          ),
-                        ),
-                      ...hippodromes.map((h) {
-                        final sel = _btHippodrome == h;
-                        return GestureDetector(
-                          onTap: () { setState(() => _btHippodrome = h); _sauvegarderPrefs(); },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: sel ? const Color(0xFF1A3A2E) : const Color(0xFF0D1B2A),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                  color: sel ? const Color(0xFF4CAF7D) : Colors.white24),
-                            ),
-                            child: Text(h, style: TextStyle(
-                                color: sel ? const Color(0xFF4CAF7D) : Colors.white54,
-                                fontSize: 14, fontWeight: FontWeight.w600)),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
-                  if (_btDiscipline != null || _btHippodrome != null) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.25)),
-                            ),
-                            child: Row(children: [
-                              const Icon(Icons.filter_alt, color: Color(0xFF7C4DFF), size: 14),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  'Filtre actif : ${[
-                                    if (_btDiscipline != null) _btDiscipline!,
-                                    if (_btHippodrome != null) _btHippodrome!,
-                                  ].join(" · ")}',
-                                  style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 14),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() { _btDiscipline = null; _btHippodrome = null; });
-                                  _sauvegarderPrefs();
-                                },
-                                child: const Icon(Icons.close, color: Colors.white38, size: 14),
-                              ),
+                          child: const Center(
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.compare_arrows,
+                                  color: Color(0xFF7C4DFF), size: 18),
+                              SizedBox(width: 6),
+                              Text('Comparer',
+                                  style: TextStyle(
+                                      color: Color(0xFF7C4DFF),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold)),
                             ]),
                           ),
                         ),
-                      ],
+                      ),
                     ),
+                  ]),
+
+                  // ★ v10.24 — Bouton Martingale
+                  const SizedBox(height: 10),
+                  GestureDetector(
+                    onTap: _btEnCours ? null : _lancerMartingale,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: _btEnCours
+                            ? const Color(0xFF1C2A38)
+                            : const Color(0xFF1A1000),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _btEnCours
+                              ? Colors.white12
+                              : const Color(0xFFFFB74D).withValues(alpha: 0.6),
+                        ),
+                      ),
+                      child: Center(
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.trending_up,
+                              color: _btEnCours
+                                  ? Colors.white24
+                                  : const Color(0xFFFFB74D),
+                              size: 18),
+                          const SizedBox(width: 8),
+                          Text('Simuler Martingale',
+                              style: TextStyle(
+                                  color: _btEnCours
+                                      ? Colors.white24
+                                      : const Color(0xFFFFB74D),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold)),
+                        ]),
+                      ),
+                    ),
+                  ),
+
+                  // ── Résultats ──────────────────────────────────────────────────────
+                  if (_btResult != null) ...[
+                    const SizedBox(height: 20),
+                    _buildBtResultats(_btResult!),
+                    const SizedBox(height: 12),
+                    _buildBoutonAppliquerConseils(),
+                  ],
+
+                  // ★ v10.24 — Résultat Martingale
+                  if (_martingaleResult != null) ...[
+                    const SizedBox(height: 20),
+                    _buildMartingaleResultats(_martingaleResult!),
                   ],
                 ],
-              ],
-            ),
-          ),
 
-          const SizedBox(height: 14),
-
-          // ── Boutons Simuler + Comparer ────────────────────────────────────
-          Row(children: [
-            Expanded(
-              flex: 3,
-              child: GestureDetector(
-                onTap: _btEnCours ? null : () => _lancerBacktest(),
-                child: Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    gradient: _btEnCours
-                        ? const LinearGradient(colors: [Color(0xFF263238), Color(0xFF1C2A38)])
-                        : const LinearGradient(colors: [Color(0xFF7C4DFF), Color(0xFF512DA8)]),
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: _btEnCours ? [] : [
-                      BoxShadow(color: const Color(0xFF7C4DFF).withValues(alpha: 0.4),
-                          blurRadius: 12, offset: const Offset(0, 4))
-                    ],
-                  ),
-                  child: Center(
-                    child: _btEnCours
-                      ? const Row(mainAxisSize: MainAxisSize.min, children: [
-                          SizedBox(width: 18, height: 18,
-                              child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2)),
-                          SizedBox(width: 10),
-                          Text('En cours…',
-                              style: TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.bold)),
-                        ])
-                      : const Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.play_circle_fill, color: Colors.white, size: 20),
-                          SizedBox(width: 8),
-                          Text('Simuler',
-                              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-                        ]),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 2,
-              child: GestureDetector(
-                onTap: _btEnCours ? null : _lancerComparaison,
-                child: Container(
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF111F30),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFF7C4DFF).withValues(alpha: 0.5)),
-                  ),
-                  child: const Center(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.compare_arrows, color: Color(0xFF7C4DFF), size: 18),
-                      SizedBox(width: 6),
-                      Text('Comparer',
-                          style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, fontWeight: FontWeight.bold)),
-                    ]),
-                  ),
-                ),
-              ),
-            ),
-          ]),
-
-          // ★ v10.24 — Bouton Martingale
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: _btEnCours ? null : _lancerMartingale,
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: _btEnCours
-                    ? const Color(0xFF1C2A38)
-                    : const Color(0xFF1A1000),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: _btEnCours
-                      ? Colors.white12
-                      : const Color(0xFFFFB74D).withValues(alpha: 0.6),
-                ),
-              ),
-              child: Center(
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.trending_up,
-                      color: _btEnCours ? Colors.white24 : const Color(0xFFFFB74D),
-                      size: 18),
-                  const SizedBox(width: 8),
-                  Text('Simuler Martingale',
-                      style: TextStyle(
-                          color: _btEnCours ? Colors.white24 : const Color(0xFFFFB74D),
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold)),
-                ]),
-              ),
-            ),
-          ),
-
-          // ── Résultats ──────────────────────────────────────────────────────
-          if (_btResult != null) ...[
-            const SizedBox(height: 20),
-            _buildBtResultats(_btResult!),
-            const SizedBox(height: 12),
-            _buildBoutonAppliquerConseils(),
-          ],
-
-          // ★ v10.24 — Résultat Martingale
-          if (_martingaleResult != null) ...[
-            const SizedBox(height: 20),
-            _buildMartingaleResultats(_martingaleResult!),
-          ],
-        ],
-
-              const SizedBox(height: 24),
-
+                const SizedBox(height: 24),
               ], // Column children (RepaintBoundary)
-            ),  // Column
-          ),    // Container fond opaque
-        ),      // RepaintBoundary
+            ), // Column
+          ), // Container fond opaque
+        ), // RepaintBoundary
       ],
     );
   }
@@ -1275,10 +1728,14 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
-          Container(width: 8, height: 8,
+          Container(
+              width: 8,
+              height: 8,
               decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 8),
-          Text(label, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w600)),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 14, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -1289,16 +1746,18 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     // Construire la description des filtres actifs
     final List<String> lignes = [];
     if (_btType != 'Conseil IA') lignes.add('Type : $_btType');
-    if (_btConfianceMin > 0)     lignes.add('Confiance ≥ ${_btConfianceMin.round()}%');
-    if (_btDiscipline != null)   lignes.add('Discipline : $_btDiscipline');
-    if (_btHippodrome != null)   lignes.add('Hippodrome : $_btHippodrome');
+    if (_btConfianceMin > 0)
+      lignes.add('Confiance ≥ ${_btConfianceMin.round()}%');
+    if (_btDiscipline != null) lignes.add('Discipline : $_btDiscipline');
+    if (_btHippodrome != null) lignes.add('Hippodrome : $_btHippodrome');
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF0D2535),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.45), width: 1.5),
+        border: Border.all(
+            color: const Color(0xFF4CAF7D).withValues(alpha: 0.45), width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1320,7 +1779,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Appliquer vers Conseils IA',
-                        style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold)),
                     Text('Pré-configurer les filtres depuis ce backtesting',
                         style: TextStyle(color: Colors.white38, fontSize: 16)),
                   ],
@@ -1333,16 +1795,27 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
           if (lignes.isNotEmpty) ...[
             const SizedBox(height: 10),
             Wrap(
-              spacing: 6, runSpacing: 6,
-              children: lignes.map((l) => Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.3)),
-                ),
-                child: Text(l, style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 14, fontWeight: FontWeight.w600)),
-              )).toList(),
+              spacing: 6,
+              runSpacing: 6,
+              children: lignes
+                  .map((l) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color:
+                              const Color(0xFF4CAF7D).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: const Color(0xFF4CAF7D)
+                                  .withValues(alpha: 0.3)),
+                        ),
+                        child: Text(l,
+                            style: const TextStyle(
+                                color: Color(0xFF4CAF7D),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600)),
+                      ))
+                  .toList(),
             ),
           ] else ...[
             const SizedBox(height: 8),
@@ -1359,14 +1832,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 // ConseilsScreen les lira automatiquement à son prochain focus
                 final prefs = await SharedPreferences.getInstance();
                 // Types de paris : convertir depuis le type backtesting
-                final List<String> types = _btType != 'Conseil IA' ? [_btType] : [];
-                await prefs.setStringList('conseils_filtres_types_paris', types);
+                final List<String> types =
+                    _btType != 'Conseil IA' ? [_btType] : [];
+                await prefs.setStringList(
+                    'conseils_filtres_types_paris', types);
                 await prefs.setStringList('conseils_filtres_hippodromes',
                     _btHippodrome != null ? [_btHippodrome!] : []);
                 await prefs.setStringList('conseils_filtres_disciplines',
                     _btDiscipline != null ? [_btDiscipline!] : []);
-                await prefs.setInt('conseils_filtres_confiance_min',
-                    _btConfianceMin.round());
+                await prefs.setInt(
+                    'conseils_filtres_confiance_min', _btConfianceMin.round());
                 // Flag pour signaler qu'un inject est en attente
                 await prefs.setBool('conseils_inject_pending', true);
 
@@ -1385,13 +1860,17 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   barrierDismissible: true,
                   builder: (ctx) => AlertDialog(
                     backgroundColor: const Color(0xFF0D1B2A),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
                     title: const Row(
                       children: [
                         Text('✨', style: TextStyle(fontSize: 20)),
                         SizedBox(width: 8),
                         Text('Filtres appliqués',
-                            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold)),
                       ],
                     ),
                     content: Column(
@@ -1402,25 +1881,32 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                           nbFiltres > 0
                               ? '$nbFiltres critère${nbFiltres > 1 ? "s" : ""} transféré${nbFiltres > 1 ? "s" : ""} vers Conseils IA :'
                               : 'Filtres réinitialisés dans Conseils IA.',
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 14),
                         ),
-                        if (nbFiltres > 0) ...[  
+                        if (nbFiltres > 0) ...[
                           const SizedBox(height: 10),
                           if (types.isNotEmpty)
-                            _dialogChip('Type : ${types.join(", ")}', const Color(0xFF7C4DFF)),
+                            _dialogChip('Type : ${types.join(", ")}',
+                                const Color(0xFF7C4DFF)),
                           if (_btConfianceMin > 0)
-                            _dialogChip('Confiance ≥ ${_btConfianceMin.round()}%', const Color(0xFF00BCD4)),
+                            _dialogChip(
+                                'Confiance ≥ ${_btConfianceMin.round()}%',
+                                const Color(0xFF00BCD4)),
                           if (_btDiscipline != null)
-                            _dialogChip('Discipline : $_btDiscipline', const Color(0xFF4CAF7D)),
+                            _dialogChip('Discipline : $_btDiscipline',
+                                const Color(0xFF4CAF7D)),
                           if (_btHippodrome != null)
-                            _dialogChip('Hippodrome : $_btHippodrome', const Color(0xFFFFD700)),
+                            _dialogChip('Hippodrome : $_btHippodrome',
+                                const Color(0xFFFFD700)),
                         ],
                       ],
                     ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.of(ctx).pop(),
-                        child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
+                        child: const Text('Annuler',
+                            style: TextStyle(color: Colors.white38)),
                       ),
                       ElevatedButton(
                         onPressed: () {
@@ -1431,9 +1917,11 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF7C4DFF),
                           foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
-                        child: const Text('Ouvrir Conseils IA', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: const Text('Ouvrir Conseils IA',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -1446,7 +1934,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 backgroundColor: const Color(0xFF2E7D52),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
             ),
@@ -1605,10 +2094,11 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
   }
 
   Widget _buildBtResultats(BacktestResult r) {
-    final gainColor = r.gainNet >= 0 ? const Color(0xFF4CAF7D) : Colors.redAccent;
-    final mise      = _btMise;
+    final gainColor =
+        r.gainNet >= 0 ? const Color(0xFF4CAF7D) : Colors.redAccent;
+    final mise = _btMise;
     final miseParcours = (_btType == 'Gagnant+Placé') ? mise * 2 : mise;
-    final coussin      = r.pireSeriesPerdantes * miseParcours;
+    final coussin = r.pireSeriesPerdantes * miseParcours;
     final gainMoyenGagne = r.nbGagnes > 0
         ? (r.gainNet + r.nbPerdus * miseParcours) / r.nbGagnes
         : 0.0;
@@ -1616,7 +2106,6 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-
         // ═══════════════════════════════════════════════════════════════════
         // BLOC 1 — VERDICT EN UNE PHRASE
         // ═══════════════════════════════════════════════════════════════════
@@ -1628,7 +2117,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
               colors: r.estRentable
                   ? [const Color(0xFF1B3A2B), const Color(0xFF0D1B2A)]
                   : [const Color(0xFF3A1B1B), const Color(0xFF0D1B2A)],
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
@@ -1646,27 +2136,38 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   Row(children: [
                     Icon(
                       r.estRentable ? Icons.trending_up : Icons.trending_down,
-                      color: gainColor, size: 20,
+                      color: gainColor,
+                      size: 20,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      r.estRentable ? '✅ Stratégie rentable' : '❌ Stratégie déficitaire',
-                      style: TextStyle(color: gainColor, fontSize: 15, fontWeight: FontWeight.bold),
+                      r.estRentable
+                          ? '✅ Stratégie rentable'
+                          : '❌ Stratégie déficitaire',
+                      style: TextStyle(
+                          color: gainColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold),
                     ),
                   ]),
                   GestureDetector(
                     onTap: () => _exporterResultats(r),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.07),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: Colors.white24),
                       ),
-                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.share_rounded, color: Colors.white54, size: 14),
+                      child:
+                          const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.share_rounded,
+                            color: Colors.white54, size: 14),
                         SizedBox(width: 4),
-                        Text('Partager', style: TextStyle(color: Colors.white54, fontSize: 14)),
+                        Text('Partager',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 14)),
                       ]),
                     ),
                   ),
@@ -1679,23 +2180,27 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 Wrap(spacing: 6, children: [
                   if (_btDiscipline != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text('📍 $_btDiscipline',
-                          style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 16)),
+                          style: const TextStyle(
+                              color: Color(0xFF7C4DFF), fontSize: 16)),
                     ),
                   if (_btHippodrome != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFF4CAF7D).withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text('🏟️ $_btHippodrome',
-                          style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 16)),
+                          style: const TextStyle(
+                              color: Color(0xFF4CAF7D), fontSize: 16)),
                     ),
                 ]),
               ],
@@ -1712,15 +2217,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 ),
                 child: Text(
                   r.estRentable
-                    ? 'Sur ${_btJours}j, en jouant ${mise.toStringAsFixed(0)} € sur chaque course recommandée par l\'IA, '
-                      'tu aurais misé ${r.miseTotal.toStringAsFixed(0)} € au total '
-                      'et récupéré ${(r.miseTotal + r.gainNet).toStringAsFixed(0)} € — '
-                      'soit ${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} € de bénéfice net.'
-                    : 'Sur ${_btJours}j, en jouant ${mise.toStringAsFixed(0)} € sur chaque course recommandée par l\'IA, '
-                      'tu aurais misé ${r.miseTotal.toStringAsFixed(0)} € au total '
-                      'et récupéré ${(r.miseTotal + r.gainNet).toStringAsFixed(0)} € — '
-                      'soit ${r.gainNet.toStringAsFixed(0)} € de perte nette.',
-                  style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+                      ? 'Sur ${_btJours}j, en jouant ${mise.toStringAsFixed(0)} € sur chaque course recommandée par l\'IA, '
+                          'tu aurais misé ${r.miseTotal.toStringAsFixed(0)} € au total '
+                          'et récupéré ${(r.miseTotal + r.gainNet).toStringAsFixed(0)} € — '
+                          'soit ${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} € de bénéfice net.'
+                      : 'Sur ${_btJours}j, en jouant ${mise.toStringAsFixed(0)} € sur chaque course recommandée par l\'IA, '
+                          'tu aurais misé ${r.miseTotal.toStringAsFixed(0)} € au total '
+                          'et récupéré ${(r.miseTotal + r.gainNet).toStringAsFixed(0)} € — '
+                          'soit ${r.gainNet.toStringAsFixed(0)} € de perte nette.',
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 14, height: 1.5),
                 ),
               ),
 
@@ -1775,7 +2281,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 Icon(Icons.shield_outlined, color: Colors.redAccent, size: 16),
                 SizedBox(width: 6),
                 Text('Résistance — pire séquence vécue',
-                    style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                    style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold)),
               ]),
               const SizedBox(height: 12),
 
@@ -1784,16 +2293,20 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 children: [
                   Expanded(
                     child: Wrap(
-                      spacing: 4, runSpacing: 4,
+                      spacing: 4,
+                      runSpacing: 4,
                       children: [
                         ...List.generate(
                           r.pireSeriesPerdantes.clamp(0, 15),
-                          (_) => const Icon(Icons.close, color: Colors.redAccent, size: 14),
+                          (_) => const Icon(Icons.close,
+                              color: Colors.redAccent, size: 14),
                         ),
                         if (r.pireSeriesPerdantes > 15)
                           Text('…+${r.pireSeriesPerdantes - 15}',
-                              style: const TextStyle(color: Colors.redAccent, fontSize: 14)),
-                        const Icon(Icons.check_circle, color: Color(0xFF4CAF7D), size: 18),
+                              style: const TextStyle(
+                                  color: Colors.redAccent, fontSize: 14)),
+                        const Icon(Icons.check_circle,
+                            color: Color(0xFF4CAF7D), size: 18),
                       ],
                     ),
                   ),
@@ -1814,21 +2327,28 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   children: [
                     RichText(
                       text: TextSpan(
-                        style: const TextStyle(color: Colors.white60, fontSize: 14, height: 1.6),
+                        style: const TextStyle(
+                            color: Colors.white60, fontSize: 14, height: 1.6),
                         children: [
                           const TextSpan(text: 'Pire série perdante : '),
                           TextSpan(
-                            text: '${r.pireSeriesPerdantes} paris perdus d\'affilée',
-                            style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                            text:
+                                '${r.pireSeriesPerdantes} paris perdus d\'affilée',
+                            style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontWeight: FontWeight.bold),
                           ),
                           const TextSpan(text: '\nMise par course : '),
                           TextSpan(
                             text: '${miseParcours.toStringAsFixed(0)} €',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold),
                           ),
                           const TextSpan(text: '\n\n'),
                           TextSpan(
-                            text: '${r.pireSeriesPerdantes} × ${miseParcours.toStringAsFixed(0)} € = ${coussin.toStringAsFixed(0)} € partis avant le prochain gain',
+                            text:
+                                '${r.pireSeriesPerdantes} × ${miseParcours.toStringAsFixed(0)} € = ${coussin.toStringAsFixed(0)} € partis avant le prochain gain',
                             style: const TextStyle(
                               color: Colors.redAccent,
                               fontWeight: FontWeight.bold,
@@ -1841,15 +2361,20 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                     const SizedBox(height: 8),
                     RichText(
                       text: TextSpan(
-                        style: const TextStyle(color: Colors.white38, fontSize: 14, height: 1.5),
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 14, height: 1.5),
                         children: [
                           const TextSpan(text: '→ Juste après, un gain de '),
                           TextSpan(
-                            text: '+${gainMoyenGagne.toStringAsFixed(0)} € en moyenne',
-                            style: const TextStyle(color: Color(0xFF4CAF7D), fontWeight: FontWeight.bold),
+                            text:
+                                '+${gainMoyenGagne.toStringAsFixed(0)} € en moyenne',
+                            style: const TextStyle(
+                                color: Color(0xFF4CAF7D),
+                                fontWeight: FontWeight.bold),
                           ),
                           const TextSpan(
-                            text: ' te rembourse ces pertes en quelques courses.\n'
+                            text:
+                                ' te rembourse ces pertes en quelques courses.\n'
                                 'Si tu arrêtes pendant la série, tu rates ce rebond. 💡',
                           ),
                         ],
@@ -1862,21 +2387,25 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
               const SizedBox(height: 10),
 
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
                   color: const Color(0xFF4CAF7D).withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF4CAF7D).withValues(alpha: 0.2)),
+                  border: Border.all(
+                      color: const Color(0xFF4CAF7D).withValues(alpha: 0.2)),
                 ),
                 child: Row(children: [
-                  const Icon(Icons.savings_outlined, color: Color(0xFF4CAF7D), size: 16),
+                  const Icon(Icons.savings_outlined,
+                      color: Color(0xFF4CAF7D), size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Réserve conseillée : au moins ${coussin.toStringAsFixed(0)} € '
                       '(= ${r.pireSeriesPerdantes} × ${miseParcours.toStringAsFixed(0)} €) '
                       'pour ne jamais être forcé d\'arrêter.',
-                      style: const TextStyle(color: Color(0xFF4CAF7D), fontSize: 14, height: 1.4),
+                      style: const TextStyle(
+                          color: Color(0xFF4CAF7D), fontSize: 14, height: 1.4),
                     ),
                   ),
                 ]),
@@ -1884,7 +2413,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
               const SizedBox(height: 10),
               Row(children: [
-                const Icon(Icons.local_fire_department, color: Color(0xFFFFD700), size: 15),
+                const Icon(Icons.local_fire_department,
+                    color: Color(0xFFFFD700), size: 15),
                 const SizedBox(width: 6),
                 Text(
                   'Meilleure série gagnante : ${r.meilleureSerieGagnante} paris consécutifs gagnés'
@@ -1898,17 +2428,20 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 10),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
                     color: Colors.orange.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+                    border: Border.all(
+                        color: Colors.orange.withValues(alpha: 0.25)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        const Icon(Icons.trending_down, color: Colors.orange, size: 15),
+                        const Icon(Icons.trending_down,
+                            color: Colors.orange, size: 15),
                         const SizedBox(width: 6),
                         RichText(
                           text: TextSpan(
@@ -1967,7 +2500,10 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   Icon(Icons.show_chart, color: Color(0xFF7C4DFF), size: 16),
                   SizedBox(width: 6),
                   Text('Évolution de ta cagnotte',
-                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 4),
                 const Text(
@@ -1987,16 +2523,20 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('Début\n0 €',
-                        style: TextStyle(color: Colors.white24, fontSize: 16), textAlign: TextAlign.center),
+                        style: TextStyle(color: Colors.white24, fontSize: 16),
+                        textAlign: TextAlign.center),
                     Column(children: [
                       Text(
                         '${r.gainNet >= 0 ? "+" : ""}${r.gainNet.toStringAsFixed(0)} €',
                         style: TextStyle(
-                          color: gainColor, fontSize: 15, fontWeight: FontWeight.bold,
+                          color: gainColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                       const Text('résultat final',
-                          style: TextStyle(color: Colors.white30, fontSize: 16)),
+                          style:
+                              TextStyle(color: Colors.white30, fontSize: 16)),
                     ]),
                     const Text('Fin',
                         style: TextStyle(color: Colors.white24, fontSize: 16)),
@@ -2025,19 +2565,26 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   Icon(Icons.sports, color: Color(0xFF7C4DFF), size: 16),
                   SizedBox(width: 6),
                   Text('Par discipline — où jouer, où éviter',
-                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 12),
                 ...(() {
                   final entries = r.parDiscipline.entries.toList()
-                    ..sort((a, b) => b.value.gainNet.compareTo(a.value.gainNet));
+                    ..sort(
+                        (a, b) => b.value.gainNet.compareTo(a.value.gainNet));
                   return entries.map((e) {
-                    final stat  = e.value;
-                    final color = stat.gainNet >= 0 ? const Color(0xFF4CAF7D) : Colors.redAccent;
+                    final stat = e.value;
+                    final color = stat.gainNet >= 0
+                        ? const Color(0xFF4CAF7D)
+                        : Colors.redAccent;
                     final emoji = stat.gainNet >= 0 ? '✅' : '❌';
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
                         color: color.withValues(alpha: 0.06),
                         borderRadius: BorderRadius.circular(8),
@@ -2051,18 +2598,26 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(e.key,
-                                  style: const TextStyle(color: Colors.white,
-                                      fontSize: 14, fontWeight: FontWeight.w600)),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600)),
                               Text(
-                                '${stat.nbTotal} courses · ${stat.taux.toStringAsFixed(0)}% gagnées',
-                                style: const TextStyle(color: Colors.white38, fontSize: 16),
+                                '${stat.nbTotal} courses · '
+                                '${stat.taux == null ? "taux indéterminé" : "${stat.taux!.toStringAsFixed(0)}% gagnées"}'
+                                '${stat.nbNonDetermines > 0 ? " · ${stat.nbNonDetermines} non déterminé(s)" : ""}',
+                                style: const TextStyle(
+                                    color: Colors.white38, fontSize: 16),
                               ),
                             ],
                           ),
                         ),
                         Text(
                           '${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)} €',
-                          style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                              color: color,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold),
                         ),
                       ]),
                     );
@@ -2071,10 +2626,15 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 4),
                 Builder(builder: (ctx) {
                   final rentables = r.parDiscipline.entries
-                      .where((e) => e.value.gainNet > 0).map((e) => e.key).toList();
+                      .where((e) => e.value.gainNet > 0)
+                      .map((e) => e.key)
+                      .toList();
                   final perdantes = r.parDiscipline.entries
-                      .where((e) => e.value.gainNet < 0).map((e) => e.key).toList();
-                  if (rentables.isEmpty && perdantes.isEmpty) return const SizedBox();
+                      .where((e) => e.value.gainNet < 0)
+                      .map((e) => e.key)
+                      .toList();
+                  if (rentables.isEmpty && perdantes.isEmpty)
+                    return const SizedBox();
                   return Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -2084,7 +2644,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                     child: Text(
                       '💡 ${rentables.isNotEmpty ? "Joue en priorité : ${rentables.join(", ")}." : ""}'
                       '${perdantes.isNotEmpty ? " Évite : ${perdantes.join(", ")}." : ""}',
-                      style: const TextStyle(color: Color(0xFF7C4DFF), fontSize: 14, height: 1.4),
+                      style: const TextStyle(
+                          color: Color(0xFF7C4DFF), fontSize: 14, height: 1.4),
                     ),
                   );
                 }),
@@ -2108,10 +2669,13 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Row(children: [
-                  Icon(Icons.casino_outlined, color: Color(0xFFFFD700), size: 16),
+                  Icon(Icons.casino_outlined,
+                      color: Color(0xFFFFD700), size: 16),
                   SizedBox(width: 6),
                   Text('Par type de pari — taux et Kelly optimal',
-                      style: TextStyle(color: Colors.white70, fontSize: 14,
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 4),
@@ -2123,13 +2687,15 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 ...(() {
                   // Ordre des types de paris du plus joué au moins joué
                   final entries = r.parTypePari.entries.toList()
-                    ..sort((a, b) => b.value.nbTotal.compareTo(a.value.nbTotal));
+                    ..sort(
+                        (a, b) => b.value.nbTotal.compareTo(a.value.nbTotal));
                   return entries.map((e) {
-                    final stat   = e.value;
-                    final color  = stat.gainNet >= 0
-                        ? const Color(0xFF4CAF7D) : Colors.redAccent;
-                    final emoji  = stat.gainNet >= 0 ? '✅' : '❌';
-                    final kelly  = stat.kellyFraction();
+                    final stat = e.value;
+                    final color = stat.gainNet >= 0
+                        ? const Color(0xFF4CAF7D)
+                        : Colors.redAccent;
+                    final emoji = stat.gainNet >= 0 ? '✅' : '❌';
+                    final kelly = stat.kellyFraction();
                     final kellyTxt = kelly > 0
                         ? '🎯 Kelly : ${(kelly * 100).toStringAsFixed(0)}% bankroll'
                         : '⛔ Ne pas jouer (Kelly = 0)';
@@ -2149,64 +2715,77 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(e.key,
-                                style: const TextStyle(color: Colors.white,
-                                    fontSize: 14, fontWeight: FontWeight.w600)),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600)),
                             ),
                             Text(
                               '${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)} €',
-                              style: TextStyle(color: color, fontSize: 14,
+                              style: TextStyle(
+                                  color: color,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold),
                             ),
                           ]),
                           const SizedBox(height: 6),
                           Row(children: [
                             // Taux de réussite
-                            Expanded(child: Column(
+                            Expanded(
+                                child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('${stat.taux.toStringAsFixed(0)}% de réussite',
-                                    style: const TextStyle(color: Colors.white54,
-                                        fontSize: 16)),
+                                Text(
+                                    stat.taux == null
+                                        ? 'Taux indéterminé'
+                                        : '${stat.taux!.toStringAsFixed(0)}% de réussite',
+                                    style: const TextStyle(
+                                        color: Colors.white54, fontSize: 16)),
                                 Text('${stat.nbGagnes}/${stat.nbTotal} gagnés',
-                                    style: const TextStyle(color: Colors.white38,
-                                        fontSize: 16)),
+                                    style: const TextStyle(
+                                        color: Colors.white38, fontSize: 16)),
                               ],
                             )),
                             // ROI
-                            Expanded(child: Column(
+                            Expanded(
+                                child: Column(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Text('ROI ${stat.roi >= 0 ? "+" : ""}${stat.roi.toStringAsFixed(0)}%',
+                                Text(
+                                    stat.roi == null
+                                        ? 'ROI indéterminé'
+                                        : 'ROI ${stat.roi! >= 0 ? "+" : ""}${stat.roi!.toStringAsFixed(0)}%',
                                     style: TextStyle(
-                                      color: stat.roi >= 0
+                                      color: (stat.roi ?? 0) >= 0
                                           ? const Color(0xFF4CAF7D)
                                           : Colors.redAccent,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w600,
                                     )),
                                 Text('Série max : ${stat.maxSerie}',
-                                    style: const TextStyle(color: Colors.white38,
-                                        fontSize: 16)),
+                                    style: const TextStyle(
+                                        color: Colors.white38, fontSize: 16)),
                               ],
                             )),
                             // Kelly
-                            Expanded(child: Column(
+                            Expanded(
+                                child: Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  kelly > 0
-                                      ? '${(kelly * 100).toStringAsFixed(0)}%'
-                                      : '0%',
-                                  style: TextStyle(
-                                    color: kelly > 0
-                                        ? const Color(0xFFFFD700)
-                                        : Colors.white24,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  )),
+                                    kelly > 0
+                                        ? '${(kelly * 100).toStringAsFixed(0)}%'
+                                        : '0%',
+                                    style: TextStyle(
+                                      color: kelly > 0
+                                          ? const Color(0xFFFFD700)
+                                          : Colors.white24,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    )),
                                 const Text('Kelly',
-                                    style: TextStyle(color: Colors.white38,
-                                        fontSize: 14)),
+                                    style: TextStyle(
+                                        color: Colors.white38, fontSize: 14)),
                               ],
                             )),
                           ]),
@@ -2216,13 +2795,13 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
+                                color: const Color(0xFF7C4DFF)
+                                    .withValues(alpha: 0.08),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(kellyTxt,
-                                style: const TextStyle(
-                                    color: Color(0xFFB39DDB),
-                                    fontSize: 16)),
+                                  style: const TextStyle(
+                                      color: Color(0xFFB39DDB), fontSize: 16)),
                             ),
                           ],
                         ],
@@ -2234,14 +2813,19 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 const SizedBox(height: 4),
                 Builder(builder: (ctx) {
                   final meilleur = r.parTypePari.entries
-                      .where((e) => e.value.nbTotal >= 5 && e.value.roi > 0)
+                      .where(
+                          (e) => e.value.nbTotal >= 5 && (e.value.roi ?? 0) > 0)
                       .toList()
-                    ..sort((a, b) => b.value.roi.compareTo(a.value.roi));
+                    ..sort((a, b) =>
+                        (b.value.roi ?? 0).compareTo(a.value.roi ?? 0));
                   final eviter = r.parTypePari.entries
-                      .where((e) => e.value.nbTotal >= 5 && e.value.roi < -20)
+                      .where((e) =>
+                          e.value.nbTotal >= 5 && (e.value.roi ?? 0) < -20)
                       .toList()
-                    ..sort((a, b) => a.value.roi.compareTo(b.value.roi));
-                  if (meilleur.isEmpty && eviter.isEmpty) return const SizedBox();
+                    ..sort((a, b) =>
+                        (a.value.roi ?? 0).compareTo(b.value.roi ?? 0));
+                  if (meilleur.isEmpty && eviter.isEmpty)
+                    return const SizedBox();
                   return Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -2251,8 +2835,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                     child: Text(
                       '💡 ${meilleur.isNotEmpty ? "Privilégie : ${meilleur.take(2).map((e) => e.key).join(", ")}." : ""}'
                       '${eviter.isNotEmpty ? " Évite : ${eviter.take(2).map((e) => e.key).join(", ")}." : ""}',
-                      style: const TextStyle(color: Color(0xFF7C4DFF),
-                          fontSize: 14, height: 1.4),
+                      style: const TextStyle(
+                          color: Color(0xFF7C4DFF), fontSize: 14, height: 1.4),
                     ),
                   );
                 }),
@@ -2285,19 +2869,27 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                   Icon(Icons.location_on, color: Color(0xFF7C4DFF), size: 16),
                   SizedBox(width: 6),
                   Text('Par hippodrome — Top 5',
-                      style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 12),
                 ...(() {
                   final entries = r.parHippodrome.entries.toList()
-                    ..sort((a, b) => b.value.gainNet.compareTo(a.value.gainNet));
+                    ..sort(
+                        (a, b) => b.value.gainNet.compareTo(a.value.gainNet));
                   return entries.map((e) {
-                    final stat  = e.value;
-                    final color = stat.gainNet >= 0 ? const Color(0xFF4CAF7D) : Colors.redAccent;
+                    final stat = e.value;
+                    final color = stat.gainNet >= 0
+                        ? const Color(0xFF4CAF7D)
+                        : Colors.redAccent;
                     final maxGain = entries
                         .map((x) => x.value.gainNet.abs())
                         .fold(0.0, (a, b) => a > b ? a : b);
-                    final ratio = maxGain > 0 ? (stat.gainNet.abs() / maxGain).clamp(0.0, 1.0) : 0.0;
+                    final ratio = maxGain > 0
+                        ? (stat.gainNet.abs() / maxGain).clamp(0.0, 1.0)
+                        : 0.0;
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: Column(
@@ -2306,14 +2898,19 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                           Row(children: [
                             Expanded(
                               child: Text(e.key,
-                                  style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 14)),
                             ),
                             Text('${stat.nbTotal} courses',
-                                style: const TextStyle(color: Colors.white30, fontSize: 16)),
+                                style: const TextStyle(
+                                    color: Colors.white30, fontSize: 16)),
                             const SizedBox(width: 10),
                             Text(
                               '${stat.gainNet >= 0 ? "+" : ""}${stat.gainNet.toStringAsFixed(0)} €',
-                              style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                  color: color,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold),
                             ),
                           ]),
                           const SizedBox(height: 4),
@@ -2337,8 +2934,11 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             ),
                           ]),
                           Text(
-                            '${stat.taux.toStringAsFixed(0)}% de réussite',
-                            style: const TextStyle(color: Colors.white30, fontSize: 16),
+                            stat.taux == null
+                                ? 'Taux indéterminé'
+                                : '${stat.taux!.toStringAsFixed(0)}% de réussite',
+                            style: const TextStyle(
+                                color: Colors.white30, fontSize: 16),
                           ),
                         ],
                       ),
@@ -2363,10 +2963,14 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                tilePadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                 title: Text(
                   '📋 Détail des ${r.courses.length} courses simulées',
-                  style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(
                   '✅ ${r.nbGagnes} gagnées  ❌ ${r.nbPerdus} perdues',
@@ -2376,31 +2980,54 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                 collapsedIconColor: Colors.white24,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     child: Column(children: [
                       ...(() {
-                        final liste     = r.courses.reversed.toList();
-                        final affichees = _btShowAll ? liste : liste.take(20).toList();
+                        final liste = r.courses.reversed.toList();
+                        final affichees =
+                            _btShowAll ? liste : liste.take(20).toList();
                         return affichees.map((c) {
-                          final dateStr = '${c.date.day.toString().padLeft(2,"0")}/${c.date.month.toString().padLeft(2,"0")}';
-                          final color   = c.gagne ? const Color(0xFF4CAF7D) : Colors.redAccent;
-                          final gainStr = '${c.gainNet >= 0 ? "+" : ""}${c.gainNet.toStringAsFixed(0)}€';
+                          final dateStr =
+                              '${c.date.day.toString().padLeft(2, "0")}/${c.date.month.toString().padLeft(2, "0")}';
+                          // ★ BLOC 1 : trois états distincts, trois affichages.
+                          //   Un indéterminé ne doit NI ressembler à un gain NI
+                          //   à une perte : couleur neutre et mention explicite.
+                          final color = c.sort == SortPariSimule.gagne
+                              ? const Color(0xFF4CAF7D)
+                              : c.sort == SortPariSimule.perdu
+                                  ? Colors.redAccent
+                                  : Colors.white54;
+                          final gainStr = c.sort == SortPariSimule.nonDeterminee
+                              ? 'non déterminé'
+                              : '${(c.gainNet ?? 0) >= 0 ? "+" : ""}${(c.gainNet ?? 0).toStringAsFixed(0)}€';
                           return Container(
                             margin: const EdgeInsets.only(bottom: 6),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 9),
                             decoration: BoxDecoration(
                               color: const Color(0xFF0D1B2A),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                color: c.gagne
-                                    ? const Color(0xFF4CAF7D).withValues(alpha: 0.2)
-                                    : Colors.redAccent.withValues(alpha: 0.12),
+                                color: c.sort == SortPariSimule.gagne
+                                    ? const Color(0xFF4CAF7D)
+                                        .withValues(alpha: 0.2)
+                                    : c.sort == SortPariSimule.perdu
+                                        ? Colors.redAccent
+                                            .withValues(alpha: 0.12)
+                                        : Colors.white24
+                                            .withValues(alpha: 0.12),
                               ),
                             ),
                             child: Row(children: [
                               Icon(
-                                c.gagne ? Icons.check_circle_outline : Icons.highlight_off,
-                                color: color, size: 16,
+                                c.sort == SortPariSimule.gagne
+                                    ? Icons.check_circle_outline
+                                    : c.sort == SortPariSimule.perdu
+                                        ? Icons.highlight_off
+                                        : Icons.help_outline,
+                                color: color,
+                                size: 16,
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -2408,19 +3035,31 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text('$dateStr · ${c.hippodrome}',
-                                        style: const TextStyle(color: Colors.white38, fontSize: 16)),
+                                        style: const TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 16)),
                                     Text(c.nomCourse,
-                                        style: const TextStyle(color: Colors.white70, fontSize: 14),
-                                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                                        style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 14),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
                                   ],
                                 ),
                               ),
-                              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                                Text(gainStr,
-                                    style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
-                                Text(c.typePariConseille,
-                                    style: const TextStyle(color: Colors.white30, fontSize: 16)),
-                              ]),
+                              Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(gainStr,
+                                        style: TextStyle(
+                                            color: color,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold)),
+                                    Text(c.typePariConseille,
+                                        style: const TextStyle(
+                                            color: Colors.white30,
+                                            fontSize: 16)),
+                                  ]),
                             ]),
                           );
                         }).toList();
@@ -2439,10 +3078,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                             child: Center(
                               child: Text(
                                 _btShowAll
-                                  ? '▲ Réduire'
-                                  : '▼ Voir tout (${r.courses.length - 20} autres)',
+                                    ? '▲ Réduire'
+                                    : '▼ Voir tout (${r.courses.length - 20} autres)',
                                 style: const TextStyle(
-                                  color: Colors.white54, fontSize: 14, fontWeight: FontWeight.w600,
+                                  color: Colors.white54,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),
@@ -2471,7 +3112,8 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
         },
         child: Column(children: [
           Text(valeur,
-              style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  color: color, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 3),
           Text(label,
               style: const TextStyle(color: Colors.white38, fontSize: 16),
@@ -2491,8 +3133,11 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold)),
-        Text(label, style: const TextStyle(color: Colors.white30, fontSize: 16)),
+        Text(value,
+            style: TextStyle(
+                color: color, fontSize: 14, fontWeight: FontWeight.bold)),
+        Text(label,
+            style: const TextStyle(color: Colors.white30, fontSize: 16)),
       ],
     );
   }
@@ -2506,18 +3151,20 @@ class _CourbePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (gains.isEmpty) return;
-    final minV  = gains.reduce((a, b) => a < b ? a : b);
-    final maxV  = gains.reduce((a, b) => a > b ? a : b);
+    final minV = gains.reduce((a, b) => a < b ? a : b);
+    final maxV = gains.reduce((a, b) => a > b ? a : b);
     final range = (maxV - minV).abs();
     if (range == 0) return;
 
-    final paintLine = Paint()..strokeWidth = 2..style = PaintingStyle.stroke;
+    final paintLine = Paint()
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
     final paintFill = Paint()..style = PaintingStyle.fill;
-    final path      = Path();
-    final fillPath  = Path();
+    final path = Path();
+    final fillPath = Path();
     final n = gains.length;
 
-    double x(int i)    => size.width * i / (n - 1);
+    double x(int i) => size.width * i / (n - 1);
     double y(double v) => size.height - ((v - minV) / range) * size.height;
 
     path.moveTo(x(0), y(gains[0]));
@@ -2531,14 +3178,16 @@ class _CourbePainter extends CustomPainter {
     fillPath.close();
 
     final isPositive = gains.last >= 0;
-    final color      = isPositive ? const Color(0xFF4CAF7D) : Colors.redAccent;
-    paintFill.color  = color.withValues(alpha: 0.12);
-    paintLine.color  = color;
+    final color = isPositive ? const Color(0xFF4CAF7D) : Colors.redAccent;
+    paintFill.color = color.withValues(alpha: 0.12);
+    paintLine.color = color;
     canvas.drawPath(fillPath, paintFill);
     canvas.drawPath(path, paintLine);
 
     if (minV < 0 && maxV > 0) {
-      final zeroPaint = Paint()..color = Colors.white24..strokeWidth = 1;
+      final zeroPaint = Paint()
+        ..color = Colors.white24
+        ..strokeWidth = 1;
       final zy = y(0);
       canvas.drawLine(Offset(0, zy), Offset(size.width, zy), zeroPaint);
     }
@@ -2550,25 +3199,57 @@ class _CourbePainter extends CustomPainter {
 
 // ── ★ v10.24 : Résultat simulation Martingale ─────────────────────────────────
 class _MartingaleResult {
-  final int    nbTotal;
-  final int    nbGagnes;
-  final int    nbPerdus;
+  final int nbTotal;
+  final int nbGagnes;
+  final int nbPerdus;
+
+  /// ★ BLOC 1 — paris dont le résultat officiel était INDISPONIBLE.
+  /// S'il y en a un, la simulation s'est ARRÊTÉE : voir [interruption].
+  final int nbNonDetermines;
+
+  /// Résultat NET cumulé, calculé UNIQUEMENT à partir des rapports officiels.
   final double gainNet;
+
+  /// Mises des paris DÉTERMINÉS. Base honnête du rendement.
   final double miseTotale;
-  final int    seriePertMax;
-  final int    doublementsMax;
+
+  /// Mises des paris indéterminés, tenues À PART (ni perdues, ni gagnées).
+  final double misesIndeterminees;
+
+  /// Remboursements officiels (jamais fondus dans le gain).
+  final double remboursements;
+
+  final int seriePertMax;
+  final int doublementsMax;
   final double bankrollRequise;
   final double miseFinale;
+
+  /// Motif d'interruption si un résultat essentiel à la progression manquait.
+  /// `null` = la simulation a pu aller au bout.
+  final String? interruption;
+  final String? courseInterruption;
 
   const _MartingaleResult({
     required this.nbTotal,
     required this.nbGagnes,
     required this.nbPerdus,
+    this.nbNonDetermines = 0,
     required this.gainNet,
     required this.miseTotale,
+    this.misesIndeterminees = 0.0,
+    this.remboursements = 0.0,
     required this.seriePertMax,
     required this.doublementsMax,
     required this.bankrollRequise,
     required this.miseFinale,
+    this.interruption,
+    this.courseInterruption,
   });
+
+  bool get interrompue => interruption != null;
+
+  /// Rendement officiel, sur les seuls paris déterminés. `null` si aucun :
+  /// un rendement inconnu n'est pas 0 %.
+  double? get rendement =>
+      miseTotale > 0 ? (gainNet / miseTotale) * 100.0 : null;
 }

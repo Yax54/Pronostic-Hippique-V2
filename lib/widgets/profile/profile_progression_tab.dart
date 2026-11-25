@@ -778,8 +778,15 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
                   color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           ...r.parDiscipline.entries.map((e) {
+            // ★ BLOC 1 (périmètre financier) — `taux` est désormais NULLABLE :
+            // il vaut null quand aucun pari de la discipline n'a de résultat
+            // officiel. On n'affiche alors AUCUN pourcentage : un « 0 % »
+            // inventé serait un mensonge (il ferait passer une absence de
+            // données pour une contre-performance mesurée).
             final taux = e.value.taux;
-            final color = taux >= 35 ? _green : taux >= 20 ? _gold : Colors.white38;
+            final color = taux == null
+                ? Colors.white38
+                : (taux >= 35 ? _green : taux >= 20 ? _gold : Colors.white38);
             return Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(children: [
@@ -789,9 +796,14 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
                 Text('${e.value.nbGagnes}/${e.value.nbTotal}',
                     style: TextStyle(color: color, fontSize: 12)),
                 const SizedBox(width: 8),
-                Text('${taux.round()}%',
+                Text(taux == null ? '—' : '${taux.round()}%',
                     style: TextStyle(
                         color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+                if (e.value.nbNonDetermines > 0) ...[
+                  const SizedBox(width: 6),
+                  Text('(${e.value.nbNonDetermines} indét.)',
+                      style: const TextStyle(color: Colors.white24, fontSize: 10)),
+                ],
               ]),
             );
           }),

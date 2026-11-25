@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import 'package:flutter/foundation.dart';
+import 'finance_simulateur_officiel.dart';
 import 'ia_memory_service.dart';
 
 // ─── Résultat d'une course simulée ───────────────────────────────────────────
@@ -27,12 +28,21 @@ class BacktestCourse {
 
   // Résultat réel
   final List<int> arriveeReelle;
-  final int? rangFavoriIA;   // rang du favori IA dans l'arrivée réelle (1 = gagné)
+  final int?
+      rangFavoriIA; // rang du favori IA dans l'arrivée réelle (1 = gagné)
 
-  // Calcul financier
+  // Calcul financier — ★ BLOC 1 : issu du MOTEUR OFFICIEL, jamais estimé.
+  //   `sort == nonDeterminee` ⇒ `gainNet` et `gainsBruts` valent `null` ;
+  //   ils ne valent JAMAIS 0,0 et la course n'entre dans aucun agrégat
+  //   financier. C'est la différence entre « perdu » et « on ne sait pas ».
   final double mise;
-  final double gainNet;
-  final bool gagne;
+  final double? gainNet;
+  final bool? gagne;
+  final SortPariSimule sort;
+  final double? gainsBruts;
+  final double? remboursements;
+  final String? motifIndetermination;
+  final List<int> numerosJoues;
 
   const BacktestCourse({
     required this.courseKey,
@@ -47,7 +57,14 @@ class BacktestCourse {
     required this.mise,
     required this.gainNet,
     required this.gagne,
+    required this.sort,
+    this.gainsBruts,
+    this.remboursements,
+    this.motifIndetermination,
+    this.numerosJoues = const <int>[],
   });
+
+  bool get estDetermine => sort != SortPariSimule.nonDeterminee;
 }
 
 // ─── Résultat complet d'une simulation ───────────────────────────────────────
@@ -59,9 +76,9 @@ class BacktestResult {
   final int nbGagnes;
   final int nbPerdus;
   final int nbTotal;
-  final double tauxReussite;     // %
-  final double roi;              // Return on Investment %
-  final double gainNetCumule;    // gain cumulé sur toute la période
+  final double tauxReussite; // %
+  final double roi; // Return on Investment %
+  final double gainNetCumule; // gain cumulé sur toute la période
   // Séries
   final int meilleureSerieGagnante;
   final int pireSeriesPerdantes;
@@ -75,6 +92,34 @@ class BacktestResult {
   final double maxDrawdown;
   // ★ v10.35 : Ventilation par type de pari (synergie avec vrais critères PMU)
   final Map<String, StatTypePari> parTypePari;
+
+  // ★ BLOC 1 — PÉRIMÈTRE FINANCIER OFFICIEL
+  //
+  //  Ces champs existent pour qu'une statistique ne puisse JAMAIS présenter un
+  //  résultat fictif comme mesuré, ni un indéterminé comme une perte.
+  //
+  /// Nombre de paris dont le sort financier est ÉTABLI par le moteur officiel.
+  final int nbDetermines;
+
+  /// Nombre de paris dont le résultat officiel est introuvable/insuffisant.
+  /// Ils ne sont ni gagnants ni perdants : ils sont INCONNUS.
+  final int nbNonDetermines;
+
+  /// Somme des mises des paris DÉTERMINÉS uniquement (base du ROI).
+  final double misesDeterminees;
+
+  /// Somme des mises des paris indéterminés, tenue À PART.
+  final double misesIndeterminees;
+
+  /// Somme des remboursements officiels (jamais fondus dans le gain).
+  final double remboursements;
+
+  /// Couverture officielle en % : paris déterminés / paris simulés.
+  final double couvertureOfficielle;
+
+  /// Vrai si la couverture est trop faible pour que le ROI signifie quelque
+  /// chose. Un ROI calculé sur 3 paris établis et 40 inconnus n'est pas un ROI.
+  final bool couvertureInsuffisante;
 
   const BacktestResult({
     required this.courses,
@@ -92,16 +137,37 @@ class BacktestResult {
     required this.courbeGains,
     required this.parDiscipline,
     required this.parHippodrome,
-    this.maxDrawdown = 0.0,   // ★ v9.93
+    this.maxDrawdown = 0.0, // ★ v9.93
     this.parTypePari = const {}, // ★ v10.35
+    this.nbDetermines = 0, // ★ BLOC 1
+    this.nbNonDetermines = 0, // ★ BLOC 1
+    this.misesDeterminees = 0.0, // ★ BLOC 1
+    this.misesIndeterminees = 0.0, // ★ BLOC 1
+    this.remboursements = 0.0, // ★ BLOC 1
+    this.couvertureOfficielle = 0.0, // ★ BLOC 1
+    this.couvertureInsuffisante = false, // ★ BLOC 1
   });
 
   bool get estRentable => gainNet > 0;
 
   String get resumeTexte {
-    final roiStr = roi >= 0 ? '+${roi.toStringAsFixed(0)}%' : '${roi.toStringAsFixed(0)}%';
-    return '$nbGagnes gagnés / $nbTotal paris — ROI : $roiStr — '
+    final roiStr =
+        roi >= 0 ? '+${roi.toStringAsFixed(0)}%' : '${roi.toStringAsFixed(0)}%';
+    final base = '$nbGagnes gagnés / $nbTotal paris — ROI : $roiStr — '
         'Gain net : ${gainNet >= 0 ? "+" : ""}${gainNet.toStringAsFixed(0)} €';
+    // ★ BLOC 1 : la couverture ET les indéterminés sont TOUJOURS annoncés.
+    //   Sans eux, l'utilisateur lirait un ROI sur un sous-ensemble sans le
+    //   savoir — exactement ce que le mandat interdit.
+    final couv = 'Couverture officielle : '
+        '${couvertureOfficielle.toStringAsFixed(0)} %';
+    final inde = nbNonDetermines > 0
+        ? ' — $nbNonDetermines pari(s) NON DÉTERMINÉ(S) '
+            '(${misesIndeterminees.toStringAsFixed(0)} € non comptés)'
+        : '';
+    final alerte = couvertureInsuffisante
+        ? ' ⚠️ Couverture insuffisante : ce ROI n\'est pas représentatif.'
+        : '';
+    return '$base — $couv$inde$alerte';
   }
 }
 
@@ -110,26 +176,47 @@ class StatDiscipline {
   int nbTotal = 0;
   int nbGagnes = 0;
   double gainNet = 0.0;
-  double get taux => nbTotal > 0 ? nbGagnes / nbTotal * 100 : 0.0;
+
+  /// ★ BLOC 1 — paris dont le résultat officiel est INDISPONIBLE.
+  /// Ils sont comptés pour que l'utilisateur voie l'échantillon réel, mais ils
+  /// ne sont ni gagnés ni perdus et n'entrent dans aucun taux.
+  int nbNonDetermines = 0;
+
+  /// Taux calculé sur les paris DÉTERMINÉS seulement. `null` si aucun : un
+  /// taux inconnu n'est pas 0 %.
+  double? get taux {
+    final determines = nbTotal - nbNonDetermines;
+    return determines > 0 ? nbGagnes / determines * 100 : null;
+  }
 }
 
 // ─── Stats par type de pari ─────────────────────────────────────────────────
 // ★ v10.35 : Ventilation par type de pari — même structure que StatDiscipline
 //            + Kelly optimal calculé depuis le taux de réussite réel
 class StatTypePari {
-  int    nbTotal   = 0;
-  int    nbGagnes  = 0;
-  double gainNet   = 0.0;
+  int nbTotal = 0;
+  int nbGagnes = 0;
+  double gainNet = 0.0;
   double miseTotal = 0.0;
-  int    maxSerie  = 0;     // série perdante max pour ce type
-  int    _serieCourante = 0;
+  int maxSerie = 0; // série perdante max pour ce type
+  int _serieCourante = 0;
 
-  double get taux => nbTotal > 0 ? nbGagnes / nbTotal * 100 : 0.0;
-  double get roi  => miseTotal > 0 ? (gainNet / miseTotal) * 100 : 0.0;
+  /// ★ BLOC 1 — paris de ce type dont le résultat officiel est INDISPONIBLE.
+  int nbNonDetermines = 0;
+
+  /// Nombre de paris réellement établis pour ce type.
+  int get nbDetermines => nbTotal;
+
+  /// Taux sur les paris DÉTERMINÉS. `null` si aucun : inconnu ≠ 0 %.
+  double? get taux => nbTotal > 0 ? nbGagnes / nbTotal * 100 : null;
+  double? get roi => miseTotal > 0 ? (gainNet / miseTotal) * 100 : null;
 
   /// Kelly fraction = (p*b - q) / b
   /// p = proba de gain, b = cote nette moyenne, q = 1 - p
   /// Si taux < 10% → Kelly = 0 (ne pas jouer ce type)
+  ///
+  /// ★ BLOC 1 : `nbTotal` ne compte QUE les paris déterminés (voir
+  /// `ajouterPari`), donc `p` n'est plus dilué par des indéterminés.
   double kellyFraction({double coteNetteMoyenne = 3.5}) {
     if (nbTotal < 5) return 0.0; // pas assez de données
     final p = nbGagnes / nbTotal;
@@ -142,9 +229,11 @@ class StatTypePari {
   void ajouterPari(bool gagne, double gain, double mise) {
     nbTotal++;
     miseTotal += mise;
-    gainNet   += gain;
-    if (gagne) { nbGagnes++; _serieCourante = 0; }
-    else {
+    gainNet += gain;
+    if (gagne) {
+      nbGagnes++;
+      _serieCourante = 0;
+    } else {
       _serieCourante++;
       if (_serieCourante > maxSerie) maxSerie = _serieCourante;
     }
@@ -170,135 +259,197 @@ class BacktestingService {
     String typePari = 'Conseil IA',
     int nbJours = 30,
     double confianceMin = 0.0,
-    String? discipline,    // ★ v10.20
-    String? hippodrome,    // ★ v10.20
+    String? discipline, // ★ v10.20
+    String? hippodrome, // ★ v10.20
   }) async {
     final pronostics = IaMemoryService.instance.pronostics;
     final limiteDate = DateTime.now().subtract(Duration(days: nbJours));
 
     // Filtrer les pronostics avec résultats réels, dans la période
     // ★ v10.20 : + filtre discipline / hippodrome optionnel
-    final avecResultats = pronostics.where((p) =>
-      p.resultatsReels &&
-      p.arriveeReelle != null &&
-      p.arriveeReelle!.isNotEmpty &&
-      p.datePronostic.isAfter(limiteDate) &&
-      (discipline == null || p.discipline == discipline) &&
-      (hippodrome == null || p.hippodrome == hippodrome)
-    ).toList()
-    ..sort((a, b) => a.datePronostic.compareTo(b.datePronostic));
+    final avecResultats = pronostics
+        .where((p) =>
+            p.resultatsReels &&
+            p.arriveeReelle != null &&
+            p.arriveeReelle!.isNotEmpty &&
+            p.datePronostic.isAfter(limiteDate) &&
+            (discipline == null || p.discipline == discipline) &&
+            (hippodrome == null || p.hippodrome == hippodrome))
+        .toList()
+      ..sort((a, b) => a.datePronostic.compareTo(b.datePronostic));
 
     if (avecResultats.isEmpty) {
       return BacktestResult(
         courses: [],
-        miseTotal: 0, gainsTotal: 0, gainNet: 0,
-        nbGagnes: 0, nbPerdus: 0, nbTotal: 0,
-        tauxReussite: 0, roi: 0, gainNetCumule: 0,
-        meilleureSerieGagnante: 0, pireSeriesPerdantes: 0,
+        miseTotal: 0,
+        gainsTotal: 0,
+        gainNet: 0,
+        nbGagnes: 0,
+        nbPerdus: 0,
+        nbTotal: 0,
+        tauxReussite: 0,
+        roi: 0,
+        gainNetCumule: 0,
+        meilleureSerieGagnante: 0,
+        pireSeriesPerdantes: 0,
         courbeGains: [],
-        parDiscipline: {}, parHippodrome: {}, parTypePari: {},
+        parDiscipline: {},
+        parHippodrome: {},
+        parTypePari: {},
       );
     }
 
+    // ★ BLOC 1 — PÉRIMÈTRE FINANCIER : plus aucun calcul local.
+    //
+    //   Chaque pari est résolu par `FinanceSimulateurOfficiel.simulerPari`,
+    //   qui délègue au moteur officiel. Ce service ne fait plus que :
+    //     • CHOISIR les numéros à jouer (règle IA : top N des scores) ;
+    //     • CHOISIR le type de pari ;
+    //     • ADDITIONNER ce que le moteur rend.
+    //
+    //   ⚠️ Choix anti-triche : la sélection n'utilise QUE `scoresIA`, donc
+    //      uniquement ce que l'IA savait AVANT la course. `arriveeReelle`
+    //      n'intervient que pour l'AFFICHAGE du rang constaté, jamais dans la
+    //      décision ni dans le calcul financier.
     final List<BacktestCourse> courses = [];
-    double gainCumule = 0.0;
     final List<double> courbeGains = [];
-    final Map<String, StatDiscipline> parDisc  = {};
+    final Map<String, StatDiscipline> parDisc = {};
     final Map<String, StatDiscipline> parHippo = {};
-    // ★ v10.35 : Stats par type de pari
-    final Map<String, StatTypePari> parType = {};
 
-    int serieGagnante = 0; int maxSerieGagnante = 0;
-    int seriePerdante = 0; int maxSeriePerdante = 0;
+    int serieGagnante = 0;
+    int maxSerieGagnante = 0;
+    int seriePerdante = 0;
+    int maxSeriePerdante = 0;
     int nbGagnes = 0;
+    int nbPerdus = 0;
+    int nbNonDetermines = 0;
+    double gainCumule = 0.0;
+    double misesDeterminees = 0.0;
+    double misesIndeterminees = 0.0;
+    double remboursementsTotal = 0.0;
+    double gainsBrutsTotal = 0.0;
 
     for (final p in avecResultats) {
-      // Filtrer par confiance minimum
       final confiance = p.confiancePredite ?? 50.0;
       if (confiance < confianceMin) continue;
 
       final arrivee = p.arriveeReelle!;
 
-      // Trouver le favori IA (le cheval avec le meilleur score dans scoresIA)
-      String? numFavori;
-      double maxScore = -1;
-      p.scoresIA.forEach((num, score) {
-        if (score > maxScore) {
-          maxScore  = score;
-          numFavori = num;
-        }
-      });
-      if (numFavori == null) continue;
-
-      final numFavoriInt = int.tryParse(numFavori!);
-      if (numFavoriInt == null) continue;
-
-      // Position du favori IA dans l'arrivée réelle
-      final rang = arrivee.indexOf(numFavoriInt) + 1; // 0 si absent
-      final rangReel = rang > 0 ? rang : null;
-
-      // Déterminer le type de pari effectif
+      // Type de pari effectif — règle HISTORIQUE conservée telle quelle.
       final typeEffectif = typePari == 'Conseil IA'
           ? (p.typePariConseille ?? 'Simple Gagnant')
           : typePari;
 
-      // Calculer si gagné et le gain
-      // ★ v9.84 : transmettre la cote PMU réelle pour un calcul de gain réaliste
-      final (gagne, gainNetCourse) = _calculerResultat(
-        typeEffectif:  typeEffectif,
-        rangFavori:    rangReel,
-        scoresIA:      p.scoresIA,
-        arrivee:       arrivee,
-        mise:          mise,
-        coteFavoriPmu: p.coteFavoriPmu,   // null → fallback cote fixe
-      );
+      // Numéros joués : top N des scores IA, N dépendant du type. Aucune
+      // information post-course n'entre ici.
+      final nbNum = FinanceSimulateurOfficiel.nbNumerosPourType(typeEffectif);
+      final numerosJoues = _getTopNIA(p.scoresIA, nbNum);
+      if (numerosJoues.isEmpty) continue;
 
-      gainCumule += gainNetCourse;
-      courbeGains.add(gainCumule);
+      // Rang constaté du premier numéro joué : AFFICHAGE uniquement.
+      final rang = arrivee.indexOf(numerosJoues.first) + 1;
+      final rangReel = rang > 0 ? rang : null;
 
-      if (gagne) {
-        nbGagnes++;
-        serieGagnante++;
-        seriePerdante = 0;
-        if (serieGagnante > maxSerieGagnante) maxSerieGagnante = serieGagnante;
+      // ── RÉSOLUTION OFFICIELLE ──────────────────────────────────────────
+      final ResultatFinancierSimule sim;
+      if (typeEffectif == 'Gagnant+Placé') {
+        // Mise historique : une mise sur chaque composante (le gain était
+        // auparavant calculé sur `mise * cote - mise * 2`). On ne change pas
+        // cette règle de mise, on change seulement QUI calcule le gain.
+        sim = await FinanceSimulateurOfficiel.simulerGagnantPlace(
+          courseKey: p.courseKey,
+          numero: numerosJoues.first,
+          miseGagnant: mise,
+          misePlace: mise,
+        );
       } else {
-        seriePerdante++;
-        serieGagnante = 0;
-        if (seriePerdante > maxSeriePerdante) maxSeriePerdante = seriePerdante;
+        sim = await FinanceSimulateurOfficiel.simulerPari(
+          courseKey: p.courseKey,
+          typePari: typeEffectif,
+          numerosJoues: numerosJoues,
+          mise: mise,
+        );
       }
 
-      // Stats par discipline
+      final gagne = sim.sort == SortPariSimule.gagne;
+      final estDetermine = sim.estDetermine;
+
+      if (estDetermine) {
+        misesDeterminees += sim.mise;
+        gainsBrutsTotal += sim.gain ?? 0.0;
+        remboursementsTotal += sim.remboursement ?? 0.0;
+        gainCumule += sim.resultatNet ?? 0.0;
+        courbeGains.add(gainCumule);
+        if (gagne) {
+          nbGagnes++;
+          serieGagnante++;
+          seriePerdante = 0;
+          if (serieGagnante > maxSerieGagnante)
+            maxSerieGagnante = serieGagnante;
+        } else {
+          nbPerdus++;
+          seriePerdante++;
+          serieGagnante = 0;
+          if (seriePerdante > maxSeriePerdante)
+            maxSeriePerdante = seriePerdante;
+        }
+      } else {
+        // ⚠️ NON DÉTERMINÉ : la mise n'entre PAS dans `misesDeterminees`, la
+        //    course n'entre NI dans la courbe NI dans le résultat net, et elle
+        //    ne casse aucune série. La traiter comme une perte serait un
+        //    mensonge comptable.
+        nbNonDetermines++;
+        misesIndeterminees += sim.mise;
+      }
+
+      // Ventilations : les indéterminés y sont comptés SÉPARÉMENT.
       final disc = p.discipline.isNotEmpty ? p.discipline : 'Inconnu';
       parDisc.putIfAbsent(disc, () => StatDiscipline());
       parDisc[disc]!.nbTotal++;
       if (gagne) parDisc[disc]!.nbGagnes++;
-      parDisc[disc]!.gainNet += gainNetCourse;
+      if (estDetermine) parDisc[disc]!.gainNet += sim.resultatNet ?? 0.0;
+      parDisc[disc]!.nbNonDetermines++;
 
-      // Stats par hippodrome
       final hippo = p.hippodrome.isNotEmpty ? p.hippodrome : 'Inconnu';
       parHippo.putIfAbsent(hippo, () => StatDiscipline());
       parHippo[hippo]!.nbTotal++;
       if (gagne) parHippo[hippo]!.nbGagnes++;
-      parHippo[hippo]!.gainNet += gainNetCourse;
-
-      // ★ v10.35 : Stats par type de pari (synergie avec vrais critères PMU)
-      parType.putIfAbsent(typeEffectif, () => StatTypePari());
-      parType[typeEffectif]!.ajouterPari(gagne, gainNetCourse, mise);
+      if (estDetermine) parHippo[hippo]!.gainNet += sim.resultatNet ?? 0.0;
+      parHippo[hippo]!.nbNonDetermines++;
 
       courses.add(BacktestCourse(
-        courseKey:          p.courseKey,
-        nomCourse:          p.nomCourse,
-        hippodrome:         p.hippodrome,
-        discipline:         p.discipline,
-        date:               p.datePronostic,
-        confianceIA:        confiance,
-        typePariConseille:  typeEffectif,
-        arriveeReelle:      arrivee,
-        rangFavoriIA:       rangReel,
-        mise:               mise,
-        gainNet:            gainNetCourse,
-        gagne:              gagne,
+        courseKey: p.courseKey,
+        nomCourse: p.nomCourse,
+        hippodrome: p.hippodrome,
+        discipline: p.discipline,
+        date: p.datePronostic,
+        confianceIA: confiance,
+        typePariConseille: typeEffectif,
+        arriveeReelle: arrivee,
+        rangFavoriIA: rangReel,
+        mise: sim.mise,
+        gainNet: estDetermine ? sim.resultatNet : null,
+        gagne: estDetermine ? gagne : null,
+        sort: sim.sort,
+        gainsBruts: estDetermine ? sim.gain : null,
+        remboursements: estDetermine ? sim.remboursement : null,
+        motifIndetermination: sim.motifIndetermination,
+        numerosJoues: numerosJoues,
       ));
+    }
+
+    // ── VENTILATION PAR TYPE : reconstruite depuis `courses` ────────────────
+    //  Elle est calculée APRÈS la boucle, à partir des résultats officiels
+    //  déjà obtenus : aucune deuxième résolution, aucun second moteur.
+    final Map<String, StatTypePari> parType = {};
+    for (final c in courses) {
+      parType.putIfAbsent(c.typePariConseille, () => StatTypePari());
+      final st = parType[c.typePariConseille]!;
+      if (c.estDetermine) {
+        st.ajouterPari(c.gagne ?? false, c.gainNet ?? 0.0, c.mise);
+      } else {
+        st.nbNonDetermines++;
+      }
     }
 
     // ★ v9.93 : Calculer le maxDrawdown (perte maximale consécutive sur la courbe des gains)
@@ -312,147 +463,82 @@ class BacktestingService {
       }
     }
 
-    final nbTotal    = courses.length;
-    final nbPerdus   = nbTotal - nbGagnes;
-    final miseTotal  = mise * nbTotal;
-    final gainsTotal = courses.where((c) => c.gagne).fold(0.0, (s, c) => s + c.gainNet + mise);
-    final gainNet    = gainCumule;
-    final taux       = nbTotal > 0 ? nbGagnes / nbTotal * 100 : 0.0;
-    final roi        = miseTotal > 0 ? (gainNet / miseTotal) * 100 : 0.0;
+    // ★ BLOC 1 — AGRÉGATS OFFICIELS.
+    //   `nbPerdus` n'est plus « total − gagnés » : ce serait compter les
+    //   indéterminés comme des pertes. Il vient du moteur, pas d'une soustraction.
+    final nbTotal = courses.length;
+    final nbDetermines = nbGagnes + nbPerdus;
+    final miseTotal = misesDeterminees;
+    final gainsTotal = gainsBrutsTotal;
+    final gainNet = gainCumule;
+    final taux = nbDetermines > 0 ? nbGagnes / nbDetermines * 100 : 0.0;
+    final roi = misesDeterminees > 0 ? (gainNet / misesDeterminees) * 100 : 0.0;
+    final couverture = nbTotal > 0 ? nbDetermines / nbTotal * 100 : 0.0;
+    final couvertureInsuffisante = nbTotal > 0 && couverture < 50.0;
 
     // Top 5 hippodromes seulement
     final topHippos = Map.fromEntries(
       (parHippo.entries.toList()
-        ..sort((a, b) => b.value.nbTotal.compareTo(a.value.nbTotal)))
-        .take(5),
+            ..sort((a, b) => b.value.nbTotal.compareTo(a.value.nbTotal)))
+          .take(5),
     );
 
-    debugPrint('[Backtesting] ✅ $nbTotal courses simulées sur $nbJours jours '
-        '— Gain net : ${gainNet.toStringAsFixed(0)} € — ROI : ${roi.toStringAsFixed(0)}%');
+    debugPrint('[Backtesting] ✅ $nbTotal paris simulés sur $nbJours jours '
+        '— déterminés : $nbDetermines ($nbGagnes gagnés / $nbPerdus perdus), '
+        'non déterminés : $nbNonDetermines — couverture : '
+        '${couverture.toStringAsFixed(0)} % — Gain net officiel : '
+        '${gainNet.toStringAsFixed(0)} € — ROI officiel : '
+        '${roi.toStringAsFixed(0)} %');
 
     return BacktestResult(
-      courses:                courses,
-      miseTotal:              miseTotal,
-      gainsTotal:             gainsTotal,
-      gainNet:                gainNet,
-      nbGagnes:               nbGagnes,
-      nbPerdus:               nbPerdus,
-      nbTotal:                nbTotal,
-      tauxReussite:           taux,
-      roi:                    roi,
-      gainNetCumule:          gainCumule,
+      courses: courses,
+      miseTotal: miseTotal,
+      gainsTotal: gainsTotal,
+      gainNet: gainNet,
+      nbGagnes: nbGagnes,
+      nbPerdus: nbPerdus,
+      nbTotal: nbTotal,
+      tauxReussite: taux,
+      roi: roi,
+      gainNetCumule: gainCumule,
       meilleureSerieGagnante: maxSerieGagnante,
-      pireSeriesPerdantes:    maxSeriePerdante,
-      courbeGains:            courbeGains,
-      parDiscipline:          parDisc,
-      parHippodrome:          topHippos,
-      maxDrawdown:            maxDrawdown, // ★ v9.93
-      parTypePari:            parType,     // ★ v10.35
+      pireSeriesPerdantes: maxSeriePerdante,
+      courbeGains: courbeGains,
+      parDiscipline: parDisc,
+      parHippodrome: topHippos,
+      maxDrawdown: maxDrawdown, // ★ v9.93
+      parTypePari: parType, // ★ v10.35
+      // ★ BLOC 1
+      nbDetermines: nbDetermines,
+      nbNonDetermines: nbNonDetermines,
+      misesDeterminees: misesDeterminees,
+      misesIndeterminees: misesIndeterminees,
+      remboursements: remboursementsTotal,
+      couvertureOfficielle: couverture,
+      couvertureInsuffisante: couvertureInsuffisante,
     );
   }
 
-  /// Calcule si le pari est gagné et le gain net selon le type de pari.
-  ///
-  /// ★ v9.84 : [coteFavoriPmu] est la cote PMU réelle du favori IA capturée
-  /// au moment du pronostic. Si null (pronostics antérieurs), on utilise les
-  /// cotes fixes historiques comme fallback.
-  ///
-  /// Cotes placé PMU : environ cote_gagnant / 4 (plancher 1.1)
-  (bool, double) _calculerResultat({
-    required String typeEffectif,
-    required int? rangFavori,
-    required Map<String, double> scoresIA,
-    required List<int> arrivee,
-    required double mise,
-    double? coteFavoriPmu,        // ★ v9.84 : cote réelle ou null
-  }) {
-    if (rangFavori == null) return (false, -mise);
-
-    // ★ v9.84 : Cote gagnant réelle avec fallback sur cote moyenne PMU (4.5)
-    final coteGagnant = (coteFavoriPmu != null && coteFavoriPmu > 1.0)
-        ? coteFavoriPmu
-        : 4.5;
-    // Cote placé PMU ≈ cote_gagnant / 4, plancher 1.10
-    final cotePlaceEstimee = (coteGagnant / 4.0).clamp(1.10, 20.0);
-
-    switch (typeEffectif) {
-      case 'Simple Gagnant':
-        if (rangFavori == 1) {
-          // ★ v9.84 : cote réelle si disponible, sinon 4.5 (cote moyenne PMU)
-          return (true, mise * coteGagnant - mise);
-        }
-        return (false, -mise);
-
-      case 'Simple Placé':
-        if (rangFavori <= 3) {
-          // ★ v9.84 : cote placé réelle estimée ou 1.8
-          return (true, mise * cotePlaceEstimee - mise);
-        }
-        return (false, -mise);
-
-      case 'Gagnant+Placé':
-        // ★ v9.84 : mise répartie 50/50 sur Gagnant + Placé
-        if (rangFavori == 1) return (true, mise * coteGagnant + mise * cotePlaceEstimee - mise * 2);
-        if (rangFavori <= 3) return (false, mise * cotePlaceEstimee - mise * 2); // récupère le placé
-        return (false, -mise * 2);
-
-      case 'Couplé Gagnant':
-        // Les 2 meilleurs scores IA couvrent les 2 premiers de l'arrivée
-        // ★ v9.82 fix : top2Arrivee.every(...) au lieu de top2IA.toSet().containsAll(...)
-        final top2IA = _getTopNIA(scoresIA, 2);
-        final top2Arrivee = arrivee.take(2).toSet();
-        if (top2IA.length >= 2 && top2Arrivee.every((n) => top2IA.contains(n))) {
-          return (true, mise * 8.0 - mise);
-        }
-        return (false, -mise);
-
-      case 'Couplé Placé':
-        final top2IA = _getTopNIA(scoresIA, 2);
-        final top3Arrivee = arrivee.take(3).toSet();
-        if (top2IA.length >= 2 && top2IA.every((n) => top3Arrivee.contains(n))) {
-          return (true, mise * 4.0 - mise);
-        }
-        return (false, -mise);
-
-      case 'Tiercé':
-        // ★ v9.82 fix : listEquals() au lieu de toString() pour comparer l'ordre
-        final top3IA = _getTopNIA(scoresIA, 3);
-        final top3Arrivee = arrivee.take(3).toSet();
-        if (top3IA.length >= 3) {
-          final nbBons = top3IA.where((n) => top3Arrivee.contains(n)).length;
-          if (nbBons == 3 && listEquals(top3IA, arrivee.take(3).toList())) {
-            return (true, mise * 50.0 - mise); // tiercé ordre exact
-          }
-          if (nbBons == 3) return (true, mise * 20.0 - mise); // désordre
-        }
-        return (false, -mise);
-
-      case 'Quarté+':
-        // Les 4 meilleurs scores IA dans le top 4 (désordre)
-        final top4IA = _getTopNIA(scoresIA, 4);
-        final top4Arrivee = arrivee.take(4).toSet();
-        if (top4IA.length >= 4) {
-          final nbBons = top4IA.where((n) => top4Arrivee.contains(n)).length;
-          if (nbBons == 4) return (true, mise * 40.0 - mise); // 4/4 désordre
-          if (nbBons == 3) return (true, mise * 5.0 - mise);  // bonus 3/4
-        }
-        return (false, -mise);
-
-      case 'Quinté+':
-        final top5IA = _getTopNIA(scoresIA, 5);
-        final top5Arrivee = arrivee.take(5).toSet();
-        if (top5IA.length >= 5) {
-          final nbBons = top5IA.where((n) => top5Arrivee.contains(n)).length;
-          if (nbBons == 5) return (true, mise * 100.0 - mise);
-          if (nbBons == 4) return (true, mise * 8.0 - mise); // bonus 4/5
-        }
-        return (false, -mise);
-
-      default: // Conseil IA → Simple Gagnant par défaut
-        if (rangFavori == 1) return (true, mise * coteGagnant - mise);
-        return (false, -mise);
-    }
-  }
+  // ═════════════════════════════════════════════════════════════════════════
+  //  ★ BLOC 1 — SUPPRESSION DU CALCULATEUR FICTIF
+  //
+  //  Ce qui a été RETIRÉ ici, et pourquoi (mesuré, pas supposé) :
+  //
+  //    • repli `4.5` quand la cote PMU manquait  → dividende inventé ;
+  //    • `cotePlaceEstimee = coteGagnant / 4`     → cote placé inventée ;
+  //    • Couplé Gagnant  × 8.0                    → multiplicateur inventé ;
+  //    • Couplé Placé    × 4.0                    → multiplicateur inventé ;
+  //    • Tiercé ordre    × 50.0 / désordre × 20.0 → multiplicateurs inventés ;
+  //    • Quarté+ 4/4     × 40.0 / bonus × 5.0     → multiplicateurs inventés ;
+  //    • Quinté+ 5/5     × 100.0 / bonus × 8.0    → multiplicateurs inventés.
+  //
+  //  Aucun de ces nombres n'a jamais été publié par le PMU. Ils produisaient
+  //  des ROI et des courbes de gains entièrement fictifs, présentés comme des
+  //  mesures.
+  //
+  //  REMPLACEMENT : `FinanceSimulateurOfficiel.simulerPari`, qui délègue au
+  //  moteur officiel via la chaîne commune. Aucun second moteur financier.
+  // ═════════════════════════════════════════════════════════════════════════
 
   /// Retourne les N numéros avec les meilleurs scores IA
   List<int> _getTopNIA(Map<String, double> scoresIA, int n) {
@@ -466,10 +552,9 @@ class BacktestingService {
   }
 
   /// Résumé rapide : combien de courses avec résultats disponibles
-  int get nbCoursesDisponibles =>
-      IaMemoryService.instance.pronostics
-          .where((p) => p.resultatsReels && p.arriveeReelle != null)
-          .length;
+  int get nbCoursesDisponibles => IaMemoryService.instance.pronostics
+      .where((p) => p.resultatsReels && p.arriveeReelle != null)
+      .length;
 
   /// Plage de dates disponible
   ({DateTime? debut, DateTime? fin}) get plageDisponible {
