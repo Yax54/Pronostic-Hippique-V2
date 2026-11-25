@@ -312,19 +312,46 @@ class IaPronosticEngine {
     // ── Poids fallback — 19 critères.
     //
     // ★ BL1-A19 — CE COMMENTAIRE AFFIRMAIT « somme ≈ 1.00 » : FAUX, MESURÉ.
-    //   Somme réelle de ce chemin fallback, avec les poids par défaut :
+    //   Il a ensuite été corrigé en « 1,10 », CE QUI ÉTAIT ENCORE FAUX.
+    //   Voici la mesure RÉELLE, instrumentée sur les 19 coefficients.
+    //
+    //   MESURE 1 — AUCUN repli n'est atteint en production.
+    //     • Les trois producteurs (`analyserCourse`, `extraireScoresCriteres`,
+    //       `analyserCourseAvecCriteres`) passent TOUS `poidsEffectifs`, donc
+    //       `pe` n'est jamais le `Map` de 11 clés ci-dessus : les 7 littéraux
+    //       `?? 0.21` … `?? 0.02` sont INATTEIGNABLES (mesuré : 0 / 7).
+    //     • `pe` contient les 19 clés (`poidsEffectifsPourDiscipline` complète
+    //       les 12 enrichis), donc les 8 ternaires `wX > 0 ? wX : plancher`
+    //       retournent TOUJOURS `wX`, jamais le plancher (mesuré : 0 / 8).
+    //     • Somme des 19 coefficients effectifs = 1,2600000000, exactement la
+    //       somme brute des poids de `IaPoidsAdaptatifs.defaut()`.
+    //
+    //   MESURE 2 — ce que donneraient les replis s'ils étaient atteints.
     //       littéraux  0,21+0,10+0,08+0,06+0,08+0,04+0,02 = 0,59
     //     + 4 poids lus sur `w` (distSpec 0,08 + jockey 0,07 + repos 0,03
     //       + hippo 0,04)                                = 0,22
-    //     + 8 planchers  0,03+0,04+0,05+0,04+0,02+0,02+0,06+0,03 = 0,29
-    //     → TOTAL = 1,10, et non 1,00.
+    //     + 8 planchers RÉELS 0,04+0,05+0,05+0,04+0,03+0,03+0,06+0,03 = 0,33
+    //     → 1,14. (Le commentaire précédent annonçait 0,29 puis 1,10 : deux
+    //       planchers étaient recopiés faux — `entraineur` vaut 0,04 et non
+    //       0,03 ; `poidsRel` et `progression` valent 0,03 et non 0,02.)
+    //     Ce chiffre de 1,14 est DONC THÉORIQUE : il ne décrit aucun chemin
+    //     réellement exécuté. Il est conservé ici pour mémoire.
     //
-    //   ⚠️ Conséquence à connaître : ce chemin ne normalise PAS. Un score
-    //      composite peut donc dépasser la plage 0–100 des scores d'entrée.
-    //      C'est une DIFFÉRENCE DE FORMULE ARBITRÉE, pas un défaut de
-    //      raccordement : la corriger modifierait la formule des 19 critères,
-    //      ce qui est interdit (BL1-A04/A06 — DÉCISION UTILISATEUR
-    //      INDISPENSABLE). Elle est donc DOCUMENTÉE, jamais « corrigée ».
+    //   ⚠️ CONSÉQUENCE RÉELLE, ET ELLE EST MESURÉE : ce chemin ne normalise
+    //      PAS. Tant que l'IA n'a jamais appris, la somme vaut 1,26 et un
+    //      score composite peut donc dépasser la plage 0–100 des entrées.
+    //      Sur une course de 8 partants mesurée : scores publics
+    //      98,21 | 93,31 | 85,49 | 68,66 | 61,49 | 56,57 | 43,50 | 35,54
+    //      avec un état vierge, contre
+    //      90,67 | 87,73 | 77,88 | 61,45 | 54,37 | 49,21 | 36,17 | 28,54
+    //      après `clamp()` (somme 1,00) — soit +7 pt environ par cheval.
+    //      L'ORDRE, lui, est identique (mesuré). Ce sont donc les SEUILS
+    //      ABSOLUS (`seuilSimpleGagnant` 80, `seuilCoupleGagnant` 75…) qui
+    //      sont franchis plus facilement tant que l'IA n'a pas appris.
+    //
+    //   ⚠️ AUCUNE VALEUR N'EST MODIFIÉE : c'est une correction documentaire.
+    //      Normaliser ici changerait la formule des 19 critères (BL1-A04/A06 —
+    //      DÉCISION UTILISATEUR INDISPENSABLE).
     final score = scoreForme      * (pe['forme']      ?? 0.21)
                 + scoreGains      * (pe['gains']      ?? 0.10)
                 + scoreRecord     * (pe['record']     ?? 0.08)

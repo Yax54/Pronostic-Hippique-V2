@@ -904,9 +904,12 @@ class IaPoidsAdaptatifs {
   //      • Ce qui n'est PAS neutralisé : les scores passés en REVUE (A→S) ne
   //        sont pas des poids mais des notes 0-100 ; les multiplier par un
   //        facteur commun n'a aucun effet sur leur classement relatif, mais le
-  //        chemin *fallback* de `ia_pronostic_engine.dart:312-332` emploie des
-  //        littéraux distincts (somme mesurée 1,10) qui, eux, ne sont jamais
-  //        normalisés.
+  //        chemin de `ia_pronostic_engine.dart:328-347` n'appelle NI `clamp()`
+  //        NI `normaliser()` : il multiplie directement par les 19 poids
+  //        EFFECTIFS. MESURE de cette somme sur un état vierge : 1,2600000000
+  //        (et 1,0000000000 seulement après un premier apprentissage). C'est
+  //        donc tant que l'IA n'a jamais appris que l'échelle est dilatée de
+  //        26 % — ce qui gonfle les scores absolus comparés aux seuils.
   //
   //   ⚠️ AUCUNE VALEUR N'EST MODIFIÉE ICI. Changer une seule de ces dix-neuf
   //      valeurs modifierait la formule IA — formellement interdit (BL1-A04 /
