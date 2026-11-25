@@ -84,7 +84,23 @@ _BatchResult _calculerPronosticsBatch(_BatchPayload payload) {
   late final SeuilsConfianceAdaptatifs seuils;
   try {
     seuils = SeuilsConfianceAdaptatifs.fromJson(payload.seuilsJson);
-  } catch (_) {
+  } catch (e) {
+    // ★ CORRECTION BLOC 1 (BL1-A08) — CE REPLI NE DOIT PAS ÊTRE SILENCIEUX.
+    //   `seuilsJson` est produit par `seuilsConfiance.toJson()` dans le
+    //   processus principal : il est valide par construction. Si la
+    //   désérialisation échoue néanmoins, les seuils APPRIS sont perdus et
+    //   l'isolate déciderait avec les DÉFAUTS — exactement le défaut
+    //   BL1-A08, mais provoqué par une corruption et non par une copie.
+    //
+    //   Les deux options sont : interrompre tout le lot, ou continuer avec
+    //   les défauts. On continue (un lot perdu coûte davantage qu'un lot
+    //   calculé avec des seuils neutres), mais on TRACE : sans cette trace,
+    //   la dégradation serait invisible et l'audit incapable de la mesurer.
+    //   Aucune valeur de seuil n'est modifiée ici.
+    if (kDebugMode) {
+      debugPrint('[DataRefresh/isolate] ⚠️ seuilsJson illisible ($e) — '
+          'calcul avec les seuils PAR DÉFAUT pour ce lot');
+    }
     seuils = SeuilsConfianceAdaptatifs();
   }
 
