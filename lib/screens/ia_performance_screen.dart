@@ -904,14 +904,23 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   // ★ v89 : _statsGlobales supprimé (données statiques inutilisées,
   // remplacées par les statistiques réelles de IaMemoryService.calculerStats())
 
-  // Performance par discipline (données de référence — affichées dans IaTabStats)
-  // ignore: unused_field
-  static const _statsDiscipline = [
-    {'nom': 'Trot Attelé', 'emoji': '🏇', 'tauxTop3': 73.2, 'tauxGagnant': 34.1, 'color': 0xFF4CAF7D},
-    {'nom': 'Trot Monté', 'emoji': '🏇', 'tauxTop3': 68.5, 'tauxGagnant': 30.2, 'color': 0xFF66BB6A},
-    {'nom': 'Plat', 'emoji': '🐎', 'tauxTop3': 70.8, 'tauxGagnant': 33.5, 'color': 0xFF42A5F5},
-    {'nom': 'Obstacle', 'emoji': '🚧', 'tauxTop3': 65.3, 'tauxGagnant': 28.7, 'color': 0xFFFFB74D},
-  ];
+  // ★ CORRECTION BLOC 2 (BL2-A10) — TABLE FABRIQUÉE SUPPRIMÉE.
+  //
+  // État mesuré avant correction : ce `static const _statsDiscipline` était
+  // une COPIE AU CARACTÈRE PRÈS de `IaTabStats._statsDiscipline`, y compris
+  // les couleurs, et portait la mention `// ignore: unused_field` — le
+  // linter savait donc déjà qu'elle n'était jamais lue, mais elle restait
+  // compilée dans le binaire. Toute correction de BL2-A09 sur un seul fichier
+  // aurait laissé l'autre table en place, prête à être rebranchée par erreur.
+  //
+  // Les 4 lignes de taux (34.1 / 30.2 / 33.5 / 28.7 et 73.2 / 68.5 / 70.8 /
+  // 65.3) étaient des CONSTANTES, pas des mesures : un utilisateur sans aucune
+  // course voyait exactement les mêmes chiffres qu'un utilisateur à 500
+  // courses. Les deux tables sont désormais supprimées ; `IaTabStats` lit
+  // `IaMemoryService.calculerStats()`.
+  //
+  // Vérifié après suppression : cette classe ne référence plus AUCUN de ces
+  // 12 littéraux (voir le test de non-régression b2_stats_reelles_test.dart).
 
   @override
   Widget build(BuildContext context) {
