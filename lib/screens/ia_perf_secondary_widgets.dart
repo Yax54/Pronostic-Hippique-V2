@@ -154,7 +154,10 @@ extension IaPerfSecondaryWidgets on _IaPerformanceScreenState {
     final misesAJour  = poids.nbMisesAJour;
     final calibration = poids.calibrationScore;
     // ★ v9.1 : Nombre de courses avec résultat pour la phase de stabilisation
-    final nbAvecRes   = IaMemoryService.instance.pronosticsAvecResultat.length;
+    // ★ CORRECTION BLOC 1 (BL1-A10) — le statut affiché décrit la maturité
+    //   de l'IA : il doit compter l'historique complet, pas la fenêtre vive.
+    final nbAvecRes   =
+        IaMemoryService.instance.historiqueCompletAvecResultat.length;
 
     String statutText;
     Color statutColor;

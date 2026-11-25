@@ -1436,7 +1436,10 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     // ★ v10.70 : On calcule depuis TOUS les pronostics avec résultat,
     // filtrés par la période choisie — indépendamment du mois calendrier
     final mem = IaMemoryService.instance;
-    final tousPronostics = mem.pronosticsAvecResultat;
+    // ★ CORRECTION BLOC 1 (BL1-A10) — historique COMPLET, pas la seule fenêtre
+    //   vive de 600 entrées : les pronostics évincés sont conservés dans
+    //   l'archive mais n'étaient relus par AUCUN consommateur statistique.
+    final tousPronostics = mem.historiqueCompletAvecResultat;
 
     final Map<String, int> nbByType   = {};
     final Map<String, int> bonsbyType = {};

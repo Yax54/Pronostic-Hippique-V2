@@ -977,6 +977,48 @@ class IaMemoryService extends ChangeNotifier {
   List<IaPronostic>       get pronosticsAvecResultat =>
       _pronostics.where((p) => p.resultatsReels).toList();
 
+  /// ★ CORRECTION BLOC 1 (BL1-A10) — HISTORIQUE **COMPLET** POUR LES
+  ///   STATISTIQUES ET LES ÉVALUATIONS, DISTINCT DE L'HISTORIQUE
+  ///   D'APPRENTISSAGE.
+  ///
+  /// DÉFAUT MESURÉ
+  /// ─────────────
+  /// `_pronostics` est plafonné à `_maxPronostics = 600` (:130) et les entrées
+  /// sans résultat sont purgées à `_maxPronosticsAge = 90` jours (:134). Les
+  /// entrées évincées ne sont PAS perdues : `_evincerAuDelaDeLaLimite()`
+  /// (:2578) et `_securiserExcedentAvantEcriture()` (:2593) les confient à
+  /// `IaArchiveService`. Mais AUCUN consommateur statistique ne relisait
+  /// l'archive : `pronosticsAvecResultat` ne parcourt que la fenêtre vive.
+  /// Conséquence : dès la 601ᵉ course, les taux affichés (calendrier,
+  /// ROI/Value, profil, statut d'apprentissage) portaient sur une tranche
+  /// glissante et non sur l'historique réellement conservé.
+  ///
+  /// CE QUI EST DÉLIBÉRÉMENT **SÉPARÉ**
+  /// ───────────────────────────────────
+  /// Ce getter n'est lu par AUCUN mécanisme d'apprentissage. `_apprendreParGradient`
+  /// (:3760), `_mettreAJourPrecisionIA` (:5770) et le calcul de calibration
+  /// continuent de lire `pronosticsAvecResultat`, dont le périmètre est
+  /// INCHANGÉ. Élargir ce dernier aurait allongé les fenêtres d'apprentissage
+  /// en silence — c'est précisément ce que le mandat interdit (§7).
+  ///
+  /// RÈGLES DE FUSION — AUCUNE INVENTION
+  /// ────────────────────────────────────
+  /// • Une entrée de la fenêtre vive PRIME : elle est l'état courant, l'archive
+  ///   peut en contenir une version antérieure.
+  /// • Une entrée d'archive n'est retenue que si sa `courseKey` est absente de
+  ///   la fenêtre vive (dédoublonnage strict, jamais de fusion de champs).
+  /// • Seules les entrées AVEC résultat officiel sont retournées, exactement
+  ///   comme le getter d'apprentissage : la question posée est identique.
+  /// • Aucune date, aucun score, aucun poids n'est recalculé.
+  List<IaPronostic> get historiqueCompletAvecResultat {
+    final vives = _pronostics.where((p) => p.resultatsReels).toList();
+    final vues = vives.map((p) => p.courseKey).toSet();
+    final archive = IaArchiveService.instance.versionsRetenues
+        .where((p) => p.resultatsReels && !vues.contains(p.courseKey));
+    if (archive.isEmpty) return vives;
+    return <IaPronostic>[...vives, ...archive];
+  }
+
   /// ★ v9.87 : Précision IA par hippodrome avec flag de fiabilité (tous hippos).
   /// Retourne { 'NomHippo': {'taux': double, 'nb': int, 'fiable': bool} }
   Map<String, Map<String, dynamic>> get precisionParHippodromeAvecFiabilite {

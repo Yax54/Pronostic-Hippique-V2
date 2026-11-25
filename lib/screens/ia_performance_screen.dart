@@ -1189,7 +1189,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     final stats  = _statsReelles ?? mem.calculerStats();
     final poids  = mem.poids;
     // Tous les pronostics avec résultat (pas de limite)
-    final historique = mem.pronosticsAvecResultat.toList();
+    // ★ CORRECTION BLOC 1 (BL1-A10) — la liste « avec résultat » affichée
+    //   doit montrer tout l'historique conservé, archive comprise.
+    final historique = mem.historiqueCompletAvecResultat.toList();
     // Tous les pronostics en attente (pas de limite)
     final enAttenteAll = mem.pronostics.where((p) => !p.resultatsReels).toList();
     final enAttenteTotal = enAttenteAll.length;

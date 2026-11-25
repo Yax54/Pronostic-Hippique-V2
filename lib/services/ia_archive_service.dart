@@ -1093,6 +1093,31 @@ class IaArchiveService extends ChangeNotifier {
   /// Version retenue pour une course (une seule par courseKey).
   IaPronostic? versionRetenue(String courseKey) => _retenues[courseKey];
 
+  /// ★ CORRECTION BLOC 1 (BL1-A10) — TOUTES LES VERSIONS RETENUES, en lecture.
+  ///
+  /// POURQUOI CE GETTER EXISTE
+  /// ─────────────────────────
+  /// `IaMemoryService._pronostics` est plafonné à 600 entrées et ses entrées
+  /// sans résultat sont purgées à 90 jours. Tout pronostic évincé était
+  /// jusqu'ici ARCHIVÉ (correctement, ce service ne perd rien) mais **jamais
+  /// relu** : `pronosticsAvecResultat` ne parcourt que la fenêtre vive. Les
+  /// statistiques, le ROI/Value, le profil et le calendrier ne voyaient donc
+  /// qu'une tranche glissante, alors que les données étaient sur le disque.
+  ///
+  /// CE QUE CE GETTER N'EST PAS
+  /// ──────────────────────────
+  /// • Il n'est lu par AUCUNE fonction d'apprentissage. Le gradient, les
+  ///   seuils et la calibration continuent de lire la fenêtre vive via
+  ///   `IaMemoryService.pronosticsAvecResultat`, INCHANGÉE. Élargir ce getter
+  ///   partagé aurait silencieusement modifié les fenêtres d'apprentissage,
+  ///   ce que le mandat interdit explicitement.
+  /// • Il ne modifie rien : `List.unmodifiable` sur les valeurs de l'index
+  ///   d'autorité. Aucun shard, aucune date, aucune autorité n'est touché.
+  /// • Il ne fabrique rien : une seule version par course, celle que
+  ///   l'autorité existante (`_retenues`) a retenue. Aucune recombinaison.
+  List<IaPronostic> get versionsRetenues =>
+      List<IaPronostic>.unmodifiable(_retenues.values);
+
   /// Toutes les versions archivées d'une course (y compris écartées).
   List<IaPronostic> toutesLesVersions(String courseKey) => List.unmodifiable(
       _shards.values.expand((l) => l).where((p) => p.courseKey == courseKey));

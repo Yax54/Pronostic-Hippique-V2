@@ -340,7 +340,9 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
   // ── ★ v10.25 : Section Précision IA temps réel ───────────────────────────
   Widget _buildSectionPrecisionIA() {
     final mem    = IaMemoryService.instance;
-    final pronos = mem.pronosticsAvecResultat;
+    // ★ CORRECTION BLOC 1 (BL1-A10) — précision IA calculée sur l'historique
+    //   complet (archive incluse), et non sur les 600 dernières courses.
+    final pronos = mem.historiqueCompletAvecResultat;
 
     if (pronos.isEmpty) return const SizedBox();
 

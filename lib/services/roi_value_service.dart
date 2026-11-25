@@ -41,7 +41,9 @@ class RoiValueService {
   // ════════════════════════════════════════════════════════════════════════════
 
   List<IaPronostic> _filtrer(RoiValueFilters f) {
-    final all = IaMemoryService.instance.pronosticsAvecResultat;
+    // ★ CORRECTION BLOC 1 (BL1-A10) — le ROI doit porter sur l'historique
+    //   réellement conservé, pas sur une tranche glissante de 600 courses.
+    final all = IaMemoryService.instance.historiqueCompletAvecResultat;
 
     return all.where((p) {
       // ── ★ A4-4 : exclusion des données INVALIDES ──────────────────────────
