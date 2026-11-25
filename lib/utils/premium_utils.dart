@@ -17,11 +17,31 @@ import 'package:flutter/material.dart';
 import '../models/zt_models.dart';
 import '../services/ia_memory_service.dart';
 import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, IaPronostic;
+import '../services/recommandation_pari_service.dart'
+    as source
+    show cascadeRecommandation, regleNbNumerosPourTypePari;
 
 // ─── 1. Calcul typePari + numéros depuis une course réelle ───────────────────
 
 /// Calcule le typePari conseillé et les numéros complets depuis la course.
-/// Identique à la logique de best_bet_screen._calculerOpportunites().
+///
+/// ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A03 / BL1-A08 / BL1-A14 / BL1-A15 /
+///   BL3-A26) : cette fonction N'IMPLÉMENTE PLUS de cascade. Elle délègue à
+///   `cascadeRecommandation()` (`services/recommandation_pari_service.dart`),
+///   désormais SOURCE DE VÉRITÉ UNIQUE du type de pari.
+///
+///   Avant cette correction, la cascade existait en SEPT exemplaires :
+///   cette fonction et `best_bet_screen` dupliquaient la version ADAPTATIVE,
+///   tandis que `conseils_screen`, `alert_service` et `widget_service`
+///   dupliquaient une version FIGÉE (80/75/65/50/35), et
+///   `data_refresh_service` en contenait deux variantes sans branche Quarté+.
+///   Résultat mesuré : jusqu'à 20 points d'écart de seuil Tiercé, et deux
+///   types de pari différents pour la MÊME course selon l'écran.
+///
+///   La signature et le type de retour sont INCHANGÉS : aucun appelant n'est
+///   modifié, et les libellés de type de pari restent identiques (ils sont
+///   comparés par égalité de chaîne par la persistance et l'apprentissage).
+///
 /// Couche LECTURE uniquement — ne modifie pas les données IA.
 ///
 /// Retourne (tp: 'Quarté+', nums: ['6','4','8','12']) par exemple.
@@ -29,53 +49,28 @@ import '../services/ia_memory_models.dart' show PremiumPronosticDuJour, IaPronos
   final sorted = course.partantsParRangIA;
   if (sorted.isEmpty) return (tp: '', nums: []);
 
-  final top       = sorted.first;
-  final scoreConf = top.scoreIA;
-  final score2nd  = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-  final ecart12   = (scoreConf - score2nd).abs();
-  final estEquil  = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
-  final coteTop   = top.coteDecimale;
-  final seuils    = IaMemoryService.instance.seuilsConfiance;
+  final seuils = IaMemoryService.instance.seuilsConfiance;
+  final reco = source.cascadeRecommandation(
+    course: course,
+    seuils: seuils,
+    scoreConf: sorted.first.scoreIA,
+    score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+    score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+    score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+    coteTop: sorted.first.coteDecimale,
+  );
 
-  final String typePari;
-  if (course.isQuinte) {
-    typePari = 'Quinté+';
-  } else if (course.isQuarte) {
-    typePari = 'Quarté+';
-  } else if (estEquil && scoreConf >= seuils.seuilCoupleGagnant) {
-    typePari = 'Couplé Gagnant';
-  } else if (estEquil && scoreConf >= seuils.seuilCouplePlace) {
-    typePari = 'Couplé Placé';
-  } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-    typePari = 'Simple Gagnant';
-  } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop > 8.0) {
-    typePari = 'Gagnant+Placé';
-  } else if (scoreConf >= seuils.seuilSimplePlace) {
-    typePari = 'Simple Placé';
-  } else if (scoreConf >= seuils.seuilGagnantPlace) {
-    typePari = 'Gagnant+Placé';
-  } else if (scoreConf >= seuils.seuilTierce) {
-    typePari = 'Tiercé';
-  } else {
-    typePari = 'À surveiller';
-  }
-
-  final int nbNum = nbNumerosPourTypePari(typePari);
-  final nums = sorted.take(nbNum).map((p) => p.numero).toList();
-  return (tp: typePari, nums: nums);
+  final nums = sorted.take(reco.nbNumeros).map((p) => p.numero).toList();
+  return (tp: reco.typePari, nums: nums);
 }
 
 /// Nombre de numéros à stocker/afficher selon le type de pari.
-/// Utilisé par typePariEtNumerosPourCourse et best_bet_screen.
-int nbNumerosPourTypePari(String typePari) {
-  if (typePari == 'Quinté+') return 5;
-  if (typePari == 'Quarté+') return 4;
-  if (typePari == 'Tiercé' ||
-      typePari == 'Tiercé Ordre' ||
-      typePari == 'Tiercé Désordre') return 3;
-  if (typePari == 'Couplé Gagnant' || typePari == 'Couplé Placé') return 2;
-  return 1;
-}
+///
+/// Délègue à la définition unique de `recommandation_pari_service.dart` :
+/// une seule implémentation, aucun risque de divergence (le tableau exact
+/// était dupliqué ici et utilisé par `best_bet_screen`).
+int nbNumerosPourTypePari(String typePari) =>
+    source.regleNbNumerosPourTypePari(typePari);
 
 // ─── 2. Emoji selon le type de pari ─────────────────────────────────────────
 

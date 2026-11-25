@@ -14,6 +14,9 @@ import '../models/zt_models.dart';
 import '../services/zone_turf_service.dart';
 import '../services/data_refresh_service.dart';
 import '../services/alert_service.dart';
+import '../services/ia_memory_service.dart' show IaMemoryService; // ★ BLOC 1 : seuils adaptatifs
+import '../services/recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 import '../providers/pmu_provider.dart';
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
@@ -277,58 +280,35 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
   }
 
   // ── Calcule le type de pari recommandé pour une course ────────────
+  //
+  // ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A08 / BL1-A14 / BL3-A26) — SOURCE UNIQUE
+  //
+  //   AVANT : cette méthode contenait une cascade FIGÉE (80 / 75 / 65 / 50 / 35
+  //   et 75-60-55 / 60-50-40-35 pour Quinté/Quarté) qui n'accédait JAMAIS aux
+  //   seuils adaptatifs (`grep seuilsConfiance` dans ce fichier → 0 occurrence).
+  //   Elle affichait donc un type de pari différent de Best Bet pour la MÊME
+  //   course dès que l'IA avait appris, et jusqu'à 20 points d'écart sur le
+  //   seuil Tiercé (25–55 adaptatif contre 35 figé).
+  //
+  //   APRÈS : délégation à `cascadeRecommandation()`. Les valeurs numériques
+  //   des branches Quarté/Quinté/Classique sont identiques à celles d'avant
+  //   (elles sont des constantes de sélection, pas des seuils appris) ; pour
+  //   les courses ordinaires, les littéraux 80/75/65/50/35 sont remplacés par
+  //   les seuils ADAPTATIFS dont ils étaient la copie — seuils dont les
+  //   valeurs par défaut sont précisément 80/75/65/50/35. Comportement
+  //   identique sur une installation neuve, apprentissage enfin respecté.
   String _getTypePariPourCourse(ZtCourse course) {
     final sorted = course.partantsParRangIA;
     if (sorted.isEmpty) return 'À surveiller';
-    final score  = sorted.first.scoreIA;
-    final score2 = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-    final score3 = sorted.length >= 3 ? sorted[2].scoreIA : 0.0;
-    final score4 = sorted.length >= 4 ? sorted[3].scoreIA : 0.0;
-    final ecart12 = (score - score2).abs();
-    final estEquilibre = !course.isQuinte && ecart12 <= 15 && score >= 60 && score2 >= 50;
-    final cote = sorted.first.coteDecimale;
-
-    // ★ v9.93 : Grande course classique sans Quarté/Quinté → limiter au Tiercé max
-    if (course.isClassiqueSansMultiple) {
-      if (score >= 75 && score2 >= 55 && score3 >= 45) return 'Tiercé';
-      if (estEquilibre && score >= 75) return 'Couplé Gagnant';
-      if (estEquilibre && score >= 60) return 'Couplé Placé';
-      if (score >= 80 && cote <= 8.0)  return 'Simple Gagnant';
-      if (score >= 80)                  return 'Gagnant+Placé';
-      if (score >= 65)                  return 'Simple Placé';
-      if (score >= 50)                  return 'Gagnant+Placé';
-      return 'À surveiller';
-    }
-
-    if (course.isQuinte) {
-      if (score >= 75 && score2 >= 60 && score3 >= 55) return 'Quinté+';
-      if (score >= 65 && score2 >= 55) return 'Quarté+';
-      if (score >= 55 && score2 >= 50) return 'Tiercé';
-      if (score >= 45) return 'Couplé Gagnant';
-      return 'À surveiller';
-    } else if (course.isQuarte) {
-      if (score >= 60 && score2 >= 50 && score3 >= 40 && score4 >= 35) return 'Quarté+';
-      if (score >= 55 && score2 >= 45 && score3 >= 35) return 'Tiercé';
-      if (score >= 45) return 'Couplé Gagnant';
-      return 'À surveiller';
-    } else if (estEquilibre && score >= 75) {
-      // ★ v10.56 : branche "Quarté+ par scores+partants" supprimée — PMU only.
-      // Quarté+ uniquement si course.isQuarte == true (détection PMU réelle).
-      return 'Couplé Gagnant';
-    } else if (estEquilibre && score >= 60) {
-      return 'Couplé Placé';
-    } else if (score >= 80 && cote <= 8.0) {
-      return 'Simple Gagnant';
-    } else if (score >= 80) {
-      return 'Gagnant+Placé';
-    } else if (score >= 65) {
-      return 'Simple Placé';
-    } else if (score >= 50) {
-      return 'Gagnant+Placé';
-    } else if (score >= 35) {
-      return 'Tiercé';
-    }
-    return 'À surveiller';
+    return cascadeRecommandation(
+      course: course,
+      seuils: IaMemoryService.instance.seuilsConfiance,
+      scoreConf: sorted.first.scoreIA,
+      score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+      score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+      score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+      coteTop: sorted.first.coteDecimale,
+    ).typePari;
   }
 
   // ── Définition statique des types de pari ─────────────────────────

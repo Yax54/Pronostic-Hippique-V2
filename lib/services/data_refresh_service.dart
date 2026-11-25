@@ -30,6 +30,8 @@ import 'ia_pronostic_engine.dart';
 import 'elo_service.dart';
 import 'alert_service.dart';
 import 'cote_tracker_service.dart';   // ★ v9.92 : critère R mouvement de cote
+import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 import '../widgets/ia/ia_bubble_widget.dart'; // ★ v9.93 : bulle non-partant
 import 'widget_service.dart'; // ★ Lot 4
 import '../models/zt_models.dart';
@@ -106,33 +108,28 @@ _BatchResult _calculerPronosticsBatch(_BatchPayload payload) {
 
       // Déterminer le type de pari conseillé
       final scoreConf = partantsClasses.first.scoreIA;
-      final score2nd  = partantsClasses.length >= 2 ? partantsClasses[1].scoreIA : 0.0;
-      final ecart12   = (scoreConf - score2nd).abs();
-      final estEquil  = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
       final coteTop   = partantsClasses.first.coteDecimale;
 
-      final String typePariAuto;
-      if (course.isQuinte) {
-        typePariAuto = 'Quinté+';
-      } else if (course.isQuarte) {
-        typePariAuto = 'Quarté+';
-      } else if (estEquil && scoreConf >= seuils.seuilCoupleGagnant) {
-        typePariAuto = 'Couplé Gagnant';
-      } else if (estEquil && scoreConf >= seuils.seuilCouplePlace) {
-        typePariAuto = 'Couplé Placé';
-      } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-        typePariAuto = 'Simple Gagnant';
-      } else if (scoreConf >= seuils.seuilSimpleGagnant) {
-        typePariAuto = 'Gagnant+Placé';
-      } else if (scoreConf >= seuils.seuilSimplePlace) {
-        typePariAuto = 'Simple Placé';
-      } else if (scoreConf >= seuils.seuilGagnantPlace) {
-        typePariAuto = 'Gagnant+Placé';
-      } else if (scoreConf >= seuils.seuilTierce) {
-        typePariAuto = 'Tiercé';
-      } else {
-        typePariAuto = 'À surveiller';
-      }
+      // ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A03 / BL3-A26) — SOURCE UNIQUE
+      //   Cette cascade locale à l'isolate dupliquait la logique de décision
+      //   avec des variantes (elle omettait notamment la branche `isQuarte`
+      //   dans le fallback synchrone, cf. BL1-A03). Elle délègue désormais à
+      //   `cascadeRecommandation()`, qui est PURE et sans état : elle peut
+      //   donc s'exécuter dans un isolate. Les seuils lui sont passés
+      //   explicitement (`seuils`, reconstruits depuis `payload.seuilsJson`),
+      //   ce qui garantit que l'isolate applique exactement les seuils appris
+      //   par `IaMemoryService` et non une copie par défaut.
+      final typePariAuto = cascadeRecommandation(
+        course: course,
+        seuils: seuils,
+        scoreConf: scoreConf,
+        score2nd: partantsClasses.length >= 2
+            ? partantsClasses[1].scoreIA
+            : null,
+        score3: partantsClasses.length >= 3 ? partantsClasses[2].scoreIA : null,
+        score4: partantsClasses.length >= 4 ? partantsClasses[3].scoreIA : null,
+        coteTop: coteTop,
+      ).typePari;
 
       // Sérialiser les scores critères
       final scoresJson = <String, dynamic>{};
@@ -1052,32 +1049,31 @@ class DataRefreshService extends ChangeNotifier {
         final confiance = course.confianceIA;
         final seuils    = IaMemoryService.instance.seuilsConfiance;
         final scoreConf = partantsClasses.first.scoreIA;
-        final score2nd  = partantsClasses.length >= 2
-            ? partantsClasses[1].scoreIA : 0.0;
-        final ecart12   = (scoreConf - score2nd).abs();
-        final estEquil  = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
         final coteTop   = partantsClasses.first.coteDecimale;
 
-        final String typePari;
-        if (course.isQuinte) {
-          typePari = 'Quinté+';
-        } else if (estEquil && scoreConf >= seuils.seuilCoupleGagnant) {
-          typePari = 'Couplé Gagnant';
-        } else if (estEquil && scoreConf >= seuils.seuilCouplePlace) {
-          typePari = 'Couplé Placé';
-        } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-          typePari = 'Simple Gagnant';
-        } else if (scoreConf >= seuils.seuilSimpleGagnant) {
-          typePari = 'Gagnant+Placé';
-        } else if (scoreConf >= seuils.seuilSimplePlace) {
-          typePari = 'Simple Placé';
-        } else if (scoreConf >= seuils.seuilGagnantPlace) {
-          typePari = 'Gagnant+Placé';
-        } else if (scoreConf >= seuils.seuilTierce) {
-          typePari = 'Tiercé';
-        } else {
-          typePari = 'À surveiller';
-        }
+        // ★ CORRECTION BLOC 1 (BL1-A03) — la branche `isQuarte` MANQUAIT ici.
+        //   Un `★ fix` équivalent existait dans `ia_memory_service.dart:6229`
+        //   mais pas dans ce fallback : quand l'isolate échouait, toutes les
+        //   courses Quarté+ du lot recevaient un `typePariConseille` erroné,
+        //   persisté puis exploité par le Calendrier, les Statistiques, le
+        //   Backtesting et le ROI/Value. La délégation à la cascade unique
+        //   supprime la cause : la branche Quarté+ ne peut plus être oubliée
+        //   dans une copie.
+        final typePari = cascadeRecommandation(
+          course: course,
+          seuils: seuils,
+          scoreConf: scoreConf,
+          score2nd: partantsClasses.length >= 2
+              ? partantsClasses[1].scoreIA
+              : null,
+          score3: partantsClasses.length >= 3
+              ? partantsClasses[2].scoreIA
+              : null,
+          score4: partantsClasses.length >= 4
+              ? partantsClasses[3].scoreIA
+              : null,
+          coteTop: coteTop,
+        ).typePari;
 
         nouveaux.add({
           'courseKey':         courseKey,

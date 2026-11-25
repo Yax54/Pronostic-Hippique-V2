@@ -49,6 +49,8 @@ import '../utils/date_utils.dart'
 
 // ─── Modèles de données extraits dans ia_memory_models.dart ──────────────────
 import 'ia_memory_models.dart';
+import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 // ★ C1-a / E1 : archive permanente des pronostics évincés (ÉCRITURE SEULE).
 //   Ce service n'est lu par AUCUNE fonction d'apprentissage.
 import 'ia_archive_service.dart' show IaArchiveService, ArchiveReason;
@@ -6205,35 +6207,29 @@ class IaMemoryService extends ChangeNotifier {
 
         // Type de pari conseillé
         final scoreConf = partantsClasses.first.scoreIA;
-        final score2nd  = partantsClasses.length >= 2
-            ? partantsClasses[1].scoreIA : 0.0;
-        final ecart12   = (scoreConf - score2nd).abs();
-        final estEquil  = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
         final coteTop   = partantsClasses.first.coteDecimale;
 
-        final String typePari;
-        if (course.isQuinte) {
-          typePari = 'Quinté+';
-        } else if (course.isQuarte) {
-          typePari = 'Quarté+';
-        } else if (estEquil && scoreConf >= _seuils.seuilCoupleGagnant) {
-          typePari = 'Couplé Gagnant';
-        } else if (estEquil && scoreConf >= _seuils.seuilCouplePlace) {
-          typePari = 'Couplé Placé';
-        } else if (scoreConf >= _seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-          typePari = 'Simple Gagnant';
-        } else if (scoreConf >= _seuils.seuilSimpleGagnant) {
-          typePari = 'Gagnant+Placé';
-        } else if (scoreConf >= _seuils.seuilSimplePlace) {
-          typePari = 'Simple Placé';
-        } else if (scoreConf >= _seuils.seuilGagnantPlace) {
-          // ★ fix : branche seuilGagnantPlace manquante — alignement avec data_refresh_service
-          typePari = 'Gagnant+Placé';
-        } else if (scoreConf >= _seuils.seuilTierce) {
-          typePari = 'Tiercé';
-        } else {
-          typePari = 'À surveiller';
-        }
+        // ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A03 / BL3-A26) — SOURCE UNIQUE
+        //   Huitième et dernière copie de la cascade. Elle divergeait des
+        //   autres (branches Quarté+/Quinté+ inconditionnelles, gestion de
+        //   `score4` absente). Elle délègue désormais à la cascade unique, ce
+        //   qui garantit qu'un pronostic CRÉÉ et un pronostic RECRÉÉ par
+        //   `recreerPronosticsManquants` reçoivent le même type de pari.
+        final typePari = cascadeRecommandation(
+          course: course,
+          seuils: _seuils,
+          scoreConf: scoreConf,
+          score2nd: partantsClasses.length >= 2
+              ? partantsClasses[1].scoreIA
+              : null,
+          score3: partantsClasses.length >= 3
+              ? partantsClasses[2].scoreIA
+              : null,
+          score4: partantsClasses.length >= 4
+              ? partantsClasses[3].scoreIA
+              : null,
+          coteTop: coteTop,
+        ).typePari;
 
         // Favori IA = partant avec meilleur scoreIA
         final favoriNum = scores.isEmpty ? null
@@ -7627,101 +7623,6 @@ class StatsPrecisionParType {
   }
 }
 
-// ─── Seuils de confiance adaptatifs ──────────────────────────────────────────
-//
-//  Ces seuils remplacent les seuils hardcodés dans best_bet_screen.dart.
-//  L'IA les ajuste automatiquement après chaque analyse de la journée :
-//
-//   • Si un type de pari a un mauvais taux de réussite → seuil monte
-//     (l'IA sera plus exigeante avant de proposer ce pari)
-//   • Si un type de pari a un bon taux de réussite → seuil peut descendre
-//     (l'IA peut proposer ce pari un peu plus facilement)
-//
-//  Limites :
-//   • Plage autorisée par type : défaut ± 15 points max
-//   • Le seuil ne peut pas sortir de la plage absolue [25, 95]
-// ─────────────────────────────────────────────────────────────────────────────
-class SeuilsConfianceAdaptatifs {
-  // Seuils par défaut (identiques aux seuils codés dans best_bet_screen)
-  // Correspondent au scoreConf minimum pour conseiller ce type de pari
-  double seuilSimpleGagnant;   // défaut 80 (+ cote ≤ 8)
-  double seuilGagnantPlace;    // défaut 80 (+ cote > 8) ou 50
-  double seuilSimplePlace;     // défaut 65
-  double seuilCoupleGagnant;   // défaut 75 (+ équilibre)
-  double seuilCouplePlace;     // défaut 60 (+ équilibre)
-  double seuilTierce;          // défaut 35
-  double seuilQuarte;          // défaut 80 (course Quarté officielle)
-  double seuilQuinte;          // défaut 0  (course Quinté officielle → toujours)
-
-  SeuilsConfianceAdaptatifs({
-    this.seuilSimpleGagnant  = 80.0,
-    this.seuilGagnantPlace   = 50.0,
-    this.seuilSimplePlace    = 65.0,
-    this.seuilCoupleGagnant  = 75.0,
-    this.seuilCouplePlace    = 60.0,
-    this.seuilTierce         = 35.0,
-    this.seuilQuarte         = 80.0,
-    this.seuilQuinte         = 0.0,
-  });
-
-  /// Ajuste le seuil pour un type de pari.
-  /// delta positif → seuil monte (plus sélectif)
-  /// delta négatif → seuil descend (moins sélectif)
-  void ajusterSeuil(String typePari, double delta) {
-    // Limiter la variation par appel à ±2.0 points (stabilité)
-    final d = delta.clamp(-2.0, 2.0);
-    switch (typePari) {
-      case 'Simple Gagnant':
-        seuilSimpleGagnant = (seuilSimpleGagnant + d).clamp(65.0, 92.0);
-        break;
-      case 'Gagnant+Placé':
-        seuilGagnantPlace  = (seuilGagnantPlace  + d).clamp(40.0, 75.0);
-        break;
-      case 'Simple Placé':
-        seuilSimplePlace   = (seuilSimplePlace   + d).clamp(50.0, 80.0);
-        break;
-      case 'Couplé Gagnant':
-        seuilCoupleGagnant = (seuilCoupleGagnant + d).clamp(60.0, 88.0);
-        break;
-      case 'Couplé Placé':
-        seuilCouplePlace   = (seuilCouplePlace   + d).clamp(45.0, 78.0);
-        break;
-      case 'Tiercé':
-        seuilTierce        = (seuilTierce        + d).clamp(25.0, 55.0);
-        break;
-      case 'Quarté+':
-        seuilQuarte        = (seuilQuarte        + d).clamp(65.0, 92.0);
-        break;
-      // Quinté+ : toujours conseillé quand course officielle → pas de seuil à ajuster
-      default:
-        break;
-    }
-  }
-
-  Map<String, dynamic> toJson() => {
-    'sg':  seuilSimpleGagnant,
-    'gp':  seuilGagnantPlace,
-    'sp':  seuilSimplePlace,
-    'cg':  seuilCoupleGagnant,
-    'cp':  seuilCouplePlace,
-    'ti':  seuilTierce,
-    'qa':  seuilQuarte,
-    'qi':  seuilQuinte,
-  };
-
-  factory SeuilsConfianceAdaptatifs.fromJson(Map<String, dynamic> j) {
-    return SeuilsConfianceAdaptatifs(
-      seuilSimpleGagnant : (j['sg'] as num?)?.toDouble() ?? 80.0,
-      seuilGagnantPlace  : (j['gp'] as num?)?.toDouble() ?? 50.0,
-      seuilSimplePlace   : (j['sp'] as num?)?.toDouble() ?? 65.0,
-      seuilCoupleGagnant : (j['cg'] as num?)?.toDouble() ?? 75.0,
-      seuilCouplePlace   : (j['cp'] as num?)?.toDouble() ?? 60.0,
-      seuilTierce        : (j['ti'] as num?)?.toDouble() ?? 35.0,
-      seuilQuarte        : (j['qa'] as num?)?.toDouble() ?? 80.0,
-      seuilQuinte        : (j['qi'] as num?)?.toDouble() ??  0.0,
-    );
-  }
-}
 
 // ─── Rapport journalier complet (persisté, glissant 60 jours) ─────────────────
 //

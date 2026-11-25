@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ia_memory_service.dart';
+import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 // ★ A6 : décision d'arrivée partagée (L0 prioritaire + contrôle d'appartenance).
 // `arrivee_pmu_ordonnee.dart` n'est plus importé ici : la décision P5 ne
 // consulte plus directement `analyserRapportsPmu` (mesuré : 0 occurrence).
@@ -1918,60 +1920,31 @@ class AlertService extends ChangeNotifier {
     };
   }
 
-  /// Calcule le type de pari recommandé pour une course (copie de conseils_screen).
+  /// Calcule le type de pari recommandé pour une course.
+  ///
+  /// ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A08 / BL1-A14 / BL3-A26) — SOURCE UNIQUE
+  ///
+  ///   AVANT : cette méthode était une COPIE de celle de `conseils_screen`
+  ///   (son propre commentaire l'admettait : « copie de conseils_screen »),
+  ///   donc une cascade FIGÉE n'ayant jamais accès aux seuils adaptatifs.
+  ///   L'alerte « Dernière chance » pouvait donc annoncer un type de pari
+  ///   différent de celui affiché par Best Bet pour la même course.
+  ///
+  ///   APRÈS : délégation à `cascadeRecommandation()`. Aucune valeur
+  ///   numérique n'est modifiée ; les seuils appris sont enfin respectés par
+  ///   les notifications comme par les écrans.
   String _getTypePariPourCourse(ZtCourse course) {
     final sorted = course.partantsParRangIA;
     if (sorted.isEmpty) return 'À surveiller';
-    final score  = sorted.first.scoreIA;
-    final score2 = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-    final score3 = sorted.length >= 3 ? sorted[2].scoreIA : 0.0;
-    final score4 = sorted.length >= 4 ? sorted[3].scoreIA : 0.0;
-    final ecart12 = (score - score2).abs();
-    final estEquilibre = !course.isQuinte && ecart12 <= 15 && score >= 60 && score2 >= 50;
-    final cote = sorted.first.coteDecimale;
-
-    // ★ v9.93 : Course classique sans Quarté/Quinté → limiter au Tiercé max
-    if (course.isClassiqueSansMultiple) {
-      if (score >= 75 && score2 >= 55 && score3 >= 45) return 'Tiercé';
-      if (estEquilibre && score >= 75) return 'Couplé Gagnant';
-      if (estEquilibre && score >= 60) return 'Couplé Placé';
-      if (score >= 80 && cote <= 8.0) return 'Simple Gagnant';
-      if (score >= 80) return 'Gagnant+Placé';
-      if (score >= 65) return 'Simple Placé';
-      if (score >= 50) return 'Gagnant+Placé';
-      return 'À surveiller';
-    }
-
-    if (course.isQuinte) {
-      if (score >= 75 && score2 >= 60 && score3 >= 55) return 'Quinté+';
-      if (score >= 65 && score2 >= 55) return 'Quarté+';
-      if (score >= 55 && score2 >= 50) return 'Tiercé';
-      if (score >= 45) return 'Couplé Gagnant';
-      return 'À surveiller';
-    } else if (course.isQuarte) {
-      if (score >= 60 && score2 >= 50 && score3 >= 40 && score4 >= 35) return 'Quarté+';
-      if (score >= 55 && score2 >= 45 && score3 >= 35) return 'Tiercé';
-      if (score >= 45) return 'Couplé Gagnant';
-      return 'À surveiller';
-    } else if (estEquilibre && score >= 75) {
-      // ★ v10.56 : branche "Quarté+ par scores+partants" supprimée — PMU only.
-      // Quarté+ uniquement si course.isQuarte == true (détection PMU réelle).
-      // Fallback intelligent : mêmes chevaux IA, type rétrogradé PMU-compatible.
-      return 'Couplé Gagnant';
-    } else if (estEquilibre && score >= 60) {
-      return 'Couplé Placé';
-    } else if (score >= 80 && cote <= 8.0) {
-      return 'Simple Gagnant';
-    } else if (score >= 80) {
-      return 'Gagnant+Placé';
-    } else if (score >= 65) {
-      return 'Simple Placé';
-    } else if (score >= 50) {
-      return 'Gagnant+Placé';
-    } else if (score >= 35) {
-      return 'Tiercé';
-    }
-    return 'À surveiller';
+    return cascadeRecommandation(
+      course: course,
+      seuils: IaMemoryService.instance.seuilsConfiance,
+      scoreConf: sorted.first.scoreIA,
+      score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+      score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+      score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+      coteTop: sorted.first.coteDecimale,
+    ).typePari;
   }
 
   // ── ★ v10.24 : Feature #2 — Alerte "Cote qui chute" ─────────────────────────

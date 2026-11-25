@@ -18,6 +18,8 @@ import '../services/gain_calculator.dart';  // ★ v9.93 : Kelly Criterion
 import '../widgets/bet_bottom_sheet.dart';
 import '../widgets/arrivee_reelle_widget.dart';
 import '../utils/premium_utils.dart' show nbNumerosPourTypePari; // ★ v10.55
+import '../services/recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 import '../utils/date_utils.dart' show dateDepuisCourseKey; // ★ A-2 : date réelle de la course
 import '../utils/premium_streak_ui.dart';        // ★ v10.61 : phrase série premium commune
 import '../services/quasi_gros_paris_service.dart'; // ★ v10.72 : Gros paris à surveiller
@@ -341,54 +343,30 @@ class _BestBetScreenState extends State<BestBetScreen>
         // Aligné sur la philosophie BestBetEngine (confiance = critère dominant)
         final composite = scoreConf * 0.65 + scoreGainRaw * 0.35;
 
-        // ── Type de pari recommandé — seuils ADAPTATIFS (appris par l'IA) ──
-        // Les seuils évoluent après chaque "Analyser la journée" selon la
-        // précision réelle de l'IA pour chaque type de pari conseillé.
-        final coteTop = top.coteDecimale;
-        final score2nd = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-        final ecart12 = (scoreConf - score2nd).abs();
-        final estEquilibre = ecart12 <= 15 && scoreConf >= 60 && score2nd >= 50;
-
-        final String typePari;
-        final String conseil;
-        if (course.isQuinte) {
-          typePari = 'Quinté+';
-          final s5 = sorted.take(5).map((p) => 'N°${p.numero}').join(' - ');
-          conseil = 'Course Quinté+ officielle. Sélection IA : $s5.';
-        } else if (course.isQuarte) {
-          typePari = 'Quarté+';
-          final s4 = sorted.take(4).map((p) => 'N°${p.numero}').join(' - ');
-          conseil = 'Course Quarté+ officielle. Sélection IA (4 chevaux) : $s4.';
-        } else if (estEquilibre && scoreConf >= seuils.seuilCoupleGagnant) {
-          typePari = 'Couplé Gagnant';
-          conseil = 'Deux favoris très proches (${scoreConf.round()} vs ${score2nd.round()}/100). '
-              'Couplé Gagnant : N°${top.numero} ${top.nom} + N°${sorted[1].numero} ${sorted[1].nom}.';
-        } else if (estEquilibre && scoreConf >= seuils.seuilCouplePlace) {
-          typePari = 'Couplé Placé';
-          conseil = 'Course équilibrée. Couplé Placé : N°${top.numero} + N°${sorted[1].numero} dans le top 3.';
-        } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop <= 8.0) {
-          typePari = 'Simple Gagnant';
-          conseil = 'Confiance très haute (${scoreConf.round()}/100). Misez sur N°${top.numero} ${top.nom} en Simple Gagnant.';
-        } else if (scoreConf >= seuils.seuilSimpleGagnant && coteTop > 8.0) {
-          typePari = 'Gagnant+Placé';
-          conseil = 'Score élevé mais cote longue (×${coteTop.toStringAsFixed(1)}). '
-              'Gagnant+Placé sécurise la mise sur N°${top.numero} ${top.nom}.';
-        } else if (scoreConf >= seuils.seuilSimplePlace) {
-          typePari = 'Simple Placé';
-          conseil = 'Bon profil (${scoreConf.round()}/100). N°${top.numero} ${top.nom} en Simple Placé (top 3).';
-        } else if (scoreConf >= seuils.seuilGagnantPlace) {
-          typePari = 'Gagnant+Placé';
-          final s2 = sorted.length > 1 ? 'N°${sorted[1].numero}' : '?';
-          conseil = 'Score moyen (${scoreConf.round()}/100). Gagnant+Placé sur N°${top.numero}, '
-              'ou Couplé avec $s2 pour couvrir les 2 cas.';
-        } else if (scoreConf >= seuils.seuilTierce) {
-          typePari = 'Tiercé';
-          final s = sorted.take(3).map((p) => 'N°${p.numero}').join(' - ');
-          conseil = 'Course incertaine (${scoreConf.round()}/100). Tiercé IA en désordre : $s.';
-        } else {
-          typePari = 'À surveiller';
-          conseil = 'Course très ouverte (${scoreConf.round()}/100). Mise minimale ou abstention conseillée.';
-        }
+        // ── Type de pari recommandé — SOURCE UNIQUE DE DÉCISION ──────────
+        //
+        // ★ CORRECTION BLOC 1 (BL1-A02 / BL1-A08 / BL3-A26)
+        //
+        //   Cette cascade était l'une des deux versions « adaptatives » du
+        //   dépôt (l'autre étant `premium_utils`). Elle est conservée comme
+        //   référence fonctionnelle — c'est elle qui est reprise par
+        //   `cascadeRecommandation()` — et remplacée ici par la délégation.
+        //
+        //   Le TEXTE du conseil est désormais produit au même endroit que la
+        //   décision. Avant, il était possible d'afficher « Couplé Gagnant »
+        //   avec un conseil rédigé pour une autre branche après toute
+        //   évolution de l'un sans l'autre.
+        final reco = cascadeRecommandation(
+          course: course,
+          seuils: seuils,
+          scoreConf: scoreConf,
+          score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+          score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+          score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+          coteTop: cote,
+        );
+        final String typePari = reco.typePari;
+        final String conseil  = reco.conseil;
 
         // ★ v10.55 : délègue à premium_utils (source unique de vérité)
         final numeros = sorted

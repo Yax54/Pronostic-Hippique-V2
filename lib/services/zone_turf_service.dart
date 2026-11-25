@@ -204,7 +204,26 @@ class ZoneTurfService {
 
           courses.add(ZtCourse(
             numCourse: numOrdre,
-            anchor: '$numOfficiel$numOrdre',
+            // ★ CORRECTION BL3-A22 — L'ANCRE EST UNE IDENTITÉ, PAS UN CONCATÉNAT
+            //
+            //   DÉFAUT MESURÉ : `anchor` valait '$numOfficiel$numOrdre', soit
+            //   « 35 » pour la course 5 de la réunion 3. Le seul consommateur
+            //   du champ est `IaPronosticEngine._numReunionDepuisAnchor()`
+            //   (`ia_pronostic_engine.dart:876`), qui applique
+            //   `RegExp(r'^R(\d+)C\d+$')` : « 35 » ne correspond JAMAIS.
+            //   Conséquence : le numéro de réunion n'était jamais extrait, la
+            //   clé de mouvements de cotes valait '' et le critère R
+            //   (`mouvCote`, 6 % du score) restait neutralisé à 50.0 pour
+            //   TOUTES les courses, en permanence.
+            //
+            //   FORMAT PRODUIT : « R{nR}C{nC} » — exactement celui attendu par
+            //   le consommateur, et identique à ce que le commentaire de
+            //   `ia_pronostic_engine.dart:853` affirmait déjà à tort.
+            //
+            //   La formule du critère R, son coefficient `mouvCote: 0.06`, les
+            //   19 poids et les scores historiques ne sont PAS touchés : seule
+            //   la donnée d'identité transmise est corrigée.
+            anchor: 'R${numOfficiel}C$numOrdre',
             nom: nomCourse,
             heure: heureStr,
             distance: '${distanceM}m',

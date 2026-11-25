@@ -20,6 +20,8 @@ import 'ia_personality_service.dart'; // ★ v9.86
 import 'ia_badges_service.dart';      // ★ v9.86
 import 'elo_service.dart';
 import 'alert_service.dart';          // ★ v10.24 : coursesConseilIA + tendanceForme
+import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
+    show cascadeRecommandation;
 
 class WidgetService {
   // ── Singleton ─────────────────────────────────────────────────────
@@ -96,26 +98,27 @@ class WidgetService {
         final composite = top.scoreIA * 0.65 + scoreGain * 0.35;
 
         // Type de pari conseillé
-        final seuils    = IaMemoryService.instance.seuilsConfiance;
-        final score2nd  = sorted.length >= 2 ? sorted[1].scoreIA : 0.0;
-        final ecart12   = (top.scoreIA - score2nd).abs();
-        final estEquil  = ecart12 <= 15 && top.scoreIA >= 60 && score2nd >= 50;
-        final String typePari;
-        if (course.isQuinte) {
-          typePari = 'Quinté+';
-        } else if (course.isQuarte) {
-          typePari = 'Quarté+';
-        } else if (estEquil && top.scoreIA >= seuils.seuilCoupleGagnant) {
-          typePari = 'Couplé Gagnant';
-        } else if (top.scoreIA >= seuils.seuilSimpleGagnant && cote <= 8.0) {
-          typePari = 'Simple Gagnant';
-        } else if (top.scoreIA >= seuils.seuilSimpleGagnant) {
-          typePari = 'Gagnant+Placé';
-        } else if (top.scoreIA >= seuils.seuilSimplePlace) {
-          typePari = 'Simple Placé';
-        } else {
-          typePari = 'À surveiller';
-        }
+        //
+        // ★ CORRECTION BLOC 1 (BL1-A14 / BL1-A02 / BL3-A26) — SOURCE UNIQUE
+        //
+        //   AVANT : cette cascade était TRONQUÉE par rapport à celle des
+        //   écrans. Il manquait la branche « Couplé Placé », la branche
+        //   `seuilGagnantPlace` et la branche `seuilTierce`. Conséquence
+        //   mesurée : un score de 40-49 produisait « À surveiller » sur le
+        //   widget Android, alors que Best Bet produisait « Tiercé »
+        //   (seuil 35). Le widget ne pouvait donc JAMAIS afficher Tiercé.
+        //
+        //   APRÈS : délégation à la cascade unique. Le widget affiche le même
+        //   type de pari que l'application. Aucune valeur numérique nouvelle.
+        final typePari = cascadeRecommandation(
+          course: course,
+          seuils: IaMemoryService.instance.seuilsConfiance,
+          scoreConf: top.scoreIA,
+          score2nd: sorted.length >= 2 ? sorted[1].scoreIA : null,
+          score3: sorted.length >= 3 ? sorted[2].scoreIA : null,
+          score4: sorted.length >= 4 ? sorted[3].scoreIA : null,
+          coteTop: cote,
+        ).typePari;
 
         // ★ v9.92 : ELO par discipline
         final elo = EloService.instance.getScore(top.nom,
