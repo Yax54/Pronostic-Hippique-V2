@@ -138,7 +138,6 @@ void main() {
 
     // ignore: avoid_print
     print('─── MESURE G1 (appels RÉELS, commentaires exclus) ──────────');
-    // ignore: avoid_print
     for (final m in mesures) {
       // ignore: avoid_print
       print('  $m');
@@ -216,7 +215,6 @@ void main() {
 
     // ignore: avoid_print
     print('─── MESURE G2 (sémantique des six arguments) ───────────────');
-    // ignore: avoid_print
     for (final m in mesures) {
       // ignore: avoid_print
       print('  $m');
@@ -319,7 +317,6 @@ void main() {
 
     // ignore: avoid_print
     print('─── MESURE G3 (source des seuils) ──────────────────────────');
-    // ignore: avoid_print
     for (final m in mesures) {
       // ignore: avoid_print
       print('  $m');

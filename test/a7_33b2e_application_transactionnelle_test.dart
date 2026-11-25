@@ -55,9 +55,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
-// ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'package:pronostic_hippique/models/zt_models.dart';
@@ -871,7 +869,6 @@ void main() {
       await _laisserProgresser();
 
       final reg = _registreSurDisque()!;
-      // ignore: avoid_print
       final res = EloService.instance.dernierResultatMiseAJour;
       // ignore: avoid_print
       print('[B2e-3d] → $etat | $res | entrées=${reg.entrees.length}');

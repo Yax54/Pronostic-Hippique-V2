@@ -46,12 +46,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/http.dart' show Client;
 import 'package:http/testing.dart';
-// ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
-// ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'package:pronostic_hippique/models/decision_gain_pmu.dart';

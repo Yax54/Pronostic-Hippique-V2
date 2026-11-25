@@ -33,25 +33,32 @@ dev_dependencies:
   #   désormais sur l'AST officiel : chemin + classe + méthode + champ +
   #   nature de l'écriture, sans aucun numéro de ligne.
   #   Dépendance de DÉVELOPPEMENT uniquement : rien n'entre dans l'APK.
-  analyzer: ^7.0.0
+  analyzer: ^7.7.1
   # ★ BLOC 1 (qualité) — FAUX CANAUX DE PLATEFORME UTILISÉS PAR LES TESTS.
-  #   Les tests remplacent le canal `shared_preferences` / `path_provider` par
-  #   un faux en mémoire (store fautif, restauration, sauvegarde). Pour cela
-  #   ils importent DIRECTEMENT les interfaces de plateforme. Ce sont des
-  #   dépendances TRANSITIVES : les importer sans les déclarer est signalé par
-  #   `depend_on_referenced_packages`.
+  #   Les tests remplacent le canal `shared_preferences` / `path_provider` /
+  #   `share_plus` par un faux en mémoire (store fautif, restauration,
+  #   sauvegarde). Pour cela ils importent DIRECTEMENT les interfaces de
+  #   plateforme. Ce sont des dépendances TRANSITIVES : les importer sans les
+  #   déclarer est signalé par `depend_on_referenced_packages`.
   #
   #   Le dépôt contournait cela par `// ignore: depend_on_referenced_packages`
-  #   (123 occurrences dans 60 fichiers de test). La DIRECTIVE impose la voie
-  #   `pubspec` plutôt que le masquage du diagnostic : on déclare donc les
-  #   paquets. Ce sont des dépendances de DÉVELOPPEMENT, jamais embarquées
-  #   dans l'APK.
+  #   (123 occurrences, toutes supprimées au BLOC 1). On déclare donc les
+  #   paquets : c'est la seule façon de rendre l'analyse propre SANS masquer.
   #
-  #   Contraintes volontairement LARGES (`any` → version résolue actuelle
-  #   conservée) : on ne veut AUCUNE montée de version, seulement la
-  #   déclaration. `pubspec.lock` prouve qu'aucune version n'a bougé.
-  shared_preferences_platform_interface: any
-  path_provider_platform_interface: any
+  #   ⚠️ CONTRAINTES EXPLICITES, alignées sur la version RÉSOLUE.
+  #      La contrainte d'un `platform_interface` est dictée par son paquet
+  #      PARENT (`shared_preferences`, `path_provider`, `share_plus`), qui
+  #      impose une plage étroite : les versions 2.x et 3.x des interfaces ne
+  #      sont pas interchangeables, et `^3.x` casserait la résolution.
+  #      On écrit donc `^<version résolue>` — marge de correctif uniquement :
+  #        • shared_preferences_platform_interface  2.4.2 -> ^2.4.2
+  #        • path_provider_platform_interface       2.1.2 -> ^2.1.2
+  #        • share_plus_platform_interface          6.1.0 -> ^6.1.0
+  #      Aucune montée de version n'est demandée : `pubspec.lock` doit
+  #      demeurer inchangé sur ces trois paquets.
+  shared_preferences_platform_interface: ^2.4.2
+  path_provider_platform_interface: ^2.1.2
+  share_plus_platform_interface: ^6.1.0
 
 flutter:
   uses-material-design: true
