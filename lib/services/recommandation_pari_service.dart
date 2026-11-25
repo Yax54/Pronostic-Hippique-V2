@@ -396,39 +396,50 @@ RecommandationPari _cascadeBrut({
     //      RECOMMANDATION ARBITRAIRE, c'est la RÈGLE EXISTANTE DU DÉPÔT
     //      appliquée à sa place dans l'ordre de la cascade :
     //
-    //      • `_simplePlace()` était DÉJÀ la branche immédiatement inférieure
-    //        (`scoreConf >= seuils.seuilSimplePlace`, ligne suivante). Le
-    //        repli ne crée donc aucune règle : il AVANCE cette branche pour
-    //        les scores qui satisfont `seuilSimpleGagnant` (≥ 80) — un score
-    //        qui satisfait 80 satisfait 65 par construction, donc la branche
-    //        Simple Placé était de toute façon ATTEINTE par ce score si la
-    //        cote manquait.
-    //      • Ce pari ne dépend PAS de la cote pour être JUSTIFIÉ : son énoncé
-    //        de production est « profil ≥ seuilSimplePlace ⇒ le cheval est
-    //        dans le top 3 » (`_simplePlace`, commentaire d'origine). Aucune
-    //        prémisse chiffrée sur la cote.
-    //      • Il est le MOINS engageant des paris encore recommandables : UNE
-    //        seule mise, contre DEUX pour Gagnant+Placé. En situation de
-    //        donnée incomplète, réduire l'engagement est la seule attitude
-    //        qui n'invente rien.
-    //      • La cascade n'atteint PAS l'abstention à ce stade : le score est
-    //        supérieur au seuil Simple Placé, donc l'abstention serait une
-    //        sous-estimation de la confiance réelle, tout aussi injustifiée
-    //        que le Gagnant+Placé.
+    //      ⚠️ CE QUE CE BLOC NE FAIT SURTOUT PAS — ET QUE MA PREMIÈRE VERSION
+    //         FAISAIT À TORT : renvoyer `_simplePlace()` DIRECTEMENT.
     //
-    //      Autrement dit : on ne choisit pas un pari NOUVEAU ; on laisse la
-    //      branche suivante de la cascade EXISTANTE décider, et l'on empêche
-    //      seulement l'activation d'une branche dont la prémisse manque.
-    //      Aucune valeur de seuil n'est changée.
-    if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
-      return _simplePlace(course, scoreConf);
-    }
+    //         Ma justification initiale était « un score qui satisfait
+    //         `seuilSimpleGagnant` (80) satisfait forcément
+    //         `seuilSimplePlace` (65) ». C'EST FAUX DÈS QUE LES SEUILS SONT
+    //         APPRIS, car les deux plages se CROISENT :
+    //             seuilSimpleGagnant ∈ [65, 92]   (défaut 80)
+    //             seuilSimplePlace   ∈ [50, 80]   (défaut 65)
+    //         Contre-exemple mesuré : `seuilSimpleGagnant = 65` et
+    //         `seuilSimplePlace = 80`, pour un score de 70. Le score satisfait
+    //         le premier seuil et PAS le second : le raccourci recommandait
+    //         alors un Simple Placé que le seuil APPRIS n'autorisait pas —
+    //         c'est-à-dire exactement le défaut que BL1-A08 dénonce
+    //         (décision prise sans le seuil réel).
+    //
+    //      ⚠️ COMPORTEMENT CORRECT : on n'active PAS la branche dont la
+    //         prémisse (cote longue) est indémontrable, et l'on laisse la
+    //         CASCADE EXISTANTE continuer. Chacune des branches suivantes est
+    //         justifiée par SON PROPRE seuil adaptatif réel, et AUCUNE ne
+    //         dépend de la cote :
+    //             • `seuilSimplePlace` → Simple Placé (une mise) ;
+    //             • `seuilTierce`      → Tiercé ;
+    //             • `seuilGagnantPlace` est SAUTÉ (il exige `coteConnue`) ;
+    //             • sinon abstention.
+    //         Le résultat n'est donc pas une décision fabriquée par moi, mais
+    //         la décision de la cascade d'origine privée de sa seule branche
+    //         indémontrable. Aucun seuil n'est modifié.
     if (coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
       return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
     }
+    // (cote inconnue : on ne renvoie RIEN ici — la cascade continue et chacune
+    //  des branches suivantes applique SON seuil adaptatif réel.)
     if (scoreConf >= seuils.seuilSimplePlace) return _simplePlace(course, scoreConf);
-    if (scoreConf >= ParametresCascade.classiqueRetroGagnantPlace1) {
+    if (coteConnue && scoreConf >= ParametresCascade.classiqueRetroGagnantPlace1) {
       return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
+    }
+    if (scoreConf >= seuils.seuilTierce) {
+      return RecommandationPari(
+        typePari: 'Tiercé',
+        conseil: 'Course classique (Tiercé seul au PMU) — confiance limitée '
+            '(${scoreConf.round()}/100). Sélection IA : ${_liste(course, 3)}.',
+        nbNumeros: 3,
+      );
     }
     return _abstention(scoreConf);
   }
@@ -450,13 +461,12 @@ RecommandationPari _cascadeBrut({
     return _simpleGagnant(course, scoreConf);
   }
   // ★ Même règle que ci-dessus : cote absente ⇒ pas de Gagnant+Placé déduit
-  //   d'une « cote longue » indémontrable. Repli sur la branche Simple Placé
-  //   IMMÉDIATEMENT INFÉRIEURE de cette même cascade (voir la démonstration
-  //   complète dans la section classique) : aucune règle nouvelle, aucun
-  //   seuil modifié, une seule mise engagée.
-  if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
-    return _simplePlace(course, scoreConf);
-  }
+  //   d'une « cote longue » indémontrable. ON NE RENVOIE RIEN ICI : la cascade
+  //   continue et chacune des branches suivantes applique SON PROPRE seuil
+  //   adaptatif réel (`seuilSimplePlace`, `seuilTierce`). Voir la démonstration
+  //   complète — et le contre-exemple chiffré — dans la section classique :
+  //   un raccourci vers `_simplePlace` ignorerait `seuilSimplePlace` dès que
+  //   les seuils sont appris (plages qui se croisent).
   if (coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
     return _gagnantPlace(course, scoreConf, coteTop, coteConnue);
   }

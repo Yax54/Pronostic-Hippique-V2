@@ -341,4 +341,97 @@ void main() {
     // ignore: avoid_print
     print('─────────────────────────────────────────────────────────────');
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  T7 — LE REPLI COTE-INCONNUE RESPECTE LE SEUIL ADAPTATIF RÉEL
+  //
+  //  Ce test est un GARDE CONTRE MA PROPRE PREMIÈRE CORRECTION. Celle-ci
+  //  renvoyait directement `_simplePlace()` dès que `scoreConf >=
+  //  seuilSimpleGagnant`, en justifiant que « 80 satisfait 65 par
+  //  construction ». C'est FAUX : les deux plages se croisent
+  //  (seuilSimpleGagnant ∈ [65,92], seuilSimplePlace ∈ [50,80]).
+  //
+  //  Contre-exemple : seuilSimpleGagnant = 65, seuilSimplePlace = 80,
+  //  score = 70. L'ancien raccourci produisait « Simple Placé » alors que le
+  //  seuil APPRIS l'interdisait — exactement le défaut BL1-A08.
+  // ─────────────────────────────────────────────────────────────────────────
+  test('T7 — cote inconnue : le repli suit le seuil adaptatif RÉEL, pas un raccourci',
+      () {
+    final course = _courseOrdinaire(scores: [70.0, 50.0, 45.0, 40.0], cote: '');
+    final seuils = SeuilsConfianceAdaptatifs();
+
+    // Seuils APPRIS qui CROISENT les défauts : SG très bas, SP très haut.
+    seuils.seuilSimpleGagnant = 65.0;
+    seuils.seuilSimplePlace   = 80.0;
+    seuils.seuilTierce        = 55.0;
+
+    final reco = cascadeRecommandation(
+      course: course,
+      seuils: seuils,
+      scoreConf: 70.0,
+      score2nd: 50.0,
+      score3: 45.0,
+      score4: 40.0,
+      coteTop: 99.0, // cote inconnue (sentinelle du producteur)
+    );
+
+    // ignore: avoid_print
+    print('─── MESURE T7 (repli vs seuil adaptatif réel) ──────────────');
+    // ignore: avoid_print
+    print('  seuils : SG=65, SP=80, Tiercé=55 ; scoreConf=70 ; cote inconnue');
+    // ignore: avoid_print
+    print('  décision = « ${reco.typePari} »');
+    // ignore: avoid_print
+    print('  ATTENDU : « Tiercé » — 70 < SP(80) donc pas de Simple Placé, '
+        'mais 70 >= Tiercé(55)');
+    // ignore: avoid_print
+    print('  (le raccourci fautif aurait rendu « Simple Placé », interdit par SP=80)');
+    // ignore: avoid_print
+    print('─────────────────────────────────────────────────────────────');
+
+    expect(reco.typePari, isNot('Simple Placé'),
+        reason: 'scoreConf = 70 < seuilSimplePlace = 80 : le Simple Placé '
+            'n\'est PAS autorisé par le seuil appris. Le raccourci qui '
+            'renvoyait _simplePlace() directement produisait ce résultat faux.');
+    expect(reco.typePari, isNot('Gagnant+Placé'),
+        reason: 'Cote inconnue : la prémisse « cote longue » est indémontrable.');
+    expect(reco.typePari, 'Tiercé',
+        reason: 'Le seuil Tiercé appris (55) est satisfait par 70 : c\'est la '
+            'branche RÉELLE de la cascade, avec son propre seuil.');
+    expect(reco.coteDisponible, isFalse);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  T8 — ET AVEC LE SEUIL ADAPTATIF QUI AUTORISE Simple Placé
+  // ─────────────────────────────────────────────────────────────────────────
+  test('T8 — cote inconnue : Simple Placé rendu quand SON seuil appris le permet',
+      () {
+    final course = _courseOrdinaire(scores: [70.0, 50.0, 45.0, 40.0], cote: '');
+    final seuils = SeuilsConfianceAdaptatifs();
+    seuils.seuilSimpleGagnant = 65.0;
+    seuils.seuilSimplePlace   = 68.0; // 70 >= 68 : autorisé
+    seuils.seuilTierce        = 55.0;
+
+    final reco = cascadeRecommandation(
+      course: course,
+      seuils: seuils,
+      scoreConf: 70.0,
+      score2nd: 50.0,
+      score3: 45.0,
+      score4: 40.0,
+      coteTop: 99.0,
+    );
+
+    // ignore: avoid_print
+    print('─── MESURE T8 (même cas, SP abaissé à 68) ──────────────────');
+    // ignore: avoid_print
+    print('  décision = « ${reco.typePari} » (attendu : Simple Placé)');
+    // ignore: avoid_print
+    print('─────────────────────────────────────────────────────────────');
+
+    expect(reco.typePari, 'Simple Placé',
+        reason: 'La branche Simple Placé s\'active dès que SON seuil appris '
+            'le permet : la décision est gouvernée par les seuils réels.');
+    expect(reco.coteDisponible, isFalse);
+  });
 }
