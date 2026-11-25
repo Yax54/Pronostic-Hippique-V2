@@ -426,8 +426,9 @@ class BacktestingService {
           nbGagnes++;
           serieGagnante++;
           seriePerdante = 0;
-          if (serieGagnante > maxSerieGagnante)
+          if (serieGagnante > maxSerieGagnante) {
             maxSerieGagnante = serieGagnante;
+          }
         } else if (rembourse) {
           // ★ CORRECTION BLOC 1 (validation financière) — REMBOURSEMENT.
           //
@@ -443,8 +444,9 @@ class BacktestingService {
           nbPerdus++;
           seriePerdante++;
           serieGagnante = 0;
-          if (seriePerdante > maxSeriePerdante)
+          if (seriePerdante > maxSeriePerdante) {
             maxSeriePerdante = seriePerdante;
+          }
         }
       } else {
         // ⚠️ NON DÉTERMINÉ : la mise n'entre PAS dans `misesDeterminees`, la

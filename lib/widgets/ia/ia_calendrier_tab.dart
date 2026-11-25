@@ -228,11 +228,13 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         final j = double.tryParse(parts[1]);
         final o = double.tryParse(parts[2]);
         if (v != null && j != null && o != null && v > j && j > o && o > 0) {
-          if (mounted) setState(() {
+          if (mounted) {
+            setState(() {
             _seuilVert   = v;
             _seuilJaune  = j;
             _seuilOrange = o;
           });
+          }
         }
       }
     }
@@ -417,6 +419,18 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   // Accessible via l'icône 🧹 dans le header du calendrier.
   // NE TOUCHE PAS : mémoire IA, poids, apprentissage, pronostics.
   Future<void> _ouvrirResetEtoile(BuildContext context) async {
+    // ★ CORRECTION BLOC 1 (qualité) — LE `mounted` NE PROTÉGEAIT PAS CE CONTEXTE.
+    //
+    //   L'analyseur signalait « guarded by an unrelated 'mounted' check » : le
+    //   `context` de cette méthode est un PARAMÈTRE, alors que `mounted`
+    //   interroge l'état du widget `IaCalendrierTab`. Après un `await`, rien ne
+    //   garantit que ce contexte paramètre désigne encore un élément monté —
+    //   l'appelant peut l'avoir obtenu d'un sous-arbre démonté entre-temps.
+    //
+    //   La cause est supprimée, pas masquée : après la première attente, on
+    //   n'utilise plus le contexte reçu mais `this.context`, dont `mounted`
+    //   garantit réellement la validité. Aucune opération n'est abandonnée :
+    //   les trois branches (date / toutes / annulation) sont inchangées.
     // ── Étape 1 : choix du mode ──────────────────────────────────────────
     final choix = await showModalBottomSheet<String>(
       context: context,
@@ -497,7 +511,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     // ── Étape 2a : reset d'une date précise ─────────────────────────────
     if (choix == 'date') {
       final date = await showDatePicker(
-        context: context,
+        context: this.context,
         initialDate: _moisRef.copyWith(day: 1),
         firstDate: DateTime(2024),
         lastDate: DateTime.now().add(const Duration(days: 1)),
@@ -524,7 +538,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       final an  = date.year.toString();
 
       final ok = await showDialog<bool>(
-        context: context,
+        context: this.context,
         builder: (_) => AlertDialog(
           backgroundColor: const Color(0xFF0A1628),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -561,7 +575,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       await IaMemoryService.instance.resetPremiumPourDate(date);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(this.context).showSnackBar(
         SnackBar(
           content: Text('✅ Étoile premium du $j/$m/$an réinitialisée.'),
           backgroundColor: const Color(0xFFFFB74D),
@@ -575,7 +589,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     if (choix == 'all') {
       if (!mounted) return;
       final ok = await showDialog<bool>(
-        context: context,
+        context: this.context,
         builder: (_) => AlertDialog(
           backgroundColor: const Color(0xFF0A1628),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -614,7 +628,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       await IaMemoryService.instance.resetToutesEtoilesPremium();
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(this.context).showSnackBar(
         const SnackBar(
           content: Text('✅ Toutes les étoiles premium ont été réinitialisées.'),
           backgroundColor: Color(0xFFEF5350),
@@ -1762,8 +1776,8 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     final periode = _periodeQuasiGagnants(); // réutilise le même filtre de période
 
     final gagnants = svc.grosParisGagnantsPeriode(
-      annee:   periode == null ? null : periode.start.year,
-      mois:    periode == null ? null : periode.start.month,
+      annee:   periode?.start.year,
+      mois:    periode?.start.month,
       periode: periode,
     );
 
@@ -2526,8 +2540,11 @@ class _SparklinePainter extends CustomPainter {
     for (int i = 0; i < values.length; i++) {
       final x = i * step;
       final y = size.height - (values[i] / maxV) * size.height * 0.85;
-      if (i == 0) fillPath.lineTo(x, y);
-      else        fillPath.lineTo(x, y);
+      if (i == 0) {
+        fillPath.lineTo(x, y);
+      } else {
+        fillPath.lineTo(x, y);
+      }
     }
     fillPath.lineTo(size.width, size.height);
     fillPath.close();
@@ -2552,8 +2569,11 @@ class _SparklinePainter extends CustomPainter {
     for (int i = 0; i < values.length; i++) {
       final x = i * step;
       final y = size.height - (values[i] / maxV) * size.height * 0.85;
-      if (i == 0) linePath.moveTo(x, y);
-      else        linePath.lineTo(x, y);
+      if (i == 0) {
+        linePath.moveTo(x, y);
+      } else {
+        linePath.lineTo(x, y);
+      }
     }
     canvas.drawPath(linePath, linePaint);
 
@@ -2820,17 +2840,22 @@ class _DetailJourSheet extends StatelessWidget {
 
   /// ★ v10.26 : Descriptif dynamique du taux affiché dans le BottomSheet
   static String _descriptifTaux(double taux, PalierCalendrier palier) {
-    if (palier == PalierCalendrier.or)
+    if (palier == PalierCalendrier.or) {
       return 'Tiercé, Quarté+ ou Quinté+ réussi — exploit rare et précieux !';
-    if (palier == PalierCalendrier.gris)
+    }
+    if (palier == PalierCalendrier.gris) {
       return 'Aucune course analysée ce jour.';
+    }
     final pct = (taux * 100).toStringAsFixed(0);
-    if (taux >= 0.30)
+    if (taux >= 0.30) {
       return '$pct% de pronostics corrects — au-dessus de la norme (≥30%).';
-    if (taux >= 0.25)
+    }
+    if (taux >= 0.25) {
       return '$pct% de pronostics corrects — dans la norme (25–29%).';
-    if (taux >= 0.20)
+    }
+    if (taux >= 0.20) {
       return '$pct% de pronostics corrects — en dessous de la norme (20–24%). L\'IA continue d\'apprendre.';
+    }
     return '$pct% de pronostics corrects — journée difficile (<20%).';
   }
 
@@ -3155,7 +3180,7 @@ class _DetailJourSheet extends StatelessWidget {
                     Text(badgeEmoji, style: const TextStyle(fontSize: 14)),
                     const SizedBox(width: 4),
                     if (score != null)
-                      Text('${sc.toStringAsFixed(0)}',
+                      Text(sc.toStringAsFixed(0),
                         style: TextStyle(
                           color: badgeColor,
                           fontSize: 14,

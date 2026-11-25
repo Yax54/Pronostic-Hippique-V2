@@ -98,7 +98,7 @@ void showBetSheet(
                 const SizedBox(height: 12),
                 Text('$e', style: const TextStyle(color: Colors.orange, fontSize: 12)),
                 const SizedBox(height: 8),
-                Text('${stack.toString().split('\n').take(6).join('\n')}',
+                Text(stack.toString().split('\n').take(6).join('\n'),
                     style: const TextStyle(color: Colors.white38, fontSize: 11)),
               ],
             ),
@@ -205,10 +205,17 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       // Mise conseillée selon le score IA du favori
       if (_chevalSelectionne != null) {
         final score = _chevalSelectionne!.scoreIA;
-        if (score >= 80) _mise = 20.0;
-        else if (score >= 65) _mise = 10.0;
-        else if (score >= 50) _mise = 5.0;
-        else _mise = 2.0;
+        if (score >= 80) {
+          _mise = 20.0;
+        } else if (score >= 65) {
+          _mise = 10.0;
+        }
+        else if (score >= 50) {
+          _mise = 5.0;
+        }
+        else {
+          _mise = 2.0;
+        }
       }
     } catch (e) {
       debugPrint('[BetSheet] initState erreur : $e');
@@ -461,7 +468,9 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
         result.add(5.0);
       }
     }
-    while (result.length < 2) result.add(5.0);
+    while (result.length < 2) {
+      result.add(5.0);
+    }
     return result;
   }
 
@@ -1165,7 +1174,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                 ],
               ),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -2164,7 +2173,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
                         )
                       else if (score > 0)
                         Text(
-                          '${score.toStringAsFixed(0)}',
+                          score.toStringAsFixed(0),
                           style: TextStyle(
                             color: isSelec ? _gold.withValues(alpha: 0.8) : Colors.white30,
                             fontSize: 9,
@@ -2484,7 +2493,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           if (rang == 1) { rangColor = _gold; rangLabel = '⭐ Favori IA'; }
           else if (rang == 2) { rangColor = _green; rangLabel = '✅ 2ème choix'; }
           else if (rang == 3) { rangColor = const Color(0xFF42A5F5); rangLabel = '3ème choix'; }
-          else { rangColor = Colors.white38; rangLabel = '${rang}ème'; }
+          else { rangColor = Colors.white38; rangLabel = '$rangème'; }
 
           return GestureDetector(
             onTap: () => setState(() => _chevalSelectionne = p),

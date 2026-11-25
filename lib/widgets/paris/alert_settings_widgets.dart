@@ -1151,13 +1151,15 @@ class _ModeSommeilWidgetState extends State<_ModeSommeilWidget> {
     if (raw == null) return;
     try {
       final m = jsonDecode(raw) as Map<String, dynamic>;
-      if (mounted) setState(() {
+      if (mounted) {
+        setState(() {
         _actif       = m['actif']       as bool? ?? false;
         _heureDebut  = m['heureDebut']  as int?  ?? 22;
         _minuteDebut = m['minuteDebut'] as int?  ?? 0;
         _heureFin    = m['heureFin']    as int?  ?? 7;
         _minuteFin   = m['minuteFin']   as int?  ?? 0;
       });
+      }
     } catch (_) {}
   }
 

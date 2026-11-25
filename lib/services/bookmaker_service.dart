@@ -13,6 +13,8 @@
 ///
 /// Ces estimations sont indicatives. Les vraies cotes varient en temps réel.
 /// ─────────────────────────────────────────────────────────────────────────────
+library;
+
 
 class BookmakerService {
 

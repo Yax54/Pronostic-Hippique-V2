@@ -23,7 +23,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:pronostic_hippique/services/alert_service.dart';
 import 'package:pronostic_hippique/services/branchement_verdict_course.dart';
-import 'package:pronostic_hippique/services/gain_pmu_types.dart';
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
 import 'fixtures/fixture_paths.dart';

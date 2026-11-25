@@ -906,8 +906,11 @@ Widget _buildCartePronostic(IaPronostic pr, String typePari) {
     if (resolu && bonConseil) {
       if (typePari == 'Tiercé' || typePari == 'Quarté+' || typePari == 'Quinté+') {
         final estOrdre = _verifierOrdreLocal(pr, typePari);
-        if (estOrdre == true)       ordreLabel = '🎯 ORDRE';
-        else if (estOrdre == false) ordreLabel = '🔀 DÉSORDRE';
+        if (estOrdre == true) {
+          ordreLabel = '🎯 ORDRE';
+        } else if (estOrdre == false) {
+          ordreLabel = '🔀 DÉSORDRE';
+        }
       }
     }
 
@@ -1010,14 +1013,18 @@ Widget _buildCartePronostic(IaPronostic pr, String typePari) {
       case 'Quarté+':
         if (topIA.length < 4 || arrivee.length < 4) return null;
         if (topIA[0]==arrivee[0] && topIA[1]==arrivee[1] &&
-            topIA[2]==arrivee[2] && topIA[3]==arrivee[3]) return true;
+            topIA[2]==arrivee[2] && topIA[3]==arrivee[3]) {
+          return true;
+        }
         final ok = topIA.take(4).toSet().intersection(arrivee.take(4).toSet()).length >= 3;
         return ok ? false : null;
       case 'Quinté+':
         // ✅ VERT si au moins 4 des 5 chevaux IA dans les 5 premiers (correction v10.13)
         if (topIA.length < 5 || arrivee.length < 5) return null;
         if (topIA[0]==arrivee[0] && topIA[1]==arrivee[1] && topIA[2]==arrivee[2] &&
-            topIA[3]==arrivee[3] && topIA[4]==arrivee[4]) return true;
+            topIA[3]==arrivee[3] && topIA[4]==arrivee[4]) {
+          return true;
+        }
         final ok = topIA.take(5).toSet().intersection(arrivee.take(5).toSet()).length >= 4;
         return ok ? false : null;
       default: return null;

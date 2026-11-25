@@ -189,7 +189,7 @@ class IaUserPrefsService extends ChangeNotifier {
   /// Résumé des préférences pour l'affichage dans le profil
   String get resumePreferences {
     final parts = <String>[];
-    if (_prefs.typeFavori.isNotEmpty)       parts.add('${_prefs.typeFavori}');
+    if (_prefs.typeFavori.isNotEmpty)       parts.add(_prefs.typeFavori);
     if (_prefs.hippodromeFavori.isNotEmpty) parts.add(_prefs.hippodromeFavori);
     if (_prefs.miseHabituelle > 0)         parts.add('${_prefs.miseHabituelle.toStringAsFixed(0)} €/course');
     return parts.isEmpty ? 'Aucune préférence détectée' : parts.join(' · ');

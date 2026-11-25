@@ -4,7 +4,6 @@
 
 import '../widgets/type_pari_badge.dart';
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../widgets/favori_button.dart'; // ★ v9.3
 import 'package:provider/provider.dart';
@@ -386,7 +385,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         // Tous les partants classés par IA
         _buildSectionTitle('🏅 Classement IA complet'),
         const SizedBox(height: 8),
-        ...partantsIA.map((p) => _buildPartantCardIA(p)).toList(),
+        ...partantsIA.map((p) => _buildPartantCardIA(p)),
         // ★ v9.92 : Outsiders systématiques
         _buildOutsidersSystematiques(widget.course),
         const SizedBox(height: 80),
@@ -998,16 +997,24 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
     final positions = musique.trim().split(RegExp(r'\s+'));
     return positions.take(8).map((pos) {
       Color color;
-      if (pos.startsWith('1')) color = const Color(0xFF00C853);
-      else if (pos.startsWith('2')) color = const Color(0xFF64DD17);
-      else if (pos.startsWith('3')) color = const Color(0xFFFFD600);
+      if (pos.startsWith('1')) {
+        color = const Color(0xFF00C853);
+      } else if (pos.startsWith('2')) {
+        color = const Color(0xFF64DD17);
+      }
+      else if (pos.startsWith('3')) {
+        color = const Color(0xFFFFD600);
+      }
       else if (pos.startsWith('Da') || pos.startsWith('Dm') || pos.startsWith('0')) {
         color = const Color(0xFFFF1744);
       }
       else {
         final num = int.tryParse(pos.replaceAll(RegExp(r'[^\d]'), '')) ?? 99;
-        if (num <= 5) color = const Color(0xFFFF9100);
-        else color = Colors.white38;
+        if (num <= 5) {
+          color = const Color(0xFFFF9100);
+        } else {
+          color = Colors.white38;
+        }
       }
       return Container(
         margin: const EdgeInsets.only(right: 4),
@@ -1035,7 +1042,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
       children: [
         _buildSectionTitle('🐎 Tous les partants (${partants.length})'),
         const SizedBox(height: 8),
-        ...partants.map((p) => _buildPartantCardClassique(p)).toList(),
+        ...partants.map((p) => _buildPartantCardClassique(p)),
         const SizedBox(height: 80),
       ],
     );
@@ -1192,7 +1199,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
         if (topRecord.isNotEmpty) ...[
           _buildSectionTitle('⏱️ Meilleurs records'),
           const SizedBox(height: 8),
-          ...topRecord.take(5).map((p) => _buildRecordRow(p, topRecord[0])).toList(),
+          ...topRecord.take(5).map((p) => _buildRecordRow(p, topRecord[0])),
           const SizedBox(height: 16),
         ],
         // Forme générale
@@ -1380,9 +1387,14 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
 
     for (final p in partants) {
       final score = p.scoreForme;
-      if (score >= 60) nbBonneForme++;
-      else if (score >= 35) nbMoyenne++;
-      else nbMauvaise++;
+      if (score >= 60) {
+        nbBonneForme++;
+      } else if (score >= 35) {
+        nbMoyenne++;
+      }
+      else {
+        nbMauvaise++;
+      }
     }
 
     return Container(
@@ -1507,7 +1519,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               )),
               // Score d'opportunité
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('${o.scoreOpportunite.toStringAsFixed(0)}',
+                Text(o.scoreOpportunite.toStringAsFixed(0),
                     style: const TextStyle(color: Color(0xFFFFD700),
                         fontSize: 18, fontWeight: FontWeight.bold)),
                 const Text('/100', style: TextStyle(color: Colors.white24, fontSize: 10)),

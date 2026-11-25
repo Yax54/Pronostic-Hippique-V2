@@ -44,12 +44,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:pronostic_hippique/services/chaine_financiere_officielle.dart';
 import 'package:pronostic_hippique/services/estimation_best_bet.dart';
 import 'package:pronostic_hippique/services/finance_simulateur_officiel.dart';
 import 'package:pronostic_hippique/services/gain_calculator.dart';
-import 'package:pronostic_hippique/services/gain_pmu_types.dart';
-import 'package:pronostic_hippique/services/moteur_gain_pmu.dart';
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart';
 import 'package:pronostic_hippique/services/resultat_officiel_repository.dart';
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
@@ -275,9 +272,6 @@ MockClient _client(
 // ──────────────────────────────── Outils ───────────────────────────────────
 
 String get _courseKey => 'R${_numR}C${_numC}_15112026';
-
-IdentiteCoursePmu get _identite =>
-    IdentiteCoursePmu(numReunion: _numR, numCourse: _numC, date: kDate);
 
 Future<void> _vierge() async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -939,6 +933,21 @@ void main() {
 
       expect(nbGagnes, 5);
       expect(nbNonDet, 1);
+      // ★ PROTECTION AJOUTÉE (BLOC 1, qualité) — UN INDÉTERMINÉ N'EST NI UNE
+      //   PERTE NI UN REMBOURSEMENT.
+      //
+      //   `nbPerdus` et `nbRembourses` étaient calculés par le miroir mais
+      //   JAMAIS vérifiés : une régression qui compterait l'indéterminé en
+      //   perte (ou en remboursement) passerait inaperçue. Les deux compteurs
+      //   sont désormais assertés sur leur valeur exacte — 0, puisque le jeu
+      //   ne contient aucune perte et aucun remboursement — ce qui verrouille
+      //   la classification des QUATRE états sans rien affaiblir : les
+      //   assertions existantes (5 gains, 1 indéterminé, série max 3) sont
+      //   inchangées.
+      expect(nbPerdus, 0,
+          reason: 'un indéterminé ne doit JAMAIS être compté comme une perte');
+      expect(nbRembourses, 0,
+          reason: 'un indéterminé n\'est pas un remboursement établi');
       // ★ Le point capital : la meilleure série vaut 3, PAS 5. Si
       //   l'indéterminé avait été ignoré comme un simple « trou » sans
       //   casser la série, on aurait annoncé 5 gains consécutifs — un

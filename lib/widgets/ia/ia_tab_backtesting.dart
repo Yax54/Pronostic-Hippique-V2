@@ -442,12 +442,15 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       final pronostics = IaMemoryService.instance.pronosticsAvecResultat
           .where((p) => p.datePronostic.isAfter(limiteDate))
           .where((p) {
-        if (_btDiscipline != null && p.discipline != _btDiscipline)
+        if (_btDiscipline != null && p.discipline != _btDiscipline) {
           return false;
-        if (_btHippodrome != null && p.hippodrome != _btHippodrome)
+        }
+        if (_btHippodrome != null && p.hippodrome != _btHippodrome) {
           return false;
-        if (_btConfianceMin > 0 && (p.confiancePredite ?? 0) < _btConfianceMin)
+        }
+        if (_btConfianceMin > 0 && (p.confiancePredite ?? 0) < _btConfianceMin) {
           return false;
+        }
         return true;
       }).toList()
         ..sort((a, b) => a.datePronostic.compareTo(b.datePronostic));
@@ -545,8 +548,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
             seriePerte++;
             if (seriePerte > seriePertMax) seriePertMax = seriePerte;
             doublementsCourants++;
-            if (doublementsCourants > doublementsMax)
+            if (doublementsCourants > doublementsMax) {
               doublementsMax = doublementsCourants;
+            }
             mise = mise * 2; // doublement — règle inchangée
           // ★ CORRECTION BLOC 1 (validation financière) — REMBOURSEMENT.
           //
@@ -898,8 +902,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
 
       final boundary = ctx.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Export] RenderRepaintBoundary null — annulation');
+        }
         return;
       }
 
@@ -908,14 +913,16 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       try {
         image = await boundary.toImage(pixelRatio: 2.5);
       } catch (e) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Export] toImage(2.5) échoué → fallback 2.0 : $e');
+        }
         // Fallback : pixelRatio réduit si OOM
         try {
           image = await boundary.toImage(pixelRatio: 2.0);
         } catch (e2) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[Export] toImage(2.0) échoué aussi : $e2');
+          }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -1787,8 +1794,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
     // Construire la description des filtres actifs
     final List<String> lignes = [];
     if (_btType != 'Conseil IA') lignes.add('Type : $_btType');
-    if (_btConfianceMin > 0)
+    if (_btConfianceMin > 0) {
       lignes.add('Confiance ≥ ${_btConfianceMin.round()}%');
+    }
     if (_btDiscipline != null) lignes.add('Discipline : $_btDiscipline');
     if (_btHippodrome != null) lignes.add('Hippodrome : $_btHippodrome');
 
@@ -2743,8 +2751,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                       .where((e) => e.value.gainNet < 0)
                       .map((e) => e.key)
                       .toList();
-                  if (rentables.isEmpty && perdantes.isEmpty)
+                  if (rentables.isEmpty && perdantes.isEmpty) {
                     return const SizedBox();
+                  }
                   return Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -2934,8 +2943,9 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
                       .toList()
                     ..sort((a, b) =>
                         (a.value.roi ?? 0).compareTo(b.value.roi ?? 0));
-                  if (meilleur.isEmpty && eviter.isEmpty)
+                  if (meilleur.isEmpty && eviter.isEmpty) {
                     return const SizedBox();
+                  }
                   return Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(

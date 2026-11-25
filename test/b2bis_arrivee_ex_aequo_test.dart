@@ -569,7 +569,7 @@ void main() {
         () {
       // Règle appliquée par l'appelant : si definitive == false, on ne
       // transmet AUCUN groupe et le drapeau reste false.
-      const bool? definitive = false;
+      const bool definitive = false;
       final groupesAEnregistrer = definitive == false ? null : _r5c5;
       final apres = ticket().withResultat(
         isGagne: true,

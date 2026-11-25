@@ -662,7 +662,7 @@ void main() {
             'n\'enregistre plus aucune arrivée reconstruite (A6 n° 2-b-3)');
     // Les quatre parseurs reconstructeurs doivent être IDENTIQUES.
     expect(
-        <String>[_arr(p1), _arr(p2), _arr(p4), _arr(p5)].toSet().length,
+        <String>{_arr(p1), _arr(p2), _arr(p4), _arr(p5)}.length,
         1,
         reason: 'T2 (CORRIGÉ) : P1, P2, P4 et P5 produisent la MÊME arrivée '
             'sur ce corps');

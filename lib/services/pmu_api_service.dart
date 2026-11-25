@@ -188,8 +188,9 @@ class PmuApiService {
           .map((r) => PmuReunion.fromJson(r as Map<String, dynamic>, date))
           .where((r) => r.isFrench)
           .toList();
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('✅ Programme PMU: ${result.length} réunions françaises');
+      }
       return result;
     } catch (e) {
       if (kDebugMode) debugPrint('❌ fetchProgramme error: $e');
@@ -216,9 +217,10 @@ class PmuApiService {
 
       // 404 / 204 = partants pas encore disponibles (normal avant la course)
       if (resp.statusCode == 404 || resp.statusCode == 204) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint(
               '⏳ Partants R${numR}C$numC non disponibles (${resp.statusCode})');
+        }
         return [];
       }
       if (resp.statusCode != 200) {
@@ -231,12 +233,14 @@ class PmuApiService {
           .where((p) => p.statut != 'NON_PARTANT')
           .toList()
         ..sort((a, b) => a.numero.compareTo(b.numero));
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('✅ R${numR}C$numC: ${participants.length} partants réels');
+      }
       return participants;
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('❌ fetchParticipants R${numR}C$numC error: $e');
+      }
       rethrow;
     }
   }
@@ -298,9 +302,10 @@ class PmuApiService {
           .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint(
               '⏳ Rapports non disponibles R${numR}C$numC: HTTP ${resp.statusCode}');
+        }
         return DiagnosticRapports(
           rapports: const <RapportPmu>[],
           cause: CauseAbsenceRapports.httpNonOk,
@@ -354,15 +359,17 @@ class PmuApiService {
         lignesPubliees: lignesPubliees,
       );
     } on TimeoutException catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC timeout: $e');
+      }
       return const DiagnosticRapports(
         rapports: <RapportPmu>[],
         cause: CauseAbsenceRapports.timeout,
       );
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('❌ fetchRapportsDefinitifs R${numR}C$numC error: $e');
+      }
       // Toute exception non liée à la forme du corps est une défaillance
       // d'échange : le réseau n'a pas rendu de réponse exploitable.
       return const DiagnosticRapports(

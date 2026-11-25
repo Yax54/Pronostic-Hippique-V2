@@ -91,8 +91,9 @@ class ZoneTurfService {
           .timeout(const Duration(seconds: 20));
 
       if (progResp.statusCode != 200) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('PMU API erreur programme: HTTP ${progResp.statusCode}');
+        }
         return []; // ★ v91 : pas de données fictives — erreur réelle
       }
 
@@ -101,8 +102,9 @@ class ZoneTurfService {
           (progData['programme']?['reunions'] as List<dynamic>? ?? []);
 
       if (reunionsJson.isEmpty) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('PMU API: aucune réunion trouvée pour $dateStr');
+        }
         return []; // ★ v91 : API PMU vide = pas de courses aujourd'hui
       }
 
@@ -332,8 +334,9 @@ class ZoneTurfService {
       );
 
       if (reunions.isEmpty) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('PMU API: 0 réunion française après filtrage');
+        }
         return []; // ★ v91 : aucune course française aujourd'hui
       }
 
@@ -342,9 +345,10 @@ class ZoneTurfService {
       _cache[dateStr] = withIA;
       _cacheTime[dateStr] = DateTime.now();
 
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint(
             'PMU API: ${withIA.length} réunions françaises chargées pour $dateStr');
+      }
       return withIA;
     } catch (e) {
       if (kDebugMode) debugPrint('PMU API erreur: $e');
@@ -828,7 +832,9 @@ class ZoneTurfService {
     if (t.contains('tres lourd') ||
         t.contains('très lourd') ||
         t.contains('very') ||
-        t == 'tl') return 'tres_lourd';
+        t == 'tl') {
+      return 'tres_lourd';
+    }
     if (t.contains('lourd') || t == 'l') return 'lourd';
     if (t.contains('souple') || t.contains('soft') || t == 's') return 'souple';
     if (t.contains('bon') || t.contains('good') || t == 'b') return 'bon';
@@ -1489,8 +1495,9 @@ class ZoneTurfService {
           .timeout(const Duration(seconds: 15));
 
       if (resp.statusCode != 200) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('PMU Résultats complet: HTTP ${resp.statusCode}');
+        }
         return null;
       }
 
@@ -1567,8 +1574,9 @@ class ZoneTurfService {
       }
 
       if (rangsGroupes.isEmpty && disqualifies.isEmpty) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('PMU Résultats: pas de classement disponible');
+        }
         return null;
       }
 
@@ -1582,9 +1590,10 @@ class ZoneTurfService {
       // préservé, seul le nombre d'éléments est enfin correct.
       final arrivee = <int>[for (final g in groupes) ...g];
 
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint(
             'PMU Résultats: arrivée officielle = $arrivee | DQ = $disqualifies');
+      }
 
       return ResultatCourse(
         arriveeOfficielle: arrivee,

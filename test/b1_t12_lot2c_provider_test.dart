@@ -362,7 +362,7 @@ void main() {
         () async {
       await _sansReseau(() async {
         final store = _StoreControle();
-        final pmu = await _providerAvec(store, [
+        await _providerAvec(store, [
           _pred('p1',
               montantOfficielPmu: 99.0,
               decision: DecisionGainPmu.accepte,

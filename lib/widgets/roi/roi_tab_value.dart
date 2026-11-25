@@ -126,9 +126,9 @@ class RoiTabValue extends StatelessWidget {
             spacing: 12,
             runSpacing: 8,
             children: [
-              _kv('Score IA', '${v.scoreIa.toStringAsFixed(0)}', Colors.amber),
+              _kv('Score IA', v.scoreIa.toStringAsFixed(0), Colors.amber),
               _kv('Cote', v.cote.toStringAsFixed(1), Colors.white70),
-              _kv('Diverg.', '${v.divergence.toStringAsFixed(0)}', _purple),
+              _kv('Diverg.', v.divergence.toStringAsFixed(0), _purple),
               if (v.gagne)
                 _kv('Retour', '+${v.retour.toStringAsFixed(2)} €', couleur),
             ],

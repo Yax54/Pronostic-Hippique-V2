@@ -207,7 +207,7 @@ class WidgetService {
 
     debugPrint('[WidgetService] ✅ Widget mis à jour : ${top1.horseName} '
         '— ${top1.heure} à ${top1.hippodrome} '
-        '— confiance ${confianceStr} — ${toutes.length} courses');
+        '— confiance $confianceStr — ${toutes.length} courses');
   }
 
   // ★ v10.24 — Construit les données Conseil IA pour le widget

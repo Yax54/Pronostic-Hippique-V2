@@ -199,8 +199,11 @@ class _IaTabDisciplineState extends State<IaTabDiscipline>
         for (final k in _labels.keys) {
           final val = m[k];
           if (val == null) continue;
-          if (isTop3)     top3Sc.putIfAbsent(k, () => []).add(val);
-          else if (isHorsTop5) horsTop5Sc.putIfAbsent(k, () => []).add(val);
+          if (isTop3) {
+            top3Sc.putIfAbsent(k, () => []).add(val);
+          } else if (isHorsTop5) {
+            horsTop5Sc.putIfAbsent(k, () => []).add(val);
+          }
         }
         nbPartants++;
       }

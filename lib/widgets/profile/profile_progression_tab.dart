@@ -413,9 +413,7 @@ class ProfileProgressionTabState extends State<ProfileProgressionTab> {
           // Axe X simplifié
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Text(
-              sortedPreds.first.createdAt.day.toString().padLeft(2, '0') +
-                  '/' +
-                  sortedPreds.first.createdAt.month.toString().padLeft(2, '0'),
+              '${sortedPreds.first.createdAt.day.toString().padLeft(2, '0')}/${sortedPreds.first.createdAt.month.toString().padLeft(2, '0')}',
               style: const TextStyle(color: Colors.white24, fontSize: 10),
             ),
             Text(

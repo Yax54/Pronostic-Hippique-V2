@@ -743,7 +743,7 @@ class _SourceColumn extends StatelessWidget {
               const SizedBox(width: 5),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(h.$2, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis, maxLines: 1),
-                Text(h.$4.isNotEmpty ? h.$4 : (h.$3 > 0 ? '${h.$3.toStringAsFixed(1)}' : '-'),
+                Text(h.$4.isNotEmpty ? h.$4 : (h.$3 > 0 ? h.$3.toStringAsFixed(1) : '-'),
                     style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 14)),
               ])),
             ]),
@@ -986,7 +986,7 @@ class _FullRankRow extends StatelessWidget {
                   color: const Color(0xFF1565C0).withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text('📺 Eq.${equidiaRank}', style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 14, fontWeight: FontWeight.bold)),
+                child: Text('📺 Eq.$equidiaRank', style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 14, fontWeight: FontWeight.bold)),
               ),
             ],
           ]),
@@ -1065,7 +1065,7 @@ class _FinalRecommendation extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withValues(alpha: 0.5))),
-            child: Text('Conv. ${conv}%', style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+            child: Text('Conv. $conv%', style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
           ),
         ]),
         const SizedBox(height: 6),
@@ -1118,7 +1118,7 @@ class _HorseChip extends StatelessWidget {
         const SizedBox(width: 4),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(nom.length > 10 ? '${nom.substring(0, 10)}…' : nom, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-          Text(coteLabel.isNotEmpty ? coteLabel : (cote > 0 ? '${cote.toStringAsFixed(1)}' : '-'),
+          Text(coteLabel.isNotEmpty ? coteLabel : (cote > 0 ? cote.toStringAsFixed(1) : '-'),
               style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 14)),
         ]),
       ]),

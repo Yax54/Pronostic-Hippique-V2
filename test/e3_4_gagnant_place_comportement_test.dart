@@ -38,7 +38,6 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pronostic_hippique/main.dart' show NavigationNotifier;
-import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/providers/pmu_provider.dart';
 import 'package:pronostic_hippique/screens/mes_paris_screen.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';

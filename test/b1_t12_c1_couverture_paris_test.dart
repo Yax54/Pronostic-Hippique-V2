@@ -48,7 +48,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/services/arbitre_variante_pmu.dart';
 import 'package:pronostic_hippique/services/gain_calculator.dart' show RapportPmu;
 import 'package:pronostic_hippique/services/gain_pmu_types.dart'

@@ -249,8 +249,9 @@ class PmuProvider extends ChangeNotifier {
       DateTime? debut, DateTime? fin) {
     return _predictions.where((p) {
       if (debut != null && p.createdAt.isBefore(debut)) return false;
-      if (fin != null && p.createdAt.isAfter(fin.add(const Duration(days: 1))))
+      if (fin != null && p.createdAt.isAfter(fin.add(const Duration(days: 1)))) {
         return false;
+      }
       return true;
     }).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -364,9 +365,10 @@ class PmuProvider extends ChangeNotifier {
           } catch (e) {
             c.participants = [];
             c.participantsLoaded = true;
-            if (kDebugMode)
+            if (kDebugMode) {
               debugPrint(
                   'loadParticipants error R${c.numReunion}C${c.numOrdre}: $e');
+            }
           }
         }
       }),
@@ -1065,8 +1067,9 @@ class PmuProvider extends ChangeNotifier {
     await sauvegardeTerminee();
 
     final idx = _predictions.indexWhere((p) => p.id == id);
-    if (idx == -1)
+    if (idx == -1) {
       return false; // ticket absent : l'absence n'est pas une preuve
+    }
 
     // ② Lecture du disque, SANS toucher à la mémoire.
     Map<String, dynamic>? surDisque;
@@ -1858,13 +1861,15 @@ class PmuProvider extends ChangeNotifier {
           nbMisAJour++;
         }
       } catch (e) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('❌ Erreur récupération dividende ${pred.id}: $e');
+        }
       }
     }
     if (nbMisAJour > 0) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('✅ $nbMisAJour dividendes PMU récupérés et enregistrés');
+      }
     }
     return nbMisAJour;
   }

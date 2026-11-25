@@ -181,7 +181,6 @@ int _nbAlertesNonPartant() =>
 
 // ── Scénario mutable : réunion / partants modifiables entre deux appels ────
 class _Scenario {
-  int numOfficiel;
   String lieu;
   List<int> nums;
 
@@ -190,7 +189,6 @@ class _Scenario {
   Completer<void>? entreeProgramme;
 
   _Scenario({
-    this.numOfficiel = 1,
     this.lieu = 'VINCENNES',
     required this.nums,
   });
@@ -363,8 +361,7 @@ Future<T> _avecScenario<T>(
       await verrou.future;
     }
     return http.Response(
-        _programme(
-            lieu: s.lieu, numOfficiel: s.numOfficiel, url: request.url),
+        _programme(lieu: s.lieu, numOfficiel: 1, url: request.url),
         200,
         headers: {'content-type': 'application/json'});
   });

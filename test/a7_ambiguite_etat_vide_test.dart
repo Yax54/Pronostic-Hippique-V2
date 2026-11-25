@@ -30,7 +30,6 @@
 
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
@@ -621,7 +620,7 @@ void main() {
 
     test('A7-5d [INVARIANT I5] — le format legacy PLAT reste intact : la '
         'destruction ne concerne QUE le format à enveloppe', () async {
-      final store = await _monter();
+      await _monter();
       await EloService.init();
 
       final plate = <String, dynamic>{

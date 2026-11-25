@@ -17,6 +17,7 @@
 ///
 /// Fallback : si non reconnu et non vide → retourne la valeur brute trimée
 ///            (évite de masquer une discipline inconnue).
+library;
 
 /// Liste canonique des disciplines UI — ordre d'affichage stable.
 const List<String> disciplinesUICanoniques = ['Trot', 'Monté', 'Plat', 'Obstacle'];

@@ -14,7 +14,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:pronostic_hippique/services/gain_calculator.dart' show RapportPmu;
 import 'package:pronostic_hippique/services/gain_ticket_calculator.dart'
     show VarianteRapport, varianteDepuisLibelle;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';

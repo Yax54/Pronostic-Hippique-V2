@@ -25,7 +25,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:pronostic_hippique/services/gain_calculator.dart' show RapportPmu;
 import 'package:pronostic_hippique/services/pmu_api_service.dart';
 import 'fixtures/fixture_paths.dart';
 

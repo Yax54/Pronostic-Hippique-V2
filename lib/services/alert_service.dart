@@ -1425,7 +1425,7 @@ class AlertService extends ChangeNotifier {
               : 'Vérifiez PMU';
       titre   = '🏆 GAGNÉ — $gainStr !';
       final chevalStr = (nomCheval != null && nomCheval.isNotEmpty)
-          ? '${nomCheval} (N°${numeroCheval ?? "?"}) '
+          ? '$nomCheval (N°${numeroCheval ?? "?"}) '
           : '';
       final arriveeStr = arriveeOfficielle.isNotEmpty
           ? '\nArrivée : ${arriveeOfficielle.take(5).map((n) => "N°$n").join(" - ")}'
@@ -1693,11 +1693,11 @@ class AlertService extends ChangeNotifier {
     final prefs   = await SharedPreferences.getInstance();
     final today   = DateTime.now();
     final todayKey = '${today.year}${today.month.toString().padLeft(2, '0')}${today.day.toString().padLeft(2, '0')}';
-    final stored  = prefs.getString(_conseilIANotifiesKey + '_date') ?? '';
+    final stored  = prefs.getString('${_conseilIANotifiesKey}_date') ?? '';
     if (stored != todayKey) {
       _conseilIANotifies.clear();
       await _ecrireProtege((prefs) async {
-        await prefs.setString(_conseilIANotifiesKey + '_date', todayKey);
+        await prefs.setString('${_conseilIANotifiesKey}_date', todayKey);
         await prefs.setStringList(_conseilIANotifiesKey, _conseilIANotifies.toList());
       });
     }
@@ -2988,7 +2988,7 @@ class AlertService extends ChangeNotifier {
               'Arrivée : $arriveeStr\n'
               'Il manquait : ${officielTop3.difference(mesTop3).map((n) => "N°$n").join(", ")}';
         } else {
-          titre = '😔 Tiercé perdu — ${nbBons}/3 bons';
+          titre = '😔 Tiercé perdu — $nbBons/3 bons';
           alertType = AlertType.resultatsPerdant;
           messageResultat =
               '😔 Tiercé non validé ($nbBons/3 chevaux corrects).\n'
@@ -3121,7 +3121,7 @@ class AlertService extends ChangeNotifier {
               'Vos numéros : ${mesNumeros.take(5).map((n) => "N°$n").join(" - ")}\n'
               'Arrivée : $arriveeStr\n'
               'Mise : ${fmtEuros(mise)} €'
-              '${div4 != null ? " → Bonus : +${fmtEuros(gainNet)} €" : "\nVérifiez si un bonus de consolation s\'applique sur PMU.fr"}';
+              '${div4 != null ? " → Bonus : +${fmtEuros(gainNet)} €" : "\nVérifiez si un bonus de consolation s'applique sur PMU.fr"}';
         } else if (nbBons == 3) {
           titre = '👍 3/5 du Quinté — pas cette fois';
           alertType = AlertType.resultatsPerdant;
@@ -3239,8 +3239,10 @@ class AlertService extends ChangeNotifier {
           arriveeReelle: arriveeRetenue,
         );
         if (kDebugMode) {
-          if (kDebugMode) debugPrint('IA Mémoire : résultat enregistré pour $memKey - '
+          if (kDebugMode) {
+            debugPrint('IA Mémoire : résultat enregistré pour $memKey - '
               'Arrivée: ${arriveeRetenue.take(5).join("-")}');
+          }
         }
       }
 

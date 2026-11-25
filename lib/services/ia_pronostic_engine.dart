@@ -384,10 +384,17 @@ class IaPronosticEngine {
     final vitesse = dist / recSecondes;
 
     double score;
-    if (vitesse >= 12.0) score = 85.0;
-    else if (vitesse >= 10.5) score = 70.0;
-    else if (vitesse >= 9.0)  score = 55.0;
-    else score = 40.0;
+    if (vitesse >= 12.0) {
+      score = 85.0;
+    } else if (vitesse >= 10.5) {
+      score = 70.0;
+    }
+    else if (vitesse >= 9.0) {
+      score = 55.0;
+    }
+    else {
+      score = 40.0;
+    }
 
     // ★ v9.93 POINT 2 : Ajustement selon la catégorie de course
     // Un cheval habitué aux courses de "Conditions" peut être déstabilisé
@@ -443,18 +450,40 @@ class IaPronosticEngine {
     final tauxPlc = p.jockeyTauxPlace;
     if (tauxVic < 0) return 50.0;
     double score = 0.0;
-    if (tauxVic >= 22)      score += 60.0;
-    else if (tauxVic >= 18) score += 52.0;
-    else if (tauxVic >= 15) score += 44.0;
-    else if (tauxVic >= 12) score += 37.0;
-    else if (tauxVic >= 10) score += 30.0;
-    else if (tauxVic >= 7)  score += 22.0;
-    else                     score += 14.0;
-    if (tauxPlc >= 50)      score += 40.0;
-    else if (tauxPlc >= 42) score += 33.0;
-    else if (tauxPlc >= 35) score += 27.0;
-    else if (tauxPlc >= 28) score += 20.0;
-    else                     score += 12.0;
+    if (tauxVic >= 22) {
+      score += 60.0;
+    } else if (tauxVic >= 18) {
+      score += 52.0;
+    }
+    else if (tauxVic >= 15) {
+      score += 44.0;
+    }
+    else if (tauxVic >= 12) {
+      score += 37.0;
+    }
+    else if (tauxVic >= 10) {
+      score += 30.0;
+    }
+    else if (tauxVic >= 7) {
+      score += 22.0;
+    }
+    else {
+      score += 14.0;
+    }
+    if (tauxPlc >= 50) {
+      score += 40.0;
+    } else if (tauxPlc >= 42) {
+      score += 33.0;
+    }
+    else if (tauxPlc >= 35) {
+      score += 27.0;
+    }
+    else if (tauxPlc >= 28) {
+      score += 20.0;
+    }
+    else {
+      score += 12.0;
+    }
     return score.clamp(0.0, 100.0);
   }
 
@@ -577,8 +606,11 @@ class IaPronosticEngine {
     if (p.eloRating > 0) {
       final elo = EloScore(nomCheval: p.nom, rating: p.eloRating,
           nbCourses: p.eloNbCourses, variationMois: p.eloVariationMois);
-      if (p.eloRating >= 1700) raisons.add('ELO très élevé (${p.eloRating.round()}) — ${elo.niveau}');
-      else if (p.eloRating >= 1600) raisons.add('Bon ELO (${p.eloRating.round()}) — ${elo.niveau}');
+      if (p.eloRating >= 1700) {
+        raisons.add('ELO très élevé (${p.eloRating.round()}) — ${elo.niveau}');
+      } else if (p.eloRating >= 1600) {
+        raisons.add('Bon ELO (${p.eloRating.round()}) — ${elo.niveau}');
+      }
       if (p.eloVariationMois > 50) raisons.add('ELO en forte progression (+${p.eloVariationMois.round()} ce mois)');
     }
 
@@ -592,14 +624,22 @@ class IaPronosticEngine {
 
     // Victoires
     final nbV = p.nbVictoiresRecentes;
-    if (nbV >= 3) raisons.add('$nbV victoires récentes');
-    else if (nbV == 2) raisons.add('2 victoires récentes');
-    else if (nbV == 1) raisons.add('1 victoire récente');
+    if (nbV >= 3) {
+      raisons.add('$nbV victoires récentes');
+    } else if (nbV == 2) {
+      raisons.add('2 victoires récentes');
+    }
+    else if (nbV == 1) {
+      raisons.add('1 victoire récente');
+    }
 
     // Gains
     final gains = p.gainsInt;
-    if (gains >= 100000) raisons.add('Très bons gains de carrière (${_formatGains(gains)})');
-    else if (gains >= 50000) raisons.add('Bons gains (${_formatGains(gains)})');
+    if (gains >= 100000) {
+      raisons.add('Très bons gains de carrière (${_formatGains(gains)})');
+    } else if (gains >= 50000) {
+      raisons.add('Bons gains (${_formatGains(gains)})');
+    }
 
     // Record
     if (p.record.isNotEmpty) {
@@ -608,31 +648,47 @@ class IaPronosticEngine {
           .where((r) => r < 9999).toList();
       if (records.isNotEmpty && rec < 9999) {
         records.sort();
-        if (rec == records.first) raisons.add('Meilleur record du champ (${p.record})');
-        else if (records.length > 2 && rec <= records[2]) raisons.add('Bon record (${p.record})');
+        if (rec == records.first) {
+          raisons.add('Meilleur record du champ (${p.record})');
+        } else if (records.length > 2 && rec <= records[2]) {
+          raisons.add('Bon record (${p.record})');
+        }
       }
     }
 
     // Cote
     if (p.cote.isNotEmpty) {
       final c = double.tryParse(p.cote.replaceAll(',', '.')) ?? 99.0;
-      if (c <= 3.0) raisons.add('Grand favori du marché (×${p.cote})');
-      else if (c <= 5.0) raisons.add('Favori (×${p.cote})');
-      else if (c >= 10.0 && rang <= 3) raisons.add('Outsider à surveiller (×${p.cote})');
+      if (c <= 3.0) {
+        raisons.add('Grand favori du marché (×${p.cote})');
+      } else if (c <= 5.0) {
+        raisons.add('Favori (×${p.cote})');
+      }
+      else if (c >= 10.0 && rang <= 3) {
+        raisons.add('Outsider à surveiller (×${p.cote})');
+      }
     }
 
     // Jockey
     final tauxVic = p.jockeyTauxVictoire;
     if (tauxVic >= 0 && p.driver.isNotEmpty) {
-      if (tauxVic >= 18) raisons.add('Top jockey ${p.driver} (${tauxVic.round()}% vic)');
-      else if (tauxVic >= 12) raisons.add('Bon jockey ${p.driver}');
+      if (tauxVic >= 18) {
+        raisons.add('Top jockey ${p.driver} (${tauxVic.round()}% vic)');
+      } else if (tauxVic >= 12) {
+        raisons.add('Bon jockey ${p.driver}');
+      }
     }
 
     // Repos
     final repos = p.joursRepos;
-    if (repos >= 14 && repos <= 35) raisons.add('Fraîcheur optimale (${repos}j)');
-    else if (repos > 55) raisons.add('Longue absence (${repos}j)');
-    else if (repos >= 1 && repos <= 6) raisons.add('Course récente (${repos}j) — possible fatigue');
+    if (repos >= 14 && repos <= 35) {
+      raisons.add('Fraîcheur optimale (${repos}j)');
+    } else if (repos > 55) {
+      raisons.add('Longue absence (${repos}j)');
+    }
+    else if (repos >= 1 && repos <= 6) {
+      raisons.add('Course récente (${repos}j) — possible fatigue');
+    }
 
     // Distance spécialité
     final scoreDistSpec = _scoreDistanceSpecialite(p, course);
@@ -680,7 +736,7 @@ class IaPronosticEngine {
   static String _formatGains(int gains) {
     if (gains >= 1000000) return '${(gains / 1000000).toStringAsFixed(1)}M€';
     if (gains >= 1000)    return '${(gains / 1000).toStringAsFixed(0)}k€';
-    return '${gains}€';
+    return '$gains€';
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -754,43 +810,56 @@ class IaPronosticEngine {
 
     // ★ v9.93 : Course classique sans Quarté/Quinté → limiter au Tiercé max
     if (course.isClassiqueSansMultiple) {
-      if (score1 >= 75 && score2 >= 55 && score3 >= 45)
+      if (score1 >= 75 && score2 >= 55 && score3 >= 45) {
         return 'Tiercé — grande course classique, Quarté/Quinté non disponibles';
-      if (score1 >= 80 && ecart12 >= 25)
+      }
+      if (score1 >= 80 && ecart12 >= 25) {
         return 'Simple gagnant — favori IA très dominant (N°${sorted[0].numero}) — grande course classique';
-      if (score1 >= 65 && score2 >= 52)
+      }
+      if (score1 >= 65 && score2 >= 52) {
         return 'Couplé gagnant N°${sorted[0].numero}–N°${sorted[1].numero} — grande course classique';
-      if (score1 >= 65)
+      }
+      if (score1 >= 65) {
         return 'Simple gagnant N°${sorted[0].numero} — grande course classique';
+      }
       return 'Simple placé N°${sorted[0].numero} — grande course classique, jouer la sécurité';
     }
 
     if (course.isQuinte) {
       // ★ v9.2 : seuils +5 pts après normalisation min/max
-      if (score1 >= 80 && score2 >= 65 && score3 >= 58)
+      if (score1 >= 80 && score2 >= 65 && score3 >= 58) {
         return 'Quinté+ : jouer les 5 numéros sélectionnés — IA confiante';
-      if (score1 >= 70 && score2 >= 58)
+      }
+      if (score1 >= 70 && score2 >= 58) {
         return 'Quarté+ conseillé — confiance suffisante sur le top 4 (Quinté+ risqué)';
-      if (score1 >= 60 && score2 >= 52)
+      }
+      if (score1 >= 60 && score2 >= 52) {
         return 'Tiercé dans l\'ordre — confiance limitée, éviter le Quinté+';
-      if (score1 >= 48)
+      }
+      if (score1 >= 48) {
         return 'Couplé gagnant N°${sorted[0].numero}–N°${sorted[1].numero} — confiance trop faible pour le Quinté+';
+      }
       return 'À surveiller — scores IA insuffisants, passer cette course';
     }
 
-    if (score1 >= 80 && ecart12 >= 30)
+    if (score1 >= 80 && ecart12 >= 30) {
       return 'Simple gagnant — favori IA très dominant (N°${sorted[0].numero})';
+    }
     // ★ v10.56 : "Quarté+ par scores+partants" supprimé — PMU only.
     // Quarté+ uniquement si course.isQuarte == true (géré dans la branche isQuarte ci-dessus).
     // Fallback : mêmes chevaux IA, Tiercé (pari disponible PMU sans condition officielle).
-    if (score1 >= 70 && score2 >= 62 && score3 >= 57 && score4 >= 52 && nbPartants >= 10)
+    if (score1 >= 70 && score2 >= 62 && score3 >= 57 && score4 >= 52 && nbPartants >= 10) {
       return 'Tiercé conseillé — 4 candidats IA fiables (N°${sorted[0].numero}, ${sorted[1].numero}, ${sorted[2].numero}) — Quarté+ non disponible PMU';
-    if (score1 >= 65 && score2 >= 58 && score3 >= 57)
+    }
+    if (score1 >= 65 && score2 >= 58 && score3 >= 57) {
       return 'Tiercé dans l\'ordre — 3 candidats fiables';
-    if (score1 >= 65 && score2 >= 52)
+    }
+    if (score1 >= 65 && score2 >= 52) {
       return 'Couplé gagnant N°${sorted[0].numero}–N°${sorted[1].numero} — 3ᵉ place incertaine (${score3.toStringAsFixed(0)}/100)';
-    if (score1 >= 65)
+    }
+    if (score1 >= 65) {
       return 'Simple gagnant N°${sorted[0].numero} — reste du tiercé peu fiable';
+    }
     if (nbPartants <= 8) return 'Simple gagnant ou couplé — scores IA limités';
     return 'Couplé gagnant — tiercé déconseillé (scores trop proches)';
   }

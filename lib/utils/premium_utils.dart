@@ -12,6 +12,7 @@
 ///   • EloService.normaliserDiscipline()         → normaliseur interne ELO
 ///   • _estPremiumExactGagnantStrict()           → validation stricte
 ///   • _estBonConseilParType()                   → validation bons conseils
+library;
 
 import 'package:flutter/material.dart';
 import '../models/zt_models.dart';

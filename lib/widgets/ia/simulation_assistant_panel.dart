@@ -92,10 +92,17 @@ class SimulationAssistantPanel extends StatelessWidget {
 
     // Base fiabilité selon nb courses
     int score;
-    if (n < 30)       score = 10;
-    else if (n < 50)  score = 35;
-    else if (n < 150) score = 65;
-    else              score = 85;
+    if (n < 30) {
+      score = 10;
+    } else if (n < 50) {
+      score = 35;
+    }
+    else if (n < 150) {
+      score = 65;
+    }
+    else {
+      score = 85;
+    }
 
     // Bonus/malus résultat
     final dTop3 = resultat!.apres.top3 - resultat!.avant.top3;

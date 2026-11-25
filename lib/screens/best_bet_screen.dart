@@ -34,6 +34,7 @@ import '../services/quasi_gros_paris_service.dart'; // ★ v10.72 : Gros paris �
 //     et Martingale, adossé aux rapports officiels PMU. Aucun second moteur.
 import '../services/estimation_best_bet.dart';
 import '../services/finance_simulateur_officiel.dart';
+import '../services/etat_resolution_gains_officiels.dart';
 
 import 'course_detail_screen.dart';
 
@@ -106,6 +107,23 @@ class _BestBetScreenState extends State<BestBetScreen>
   bool _resolutionOfficielleLancee = false;
   bool _resolutionOfficielleTerminee = false;
 
+  /// Nombre de passes automatiques déjà tentées sans succès complet.
+  ///
+  /// ★ CORRECTION BLOC 1 (qualité) — PLAFOND DES REPRISES AUTOMATIQUES.
+  ///
+  /// DÉFAUT INDUIT PAR LA CORRECTION DU VERROU : tant que le verrou se posait
+  /// dans le `finally`, une source indisponible était « oubliée » au prix d'un
+  /// gel définitif. Depuis que le verrou n'est posé que sur un succès réel, un
+  /// `build` qui suit un échec relance la passe — et le `setState` du `finally`
+  /// provoque précisément ce `build`. Si la source reste muette, cela boucle
+  /// SANS FIN et martèle le réseau : c'est exactement ce que « aucune requête
+  /// répétée inutile » interdit.
+  ///
+  /// La décision est entièrement déléguée à
+  /// `EtatResolutionGainsOfficiels` (pure, testée exhaustivement) pour que
+  /// l'écran n'ait plus de logique de verrou dans un `finally`.
+  EtatResolutionGainsOfficiels _etatResolution = EtatResolutionGainsOfficiels.initial;
+
   @override
   void initState() {
     super.initState();
@@ -131,8 +149,9 @@ class _BestBetScreenState extends State<BestBetScreen>
         _signauxGrosParis = signaux;
       });
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[QUASI_GROS_PARIS_LOAD] Erreur chargement persistance: $e');
+      }
     }
   }
 
@@ -199,18 +218,31 @@ class _BestBetScreenState extends State<BestBetScreen>
   }
 
   Future<void> _charger({bool refresh = false}) async {
+    // ★ CORRECTION BLOC 1 (qualité) — LE CONTEXTE N'EST PLUS LU APRÈS UN AWAIT.
+    //
+    //   DÉFAUT MESURÉ : `context.read<DataRefreshService>()` était appelé deux
+    //   fois APRÈS `await QuasiGrosParisService.instance.charger()` (l.225) et
+    //   après `await svc.refresh()` (l.244). Entre-temps, l'écran peut avoir
+    //   été démonté : lire un `BuildContext` dans cet état lève, et l'opération
+    //   importante qui suit (`_enregistrerBestBetsPremium`,
+    //   `_calculerEtSauvegarderSignaux`) serait PERDUE.
+    //
+    //   Le service est donc résolu AVANT toute attente, tant que le contexte est
+    //   garanti vivant. On ne se contente pas d'ajouter un `mounted` : on
+    //   supprime la cause.
+    final svc = context.read<DataRefreshService>();
     // ★ v10.72 : Charger les signaux depuis le stockage
     await QuasiGrosParisService.instance.charger();
     // Charger immédiatement depuis le cache du DataRefreshService
     if (!refresh) {
-      final svc = context.read<DataRefreshService>();
       if (svc.reunions.isNotEmpty) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _reunions = svc.reunions;
             _loading = false;
             _error = null;
           });
+        }
         _enregistrerBestBetsPremium();
         _calculerEtSauvegarderSignaux();
         return;
@@ -221,30 +253,32 @@ class _BestBetScreenState extends State<BestBetScreen>
       _error = null;
     });
     try {
-      final svc = context.read<DataRefreshService>();
       if (refresh) {
         await svc.refresh();
-        if (mounted)
+        if (mounted) {
           setState(() {
             _reunions = svc.reunions;
             _loading = false;
           });
+        }
       } else {
         final r = await ZoneTurfService.chargerProgramme(forceRefresh: false);
-        if (mounted)
+        if (mounted) {
           setState(() {
             _reunions = r;
             _loading = false;
           });
+        }
       }
       _enregistrerBestBetsPremium();
       _calculerEtSauvegarderSignaux();
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _loading = false;
         });
+      }
     }
   }
 
@@ -254,10 +288,11 @@ class _BestBetScreenState extends State<BestBetScreen>
       final svc = QuasiGrosParisService.instance;
       final signaux = svc.calculerSignauxDuJour(_reunions);
       await svc.ajouterSignauxBatch(signaux);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _signauxGrosParis = svc.signauxAujourdhui();
         });
+      }
       debugPrint('[GrosParis] ${signaux.length} signaux calculés');
     } catch (e) {
       debugPrint('[GrosParis] Erreur calcul signaux: $e');
@@ -305,6 +340,33 @@ class _BestBetScreenState extends State<BestBetScreen>
       return;
     }
     _resolutionOfficielleLancee = true;
+    // ★ CORRECTION BLOC 1 (qualité) — LE VERROU NE DOIT SE POSER QUE SUR UN
+    //   SUCCÈS RÉEL.
+    //
+    //   DÉFAUT MESURÉ : `_resolutionOfficielleTerminee` était mis à `true` dans
+    //   le `finally`, donc AUSSI quand une exception interrompait la boucle ou
+    //   quand `simulerPari` n'avait rien pu obtenir (source indisponible).
+    //   Or la garde du `build` est
+    //       `if (!_resolutionOfficielleTerminee && !_resolutionOfficielleLancee)`
+    //   : une fois `terminee` posé, PLUS AUCUNE tentative n'était faite dans la
+    //   vie de l'écran. Un simple incident réseau au premier rendu figeait donc
+    //   TOUS les gains à « non déterminé » jusqu'au redémarrage de l'app —
+    //   exactement ce que la règle « une indisponibilité temporaire ne doit pas
+    //   bloquer définitivement » interdit. Et le rafraîchissement manuel prévu
+    //   pour rattraper ça (`_rafraichirGainsOfficiels`) n'était branché NULLE
+    //   PART : la porte de sortie existait, la serrure était cassée.
+    //
+    //   APRÈS : on ne pose le verrou que si la passe s'est déroulée sans
+    //   exception ET qu'il ne reste PLUS AUCUN indéterminé. Sinon l'écran
+    //   reproposera la résolution (et l'utilisateur dispose en plus du bouton
+    //   de rafraîchissement). Aucune requête répétée inutile : un résultat
+    //   DÉTERMINÉ n'est jamais redemandé, ni par la boucle (`continue` sur
+    //   `deja.estDetermine`) ni par le rafraîchissement (purge des déterminés).
+    //
+    //   PLAFOND : la reprise automatique est bornée à `_maxTentativesAuto`
+    //   passes (voir `_tentativesResolutionAuto`). Sans cela, la correction
+    //   ci-dessus transformait le gel définitif en boucle réseau sans fin.
+    var passeComplete = false;
     try {
       for (final opp in terminees) {
         final key = buildCourseKey(
@@ -336,9 +398,29 @@ class _BestBetScreenState extends State<BestBetScreen>
           _gainsOfficielsEnCours.remove(key);
         }
       }
+      passeComplete = true;
     } finally {
       _resolutionOfficielleLancee = false;
-      if (mounted) setState(() => _resolutionOfficielleTerminee = true);
+      if (mounted) {
+        // Un indéterminé subsistant signifie que la source n'a pas répondu :
+        // la résolution reste OUVRABLE, sans boucle automatique.
+        final resteIndetermine = terminees.any((o) {
+          final r = _gainsOfficiels[buildCourseKey(
+            reunionCode: o.reunion.code,
+            numCourse: o.course.numCourse,
+            dateStr: o.course.dateStr,
+          )];
+          return r == null || !r.estDetermine;
+        });
+        final succesComplet = passeComplete && !resteIndetermine;
+        setState(() {
+          _etatResolution = _etatResolution.apresPasse(
+            passeComplete: passeComplete,
+            resteIndetermine: resteIndetermine,
+          );
+          _resolutionOfficielleTerminee = succesComplet || _etatResolution.verrouille;
+        });
+      }
     }
   }
 
@@ -350,11 +432,18 @@ class _BestBetScreenState extends State<BestBetScreen>
   /// réessaiera la source au lieu de resservir un `null` figé.
   Future<void> _rafraichirGainsOfficiels() async {
     if (!mounted) return;
+    if (_resolutionOfficielleLancee) return; // une passe est déjà en cours
     setState(() {
-      _resolutionOfficielleTerminee = false;
+      // On ne remet PAS `_resolutionOfficielleTerminee` à `false` : la passe
+      // manuelle appelle `_resoudreGainsOfficiels` directement, elle n'a pas
+      // besoin de la garde du `build`. La laisser à `true` évite de réarmer la
+      // reprise AUTOMATIQUE après une action explicite — le plafond
+      // `_maxTentativesAuto` reste donc respecté.
+      //
       // On CONSERVE les résultats déterminés, on redemande seulement les
       // indéterminés : une perte établie ne doit pas être rejouée.
       _gainsOfficiels.removeWhere((_, v) => !v.estDetermine);
+      _etatResolution = _etatResolution.apresRafraichissementManuel();
     });
     await _resoudreGainsOfficiels(_calculerOpportunites());
   }
@@ -367,6 +456,16 @@ class _BestBetScreenState extends State<BestBetScreen>
       dateStr: opp.course.dateStr,
     );
     return _gainsOfficiels[key];
+  }
+
+  /// Vrai si le gain officiel de cette opportunité est TERMINÉ mais pas
+  /// DÉTERMINÉ : la source n'a pas répondu, ou le sort de la course est
+  /// encore provisoire. Sert uniquement à décider l'affichage du bouton
+  /// « Réessayer ». Une course non terminée n'est pas concernée.
+  bool _gainIndeterminePour(_BetOpp opp) {
+    if (!opp.estTerminee) return false;
+    final r = _gainOfficielPour(opp);
+    return r == null || !r.estDetermine;
   }
 
   // ★ v10.37 v2 : Enregistrer les 3 Best Bets avec courseKey + typePari + numéros
@@ -490,8 +589,9 @@ class _BestBetScreenState extends State<BestBetScreen>
         final top = sorted.first;
 
         // ★ v9.92 : seuil adaptatif selon maturité de l'IA
-        if (top.scoreIA < seuilMinScore && !course.isQuinte && !course.isQuarte)
+        if (top.scoreIA < seuilMinScore && !course.isQuinte && !course.isQuarte) {
           continue;
+        }
 
         final scoreConf = top.scoreIA;
         // Score gain = basé sur la cote si dispo, sinon estimation via rang IA
@@ -1181,6 +1281,29 @@ class _BestBetScreenState extends State<BestBetScreen>
                     style: TextStyle(color: Colors.white38, fontSize: 14),
                   ),
                 ),
+                // ★ CORRECTION BLOC 1 (qualité) — LA PORTE DE SORTIE EXISTAIT,
+                //   ELLE EST MAINTENANT ATTEIGNABLE.
+                //
+                //   `_rafraichirGainsOfficiels` n'avait AUCUN appelant : un
+                //   résultat officiel indisponible au premier chargement
+                //   s'affichait « non déterminé » sans aucun moyen de relancer
+                //   la résolution autrement qu'en fermant l'application.
+                //   Le bouton n'apparaît que s'il RESTE au moins un gain
+                //   indéterminé — sinon il n'a aucun sens et n'est pas affiché.
+                //   Il ne redemande jamais un résultat DÉTERMINÉ (la fonction
+                //   purge les déterminés avant de relancer), donc aucune
+                //   requête réseau répétée inutile.
+                if (autresTerminees.any(_gainIndeterminePour))
+                  TextButton.icon(
+                    onPressed:
+                        _resolutionOfficielleLancee ? null : _rafraichirGainsOfficiels,
+                    icon: const Icon(Icons.refresh, size: 15,
+                        color: Color(0xFFFFD700)),
+                    label: const Text(
+                      'Réessayer',
+                      style: TextStyle(color: Color(0xFFFFD700), fontSize: 14),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -2783,7 +2906,10 @@ class _BetRow extends StatelessWidget {
                         Row(
                           children: [
                             Flexible(
-                                child: Text(opp.typePari,
+                                child: Text(
+                                    cotePubliee
+                                        ? '${opp.typePari} • cote ${cote.toStringAsFixed(1)}'
+                                        : opp.typePari,
                                     style: TextStyle(
                                         color: opp.estTerminee
                                             ? Colors.white38

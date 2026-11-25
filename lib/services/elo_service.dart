@@ -2408,7 +2408,9 @@ class EloService {
         final keysOrphelins = _ratings.keys
             .where((k) => k.endsWith('|'))
             .toList();
-        for (final k in keysOrphelins) _ratings.remove(k);
+        for (final k in keysOrphelins) {
+          _ratings.remove(k);
+        }
         await prefs.setBool('elo_orphelins_purges_v1', true);
         if (keysOrphelins.isNotEmpty) {
           debugPrint('[EloService] 🧹 Purge orphelins : ${keysOrphelins.length} entrées "NOM|" supprimées');

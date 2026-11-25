@@ -69,7 +69,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/services/affichage_gain_structure.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';
 import 'package:pronostic_hippique/services/branchement_verdict_course.dart';
@@ -238,34 +237,10 @@ TrackedCourse _suiviGagnantPlace(DateTime dep) => TrackedCourse(
 
 /// Pari du PROFIL (`PmuProvider`), créé par `bet_bottom_sheet` avec la même
 /// ventilation et le même code PMU que la course suivie.
-UserPrediction _prediction(DateTime dep) => UserPrediction(
-      id: 'pred_d4_1',
-      dateStr: _yyyyMMdd(dep),
-      numReunion: kNumR,
-      numCourse: kNumC,
-      nomCourse: 'PRIX DE BAD GODESBERG',
-      hippodrome: 'SAINT-CLOUD',
-      numeroCheval: kNumChevalJoue,
-      nomCheval: 'SIM CARD',
-      cote: kDividendeGagnantAutre,
-      typePari: 'Gagnant+Placé',
-      createdAt: dep,
-      scoreIA: 89.0,
-      montantMise: kMiseParComposante,
-      numerosJoues: const <int>[kNumChevalJoue],
-      miseGagnant: kMiseParComposante,
-      misePlace: kMiseParComposante,
-      codePmuOfficiel: kCodePmuSaisie,
-    );
-
 String _ddmmyyyy(DateTime d) =>
     '${d.day.toString().padLeft(2, '0')}'
     '${d.month.toString().padLeft(2, '0')}'
     '${d.year}';
-
-String _yyyyMMdd(DateTime d) =>
-    '${d.year}-${d.month.toString().padLeft(2, '0')}-'
-    '${d.day.toString().padLeft(2, '0')}';
 
 /// Résultat officiel de LA course, construit comme `_majGainReelDansProfil`.
 ResultatOfficielCourse _resultat() {

@@ -49,8 +49,6 @@ import 'package:pronostic_hippique/services/enregistreur_verdict_gain_suivi.dart
 import 'package:pronostic_hippique/services/gain_calculator.dart'
     show RapportPmu;
 import 'package:pronostic_hippique/services/gain_pmu_types.dart';
-import 'package:pronostic_hippique/services/moteur_gain_pmu.dart'
-    show VerdictGain;
 import 'package:pronostic_hippique/services/resolution_gain_ticket_pmu.dart'
     show ResultatOfficielCourse, rapportPublieDepuisApi;
 

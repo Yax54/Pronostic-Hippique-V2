@@ -26,6 +26,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  # ★ BLOC 1 (qualité) — analyse SYNTAXIQUE pour la garde des écrivains
+  #   financiers (`test/c3_garde_ecriture_financiere_globale_test.dart`).
+  #   Cette garde identifiait ses sites par `fichier:ligne`, donc elle
+  #   échouait au moindre ajout d'accolade ou de ligne vide. Elle s'appuie
+  #   désormais sur l'AST officiel : chemin + classe + méthode + champ +
+  #   nature de l'écriture, sans aucun numéro de ligne.
+  #   Dépendance de DÉVELOPPEMENT uniquement : rien n'entre dans l'APK.
+  analyzer: ^7.0.0
 
 flutter:
   uses-material-design: true

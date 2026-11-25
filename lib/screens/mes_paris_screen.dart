@@ -1575,7 +1575,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
             gagnant = arrivee.take(topPlace).contains(monNumero);
             final posPlace = arrivee.indexOf(monNumero) + 1;
             msg = gagnant
-                ? '✅ Placé ! N°$monNumero ${posPlace}ème !'
+                ? '✅ Placé ! N°$monNumero $posPlaceème !'
                 : '❌ Non placé — Arrivée : $arriveeStr';
             break;
 
@@ -1591,7 +1591,7 @@ class _TrackedCourseCardState extends State<_TrackedCourseCard> {
               msg = '🏆 1er ! N°$monNumero gagne les 2 paris (Gagnant + Placé) !';
             } else if (estPlace) {
               gagnant = true; // le Placé est gagnant même si pas 1er
-              msg = '✅ N°$monNumero ${posGP}ème — Placé ✓ / Gagnant ✗ — Arrivée : $arriveeStr';
+              msg = '✅ N°$monNumero $posGPème — Placé ✓ / Gagnant ✗ — Arrivée : $arriveeStr';
             } else {
               gagnant = false;
               msg = '❌ N°$monNumero non placé — Arrivée : $arriveeStr';

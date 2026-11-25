@@ -997,7 +997,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
                 ),
               ),
             );
-          }).toList(),
+          }),
           // ── Bouton "voir tout"
           GestureDetector(
             onTap: () => _ouvrirCourse(

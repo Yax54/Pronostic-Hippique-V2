@@ -260,7 +260,9 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
   // ── Reset ─────────────────────────────────────────────────────────────────
   void _reset() {
-    for (final c in _textCtrls.values) c.dispose();
+    for (final c in _textCtrls.values) {
+      c.dispose();
+    }
     _textCtrls.clear();
     _textErrors.clear();
     setState(() {
@@ -274,7 +276,9 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
   // ── Appliquer preset ──────────────────────────────────────────────────────
   void _appliquerPreset(_Preset p) {
-    for (final c in _textCtrls.values) c.dispose();
+    for (final c in _textCtrls.values) {
+      c.dispose();
+    }
     _textCtrls.clear();
     _textErrors.clear();
     setState(() {
@@ -415,10 +419,17 @@ class _SimulationScreenState extends State<SimulationScreen> {
     // Calcul score confiance (même logique que l'assistant)
     final n = _resultat!.avant.nbCourses;
     int score;
-    if (n < 30) score = 10;
-    else if (n < 50) score = 35;
-    else if (n < 150) score = 65;
-    else score = 85;
+    if (n < 30) {
+      score = 10;
+    } else if (n < 50) {
+      score = 35;
+    }
+    else if (n < 150) {
+      score = 65;
+    }
+    else {
+      score = 85;
+    }
     final dTop3 = _resultat!.apres.top3 - _resultat!.avant.top3;
     final dRoi  = _resultat!.apres.roi  - _resultat!.avant.roi;
     if (dTop3 > 0) score += 10;

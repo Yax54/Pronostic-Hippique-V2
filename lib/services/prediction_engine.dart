@@ -142,10 +142,17 @@ class PredictionEngine {
 
     // ── 6. EXPÉRIENCE & NIVEAU (0–4) ──────────────────────────────────────
     double scoreExp = 0;
-    if (p.gainsCarriere >= 500000) scoreExp = 4;
-    else if (p.gainsCarriere >= 200000) scoreExp = 3;
-    else if (p.gainsCarriere >= 80000) scoreExp = 2;
-    else if (p.gainsCarriere >= 20000) scoreExp = 1;
+    if (p.gainsCarriere >= 500000) {
+      scoreExp = 4;
+    } else if (p.gainsCarriere >= 200000) {
+      scoreExp = 3;
+    }
+    else if (p.gainsCarriere >= 80000) {
+      scoreExp = 2;
+    }
+    else if (p.gainsCarriere >= 20000) {
+      scoreExp = 1;
+    }
     details['experience'] = scoreExp;
     total += scoreExp;
 
@@ -215,11 +222,17 @@ class PredictionEngine {
     // Bonus : série de victoires consécutives (très fort signal)
     int serieVictoires = 0;
     for (final pos in positions) {
-      if (pos == 1) serieVictoires++;
-      else break;
+      if (pos == 1) {
+        serieVictoires++;
+      } else {
+        break;
+      }
     }
-    if (serieVictoires >= 3) score += 4.0; // ★★★ Série de 3+ victoires
-    else if (serieVictoires == 2) score += 2.0; // ★★ 2 victoires de suite
+    if (serieVictoires >= 3) {
+      score += 4.0; // ★★★ Série de 3+ victoires
+    } else if (serieVictoires == 2) {
+      score += 2.0; // ★★ 2 victoires de suite
+    }
 
     // Détection de tendance : amélioration ou dégradation récente
     int tendance = 0;
@@ -228,8 +241,11 @@ class PredictionEngine {
       final anciens = positions.skip(2).take(2).map((p) => p == 0 ? 15 : p).toList();
       final moyRecent = recents.reduce((a, b) => a + b) / recents.length;
       final moyAncien = anciens.reduce((a, b) => a + b) / anciens.length;
-      if (moyRecent < moyAncien - 2) tendance = 1;   // Amélioration
-      else if (moyRecent > moyAncien + 2) tendance = -1; // Dégradation
+      if (moyRecent < moyAncien - 2) {
+        tendance = 1;   // Amélioration
+      } else if (moyRecent > moyAncien + 2) {
+        tendance = -1; // Dégradation
+      }
     }
 
     // Pénalité abandon récent (premier ou deuxième résultat)
@@ -463,32 +479,54 @@ class PredictionEngine {
     double confiance = (score * 0.78).clamp(0, 78); // Max absolu : 78%
 
     // ── Bonus signal fort : écart dominant ──────────────────────────────────
-    if (ecart >= 15) confiance += 6;
-    else if (ecart >= 10) confiance += 4;
-    else if (ecart >= 6) confiance += 2;
-    else if (ecart < 3) confiance -= 5; // Course serrée = incertitude
+    if (ecart >= 15) {
+      confiance += 6;
+    } else if (ecart >= 10) {
+      confiance += 4;
+    }
+    else if (ecart >= 6) {
+      confiance += 2;
+    }
+    else if (ecart < 3) {
+      confiance -= 5; // Course serrée = incertitude
+    }
 
     // ── Bonus signal fort : série de victoires ───────────────────────────────
-    if (serieVictoires >= 3) confiance += 7; // Série de 3+ : signal très fort
-    else if (serieVictoires == 2) confiance += 3;
+    if (serieVictoires >= 3) {
+      confiance += 7; // Série de 3+ : signal très fort
+    } else if (serieVictoires == 2) {
+      confiance += 3;
+    }
 
     // ── Bonus signal fort : accord marché ────────────────────────────────────
     if (accordMarche) confiance += 4; // Double validation IA + marché
 
     // ── Bonus cohérence musicale ──────────────────────────────────────────────
-    if (coherence >= 5.5) confiance += 3;
-    else if (coherence >= 4) confiance += 1;
+    if (coherence >= 5.5) {
+      confiance += 3;
+    } else if (coherence >= 4) {
+      confiance += 1;
+    }
 
     // ── Bonus tendance positive ───────────────────────────────────────────────
-    if (tendance == 1) confiance += 3; // Amélioration récente
-    else if (tendance == -1) confiance -= 4; // Dégradation récente
+    if (tendance == 1) {
+      confiance += 3; // Amélioration récente
+    } else if (tendance == -1) {
+      confiance -= 4; // Dégradation récente
+    }
 
     // ── Pénalités objectives ──────────────────────────────────────────────────
     if (abandonRecent) confiance -= 6; // Abandon récent : signe inquiétant
-    if (nbPartants > 16) confiance -= 4; // Grand champ = imprévisible
-    else if (nbPartants > 12) confiance -= 2;
-    if (cote > 20) confiance -= 5; // Très longshot
-    else if (cote > 15) confiance -= 3;
+    if (nbPartants > 16) {
+      confiance -= 4; // Grand champ = imprévisible
+    } else if (nbPartants > 12) {
+      confiance -= 2;
+    }
+    if (cote > 20) {
+      confiance -= 5; // Très longshot
+    } else if (cote > 15) {
+      confiance -= 3;
+    }
 
     // ── Cote "valeur" optimale : bonus léger ─────────────────────────────────
     if (cote >= 2.5 && cote <= 6.0) confiance += 2; // Zone valeur idéale
@@ -552,10 +590,16 @@ class PredictionEngine {
     double coherence, int tendance, double cote,
   ) {
     final s = <String>[];
-    if (serie >= 3) s.add('🔥 Série de $serie victoires consécutives');
-    else if (serie == 2) s.add('✅ 2 victoires de suite (en forme)');
-    if (ecart >= 15) s.add('📊 Domination nette (+${ecart.toStringAsFixed(0)} pts sur le 2e)');
-    else if (ecart >= 10) s.add('📊 Avance claire sur les concurrents');
+    if (serie >= 3) {
+      s.add('🔥 Série de $serie victoires consécutives');
+    } else if (serie == 2) {
+      s.add('✅ 2 victoires de suite (en forme)');
+    }
+    if (ecart >= 15) {
+      s.add('📊 Domination nette (+${ecart.toStringAsFixed(0)} pts sur le 2e)');
+    } else if (ecart >= 10) {
+      s.add('📊 Avance claire sur les concurrents');
+    }
     if (accord) s.add('🤝 Accord IA + marché PMU (double validation)');
     if (coherence >= 5.5) s.add('📈 Très régulier sur la durée');
     if (tendance == 1) s.add('📈 En progression : amélioration récente confirmée');
@@ -578,13 +622,19 @@ class PredictionEngine {
     final cote = p.coteAffichee;
     final d = details[p]!;
 
-    if (serieVictoires >= 3) pts.add('🔥 Série de $serieVictoires victoires consécutives');
-    else if (serieVictoires == 2) pts.add('✅ 2 victoires de suite — en pleine confiance');
+    if (serieVictoires >= 3) {
+      pts.add('🔥 Série de $serieVictoires victoires consécutives');
+    } else if (serieVictoires == 2) {
+      pts.add('✅ 2 victoires de suite — en pleine confiance');
+    }
 
     if (accordMarche) pts.add('🤝 Accord IA + bookmakers (favori partagé)');
 
-    if (ecart >= 15) pts.add('📊 Domine nettement ses concurrents (+${ecart.toStringAsFixed(0)} pts)');
-    else if (ecart >= 8) pts.add('📊 Avance significative sur le 2e concurrent');
+    if (ecart >= 15) {
+      pts.add('📊 Domine nettement ses concurrents (+${ecart.toStringAsFixed(0)} pts)');
+    } else if (ecart >= 8) {
+      pts.add('📊 Avance significative sur le 2e concurrent');
+    }
 
     if (p.tauxVictoire >= 0.40 && p.nombreCourses >= 10) {
       pts.add('🏆 Excellent palmarès : ${(p.tauxVictoire * 100).round()}% de victoires (${p.nombreCourses} courses)');
@@ -598,9 +648,14 @@ class PredictionEngine {
 
     if (d.tendanceMusique == 1) pts.add('📈 En progression : meilleures performances récentes');
 
-    if (d.dernierResultat == 1) pts.add('🥇 Vainqueur à sa dernière sortie');
-    else if (d.dernierResultat == 2) pts.add('🥈 2e à sa dernière sortie — en forme');
-    else if (d.dernierResultat == 3) pts.add('🥉 3e à sa dernière sortie — dans les favoris');
+    if (d.dernierResultat == 1) {
+      pts.add('🥇 Vainqueur à sa dernière sortie');
+    } else if (d.dernierResultat == 2) {
+      pts.add('🥈 2e à sa dernière sortie — en forme');
+    }
+    else if (d.dernierResultat == 3) {
+      pts.add('🥉 3e à sa dernière sortie — dans les favoris');
+    }
 
     if (p.gainsCarriere >= 300000) pts.add('💰 Carrière très lucrative (${(p.gainsCarriere / 1000).round()} k€)');
 
@@ -620,8 +675,11 @@ class PredictionEngine {
     if (abandonRecent) pts.add('⚠️ Abandon ou chute à une sortie récente');
     if (tendance == -1) pts.add('📉 En baisse de forme : résultats en dégradation');
     if (cote > 15) pts.add('⚠️ Cote élevée (outsider — ${cote.toStringAsFixed(1)}) : risque de surprises');
-    if (nbPartants > 16) pts.add('⚠️ Grand champ ($nbPartants partants) — plus d\'aléatoire');
-    else if (nbPartants > 12) pts.add('🔶 Champ large ($nbPartants partants) — course ouverte');
+    if (nbPartants > 16) {
+      pts.add('⚠️ Grand champ ($nbPartants partants) — plus d\'aléatoire');
+    } else if (nbPartants > 12) {
+      pts.add('🔶 Champ large ($nbPartants partants) — course ouverte');
+    }
     if (p.nombreCourses < 4) pts.add('❓ Peu de données historiques (${p.nombreCourses} course${p.nombreCourses > 1 ? "s" : ""})');
     if (ecart < 3) pts.add('🤏 Faible écart avec les concurrents — course très ouverte');
 

@@ -736,8 +736,9 @@ class IaArchiveService extends ChangeNotifier {
   /// Retourne `true` si la file est intégralement vidée.
   /// Ne lève jamais : toute exception devient un échec signalé, sans perte.
   Future<bool> persisterEnAttente() async {
-    if (_evictionsNonArchivees.isEmpty && _moisARepersister.isEmpty)
+    if (_evictionsNonArchivees.isEmpty && _moisARepersister.isEmpty) {
       return true;
+    }
     try {
       await _load();
 

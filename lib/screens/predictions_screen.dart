@@ -223,8 +223,11 @@ class _PredCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isCorrect = pred.isCorrect;
     Color borderColor = const Color(0xFF2E7D52).withValues(alpha: 0.4);
-    if (isCorrect == true) borderColor = const Color(0xFF4CAF7D);
-    else if (isCorrect == false) borderColor = const Color(0xFFEF5350);
+    if (isCorrect == true) {
+      borderColor = const Color(0xFF4CAF7D);
+    } else if (isCorrect == false) {
+      borderColor = const Color(0xFFEF5350);
+    }
 
     return Dismissible(
       key: Key(pred.id),

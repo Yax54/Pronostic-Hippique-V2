@@ -30,7 +30,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
 
-import 'package:pronostic_hippique/models/pronostic_resultat_utilisateur.dart';
 import 'package:pronostic_hippique/services/backup_service.dart';
 import 'package:pronostic_hippique/services/elo_service.dart';
 import 'package:pronostic_hippique/services/ia_archive_service.dart';
@@ -1015,7 +1014,7 @@ void main() {
       ]);
       final contenu = await _exportData();
 
-      await _installerStore();
+      _installerStore();
       await _resetAppareil();
       final svc = IaMemoryService.instance;
       expect(svc.pronostics, isEmpty);

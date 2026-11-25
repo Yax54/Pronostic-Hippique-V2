@@ -53,9 +53,6 @@ String _ddmmyyyy(DateTime d) =>
     '${d.month.toString().padLeft(2, '0')}'
     '${d.year}';
 
-String _hhmm(DateTime d) =>
-    '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-
 /// Réponse `/programme/{date}` minimale mais RÉELLE dans sa structure :
 /// hippodrome français, une réunion, une course R3C5.
 Map<String, dynamic> _programmeJson(DateTime depart) => <String, dynamic>{
@@ -214,14 +211,14 @@ void main() {
     // ignore: avoid_print
     print('  course.anchor PRODUITE = « ${course.anchor} »');
     // ignore: avoid_print
-    print('  ATTENDU : « R${kNumR}C${kNumC} »  (l\'ancien défaut donnait « ${kNumR}${kNumC} »)');
+    print('  ATTENDU : « R${kNumR}C$kNumC »  (l\'ancien défaut donnait « $kNumR$kNumC »)');
     // ignore: avoid_print
     print('─────────────────────────────────────────────────────────────');
 
     // ASSERTION — format d'identité, celui qu'attend le consommateur.
-    expect(course.anchor, 'R${kNumR}C${kNumC}',
+    expect(course.anchor, 'R${kNumR}C$kNumC',
         reason: 'BL3-A22 : le producteur doit émettre « R{nR}C{nC} » et non un '
-            'concaténat nu (« ${kNumR}${kNumC} »), que le consommateur '
+            'concaténat nu (« $kNumR$kNumC »), que le consommateur '
             'IaPronosticEngine rejette par RegExp(r\'^R(\\d+)C\\d+\$\').');
   });
 
@@ -260,7 +257,7 @@ void main() {
 
     expect(cle, 'R${kNumR}C${kNumC}_$dateStr',
         reason: 'La clé du moteur doit être « R{nR}C{nC}_JJMMAAAA ». Avant '
-            'correction, l\'ancre « ${kNumR}${kNumC} » ne satisfaisait pas '
+            'correction, l\'ancre « $kNumR$kNumC » ne satisfaisait pas '
             'RegExp(r\'^R(\\d+)C\\d+\$\') : _numReunionDepuisAnchor rendait \'\' '
             'et la clé était VIDE, donc aucun mouvement de cote ne pouvait '
             'être lu par le critère R.');
@@ -338,10 +335,10 @@ void main() {
         '${vuEcriture == null ? "AUCUN" : "variation ${vuEcriture.variationPct.toStringAsFixed(2)} %, score ${vuEcriture.scoreIA}"}');
     // ignore: avoid_print
     print('  lecture IA via « $cleMoteur » : '
-        '${scoreMoteur == null ? "NULL (critère R neutralisé à 50.0)" : scoreMoteur}');
+        '${scoreMoteur ?? "NULL (critère R neutralisé à 50.0)"}');
     // ignore: avoid_print
     print('  contre-épreuve clé vide (ancien défaut) : '
-        '${scoreAncienDefaut == null ? "NULL (neutralisé)" : scoreAncienDefaut}');
+        '${scoreAncienDefaut ?? "NULL (neutralisé)"}');
     // ignore: avoid_print
     print('─────────────────────────────────────────────────────────────');
 
@@ -375,7 +372,7 @@ void main() {
   test('B1-A22-4 — même R/C, dates différentes ⇒ clés distinctes', () {
     ZtCourse courseDu(String date) => ZtCourse(
           numCourse: kNumC,
-          anchor: 'R${kNumR}C${kNumC}',
+          anchor: 'R${kNumR}C$kNumC',
           nom: 'PRIX DE LA CHAINE DU FROID',
           heure: '14:05',
           distance: '2700',

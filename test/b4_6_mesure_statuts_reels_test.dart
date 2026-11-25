@@ -16,7 +16,6 @@
 //  combinaisons publiées, ce qui suffit pour l'arbitrage de variante.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';

@@ -1731,7 +1731,7 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
                 ],
               ]),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -1893,7 +1893,7 @@ class _ParisDetailScreenState extends State<ParisDetailScreen>
         // Score + cote
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Text(
-            '${p.scoreIA.toStringAsFixed(0)}',
+            p.scoreIA.toStringAsFixed(0),
             style: TextStyle(
                 color: scoreColor, fontSize: 18, fontWeight: FontWeight.bold),
           ),

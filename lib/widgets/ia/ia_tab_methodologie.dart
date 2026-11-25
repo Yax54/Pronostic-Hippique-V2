@@ -526,9 +526,14 @@ class _IaTabMethodologieState extends State<IaTabMethodologie> {
             final dateAnalyse    = DateTime(d.year, d.month, d.day);
             final ecartJours = aujourdhuiDate.difference(dateAnalyse).inDays;
             final String label;
-            if (ecartJours == 0)      label = "aujourd'hui";
-            else if (ecartJours == 1) label = 'hier';
-            else                      label = 'il y a $ecartJours jours';
+            if (ecartJours == 0) {
+              label = "aujourd'hui";
+            } else if (ecartJours == 1) {
+              label = 'hier';
+            }
+            else {
+              label = 'il y a $ecartJours jours';
+            }
             return Text(
               'Dernière mise à jour : $label '
               '(${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')} '

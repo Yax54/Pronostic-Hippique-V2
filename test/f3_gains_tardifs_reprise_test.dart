@@ -31,7 +31,6 @@ import 'package:pronostic_hippique/services/gains_tardifs_regles.dart';
 import 'package:pronostic_hippique/services/service_gains_tardifs.dart';
 
 const _cleTickets = 'user_predictions_v2';
-const _cleAlertes = 'alert_history_v1';
 
 UserPrediction _ticket({
   required String id,

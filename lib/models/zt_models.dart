@@ -320,18 +320,23 @@ class ZtPartant {
       }
       final pos = s.position;
       double pts;
-      if (pos == 1)
+      if (pos == 1) {
         pts = 100;
-      else if (pos == 2)
+      } else if (pos == 2) {
         pts = 78;
-      else if (pos == 3)
+      }
+      else if (pos == 3) {
         pts = 60;
-      else if (pos <= 5)
+      }
+      else if (pos <= 5) {
         pts = 35;
-      else if (pos <= 8)
+      }
+      else if (pos <= 8) {
         pts = 18;
-      else
+      }
+      else {
         pts = 6;
+      }
       total += pts * w;
       totalWeight += w;
     }
@@ -472,18 +477,23 @@ class ZtPartant {
       }
       final pos = s.position;
       double pts;
-      if (pos == 1)
+      if (pos == 1) {
         pts = 100;
-      else if (pos == 2)
+      } else if (pos == 2) {
         pts = 82;
-      else if (pos == 3)
+      }
+      else if (pos == 3) {
         pts = 66;
-      else if (pos <= 5)
+      }
+      else if (pos <= 5) {
         pts = 50;
-      else if (pos <= 8)
+      }
+      else if (pos <= 8) {
         pts = 33;
-      else
+      }
+      else {
         pts = 15;
+      }
       total += pts * w;
       wTotal += w;
     }
@@ -576,48 +586,65 @@ class ZtPartant {
 
     double score = 0.0;
     // Taux victoire 30j (contribution 55%)
-    if (tauxVic >= 22)
+    if (tauxVic >= 22) {
       score += 55.0;
-    else if (tauxVic >= 18)
+    } else if (tauxVic >= 18) {
       score += 47.0;
-    else if (tauxVic >= 15)
+    }
+    else if (tauxVic >= 15) {
       score += 40.0;
-    else if (tauxVic >= 12)
+    }
+    else if (tauxVic >= 12) {
       score += 33.0;
-    else if (tauxVic >= 10)
+    }
+    else if (tauxVic >= 10) {
       score += 26.0;
-    else if (tauxVic >= 7)
+    }
+    else if (tauxVic >= 7) {
       score += 18.0;
-    else
+    }
+    else {
       score += 10.0;
+    }
     // Taux placé (contribution 25%)
-    if (tauxPlc >= 50)
+    if (tauxPlc >= 50) {
       score += 25.0;
-    else if (tauxPlc >= 42)
+    } else if (tauxPlc >= 42) {
       score += 21.0;
-    else if (tauxPlc >= 35)
+    }
+    else if (tauxPlc >= 35) {
       score += 17.0;
-    else if (tauxPlc >= 28)
+    }
+    else if (tauxPlc >= 28) {
       score += 13.0;
-    else
+    }
+    else {
       score += 7.0;
+    }
     // Bonus activité 30j (5%)
-    if (nb30j >= 30)
+    if (nb30j >= 30) {
       score += 5.0;
-    else if (nb30j >= 15)
+    } else if (nb30j >= 15) {
       score += 3.0;
-    else if (nb30j >= 5) score += 1.0;
+    }
+    else if (nb30j >= 5) {
+      score += 1.0;
+    }
     // ★ v9.92 : Bonus forme court terme 7j (15% max)
     // Entraîneur avec ≥3 courses cette semaine et taux > historique → en forme
     if (tauxVic7j >= 0 && nb7j >= 3) {
       final surperformance = tauxVic7j - tauxVic; // écart vs historique
-      if (surperformance >= 15)
+      if (surperformance >= 15) {
         score += 15.0; // très en forme
-      else if (surperformance >= 8)
+      } else if (surperformance >= 8) {
         score += 10.0; // en forme
-      else if (surperformance >= 3)
+      }
+      else if (surperformance >= 3) {
         score += 5.0; // légèrement en forme
-      else if (surperformance <= -15) score -= 8.0; // en baisse de forme
+      }
+      else if (surperformance <= -15) {
+        score -= 8.0; // en baisse de forme
+      }
     }
     return score.clamp(0.0, 100.0);
   }
@@ -729,17 +756,23 @@ class ZtPartant {
     double score = 50.0;
 
     // 1. Bonus/malus âge — chevaux 3-5 ans sont en phase de progression
-    if (age == 3)
+    if (age == 3) {
       score += 12.0; // jeune en plein développement
-    else if (age == 4)
+    } else if (age == 4) {
       score += 8.0; // pic de progression
-    else if (age == 5)
+    }
+    else if (age == 5) {
       score += 4.0; // encore en hausse possible
-    else if (age == 6)
+    }
+    else if (age == 6) {
       score += 0.0; // stable
-    else if (age == 7)
+    }
+    else if (age == 7) {
       score -= 3.0; // légère décrue
-    else if (age >= 8) score -= 8.0; // déclin probable
+    }
+    else if (age >= 8) {
+      score -= 8.0; // déclin probable
+    }
 
     // 2. Gains dernière année vs gains totaux (ratio progression)
     final gainsTotal = gainsInt;
@@ -747,13 +780,17 @@ class ZtPartant {
       // Si les gains de l'an dernier représentent une forte fraction des gains totaux
       // → le cheval progresse vite (a beaucoup gagné récemment)
       final ratioAnnee = gainsDernierAn / gainsTotal.toDouble();
-      if (ratioAnnee >= 0.40)
+      if (ratioAnnee >= 0.40) {
         score += 15.0; // 40%+ des gains en 1 an → très actif
-      else if (ratioAnnee >= 0.25)
+      } else if (ratioAnnee >= 0.25) {
         score += 8.0;
-      else if (ratioAnnee >= 0.15)
+      }
+      else if (ratioAnnee >= 0.15) {
         score += 3.0;
-      else if (ratioAnnee < 0.05) score -= 5.0; // peu actif récemment
+      }
+      else if (ratioAnnee < 0.05) {
+        score -= 5.0; // peu actif récemment
+      }
     }
 
     // 3. Bonus tendance forme haussière (cohérence avec scoreFormeLong)
@@ -867,26 +904,35 @@ class ZtPartant {
         totalPenalite += 15.0 * weight;
       } else {
         final pos = s.position;
-        if (pos == 1)
+        if (pos == 1) {
           pts = 100.0;
-        else if (pos == 2)
+        } else if (pos == 2) {
           pts = 78.0;
-        else if (pos == 3)
+        }
+        else if (pos == 3) {
           pts = 60.0;
-        else if (pos == 4)
+        }
+        else if (pos == 4) {
           pts = 46.0;
-        else if (pos == 5)
+        }
+        else if (pos == 5) {
           pts = 35.0;
-        else if (pos == 6)
+        }
+        else if (pos == 6) {
           pts = 26.0;
-        else if (pos <= 8)
+        }
+        else if (pos <= 8) {
           pts = 18.0;
-        else if (pos <= 10)
+        }
+        else if (pos <= 10) {
           pts = 11.0;
-        else if (pos <= 14)
+        }
+        else if (pos <= 14) {
           pts = 6.0;
-        else
+        }
+        else {
           pts = 2.0;
+        }
       }
       total += pts * weight;
       weightTotal += weight;
@@ -913,11 +959,12 @@ class ZtPartant {
     // Bonus continuité top3
     final top3 = sorties.take(3);
     if (top3
-        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 3))
+        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 3)) {
       score += 10.0;
-    else if (top3
-        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 5))
+    } else if (top3
+        .every((s) => !s.estPenalite && !s.estNonPartant && s.position <= 5)) {
       score += 5.0;
+    }
 
     return score.clamp(0.0, 100.0);
   }
@@ -1176,8 +1223,9 @@ class ZtReunion {
   String get disciplineIcon {
     final d = discipline.toLowerCase();
     if (d.contains('trot')) return '🎠';
-    if (d.contains('obstacle') || d.contains('haies') || d.contains('steeple'))
+    if (d.contains('obstacle') || d.contains('haies') || d.contains('steeple')) {
       return '🚧';
+    }
     return '🏇';
   }
 

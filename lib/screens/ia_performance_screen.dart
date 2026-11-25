@@ -511,9 +511,9 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     if (heure != null) {
       final hh  = heure.hour.toString().padLeft(2, '0');
       final min = heure.minute.toString().padLeft(2, '0');
-      return 'ia_analyse_${jj}${mm}${aa}_${hh}${min}.json';
+      return 'ia_analyse_$jj$mm${aa}_$hh$min.json';
     }
-    return 'ia_analyse_${jj}${mm}${aa}';
+    return 'ia_analyse_$jj$mm$aa';
   }
 
   /// Vérifie si un fichier complet existe pour une date donnée
@@ -704,11 +704,13 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         date: dateJ,
         predictionsUtilisateur: predictionsJson,
         onProgress: (etape, total, msg) {
-          if (mounted) setState(() {
+          if (mounted) {
+            setState(() {
             _analyseEtape  = etape;
             _analyseTotal  = total;
             _analyseMessage = '[$labelDate] $msg';
           });
+          }
         },
       );
 
@@ -731,11 +733,13 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     final resultat = await IaMemoryService.instance.analyseJourneeComplete(
       date: _dateAnalyse,
       onProgress: (etape, total, msg) {
-        if (mounted) setState(() {
+        if (mounted) {
+          setState(() {
           _analyseEtape   = etape;
           _analyseTotal   = total;
           _analyseMessage = msg;
         });
+        }
       },
       predictionsUtilisateur: predictionsJson,
     );
@@ -754,30 +758,30 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
       // Construire le préfixe de rattrapage si des jours ont été traités
       final prefixRattrapage = resumeRattrapage.isNotEmpty
-          ? '📅 Rattrapage jours précédents :\n' + resumeRattrapage.map((l) => '  $l').join('\n') + '\n\n📊 Aujourd\'hui :\n'
+          ? '📅 Rattrapage jours précédents :\n${resumeRattrapage.map((l) => '  $l').join('\n')}\n\n📊 Aujourd\'hui :\n'
           : '';
 
       if (!resultat.succes) {
-        msg   = '${prefixRattrapage}❌ ${resultat.messageErreur}';
+        msg   = '$prefixRattrapage❌ ${resultat.messageErreur}';
         color = const Color(0xFF7F1919);
       } else if (resultat.nbNouveauxResultats > 0) {
-        msg   = '${prefixRattrapage}✅ ${resultat.nbNouveauxResultats} résultats comparés · '
+        msg   = '$prefixRattrapage✅ ${resultat.nbNouveauxResultats} résultats comparés · '
                 '${resultat.nbCoursesAnalysees} courses traitées · '
                 '${resultat.nbCoursesFutures} futures ignorées';
         color = const Color(0xFF1B5E20);
       } else if (resultat.nbSansResultat > 0) {
-        msg   = '${prefixRattrapage}⏳ ${resultat.nbSansResultat} course(s) passées, résultats PMU pas encore publiés — réessayez après 20h';
+        msg   = '$prefixRattrapage⏳ ${resultat.nbSansResultat} course(s) passées, résultats PMU pas encore publiés — réessayez après 20h';
         color = const Color(0xFF5D4037);
       } else if (resultat.nbCoursesAnalysees > 0) {
         final dateRef = resultat.dateAnalysee ?? _dateAnalyse;
         final label   = '${dateRef.day.toString().padLeft(2, "0")}/${dateRef.month.toString().padLeft(2, "0")}';
-        msg   = '${prefixRattrapage}✅ ${resultat.nbCoursesAnalysees} courses du $label déjà traitées — IA à jour (mise à jour n°${resultat.nbMisesAJour})';
+        msg   = '$prefixRattrapage✅ ${resultat.nbCoursesAnalysees} courses du $label déjà traitées — IA à jour (mise à jour n°${resultat.nbMisesAJour})';
         color = const Color(0xFF1B5E20);
       } else if (resultat.nbCoursesFutures > 0) {
-        msg   = '${prefixRattrapage}ℹ️ ${resultat.nbCoursesFutures} courses encore à venir — réessayez ce soir après les courses';
+        msg   = '$prefixRattrapageℹ️ ${resultat.nbCoursesFutures} courses encore à venir — réessayez ce soir après les courses';
         color = const Color(0xFF1A237E);
       } else {
-        msg   = '${prefixRattrapage}ℹ️ Aucune course trouvée — ouvrez l\'onglet Programme pour charger les pronostics';
+        msg   = '$prefixRattrapageℹ️ Aucune course trouvée — ouvrez l\'onglet Programme pour charger les pronostics';
         color = const Color(0xFF1A237E);
       }
 
@@ -861,10 +865,12 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       IaBadgesService.instance.onNouveauBadge = (badge) {
         if (mounted) {
           Future.delayed(const Duration(seconds: 4), () {
-            if (mounted) IaBubbleOverlayState.afficher(
+            if (mounted) {
+              IaBubbleOverlayState.afficher(
               '🏆 Badge débloqué : ${badge.emoji} ${badge.titre} !\n${badge.description}',
               type: 'badge',
             );
+            }
           });
         }
       };
@@ -880,11 +886,13 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
         final emoji = bilanHebdo.tauxGagnant >= 40 ? '🔥'
             : bilanHebdo.tauxGagnant >= 28 ? '📊' : '📉';
         Future.delayed(const Duration(seconds: 7), () {
-          if (mounted) IaBubbleOverlayState.afficher(
+          if (mounted) {
+            IaBubbleOverlayState.afficher(
             '$emoji Bilan de la semaine — $taux% de réussite sur $nb courses.$disc\n'
             'Consulte le journal pour tous les détails.',
             type: 'hebdo',
           );
+          }
         });
       }
 
@@ -3527,8 +3535,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     if (resolu && bonConseil) {
       if (typePari == 'Tiercé' || typePari == 'Quarté+' || typePari == 'Quinté+') {
         final estOrdre = _verifierOrdreLocal(pr, typePari);
-        if (estOrdre == true)       ordreLabel = '🎯 ORDRE';
-        else if (estOrdre == false) ordreLabel = '🔀 DÉSORDRE';
+        if (estOrdre == true) {
+          ordreLabel = '🎯 ORDRE';
+        } else if (estOrdre == false) {
+          ordreLabel = '🔀 DÉSORDRE';
+        }
       }
     }
 
@@ -4741,9 +4752,14 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
       final dateStr  = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
 
       final String quand;
-      if (diff == 0)       quand = 'Aujourd\'hui à $heureStr';
-      else if (diff == 1)  quand = 'Hier ($dateStr) à $heureStr';
-      else                 quand = 'Le $dateStr à $heureStr';
+      if (diff == 0) {
+        quand = 'Aujourd\'hui à $heureStr';
+      } else if (diff == 1) {
+        quand = 'Hier ($dateStr) à $heureStr';
+      }
+      else {
+        quand = 'Le $dateStr à $heureStr';
+      }
 
       contenu     = quand;
       couleurBord = const Color(0xFF4CAF7D).withValues(alpha: 0.55);

@@ -661,11 +661,12 @@ class BackupService {
     if (v is int) return {'type': 'int', 'value': v};
     if (v is double) return {'type': 'double', 'value': v};
     if (v is bool) return {'type': 'bool', 'value': v};
-    if (v is List)
+    if (v is List) {
       return {
         'type': 'StringList',
         'value': List<String>.from(v.map((e) => e.toString()))
       };
+    }
     return null;
   }
 
@@ -1500,8 +1501,9 @@ class BackupService {
         final list = prefs.getStringList('user_predictions_v2') ?? [];
         nbParisCount = list.length;
       } catch (_) {}
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[Backup] Paris restaures : $nbParisCount paris');
+      }
 
       // 🔔 Alertes
       final nbAlertesCles = await _restaurerGroupe(
@@ -1513,9 +1515,10 @@ class BackupService {
         final list = prefs.getStringList('alert_history_v1') ?? [];
         nbAlertesCount = list.length;
       } catch (_) {}
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint(
             '[Backup] Alertes restaurees : $nbAlertesCount alertes ($nbAlertesCles cles)');
+      }
 
       // 👤 Profil
       final nbProfil = await _restaurerGroupe(
@@ -1622,8 +1625,9 @@ class BackupService {
         final nbCote = await _restaurerGroupe(
             prefs, data['cote'] as Map<String, dynamic>?);
         total += nbCote;
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Backup] CoteTracker restaure : $nbCote cles');
+        }
       }
 
       // ── 🧪 LABO IA ★ v10.35 ──────────────────────────────────────────────
@@ -1641,8 +1645,9 @@ class BackupService {
         final nbAudit = await _restaurerGroupe(
             prefs, data['auditCache'] as Map<String, dynamic>?);
         total += nbAudit;
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Backup] AuditCache restaure : $nbAudit cles');
+        }
       }
 
       // ── ⚠️ GROS PARIS ★ v10.72 ───────────────────────────────────────────
@@ -1675,8 +1680,9 @@ class BackupService {
         }
       } catch (e) {
         // Clé corrompue : reset uniquement cette clé, ne jamais bloquer la restauration
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Backup] GrosParis restauration partielle (reset) : $e');
+        }
         try {
           await QuasiGrosParisService.instance
               .importerDepuisBackup({'signaux': [], 'quasiGagnants': []});
@@ -1701,8 +1707,9 @@ class BackupService {
             }
           }
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[Backup] REP restauration partielle : $e');
+          }
         }
       } else {
         if (kDebugMode) {
@@ -1736,8 +1743,9 @@ class BackupService {
             debugPrint('[Backup] archiveIA mal typée → local préservé');
           }
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[Backup] ARC restauration partielle : $e');
+          }
         }
       } else if (kDebugMode) {
         debugPrint('[Backup] archiveIA absent → archive locale préservée '
@@ -1777,8 +1785,9 @@ class BackupService {
                 '[Backup] arriveesOfficielles mal typée → local préservé');
           }
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[Backup] ARR restauration partielle : $e');
+          }
         }
       } else if (kDebugMode) {
         debugPrint('[Backup] arriveesOfficielles absent → stockage local '
@@ -1815,8 +1824,9 @@ class BackupService {
                 '[Backup] resultatsOfficielsPmu mal typée → local préservé');
           }
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[Backup] ROP restauration partielle : $e');
+          }
         }
       } else if (kDebugMode) {
         debugPrint('[Backup] resultatsOfficielsPmu absent → stockage local '
@@ -1892,14 +1902,16 @@ class BackupService {
       // ★ v10.26c — Recharger la RAM IaMemoryService depuis les SharedPreferences restaurées
       // Indispensable si la restauration est appelée hors UI (appel direct au service)
       await IaMemoryService.instance.recharger();
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint(
             '[Backup] IaMemoryService rechargé depuis SharedPreferences');
+      }
 
       // ★ v10.26d — Recharger AlertService (alertes, courses suivies, anti-doublons)
       await AlertService.instance.recharger();
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[Backup] AlertService rechargé depuis SharedPreferences');
+      }
 
       return ImportResult(
         succes: true,
@@ -2465,8 +2477,9 @@ class ExportResult {
 
   String get tailleLisible {
     if (tailleOctets < 1024) return '$tailleOctets o';
-    if (tailleOctets < 1024 * 1024)
+    if (tailleOctets < 1024 * 1024) {
       return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
+    }
     return '${(tailleOctets / (1024 * 1024)).toStringAsFixed(1)} Mo';
   }
 }
@@ -2619,8 +2632,9 @@ class BackupInfo {
 
   String get tailleLisible {
     if (tailleOctets < 1024) return '$tailleOctets o';
-    if (tailleOctets < 1024 * 1024)
+    if (tailleOctets < 1024 * 1024) {
       return '${(tailleOctets / 1024).toStringAsFixed(1)} Ko';
+    }
     return '${(tailleOctets / (1024 * 1024)).toStringAsFixed(1)} Mo';
   }
 

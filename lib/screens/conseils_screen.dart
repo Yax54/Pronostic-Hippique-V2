@@ -966,8 +966,11 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
                             final sel = tmpTypes.contains(label);
                             return GestureDetector(
                               onTap: () => setModal(() {
-                                if (sel) tmpTypes.remove(label);
-                                else tmpTypes.add(label);
+                                if (sel) {
+                                  tmpTypes.remove(label);
+                                } else {
+                                  tmpTypes.add(label);
+                                }
                               }),
                               child: _chip(label: '$icon $label', color: color, selected: sel),
                             );
@@ -1060,8 +1063,11 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
                                   final sel = tmpHipps.contains(h);
                                   return GestureDetector(
                                     onTap: () => setModal(() {
-                                      if (sel) tmpHipps.remove(h);
-                                      else tmpHipps.add(h);
+                                      if (sel) {
+                                        tmpHipps.remove(h);
+                                      } else {
+                                        tmpHipps.add(h);
+                                      }
                                     }),
                                     child: _chip(label: h, color: const Color(0xFF4CAF7D), selected: sel),
                                   );
@@ -1080,8 +1086,11 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
                                   final sel = tmpDiscs.contains(d);
                                   return GestureDetector(
                                     onTap: () => setModal(() {
-                                      if (sel) tmpDiscs.remove(d);
-                                      else tmpDiscs.add(d);
+                                      if (sel) {
+                                        tmpDiscs.remove(d);
+                                      } else {
+                                        tmpDiscs.add(d);
+                                      }
                                     }),
                                     child: _chip(label: d, color: const Color(0xFF7C4DFF), selected: sel),
                                   );
@@ -1118,9 +1127,9 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
                         child: ElevatedButton(
                           onPressed: () {
                             setState(() {
-                              _selectedTypesParis  ..clear(); _selectedTypesParis  ..addAll(tmpTypes);
-                              _selectedHippodromes ..clear(); _selectedHippodromes ..addAll(tmpHipps);
-                              _selectedDisciplines ..clear(); _selectedDisciplines ..addAll(tmpDiscs);
+                              _selectedTypesParis  .clear(); _selectedTypesParis  .addAll(tmpTypes);
+                              _selectedHippodromes .clear(); _selectedHippodromes .addAll(tmpHipps);
+                              _selectedDisciplines .clear(); _selectedDisciplines .addAll(tmpDiscs);
                               _confianceMin = tmpConf;
                               _confianceCtrl.text = tmpConf == 0 ? '0' : '$tmpConf';
                             });

@@ -946,9 +946,14 @@ class QuasiGrosParisService {
       final typePari   = p.typePariConseille ?? '';
 
       TypeGrosPari? type;
-      if (typePari.contains('Quinté'))      type = TypeGrosPari.quinte;
-      else if (typePari.contains('Quarté')) type = TypeGrosPari.quarte;
-      else if (typePari.contains('Tiercé')) type = TypeGrosPari.tierce;
+      if (typePari.contains('Quinté')) {
+        type = TypeGrosPari.quinte;
+      } else if (typePari.contains('Quarté')) {
+        type = TypeGrosPari.quarte;
+      }
+      else if (typePari.contains('Tiercé')) {
+        type = TypeGrosPari.tierce;
+      }
       if (type == null) continue;
 
       // Numéros IA : top N selon scoresIA
@@ -1011,7 +1016,9 @@ class QuasiGrosParisService {
       // Filtre : période explicite prioritaire, sinon année/mois, sinon tout
       if (periode != null) {
         if (signal.dateCourse.isBefore(periode.start) ||
-            signal.dateCourse.isAfter(periode.end)) continue;
+            signal.dateCourse.isAfter(periode.end)) {
+          continue;
+        }
       } else if (annee != null && mois != null) {
         if (signal.dateCourse.year  != annee) continue;
         if (signal.dateCourse.month != mois)  continue;

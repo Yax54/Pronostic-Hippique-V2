@@ -660,10 +660,17 @@ class _FormeChartPainter extends CustomPainter {
       final s   = positions[n - 1 - i];
       final pos = s.penalite ? 12 : s.position;
       final Color c;
-      if (s.penalite)   c = const Color(0xFFEF5350);
-      else if (pos <= 3) c = const Color(0xFF4CAF7D);
-      else if (pos <= 6) c = const Color(0xFFFFD700);
-      else               c = Colors.white38;
+      if (s.penalite) {
+        c = const Color(0xFFEF5350);
+      } else if (pos <= 3) {
+        c = const Color(0xFF4CAF7D);
+      }
+      else if (pos <= 6) {
+        c = const Color(0xFFFFD700);
+      }
+      else {
+        c = Colors.white38;
+      }
 
       // Point dernier = plus grand
       final isLast = i == pts.length - 1;
@@ -1023,10 +1030,11 @@ class _InfosTab extends StatelessWidget {
 
   String _formatGains(int g) {
     if (g <= 0) return 'Non renseigné';
-    if (g >= 1000000)
+    if (g >= 1000000) {
       return '${(g / 1000000).toStringAsFixed(1)} M€';
+    }
     if (g >= 1000) return '${(g / 1000).toStringAsFixed(0)} k€';
-    return '${g} €';
+    return '$g €';
   }
 }
 

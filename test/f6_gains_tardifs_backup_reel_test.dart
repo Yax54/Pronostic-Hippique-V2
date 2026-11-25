@@ -52,7 +52,6 @@ import 'package:pronostic_hippique/services/detection_gains_tardifs.dart';
 import 'package:pronostic_hippique/services/gains_tardifs_en_attente.dart';
 import 'package:pronostic_hippique/services/gains_tardifs_notifies_store.dart';
 import 'package:pronostic_hippique/services/gains_tardifs_regles.dart';
-import 'package:pronostic_hippique/services/service_gains_tardifs.dart';
 
 const String _cleTickets = 'user_predictions_v2';
 const String _cleAlertes = 'alert_history_v1';
@@ -422,7 +421,7 @@ void main() {
       expect(etat, isNotNull,
           reason: 'sans backoff, une restauration provoquerait une rafale de '
               'requêtes');
-      expect(etat!.tentatives, 3);
+      expect(etat.tentatives, 3);
       expect(etat.dernierEssai, date);
       expect(etat.derniereClassification,
           ClassificationCourseTardive.rapportsAbsents);

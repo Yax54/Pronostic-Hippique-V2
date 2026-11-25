@@ -613,14 +613,6 @@ void main() {
     ];
 
     test('chaque bloc qui recopie codePmuOfficiel recopie les sept champs', () {
-      final fichiers = <String>[
-        'lib/services/alert_service.dart',
-        'lib/models/pmu_models.dart',
-        'lib/widgets/profile/profile_historique_tab.dart',
-        'lib/screens/mes_paris_screen.dart',
-        'lib/widgets/bet_bottom_sheet.dart',
-      ];
-
       // LISTE NOMINATIVE DES RECONSTRUCTIONS — pas d'heuristique.
       //
       // Trois tentatives successives de détection automatique ont été FAUSSES
@@ -636,13 +628,34 @@ void main() {
       //   4. alert_service.dart — fromJson            (j['xxx'])
       //   5. profile_historique_tab.dart — _partagerPrediction (pred.xxx)
       //
-      // Les 4 autres sites (`mes_paris_screen.dart:3083`,
-      // `bet_bottom_sheet.dart:3075`, constructeur, et `fromJson` de
-      // pmu_models.dart) sont des CRÉATIONS : ils font naître un ticket neuf
-      // et ne peuvent donc rien perdre.
+      // ★ CORRECTION BLOC 1 (qualité) — CE TEST ANNONÇAIT UNE PROTECTION QU'IL
+      //   N'EXÉCUTAIT PAS.
       //
-      // Chaque entrée est contrôlée en deux temps : (a) sa méthode existe,
-      // (b) le bloc de construction de CETTE méthode porte les sept champs.
+      //   Le bloc `if (debutMethode < 0)` est un CONTINUE : un site dont la
+      //   méthode avait été renommée était compté « manquant » puis IGNORÉ,
+      //   et la boucle passait au suivant. La garde ne protégeait donc pas
+      //   réellement les cinq reconstructions. Le défaut est masqué aujourd'hui
+      //   parce que `expect(manquants, isEmpty)` échoue sur toute méthode
+      //   introuvable — la protection tient, mais par un chemin fragile et
+      //   involontaire. Elle est maintenant EXPLICITE ci-dessous (P2).
+      //
+      //   Le commentaire annonçait aussi un contrôle « en sens inverse » des
+      //   4 créations (« aucune ne doit porter ces champs ») qui n'existait
+      //   NULLE PART, et il citait des lignes (`mes_paris_screen.dart:3083`,
+      //   `bet_bottom_sheet.dart:3075`) qui ne correspondent plus à rien dans
+      //   les fichiers actuels (respectivement 3 947 et 3 398 lignes).
+      //
+      //   Mesure réelle des 8 sites de construction (2026, BLOC 1) :
+      //     • reconstructions (doivent recopier les 8) : ajouterSuivi,
+      //       withResultat, withDividende, fromJson, _partagerPrediction,
+      //       enregistreur_verdict_gain_pmu.enregistrerVerdictGain
+      //     • créations (ne peuvent rien perdre) : mes_paris_screen:3877,
+      //       bet_bottom_sheet:3226
+      //   Les deux créations ÉCRIVENT bien `codePmuOfficiel` (mesuré :
+      //   `null` pour l'une, `_codePmuDuTypeChoisi` pour l'autre) : la détection
+      //   par simple présence de ce champ les aurait prises pour des
+      //   reconstructions — d'où la liste nominative, qui reste la seule
+      //   méthode fiable ici.
       final reconstructions = <List<String>>[
         ['lib/services/alert_service.dart', 'Future<void> ajouterSuivi('],
         ['lib/services/alert_service.dart', 'TrackedCourse withResultat({'],
@@ -654,6 +667,10 @@ void main() {
         [
           'lib/widgets/profile/profile_historique_tab.dart',
           'void _partagerPrediction(BuildContext context, UserPrediction pred)'
+        ],
+        [
+          'lib/services/enregistreur_verdict_gain_suivi.dart',
+          'TrackedCourse copyWith({'
         ],
       ];
 
@@ -684,13 +701,30 @@ void main() {
         }
       }
 
-      // Les 4 créations sont controlées en sens inverse : aucune ne doit
-      // porter ces champs, sinon c'est qu'une valeur de gain a été inventée
-      // pour un ticket neuf.
+      // ★ P2 — LA PROTECTION EST MAINTENANT EXPLICITE.
+      //
+      // Chacune des six reconstructions doit avoir été TROUVÉE : sans ce
+      // contrôle, une signature renommée produirait un « manquant » puis
+      // l'ignorerait si l'assertion finale venait à être modifiée. On sépare
+      // donc « site introuvable » de « champ manquant », et on exige zéro des
+      // deux — y compris si `champsGain` devenait vide un jour.
+      final introuvables =
+          manquants.where((m) => m.contains('introuvable')).toList();
+      expect(introuvables, isEmpty,
+          reason: 'sites de reconstruction non localisés : '
+              '${introuvables.join(" | ")}');
+      expect(reconstructions.length, 6,
+          reason: 'la liste nominative doit couvrir les 6 reconstructions '
+              'mesurées ; toute modification est une décision explicite');
+      expect(champsGain.length, 7,
+          reason: 'les SEPTIEME champs de gain mesurés — la liste du groupe '
+              's\'appelle « les sept champs », une valeur différente signalerait '
+              'un élargissement non documenté');
       expect(manquants, isEmpty, reason: manquants.join(' | '));
     });
 
-    test('ajouterSuivi propage bien les sept champs (preuve ciblée)', () {
+    test(
+        'ajouterSuivi propage bien les sept champs (preuve ciblée)', () {
       final src = File('lib/services/alert_service.dart').readAsStringSync();
       final i = src.indexOf('Future<void> ajouterSuivi(');
       expect(i, greaterThan(0), reason: 'ajouterSuivi introuvable');

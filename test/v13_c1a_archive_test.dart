@@ -133,13 +133,6 @@ String _dateDuJour() {
       '${n.year}';
 }
 
-String _dateRelative(int jours) {
-  final d = DateTime.now().subtract(Duration(days: jours));
-  return '${d.day.toString().padLeft(2, '0')}'
-      '${d.month.toString().padLeft(2, '0')}'
-      '${d.year}';
-}
-
 String _courseKey(int r, int c, [String? date]) =>
     'R${r}C${c}_${date ?? _dateDuJour()}';
 
@@ -1007,7 +1000,7 @@ void main() {
     });
 
     test('S-3 — le motif troncature couvre la tranche excédentaire de _save', () async {
-      final store = _installerStoreFautif();
+      _installerStoreFautif();
       await IaArchiveService.instance.viderPourTest();
       await _resetIaMemory();
 

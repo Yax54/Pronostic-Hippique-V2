@@ -78,7 +78,7 @@ void main() {
         final cle = combinaison.isEmpty
             ? '<COMBINAISON VIDE>'
             : varianteDepuisLibelle(libelle) == VarianteRapport.illisible
-                ? '<LIBELLE "${libelle}">'
+                ? '<LIBELLE "$libelle">'
                 : '<CODE>';
         libellesRejetes[cle] = (libellesRejetes[cle] ?? 0) + 1;
         final code =

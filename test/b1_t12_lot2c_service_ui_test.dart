@@ -16,30 +16,20 @@
 //  utilisé comme preuve.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
 
-import 'package:pronostic_hippique/main.dart' show NavigationNotifier;
 import 'package:pronostic_hippique/models/decision_gain_pmu.dart';
 import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/providers/pmu_provider.dart';
-import 'package:pronostic_hippique/screens/mes_paris_screen.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';
-import 'package:pronostic_hippique/services/data_refresh_service.dart';
 import 'package:pronostic_hippique/services/gain_durable_vue.dart';
 import 'package:pronostic_hippique/services/gain_pmu_types.dart' show EtatGain;
-import 'package:pronostic_hippique/services/ia_badges_service.dart';
-import 'package:pronostic_hippique/services/ia_memory_service.dart';
-import 'package:pronostic_hippique/services/ia_personality_service.dart';
-import 'package:pronostic_hippique/services/ia_user_prefs_service.dart';
 import 'package:pronostic_hippique/services/resultat_ecriture_gain.dart';
 
 /// ───────────────────────────────────────────────────────────────────────────
@@ -690,31 +680,6 @@ void main() {
   //  FAMILLE I — INTÉGRATION ÉCRAN (widget)
   // ═══════════════════════════════════════════════════════════════════════
   group('I — carte réelle : le libellé vient du durable', () {
-    Future<void> monter(WidgetTester tester, PmuProvider pmu) async {
-      tester.view.devicePixelRatio = 1.0;
-      tester.view.physicalSize = const Size(520, 1700);
-      addTearDown(tester.view.reset);
-
-      await tester.pumpWidget(MultiProvider(
-        providers: [
-          ChangeNotifierProvider<PmuProvider>.value(value: pmu),
-          ChangeNotifierProvider<NavigationNotifier>(
-              create: (_) => NavigationNotifier()),
-          ChangeNotifierProvider.value(value: DataRefreshService.instance),
-          ChangeNotifierProvider.value(value: AlertService.instance),
-          ChangeNotifierProvider.value(value: IaPersonalityService.instance),
-          ChangeNotifierProvider.value(value: IaUserPrefsService.instance),
-          ChangeNotifierProvider.value(value: IaBadgesService.instance),
-          ChangeNotifierProvider.value(value: IaMemoryService.instance),
-        ],
-        child: const MaterialApp(home: MesPariScreen(initialTab: 1)),
-      ));
-
-      for (var i = 0; i < 40; i++) {
-        await tester.pump(const Duration(milliseconds: 20));
-      }
-    }
-
     // ── NOTE DE PÉRIMÈTRE, mesurée et non contournée ───────────────────
     //  I1/I2 ont été RETIRÉS. Ils prétendaient prouver le libellé de gain
     //  rendu par la carte. Or le RENDU du badge est gouverné par une porte

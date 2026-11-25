@@ -11,7 +11,6 @@
 //  accès réel, et le délai est simulé.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';

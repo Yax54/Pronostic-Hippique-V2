@@ -411,8 +411,11 @@ class IaMemoryService extends ChangeNotifier {
       entry.nbTotalAll += 1;
       if (r.gagnant) {
         entry.nbBonsAll += 1;
-        if (r.ordreExact) entry.nbOrdreAll += 1;
-        else              entry.nbDesordreAll += 1;
+        if (r.ordreExact) {
+          entry.nbOrdreAll += 1;
+        } else {
+          entry.nbDesordreAll += 1;
+        }
       }
 
       // Injecter dans les compteurs fenêtre 60j si la course est dans les 60j
@@ -421,8 +424,11 @@ class IaMemoryService extends ChangeNotifier {
         entry.nbTotal += 1;
         if (r.gagnant) {
           entry.nbBons += 1;
-          if (r.ordreExact) entry.nbOrdre += 1;
-          else              entry.nbDesordre += 1;
+          if (r.ordreExact) {
+            entry.nbOrdre += 1;
+          } else {
+            entry.nbDesordre += 1;
+          }
         }
       }
     }
@@ -3433,9 +3439,14 @@ class IaMemoryService extends ChangeNotifier {
         : 1.0; // peloton ≤7 : pas de bonus
 
     double scorePerfRaw = 0;
-    if (rangFavori == 1)                       scorePerfRaw += 40;
-    else if (rangFavori != null && rangFavori <= 3) scorePerfRaw += 20;
-    else if (rangFavori != null && rangFavori <= 5) scorePerfRaw += 10;
+    if (rangFavori == 1) {
+      scorePerfRaw += 40;
+    } else if (rangFavori != null && rangFavori <= 3) {
+      scorePerfRaw += 20;
+    }
+    else if (rangFavori != null && rangFavori <= 5) {
+      scorePerfRaw += 10;
+    }
     scorePerfRaw += nbTop3 * 15.0;
     scorePerfRaw += nbTop5 * 5.0;
     final scorePerf = (scorePerfRaw * bonusPeloton).clamp(0.0, 100.0);
@@ -3705,9 +3716,9 @@ class IaMemoryService extends ChangeNotifier {
       if (rangFavori == 1) {
         buf.writeln('✅ Favori IA $favoriNom → 1er ');
       } else if (rangFavori != null && rangFavori <= 3) {
-        buf.writeln('🟡 Favori IA $favoriNom → ${rangFavori}ème (placé)');
+        buf.writeln('🟡 Favori IA $favoriNom → $rangFavorième (placé)');
       } else if (rangFavori != null && rangFavori <= 5) {
-        buf.writeln('🟠 Favori IA $favoriNom → ${rangFavori}ème (hors podium)');
+        buf.writeln('🟠 Favori IA $favoriNom → $rangFavorième (hors podium)');
       } else {
         buf.writeln('❌ Favori IA $favoriNom → absent du top 5');
       }
@@ -3767,16 +3778,20 @@ class IaMemoryService extends ChangeNotifier {
     final moisKey = '${now.year}-${now.month}';
     final nbAtypiquesMonth = _poids.dernierGradient['atypiques_$moisKey']?.toInt() ?? 0;
     if (nbAtypiquesMonth >= 2) {
-      if (kDebugMode) debugPrint(
+      if (kDebugMode) {
+        debugPrint(
           '[Atypique] Quota mois atteint ($nbAtypiquesMonth/2) — gradient normal');
+      }
       return 1.0;
     }
 
     // Journée atypique confirmée — log + incrément compteur
     final pct = (tauxEchec * 100).toStringAsFixed(0);
-    if (kDebugMode) debugPrint(
+    if (kDebugMode) {
+      debugPrint(
         '[Atypique] ⚠️ Journée aberrante détectée : $pct% d\'échecs '
         'sur ${resolus.length} courses — gradient ×0.3');
+    }
 
     // Enregistrer dans le compteur mensuel via dernierGradient (réutilisation de la map)
     _poids.dernierGradient['atypiques_$moisKey'] = (nbAtypiquesMonth + 1).toDouble();
@@ -3812,9 +3827,11 @@ class IaMemoryService extends ChangeNotifier {
     final nbAvecResultat = avecResultat.length;
 
     if (avecScores.length < 3 || nbAvecResultat < 10) {
-      if (kDebugMode) debugPrint(
+      if (kDebugMode) {
+        debugPrint(
         '[IA Gradient] Poids figés — données insuffisantes ($nbAvecResultat/10 courses). '
         'Apprentissage par règles de base uniquement.');
+      }
       await _apprendreReglesBase(avecResultat.take(50).toList());
       return;
     }
@@ -3842,8 +3859,10 @@ class IaMemoryService extends ChangeNotifier {
     final double stabilisationFactor;
     if (nbAvecResultat < 30) {
       stabilisationFactor = 0.3;
-      if (kDebugMode) debugPrint(
+      if (kDebugMode) {
+        debugPrint(
         '[IA Gradient] Mode prudent ($nbAvecResultat courses) — lr × 0.3');
+      }
     } else {
       stabilisationFactor = 1.0;
     }
@@ -3987,8 +4006,10 @@ class IaMemoryService extends ChangeNotifier {
         final p2 = _poids.getPoids(c2);
         final aGeler = p1 <= p2 ? c1 : c2;
         criteresGeles.add(aGeler);
-        if (kDebugMode) debugPrint(
+        if (kDebugMode) {
+          debugPrint(
             '[Gel gradient] $aGeler gelé (corrélé avec ${p1 <= p2 ? c2 : c1} à r=${r.toStringAsFixed(2)})');
+        }
       }
     }
 
@@ -4110,15 +4131,19 @@ class IaMemoryService extends ChangeNotifier {
     final nbDisc = parDisc.length;
 
     if (nbDisc < 5) {
-      if (kDebugMode) debugPrint(
+      if (kDebugMode) {
+        debugPrint(
         '[IA Discipline] Poids figés $discNorm — données insuffisantes ($nbDisc/5 courses)');
+      }
       return;
     }
 
     // Facteur de stabilisation discipline (analogue au gradient global)
     final double stabilisationFactorDisc = nbDisc < 15 ? 0.3 : 1.0;
-    if (nbDisc < 15 && kDebugMode) debugPrint(
+    if (nbDisc < 15 && kDebugMode) {
+      debugPrint(
       '[IA Discipline] Mode prudent $discNorm ($nbDisc courses) — lr × 0.3');
+    }
 
     // ★ v5.0 : 10 critères complets pour l'apprentissage par discipline
     const criteres = ['forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline', 'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo', 'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart']; // ★ v9.93 : 19 critères complets
@@ -5011,9 +5036,14 @@ class IaMemoryService extends ChangeNotifier {
               final nbTop5 = top5IA.intersection(top5R).length;
 
               double perf = 0;
-              if (rangFav == 1)                         perf += 40;
-              else if (rangFav != null && rangFav <= 3) perf += 20;
-              else if (rangFav != null && rangFav <= 5) perf += 10;
+              if (rangFav == 1) {
+                perf += 40;
+              } else if (rangFav != null && rangFav <= 3) {
+                perf += 20;
+              }
+              else if (rangFav != null && rangFav <= 5) {
+                perf += 10;
+              }
               perf += nbTop3 * 15.0 + nbTop5 * 5.0;
 
               // ★ v82 : recalculer precisionIA synthèse 3 indices avec les poids courants
@@ -5510,10 +5540,17 @@ class IaMemoryService extends ChangeNotifier {
       final diff  = apres - avant;
       final sign  = diff >= 0 ? '+' : '';
       String emoji;
-      if (val > 0.10)       emoji = '🟢';
-      else if (val > 0.05)  emoji = '✅';
-      else if (val < -0.10) emoji = '🔴';
-      else                  emoji = '⚪';
+      if (val > 0.10) {
+        emoji = '🟢';
+      } else if (val > 0.05) {
+        emoji = '✅';
+      }
+      else if (val < -0.10) {
+        emoji = '🔴';
+      }
+      else {
+        emoji = '⚪';
+      }
       lines.add('$emoji $label : ${(val * 100).toStringAsFixed(1)}% ($sign${(diff * 100).toStringAsFixed(1)}%)');
     }
     return lines;
@@ -5539,7 +5576,11 @@ class IaMemoryService extends ChangeNotifier {
       if (_statsTypes.containsKey(type)) {
         final s = _statsTypes[type]!;
         s.nbJoues++;
-        if (isCorrect) s.nbGagnes++; else s.nbPerdus++;
+        if (isCorrect) {
+          s.nbGagnes++;
+        } else {
+          s.nbPerdus++;
+        }
         s.gainNet += gainNet;
       } else {
         _statsTypes[type] = StatsTypePari(
@@ -6693,10 +6734,10 @@ class IaMemoryService extends ChangeNotifier {
     final isOrdre = typeLower.contains('ordre') && !isDesordre;
 
     if (typeLower.contains('simple gagnant')) {
-      return nums.length >= 1 && arrivee.length >= 1 && nums.first == arrivee.first;
+      return nums.isNotEmpty && arrivee.isNotEmpty && nums.first == arrivee.first;
     }
     if (typeLower.contains('simple placé') || typeLower.contains('simple place')) {
-      return nums.length >= 1 && arrivee.take(3).contains(nums.first);
+      return nums.isNotEmpty && arrivee.take(3).contains(nums.first);
     }
     if (typeLower.contains('couplé gagnant') || typeLower.contains('couple gagnant')) {
       if (nums.length < 2 || arrivee.length < 2) return false;
