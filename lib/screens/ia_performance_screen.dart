@@ -2077,9 +2077,17 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   onPressed: () async {
+                    // ⚠️ Capturé AVANT tout `await` : le `BuildContext` de la
+                    //    méthode `build` reste le même objet, mais le vérifier
+                    //    après deux attentes (dialogue puis purge Firestore)
+                    //    est précisément ce que la règle exige. On garde aussi
+                    //    le messenger, qui doit être obtenu tant que le
+                    //    contexte est monté.
+                    final ctx = context;
+                    final messenger = ScaffoldMessenger.of(ctx);
                     // Confirmation avant purge
                     final confirme = await showDialog<bool>(
-                      context: context,
+                      context: ctx,
                       builder: (_) => AlertDialog(
                         backgroundColor: const Color(0xFF111F30),
                         shape: RoundedRectangleBorder(
@@ -2115,8 +2123,8 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
 
                     final mem = IaMemoryService.instance;
                     final nb  = await mem.purgerCoursesSansResultat();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                    if (ctx.mounted) {
+                      messenger.showSnackBar(
                         SnackBar(
                           content: Text(nb > 0
                               ? '🗑️ $nb pronostic(s) sans résultat supprimé(s)'

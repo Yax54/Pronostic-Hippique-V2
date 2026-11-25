@@ -895,8 +895,12 @@ class _IaTabBacktestingState extends State<IaTabBacktesting> {
       await WidgetsBinding.instance.endOfFrame;
 
       final ctx = _backtestingExportKey.currentContext;
-      if (ctx == null) {
-        if (kDebugMode) debugPrint('[Export] Context null — annulation');
+      // ⚠️ Deux `await` viennent de s'écouler (fin de frame comprise) : le
+      //    contexte lu APRÈS ces attentes peut avoir été démonté entre-temps.
+      //    On vérifie donc `ctx.mounted` — et non un `mounted` de widget, qui
+      //    ne dirait rien de CE contexte-ci.
+      if (ctx == null || !ctx.mounted) {
+        if (kDebugMode) debugPrint('[Export] Context null ou démonté — annulation');
         return;
       }
 

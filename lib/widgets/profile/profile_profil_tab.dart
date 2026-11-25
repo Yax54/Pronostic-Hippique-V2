@@ -286,7 +286,7 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
       backgroundColor: const Color(0xFF0D1B2A),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
+      builder: (feuille) => Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -303,8 +303,15 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
                 return GestureDetector(
                   onTap: () async {
                     await ia.setAvatar(avatar.id);
-                    if (mounted) setState(() {});
-                    if (context.mounted) Navigator.pop(context);
+                    // ⚠️ `context` ici est le contexte EXTÉRIEUR de
+                    //    `_choisirAvatar`, pas celui de la feuille modale :
+                    //    un `context.mounted` porterait donc sur le mauvais
+                    //    objet. On ferme la feuille par son propre contexte,
+                    //    capturé à la construction du `builder`.
+                    if (!context.mounted) return;
+                    setState(() {});
+                    if (!feuille.mounted) return;
+                    Navigator.pop(feuille);
                   },
                   child: Container(
                     width: 64, height: 64,

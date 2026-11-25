@@ -34,6 +34,24 @@ dev_dependencies:
   #   nature de l'écriture, sans aucun numéro de ligne.
   #   Dépendance de DÉVELOPPEMENT uniquement : rien n'entre dans l'APK.
   analyzer: ^7.0.0
+  # ★ BLOC 1 (qualité) — FAUX CANAUX DE PLATEFORME UTILISÉS PAR LES TESTS.
+  #   Les tests remplacent le canal `shared_preferences` / `path_provider` par
+  #   un faux en mémoire (store fautif, restauration, sauvegarde). Pour cela
+  #   ils importent DIRECTEMENT les interfaces de plateforme. Ce sont des
+  #   dépendances TRANSITIVES : les importer sans les déclarer est signalé par
+  #   `depend_on_referenced_packages`.
+  #
+  #   Le dépôt contournait cela par `// ignore: depend_on_referenced_packages`
+  #   (123 occurrences dans 60 fichiers de test). La DIRECTIVE impose la voie
+  #   `pubspec` plutôt que le masquage du diagnostic : on déclare donc les
+  #   paquets. Ce sont des dépendances de DÉVELOPPEMENT, jamais embarquées
+  #   dans l'APK.
+  #
+  #   Contraintes volontairement LARGES (`any` → version résolue actuelle
+  #   conservée) : on ne veut AUCUNE montée de version, seulement la
+  #   déclaration. `pubspec.lock` prouve qu'aucune version n'a bougé.
+  shared_preferences_platform_interface: any
+  path_provider_platform_interface: any
 
 flutter:
   uses-material-design: true
