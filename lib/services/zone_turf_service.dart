@@ -915,13 +915,22 @@ class ZoneTurfService {
   // `handicap`, `reclam`/`claim`, `condition`/`listed`/`groupe`/`group`.
   // Avec `''`, les TROIS branches étaient inatteignables par construction.
   //
-  // SOURCE RÉELLE : `categorieParticularite` du JSON PMU. Valeurs mesurées
-  // sur les fixtures du dépôt (224 courses) :
+  // SOURCE RÉELLE : `categorieParticularite` du JSON PMU. Valeurs RE-MESURÉES
+  // par `grep -rho '"categorieParticularite"' test/fixtures/ | sort | uniq -c`
+  // sur l'ENSEMBLE des fixtures du dépôt — 316 occurrences, 24 valeurs
+  // distinctes :
   //   'COURSE_A_CONDITIONS' (80), 'INCONNU' (54), 'HANDICAP' (40),
   //   'AUTOSTART' (39), 'HANDICAP_DIVISE' (17), 'NATIONALE' (16),
-  //   'INTERNATIONALE_AUTOSTART' (7), 'A_RECLAMER' (7),
-  //   'HANDICAP_DE_CATEGORIE' (7), 'HANDICAP_CATEGORIE_DIVISE' (6),
-  //   'GROUPE_III' (5), 'GROUPE_I' (4), …
+  //   'INTERNATIONALE_AUTOSTART' (7), 'HANDICAP_DE_CATEGORIE' (7),
+  //   'A_RECLAMER' (7), 'HANDICAP_CATEGORIE_DIVISE' (6), 'GROUPE_III' (5),
+  //   'EUROPEENNE' (5), 'AMATEURS' (5), 'GROUPE_I' (4),
+  //   'APPRENTIS_LADS_JOCKEYS_AUTOSTART' (4), 'APPRENTIS_LADS_JOCKEYS' (4),
+  //   'AMATEURS_AUTOSTART' (4), 'INTERNATIONALE' (3), 'EUROPEENNE_AUTOSTART' (3),
+  //   'COURSE_A_CONDITION_QUALIF_HP' (2), 'QUALIFICATION_ACCAF' (1),
+  //   'HANDICAP_A_RECLAMER' (1), 'AMATEURS_PRIORITE_AUX_PROPRIETAIRES' (1),
+  //   'AMATEURS_NATIONALE' (1).
+  //   ⚠️ Une version antérieure de ce commentaire annonçait « 224 courses » :
+  //      c'était FAUX (mesure incomplète). Corrigé ici, sans changement de code.
   //
   // ⚠️ `'INCONNU'` EST UNE VALEUR DE SENTINELLE DE L'API, PAS UNE CATÉGORIE.
   //    Elle est convertie en chaîne vide pour que les trois branches du
