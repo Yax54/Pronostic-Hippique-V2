@@ -43,11 +43,28 @@ class _BatchPayload {
   final Map<String, dynamic> poidsJson;
   final Map<String, dynamic> eloJson;
   final Map<String, dynamic> seuilsJson;
+
+  /// ★ CORRECTION BLOC 1 — MOUVEMENTS DE COTES TRANSPORTÉS VERS L'ISOLATE.
+  ///
+  /// DÉFAUT MESURÉ : un isolate a sa PROPRE mémoire. `CoteTrackerService
+  /// .instance` y est une instance neuve dont `_mouvements` est vide, donc
+  /// `scoreCritereR()` rendait toujours `null` et `p.scoreMouvementCote`
+  /// restait à 50.0 dans TOUS les pronostics calculés par `compute()` — le
+  /// critère R (`mouvCote: 0.06`) était neutralisé sur ce chemin, exactement
+  /// comme le critère ELO l'était avant `chargerDepuisMapIsolate`
+  /// (`elo_service.dart:4260`, correctif v10.82 documenté au même endroit).
+  ///
+  /// Ce champ transporte les MOUVEMENTS (entrées : coteDebut, coteCourante,
+  /// variationPct, horodatages), jamais le score calculé — le barème est
+  /// réappliqué dans l'isolate, aucune valeur n'est figée.
+  final Map<String, dynamic> mouvementsCotesJson;
+
   _BatchPayload({
     required this.reunionsJson,
     required this.poidsJson,
     required this.eloJson,
     required this.seuilsJson,
+    this.mouvementsCotesJson = const <String, dynamic>{},
   });
 }
 
@@ -77,6 +94,14 @@ _BatchResult _calculerPronosticsBatch(_BatchPayload payload) {
   // → critère M figé à 37.5 pour tous les chevaux.
   // Lecture seule : aucune formule ELO n'est modifiée.
   EloService.instance.chargerDepuisMapIsolate(payload.eloJson);
+
+  // ★ CORRECTION BLOC 1 — RESTAURER LES MOUVEMENTS DE COTES.
+  //   Sans ceci, `_mouvements` est vide dans l'isolate et le critère R
+  //   (`mouvCote: 0.06`) vaut 50.0 pour TOUS les partants, même dans la
+  //   fenêtre des 30 minutes. Même motif que la restauration ELO ci-dessus.
+  //   Lecture seule du barème : seule la DONNÉE d'entrée est transmise.
+  CoteTrackerService.instance
+      .chargerMouvementsDepuisMapIsolate(payload.mouvementsCotesJson);
 
   final List<Map<String, dynamic>> nouveaux = [];
 
@@ -941,6 +966,15 @@ class DataRefreshService extends ChangeNotifier {
     final seuilsJsonAvantCalcul =
         IaMemoryService.instance.seuilsConfiance.toJson();
 
+    // ★ CORRECTION BLOC 1 — Les MOUVEMENTS DE COTES sont capturés ICI, dans le
+    //   processus principal, où `CoteTrackerService.instance` est le VRAI
+    //   service alimenté par le polling. L'isolate ne peut pas les calculer :
+    //   il n'a ni le réseau, ni les snapshots horodatés, ni l'état du service.
+    //   Capture SYNCHRONE (pas d'`await`) : elle lit l'état courant sans
+    //   risque d'entrelacement, comme les trois exportations ci-dessus.
+    final mouvementsJsonAvantCalcul =
+        CoteTrackerService.instance.exporterMouvementsPourIsolate();
+
     try {
       // ★ Préparer le payload pour l'isolate
       final payload = _BatchPayload(
@@ -950,6 +984,7 @@ class DataRefreshService extends ChangeNotifier {
         poidsJson:   poidsJsonAvantCalcul,
         eloJson:     eloJsonAvantCalcul,
         seuilsJson:  seuilsJsonAvantCalcul,
+        mouvementsCotesJson: mouvementsJsonAvantCalcul,
       );
 
       // ★ Lancer dans un isolate Flutter (ne bloque pas l'UI)

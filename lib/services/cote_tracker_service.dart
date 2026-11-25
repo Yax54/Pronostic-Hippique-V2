@@ -366,6 +366,109 @@ class CoteTrackerService {
     return m.scoreIA;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★ CORRECTION BLOC 1 — LES MOUVEMENTS DOIVENT EXISTER DANS L'ISOLATE
+  //
+  //  DÉFAUT MESURÉ. `data_refresh_service._calculerPronosticsBatch()` tourne
+  //  dans un `compute()` : c'est un ISOLATE SÉPARÉ, avec sa PROPRE mémoire.
+  //  `CoteTrackerService.instance` y est donc une instance NEUVE dont
+  //  `_mouvements` est VIDE. Conséquence : `estDansFenetre()` peut être vrai
+  //  (il ne dépend que de l'heure), mais `scoreCritereR()` rend TOUJOURS
+  //  `null`, donc `p.scoreMouvementCote = 50.0` — le critère R (poids 0.06)
+  //  reste neutralisé sur le chemin de l'isolate, EXACTEMENT comme le critère
+  //  ELO avant la correction v10.82 (`elo_service.dart:4260`
+  //  `chargerDepuisMapIsolate`, documentée au même endroit).
+  //
+  //  C'est le QUATRIÈME maillon de la chaîne du critère R : ancre (BL3-A22),
+  //  consommateur non appelé, producteur qui n'écrit rien, et maintenant
+  //  ABSENCE DE LA DONNÉE DANS L'ISOLATE. Le corriger exige de TRANSPORTER les
+  //  mouvements calculés dans le processus principal vers l'isolate.
+  //
+  //  ⚠️ AUCUNE FORMULE N'EST TOUCHÉE : `MouvementCote.scoreIA`, son barème et
+  //     `mouvCote: 0.06` sont lus tels quels. Seule la DONNÉE devient
+  //     disponible. La sérialisation ci-dessous est purement additive.
+  //
+  //  ⚠️ PORTÉE VOLONTAIREMENT LIMITÉE À LA FENÊTRE ACTIVE : on n'exporte que
+  //     les courses pour lesquelles le suivi est en cours. Les mouvements sont
+  //     de toute façon supprimés au-delà de 6 h par `nettoyerDonneesPerimees`
+  //     et la fenêtre du critère R est de 30 min.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Sérialise les mouvements de cotes courants pour transport inter-isolate.
+  ///
+  /// Format : `{ courseKey: [ {numero, nom, coteDebut, coteCourante,
+  ///             variationPct, premierSnap(ms), dernierSnap(ms), nbSnapshots} ] }`
+  ///
+  /// Lecture seule : ne modifie ni `_mouvements`, ni `_historique`, ni
+  /// `_alertesEnvoyees`. Aucune écriture disque, aucun effet de bord.
+  Map<String, dynamic> exporterMouvementsPourIsolate() {
+    final Map<String, dynamic> out = <String, dynamic>{};
+    _mouvements.forEach((courseKey, mouvements) {
+      if (mouvements.isEmpty) return;
+      out[courseKey] = mouvements
+          .map((m) => <String, dynamic>{
+                'numero': m.numero,
+                'nom': m.nom,
+                'coteDebut': m.coteDebut,
+                'coteCourante': m.coteCourante,
+                'variationPct': m.variationPct,
+                'premierSnap': m.premierSnap.millisecondsSinceEpoch,
+                'dernierSnap': m.dernierSnap.millisecondsSinceEpoch,
+                'nbSnapshots': m.nbSnapshots,
+              })
+          .toList();
+    });
+    return out;
+  }
+
+  /// Restaure les mouvements DANS L'ISOLATE, depuis la map produite par
+  /// [exporterMouvementsPourIsolate].
+  ///
+  /// ⚠️ N'ÉCRASE RIEN QUE L'ISOLATE AURAIT CALCULÉ LUI-MÊME : la map est
+  ///    ajoutée aux clés existantes. Dans l'isolate, `_mouvements` est vide au
+  ///    départ, donc le résultat est exactement la map transmise.
+  ///
+  /// ⚠️ `scoreIA` n'est PAS transmis : c'est un getter calculé à partir de
+  ///    `variationPct` par le barème existant. Transmettre une valeur calculée
+  ///    reviendrait à figer un résultat au lieu de le recalculer — on transmet
+  ///    donc les ENTRÉES (les variations), jamais la sortie.
+  void chargerMouvementsDepuisMapIsolate(Map<String, dynamic> data) {
+    int nb = 0;
+    data.forEach((courseKey, val) {
+      if (val is! List) return;
+      final List<MouvementCote> liste = <MouvementCote>[];
+      for (final item in val) {
+        if (item is! Map) continue;
+        try {
+          final Map<String, dynamic> m = item.cast<String, dynamic>();
+          liste.add(MouvementCote(
+            numero: (m['numero'] as String?) ?? '',
+            nom: (m['nom'] as String?) ?? '',
+            coteDebut: (m['coteDebut'] as num?)?.toDouble() ?? 0.0,
+            coteCourante: (m['coteCourante'] as num?)?.toDouble() ?? 0.0,
+            variationPct: (m['variationPct'] as num?)?.toDouble() ?? 0.0,
+            premierSnap: DateTime.fromMillisecondsSinceEpoch(
+                (m['premierSnap'] as num?)?.toInt() ?? 0),
+            dernierSnap: DateTime.fromMillisecondsSinceEpoch(
+                (m['dernierSnap'] as num?)?.toInt() ?? 0),
+            nbSnapshots: (m['nbSnapshots'] as num?)?.toInt() ?? 0,
+          ));
+        } catch (_) {
+          // Une entrée illisible ne doit pas annuler l'import des autres.
+        }
+      }
+      if (liste.isNotEmpty) {
+        final List<MouvementCote> cible =
+            _mouvements.putIfAbsent(courseKey, () => <MouvementCote>[]);
+        cible.addAll(liste);
+        nb += liste.length;
+      }
+    });
+    if (kDebugMode) {
+      debugPrint('[CoteTracker/isolate] ✅ $nb mouvements restaurés');
+    }
+  }
+
   // ── Poll des cotes pour les courses imminentes ────────────────────────────
   Future<void> _pollCotesImminentes(List<ZtReunion> reunions) async {
     if (_polling) return;

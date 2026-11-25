@@ -166,6 +166,49 @@ class ZoneTurfService {
                nomUpper.contains('CHAMPION') || nomUpper.contains('DERBY') ||
                (montant >= 200000)); // Dotation très élevée = grande course classique
 
+          // ★ CORRECTION BL3-A23 + BL3-A24 — PISTE ET CATÉGORIE : DE VRAIES
+          //   DONNÉES, PLUS DE CONSTANTES.
+          //
+          //   DÉFAUTS MESURÉS (audit BLOC 3 §5.5 et §5.6) :
+          //     • `piste: 'Pelouse'` — littéral constant pour 100 % des courses.
+          //       Consommateur : `ZtPartant.scoreTerrain(course.piste)`
+          //       (`zt_models.dart:549`), qui compare la clé normalisée de la
+          //       course aux clés produites par `_normaliserTerrainPmu`
+          //       (`:726`) — cette dernière ne rend JAMAIS `'pelouse'`.
+          //       Résultat : `terrainStocke != terrainNorm` toujours vrai, la
+          //       boucle s'épuise, `return 50.0`. Critère Terrain (poids 0.05)
+          //       neutralisé même quand la donnée existe.
+          //     • `categorie: ''` — littéral vide. Consommateur :
+          //       `_scoreDisciplineCompatibilite` (`ia_pronostic_engine.dart:381`),
+          //       dont les trois branches (`handicap` / `reclam` / `condition`)
+          //       étaient inatteignables par construction.
+          //
+          //   SOURCES RÉELLES, VÉRIFIÉES SUR LES FIXTURES PMU DU DÉPÔT
+          //   (`test/fixtures/recherche_pmu/`, 146 courses lues) :
+          //     • `typePiste`      : 'HERBE' (84), 'GAZON' (78),
+          //                          'POUZZOLANE' (8), absent (146)
+          //     • `penetrometre`   : {'intitule': 'Bon' | 'Souple' | 'Collant' |
+          //                          'PSF STANDARD', 'valeurMesure': '3,6', …}
+          //     • `categorieParticularite` : 'HANDICAP' (40), 'HANDICAP_DIVISE'
+          //                          (17), 'A_RECLAMER' (7), 'COURSE_A_CONDITIONS'
+          //                          (80), 'GROUPE_I' (4), 'GROUPE_III' (5),
+          //                          'INCONNU' (54), …
+          //
+          //   ⚠️ AUCUNE DONNÉE FICTIVE NE REMPLACE UNE DONNÉE MANQUANTE.
+          //      `typePiste` absent (146 courses sur 316 dans les fixtures)
+          //      produit la chaîne VIDE, et non « Pelouse » : le consommateur
+          //      `scoreTerrain` teste `terrainCourse.isEmpty` avant tout calcul
+          //      et rend 50.0 — comportement neutre EXPLICITE, pas une
+          //      supposition. De même, `categorieParticularite == 'INCONNU'`
+          //      n'est pas converti en une catégorie inventée : il reste vide.
+          //
+          //   ⚠️ AUCUNE FORMULE, AUCUN COEFFICIENT, AUCUN SEUIL N'EST MODIFIÉ.
+          //      `terrain: 0.05`, les quatre modulations de catégorie
+          //      (×0,92 / ×0,88 / ×1,06) et `scoreTerrain` sont intacts : seule
+          //      la DONNÉE transmise cesse d'être une constante.
+          final String pisteReelle = _pisteDepuisJsonPmu(c);
+          final String categorieReelle = _categorieDepuisJsonPmu(c);
+
           // Heure de départ
           // ⚠️ .toLocal() obligatoire : l'API PMU retourne des timestamps UTC.
           // Sans cela, les heures affichées seraient décalées de +1h ou +2h
@@ -229,8 +272,8 @@ class ZoneTurfService {
             distance: '${distanceM}m',
             prix: '$montant',
             type: disc,
-            piste: 'Pelouse',
-            categorie: '',
+            piste: pisteReelle,
+            categorie: categorieReelle,
             isQuinte: isQuinte,
             isQuarte: isQuarte,
             isClassiqueSansMultiple: isClassiqueSansMultiple, // ★ v9.93
@@ -733,6 +776,114 @@ class ZoneTurfService {
     if (t.contains('piste') || t.contains('all weather'))      return 'sable';
     if (t.contains('standard') || t.contains('normal'))        return 'bon';
     return t.replaceAll(' ', '_');
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // ★ CORRECTION BL3-A23 — PISTE RÉELLE depuis le JSON PMU
+  //
+  // Producteur corrigé : le champ `piste` de `ZtCourse` valait le littéral
+  // `'Pelouse'` pour 100 % des courses.
+  //
+  // Consommateur : `ZtPartant.scoreTerrain(course.piste)`
+  // (`zt_models.dart:549-575`), qui normalise via `_normaliserTerrain` puis
+  // compare aux clés de `statsTerrainCsv` produites par `_normaliserTerrainPmu`
+  // ci-dessus. Les deux tables rendent `tres_lourd / lourd / souple / bon /
+  // sable` — JAMAIS `'pelouse'`. Toute comparaison échouait donc et le critère
+  // Terrain (poids `terrain: 0.05`) restait à 50.0.
+  //
+  // ORDRE DE PRIORITÉ DES SOURCES, dans cet ordre exact :
+  //   1. `penetrometre.intitule`  — l'état du terrain MESURÉ le jour J
+  //      (« Bon », « Souple », « Collant », « PSF STANDARD », « Très lourd »…).
+  //      C'est la source la plus précise : elle décrit l'état réel, pas la
+  //      nature du sol.
+  //   2. `typePiste`  — la nature du sol (« HERBE », « GAZON », « POUZZOLANE »).
+  //      Moins précis (l'herbe peut être bonne ou lourde) mais réel.
+  //   3. Chaîne VIDE si aucune des deux n'est exploitable.
+  //
+  // ⚠️ AUCUN REPLI FICTIF. La chaîne vide est le signal EXPRES attendu par
+  //    `scoreTerrain` (`if (statsTerrainCsv.isEmpty || terrainCourse.isEmpty)
+  //    return 50.0;`), donc « donnée absente ⇒ neutre », et non « donnée
+  //    absente ⇒ Pelouse ». Aucun `'Pelouse'`, aucun `'bon'` par défaut.
+  //
+  // ⚠️ `typePiste` brut NE PEUT PAS être renvoyé tel quel : `'HERBE'` ou
+  //    `'GAZON'` ne sont pas des clés du barème. Ils passent donc par
+  //    `_normaliserTerrainPmu`, la MÊME fonction que celle qui produit
+  //    `statsTerrainCsv` — donc même vocabulaire, aucune troisième table.
+  //
+  //    MESURE sur cette fonction : `'HERBE'` → `'herbe'`, `'GAZON'` →
+  //    `'gazon'`, `'POUZZOLANE'` → `'pouzzolane'`. AUCUN de ces trois
+  //    libellés n'est une clé du barème (`bon`/`souple`/`lourd`/`tres_lourd`/
+  //    `sable`), donc `scoreTerrain` rendra 50.0 pour eux : le critère reste
+  //    neutre quand seule la NATURE DU SOL est connue et non son ÉTAT.
+  //    C'est le comportement honnête — on transmet la donnée réelle plutôt
+  //    que de la convertir en une catégorie inventée. L'état mesuré
+  //    (`penetrometre.intitule`), lui, donne 'bon' / 'souple' / 'lourd' /
+  //    'tres_lourd' / 'collant' et active réellement le critère.
+  //    Aucun repli fictif, aucune troisième table de correspondance.
+  @visibleForTesting
+  static String pisteDepuisJsonPmu(Map<String, dynamic> courseJson) =>
+      _pisteDepuisJsonPmu(courseJson);
+
+  static String _pisteDepuisJsonPmu(Map<String, dynamic> c) {
+    // 1. État mesuré du terrain le plus proche de l'heure de départ.
+    final penetro = c['penetrometre'];
+    if (penetro is Map) {
+      final intitule = penetro['intitule'];
+      if (intitule is String && intitule.trim().isNotEmpty) {
+        final norm = _normaliserTerrainPmu(intitule);
+        if (norm.isNotEmpty) return norm;
+      }
+    }
+    // 2. Nature du sol.
+    final typePiste = c['typePiste'];
+    if (typePiste is String && typePiste.trim().isNotEmpty) {
+      final norm = _normaliserTerrainPmu(typePiste);
+      if (norm.isNotEmpty) return norm;
+    }
+    // 3. Absence réelle de donnée : neutre explicite, jamais « Pelouse ».
+    return '';
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // ★ CORRECTION BL3-A24 — CATÉGORIE RÉELLE depuis le JSON PMU
+  //
+  // Producteur corrigé : le champ `categorie` de `ZtCourse` valait le littéral
+  // vide `''` pour 100 % des courses.
+  //
+  // Consommateur : `IaPronosticEngine._scoreDisciplineCompatibilite`
+  // (`ia_pronostic_engine.dart:381-392`), qui teste par sous-chaîne
+  // `handicap`, `reclam`/`claim`, `condition`/`listed`/`groupe`/`group`.
+  // Avec `''`, les TROIS branches étaient inatteignables par construction.
+  //
+  // SOURCE RÉELLE : `categorieParticularite` du JSON PMU. Valeurs mesurées
+  // sur les fixtures du dépôt (224 courses) :
+  //   'COURSE_A_CONDITIONS' (80), 'INCONNU' (54), 'HANDICAP' (40),
+  //   'AUTOSTART' (39), 'HANDICAP_DIVISE' (17), 'NATIONALE' (16),
+  //   'INTERNATIONALE_AUTOSTART' (7), 'A_RECLAMER' (7),
+  //   'HANDICAP_DE_CATEGORIE' (7), 'HANDICAP_CATEGORIE_DIVISE' (6),
+  //   'GROUPE_III' (5), 'GROUPE_I' (4), …
+  //
+  // ⚠️ `'INCONNU'` EST UNE VALEUR DE SENTINELLE DE L'API, PAS UNE CATÉGORIE.
+  //    Elle est convertie en chaîne vide pour que les trois branches du
+  //    consommateur restent inactives : on n'applique jamais une modulation
+  //    Handicap/Réclamer à une course dont la catégorie est inconnue.
+  //    C'est la même règle que pour `piste` : absence ⇒ neutre, jamais
+  //    une catégorie inventée.
+  //
+  // ⚠️ LA VALEUR EST RENVOYÉE EN MINUSCULES, conventions attendues par le
+  //    consommateur (`cat.contains('handicap')`). Aucune modulation, aucun
+  //    coefficient n'est modifié : ×0,92 / ×0,88 / ×1,06 restent intacts.
+  @visibleForTesting
+  static String categorieDepuisJsonPmu(Map<String, dynamic> courseJson) =>
+      _categorieDepuisJsonPmu(courseJson);
+
+  static String _categorieDepuisJsonPmu(Map<String, dynamic> c) {
+    final raw = c['categorieParticularite'];
+    if (raw is! String) return '';
+    final t = raw.trim().toLowerCase();
+    // Sentinelles d'absence de l'API : aucune information exploitable.
+    if (t.isEmpty || t == 'inconnu' || t == 'inconnue') return '';
+    return t;
   }
 
   // ──────────────────────────────────────────────────────────────────

@@ -392,12 +392,34 @@ RecommandationPari _cascadeBrut({
     //   recommanderait un pari à DEUX mises dont le rapport est inconnu, en
     //   invoquant une cote qui n'existe pas.
     //
-    //   Donc, quand la cote est absente, le score élevé conduit au pari
-    //   SCORE-SEULEMENT le moins engageant : Simple Placé (une seule mise,
-    //   aucune dépendance à la cote). Aucune valeur de seuil n'est changée ;
-    //   seule la branche dont la prémisse (cote longue) est indémontrable est
-    //   neutralisée. La cote déclarée indisponible interdit en outre tout
-    //   affichage de gain chiffré en aval (`coteDisponible == false`).
+    //   ⚠️ JUSTIFICATION DU REPLI SUR « Simple Placé » — CE N'EST PAS UNE
+    //      RECOMMANDATION ARBITRAIRE, c'est la RÈGLE EXISTANTE DU DÉPÔT
+    //      appliquée à sa place dans l'ordre de la cascade :
+    //
+    //      • `_simplePlace()` était DÉJÀ la branche immédiatement inférieure
+    //        (`scoreConf >= seuils.seuilSimplePlace`, ligne suivante). Le
+    //        repli ne crée donc aucune règle : il AVANCE cette branche pour
+    //        les scores qui satisfont `seuilSimpleGagnant` (≥ 80) — un score
+    //        qui satisfait 80 satisfait 65 par construction, donc la branche
+    //        Simple Placé était de toute façon ATTEINTE par ce score si la
+    //        cote manquait.
+    //      • Ce pari ne dépend PAS de la cote pour être JUSTIFIÉ : son énoncé
+    //        de production est « profil ≥ seuilSimplePlace ⇒ le cheval est
+    //        dans le top 3 » (`_simplePlace`, commentaire d'origine). Aucune
+    //        prémisse chiffrée sur la cote.
+    //      • Il est le MOINS engageant des paris encore recommandables : UNE
+    //        seule mise, contre DEUX pour Gagnant+Placé. En situation de
+    //        donnée incomplète, réduire l'engagement est la seule attitude
+    //        qui n'invente rien.
+    //      • La cascade n'atteint PAS l'abstention à ce stade : le score est
+    //        supérieur au seuil Simple Placé, donc l'abstention serait une
+    //        sous-estimation de la confiance réelle, tout aussi injustifiée
+    //        que le Gagnant+Placé.
+    //
+    //      Autrement dit : on ne choisit pas un pari NOUVEAU ; on laisse la
+    //      branche suivante de la cascade EXISTANTE décider, et l'on empêche
+    //      seulement l'activation d'une branche dont la prémisse manque.
+    //      Aucune valeur de seuil n'est changée.
     if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
       return _simplePlace(course, scoreConf);
     }
@@ -428,7 +450,10 @@ RecommandationPari _cascadeBrut({
     return _simpleGagnant(course, scoreConf);
   }
   // ★ Même règle que ci-dessus : cote absente ⇒ pas de Gagnant+Placé déduit
-  //   d'une « cote longue » indémontrable.
+  //   d'une « cote longue » indémontrable. Repli sur la branche Simple Placé
+  //   IMMÉDIATEMENT INFÉRIEURE de cette même cascade (voir la démonstration
+  //   complète dans la section classique) : aucune règle nouvelle, aucun
+  //   seuil modifié, une seule mise engagée.
   if (!coteConnue && scoreConf >= seuils.seuilSimpleGagnant) {
     return _simplePlace(course, scoreConf);
   }
