@@ -26,11 +26,18 @@
 //     ia_premium_du_jour_v1    : ★ v10.38 — Ancien format compat lecture (migration)
 //     premium_widgets_selection_jour_v1 : ★ v10.62 — Figeage 5 widgets premium du jour
 //
-//  🎯 CONFIG FUSION BestBet (fusion_config_service.dart) — 4 cles
+//  🎯 CONFIG FUSION BestBet — 4 CLES HERITEES, MODULE SUPPRIME (BL1-A16)
 //     fusion_poids_confiance : Poids confiance (double)
 //     fusion_poids_gain      : Poids qualite gain (double)
 //     fusion_poids_risque    : Poids rapport risque (double)
 //     fusion_seuil_min       : Seuil confiance minimum (int)
+//
+//     Le module qui ecrivait ces 4 cles a ete supprime (BL1-A16 : ecran,
+//     service et moteur inatteignables). Elles sont CONSERVEES dans les
+//     listes de collecte et de restauration pour une SEULE raison :
+//     une sauvegarde ANCIENNE qui les contient doit pouvoir etre restauree
+//     sans erreur. Elles sont restaurees telles quelles, sans etre relues,
+//     et ne reactivent AUCUN module. Ne pas les retirer.
 //
 //  📋 PARIS UTILISATEUR (pmu_provider.dart) — 1 cle
 //     user_predictions_v2  : Liste complete des paris (id, date, cheval,
@@ -387,9 +394,12 @@ class BackupService {
     //   une source de reconstruction)
   ];
 
-  // 🎯 Config fusion BestBet — reglages de l'algorithme de selection
+  // 🎯 Config fusion BestBet — 4 cles HERITEES, MODULE SUPPRIME (BL1-A16)
   // IMPORTANT : fusion_poids_* sont stockes en DOUBLE, fusion_seuil_min en INT
   // On les serialise tous en String JSON pour une restauration universelle
+  // ⚠️ CONSERVER CES 4 CLES : une sauvegarde ancienne doit rester restaurable.
+  //    Aucun module ne les lit plus ; leur presence ici est de la
+  //    COMPATIBILITE, pas une fonctionnalite.
   static const _keysConfigIA = [
     'fusion_poids_confiance',
     'fusion_poids_gain',
@@ -1485,7 +1495,9 @@ class BackupService {
             '(+ pronostics : $nbPronosticsRestaures)');
       }
 
-      // 🎯 Config Fusion
+      // 🎯 Config Fusion — 4 cles heritees (BL1-A16). Restauration silencieuse :
+      //    aucune ecriture ne les relit, mais une sauvegarde ancienne qui les
+      //    contient doit s'appliquer sans erreur.
       final nbCfg = await _restaurerGroupe(
           prefs, data['configIA'] as Map<String, dynamic>?);
       total += nbCfg;
@@ -2043,9 +2055,20 @@ class BackupService {
       final nomProfil = prefs.getString('profil_nom');
       final gmail = prefs.getString('profil_gmail');
 
-      // ── Config Fusion ─────────────────────────────────────────────────────
-      final fusionConfiance = prefs.getDouble('fusion_poids_confiance');
-      final fusionSeuil = prefs.getInt('fusion_seuil_min');
+      // ── Config Fusion — RETIRÉE DE L'ÉTAT AFFICHÉ (BL1-A16) ──────────────
+      //
+      //   Les clés `fusion_poids_*` restent SAUVEGARDÉES et RESTAURÉES (voir
+      //   `_keysConfigIA` et le bloc « Config Fusion BestBet » de `_exporter`),
+      //   mais elles ne sont plus LUES ici : le module qui leur donnait un sens
+      //   a été supprimé (BL1-A16), donc plus aucun consommateur ne peut les
+      //   produire, et `BackupInfo.aConfigFusion` / `.fusionConfiance` /
+      //   `.fusionSeuil` n'avaient AUCUN lecteur d'interface (mesuré :
+      //   `grep -rn "aConfigFusion\|fusionConfiance\|fusionSeuil" lib/` → les
+      //   seules occurrences étaient dans ce fichier).
+      //
+      //   ⚠️ NE PAS CONFONDRE « plus affiché » et « plus sauvegardé » : la
+      //      compatibilité des anciennes sauvegardes exige que les 4 clés
+      //      restent dans les listes de collecte ET de restauration.
 
       // ── Widget ────────────────────────────────────────────────────────────
       final widgetUpdatedAt = prefs.getString('widget_updated_at');
@@ -2091,9 +2114,6 @@ class BackupService {
         nbStatsLabels: nbStatsLabels, // ★ v9.0
         gmail: gmail,
         nomProfil: nomProfil,
-        aConfigFusion: fusionConfiance != null,
-        fusionConfiance: fusionConfiance,
-        fusionSeuil: fusionSeuil,
         aWidget: aWidget,
         widgetUpdatedAt: widgetUpdatedAt,
       );
@@ -2596,10 +2616,12 @@ class BackupInfo {
   final String? gmail;
   final String? nomProfil;
 
-  // Config Fusion
-  final bool aConfigFusion;
-  final double? fusionConfiance;
-  final int? fusionSeuil;
+  // Config Fusion — CHAMPS RETIRÉS (BL1-A16)
+  //
+  //   Ils décrivaient une configuration produite par un module supprimé et
+  //   n'étaient lus par AUCUNE interface. Les 4 clés `fusion_poids_*` restent
+  //   collectées et restaurées : c'est la COMPATIBILITÉ DE SAUVEGARDE qui est
+  //   préservée, pas l'affichage d'un module qui n'existe plus.
 
   // Widget
   final bool aWidget;
@@ -2623,9 +2645,6 @@ class BackupInfo {
     this.nbStatsLabels = 0, // ★ v9.0
     this.gmail,
     this.nomProfil,
-    this.aConfigFusion = false,
-    this.fusionConfiance,
-    this.fusionSeuil,
     this.aWidget = false,
     this.widgetUpdatedAt,
   });
@@ -2649,7 +2668,6 @@ class BackupInfo {
     if (nbAlertes > 0) couvert++; // Alertes
     if (iaApprise) couvert++; // IA a appris (poids ajustes)
     if (aSeuilsAdaptatifs) couvert++; // Seuils adaptatifs
-    if (aConfigFusion) couvert++; // Config Fusion BestBet
     if (gmail != null) couvert++; // Profil Gmail
     if (aWidget) couvert++; // Widget Android
     return couvert * 10; // /10 categories = %
