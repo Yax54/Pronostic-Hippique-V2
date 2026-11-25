@@ -24,7 +24,7 @@ class ProfileStatsTab extends StatelessWidget {
   final VoidCallback onPickDate;
   final VoidCallback onResetDate;
 
-  const ProfileStatsTab({
+  const ProfileStatsTab({super.key, 
     required this.provider,
     required this.dateDebut,
     required this.dateFin,
@@ -122,7 +122,7 @@ class ProfileTotauxCard extends StatelessWidget {
   /// avant : sans remboursement, la carte ne change pas d'un caractère.
   final double totalRemboursements;
 
-  const ProfileTotauxCard({
+  const ProfileTotauxCard({super.key, 
     required this.gainsNet,
     required this.miseTotal,
     required this.totalGagnes,
@@ -244,7 +244,7 @@ class ProfileMiniStat extends StatelessWidget {
   final Color color;
   final IconData icon;
 
-  const ProfileMiniStat({required this.label, required this.value, required this.color, required this.icon});
+  const ProfileMiniStat({super.key, required this.label, required this.value, required this.color, required this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -269,7 +269,7 @@ class ProfileStatsGrid extends StatelessWidget {
   final double gainsNet;
   final double miseTotal;
 
-  const ProfileStatsGrid({
+  const ProfileStatsGrid({super.key, 
     required this.nbGagnes,
     required this.nbPerdus,
     required this.nbAttente,
@@ -341,7 +341,7 @@ class ProfileStatCell extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap; // ★ Fix : navigation optionnelle au tap
 
-  const ProfileStatCell({
+  const ProfileStatCell({super.key, 
     required this.label,
     required this.value,
     required this.color,
@@ -390,7 +390,7 @@ class ProfileProgressBar extends StatelessWidget {
   final int nbAttente;
   final List<UserPrediction> allFiltered;
 
-  const ProfileProgressBar({
+  const ProfileProgressBar({super.key, 
     required this.nbGagnes,
     required this.nbPerdus,
     required this.nbAttente,
@@ -548,7 +548,7 @@ class ProfileProgressBar extends StatelessWidget {
 class ProfileLegendDot extends StatelessWidget {
   final Color color;
   final String label;
-  const ProfileLegendDot({required this.color, required this.label});
+  const ProfileLegendDot({super.key, required this.color, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -563,7 +563,7 @@ class ProfileLegendDot extends StatelessWidget {
 // ─── Statut API ────────────────────────────────────────────────────────────────
 class ProfileApiStatusCard extends StatelessWidget {
   final PmuProvider provider;
-  const ProfileApiStatusCard({required this.provider});
+  const ProfileApiStatusCard({super.key, required this.provider});
 
   @override
   Widget build(BuildContext context) {

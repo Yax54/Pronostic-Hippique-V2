@@ -1351,7 +1351,7 @@ class IaMemoryPronosticsAccessor {
     _pronosticsGetter = getter;
   }
 
-  /// Reconstruit Map<courseKey, arrivée PMU int> depuis les pronostics.
+  /// Reconstruit `Map<courseKey, arrivée PMU int>` depuis les pronostics.
   static Map<String, List<int>>? getArriveesPMU() {
     final getter = _pronosticsGetter;
     if (getter == null) return null;

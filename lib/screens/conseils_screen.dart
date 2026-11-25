@@ -806,7 +806,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       ));
     }
 
-    final ouvrirPari = (ZtCourse course, ZtReunion reunion) {
+    void ouvrirPari(ZtCourse course, ZtReunion reunion) {
       try {
         context.read<PmuProvider>();
         context.read<DataRefreshService>();
@@ -820,7 +820,7 @@ class _ConseilsScreenState extends State<ConseilsScreen> {
       } catch (e) {
         debugPrint('[Conseils] Parier erreur: $e');
       }
-    };
+    }
 
     final courses = _coursesAvecPartants;
 

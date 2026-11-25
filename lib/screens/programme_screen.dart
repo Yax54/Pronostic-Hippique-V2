@@ -802,7 +802,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
 
   Widget _buildPronosticsRow(ZtCourse course, List<ZtPartant> topIA) {
     // Badge confiance IA
-    Widget _confianceProgBadge(double confiance) {
+    Widget confianceProgBadge(double confiance) {
       final Color badgeColor;
       final String label;
       if (confiance >= 80) {
@@ -863,7 +863,7 @@ class _ProgrammeScreenState extends State<ProgrammeScreen>
                 const SizedBox(width: 6),
                 ...topIA.take(3).map((p) => _horseBadge(p, showScore: true)),
                 const Spacer(),
-                _confianceProgBadge(course.confianceIA),
+                confianceProgBadge(course.confianceIA),
               ],
             ),
           ],

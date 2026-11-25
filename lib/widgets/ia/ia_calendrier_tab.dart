@@ -438,7 +438,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => SafeArea(
+      builder: (feuilleMenu) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -486,7 +486,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 'Choisir un jour précis',
                 style: TextStyle(color: Colors.white38, fontSize: 12),
               ),
-              onTap: () => Navigator.pop(_, 'date'),
+              onTap: () => Navigator.pop(feuilleMenu, 'date'),
             ),
             ListTile(
               leading: const Icon(Icons.warning_amber, color: Color(0xFFEF5350)),
@@ -498,7 +498,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
                 'Efface tout l\'historique premium',
                 style: TextStyle(color: Colors.white38, fontSize: 12),
               ),
-              onTap: () => Navigator.pop(_, 'all'),
+              onTap: () => Navigator.pop(feuilleMenu, 'all'),
             ),
             const SizedBox(height: 8),
           ],
@@ -539,7 +539,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
 
       final ok = await showDialog<bool>(
         context: this.context,
-        builder: (_) => AlertDialog(
+        builder: (feuilleDate) => AlertDialog(
           backgroundColor: const Color(0xFF0A1628),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(children: [
@@ -555,11 +555,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(_, false),
+              onPressed: () => Navigator.pop(feuilleDate, false),
               child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(_, true),
+              onPressed: () => Navigator.pop(feuilleDate, true),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFFB74D),
               ),
@@ -590,7 +590,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       if (!mounted) return;
       final ok = await showDialog<bool>(
         context: this.context,
-        builder: (_) => AlertDialog(
+        builder: (feuilleTout) => AlertDialog(
           backgroundColor: const Color(0xFF0A1628),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(children: [
@@ -608,11 +608,11 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(_, false),
+              onPressed: () => Navigator.pop(feuilleTout, false),
               child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(_, true),
+              onPressed: () => Navigator.pop(feuilleTout, true),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFEF5350),
               ),
@@ -1437,7 +1437,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
       case 'all':   return 'Filtre : Total historique';
       case 'custom':
         if (_statsFiltreDebut != null && _statsFiltreFin != null) {
-          final fmt = (DateTime d) =>
+          String fmt(DateTime d) =>
               '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
           return 'Filtre : ${fmt(_statsFiltreDebut!)} → ${fmt(_statsFiltreFin!)}';
         }
@@ -1446,7 +1446,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     }
   }
 
-  Widget _buildStatsByType(Map<int, DonneeJourCalendrier> _unusedData) {
+  Widget _buildStatsByType(Map<int, DonneeJourCalendrier> unusedData) {
     // ★ v10.70 : On calcule depuis TOUS les pronostics avec résultat,
     // filtrés par la période choisie — indépendamment du mois calendrier
     final mem = IaMemoryService.instance;
@@ -1643,7 +1643,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
     // → l'utilisateur voit que ses dates sont mémorisées même après avoir cliqué 7j/30j
     String label = 'Période';
     if (_statsFiltreDebut != null && _statsFiltreFin != null) {
-      final fmt = (DateTime d) =>
+      String fmt(DateTime d) =>
           '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
       label = '${fmt(_statsFiltreDebut!)}→${fmt(_statsFiltreFin!)}';
     }
@@ -1814,7 +1814,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
   }
 
   Widget _carteGrosPariGagnant(GrosPariGagnant g) {
-    final fmt = (DateTime d) =>
+    String fmt(DateTime d) =>
         '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
     final couleurOrdre   = g.ordreExact
         ? const Color(0xFFFFD700)   // or = ordre exact
@@ -2125,7 +2125,7 @@ class _IaCalendrierTabState extends State<IaCalendrierTab>
         ? const Color(0xFFFFD93D).withValues(alpha: 0.6)
         : const Color(0xFF57C7FF).withValues(alpha: 0.5);
     final nbRequis    = QuasiGrosParisService.nbChevauxPourType(qg.type);
-    final fmt         = (DateTime d) =>
+    String fmt(DateTime d) =>
         '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
 
     // ★ v10.75 : arrivée COMPLÈTE (jamais tronquée en affichage)
@@ -3790,7 +3790,7 @@ class _FicheDetailQuasiGagnant extends StatelessWidget {
     final couleur     = estBestBet ? const Color(0xFFFFD700) : const Color(0xFF66BB6A);
     final labelType   = QuasiGrosParisService.labelType(qg.type);
     final nbRequis    = QuasiGrosParisService.nbChevauxPourType(qg.type);
-    final fmt         = (DateTime d) =>
+    String fmt(DateTime d) =>
         '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
 
     // Comparaison complète

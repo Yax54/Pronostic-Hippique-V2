@@ -438,7 +438,7 @@ class _RacesScreenState extends State<RacesScreen> {
 
     // ★ Fix écran gris : capturer les Providers ici (contexte Scaffold avec Providers)
     // avant d'entrer dans le ListView.builder dont le ctx n'a pas accès aux Providers.
-    final ouvrirPari = (ZtCourse course, ZtReunion reunion) {
+    void ouvrirPari(ZtCourse course, ZtReunion reunion) {
       try {
         context.read<PmuProvider>();
         context.read<DataRefreshService>();
@@ -452,7 +452,7 @@ class _RacesScreenState extends State<RacesScreen> {
       } catch (e) {
         debugPrint('[Races] Parier erreur: $e');
       }
-    };
+    }
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),

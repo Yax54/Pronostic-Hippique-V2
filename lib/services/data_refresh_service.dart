@@ -174,7 +174,7 @@ _BatchResult _calculerPronosticsBatch(_BatchPayload payload) {
 
       // Sérialiser les scores critères
       final scoresJson = <String, dynamic>{};
-      scoresCriteres.forEach((num, sc) => scoresJson[num] = sc.toJson());
+      scoresCriteres.forEach((cle, sc) => scoresJson[cle] = sc.toJson());
 
       // Sérialiser les partants classés (score + rang seulement)
       final partantsJson = partantsClasses

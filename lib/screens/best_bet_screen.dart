@@ -1192,7 +1192,7 @@ class _BestBetScreenState extends State<BestBetScreen>
         ? terminees.skip(1).toList()
         : terminees;
 
-    VoidCallback? _onBet(_BetOpp opp) {
+    VoidCallback? onBet(_BetOpp opp) {
       if (opp.estTerminee) return null;
       return () {
         try {
@@ -1226,7 +1226,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                     builder: (_) => CourseDetailScreen(
                         course: top.course, reunion: top.reunion))),
             onChangerMise: _changerMise,
-            onBet: _onBet(top),
+            onBet: onBet(top),
             gainOfficiel: _gainOfficielPour(top),
           ),
         const SizedBox(height: 16),
@@ -1255,7 +1255,7 @@ class _BestBetScreenState extends State<BestBetScreen>
                     MaterialPageRoute(
                         builder: (_) => CourseDetailScreen(
                             course: opp.course, reunion: opp.reunion))),
-                onBet: _onBet(opp),
+                onBet: onBet(opp),
                 gainOfficiel: _gainOfficielPour(opp),
               )),
           const SizedBox(height: 8),
@@ -2330,13 +2330,13 @@ class _TopBetCard extends StatelessWidget {
     // Tab 1 = Plus Sûr      → 'plusSur'
     // Tab 2 = Plus Rentable → 'plusRentable'
     // Aucun partage entre les 3 : streakCetteCarteUniquement est local à ce build()
-    final String _sourceWidgetCetteCarte = tab == 0
+    final String sourceWidgetCetteCarte = tab == 0
         ? 'topEquilibre'
         : tab == 1
             ? 'plusSur'
             : 'plusRentable';
     final PremiumStreak streakCetteCarteUniquement = streakPourSource(
-      sourceWidget: _sourceWidgetCetteCarte,
+      sourceWidget: sourceWidgetCetteCarte,
       dateReference: DateTime.now(),
     );
 

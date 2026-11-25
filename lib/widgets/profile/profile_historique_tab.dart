@@ -19,7 +19,7 @@ class ProfileHistoriqueTab extends StatefulWidget {
   final VoidCallback onPickDate;
   final VoidCallback onResetDate;
 
-  const ProfileHistoriqueTab({
+  const ProfileHistoriqueTab({super.key, 
     required this.provider,
     required this.allFiltered,
     required this.dateDebut,
@@ -132,7 +132,7 @@ class ProfileHistoriqueCard extends StatelessWidget {
   final UserPrediction pred;
   final PmuProvider provider;
 
-  const ProfileHistoriqueCard({required this.pred, required this.provider});
+  const ProfileHistoriqueCard({super.key, required this.pred, required this.provider});
 
   @override
   Widget build(BuildContext context) {
@@ -886,7 +886,7 @@ class ProfileHistoriqueCard extends StatelessWidget {
 class ProfileSmallTag extends StatelessWidget {
   final String label;
   final Color color;
-  const ProfileSmallTag(this.label, this.color);
+  const ProfileSmallTag(this.label, this.color, {super.key});
 
   @override
   Widget build(BuildContext context) {

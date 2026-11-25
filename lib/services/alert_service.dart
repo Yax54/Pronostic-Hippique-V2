@@ -2619,7 +2619,7 @@ class AlertService extends ChangeNotifier {
         final rList = (r['rapports'] as List<dynamic>? ?? []);
 
         // ── Helper local : extraire dividende et combinaison ──────────────
-        double? _div(Map<String, dynamic> rap) {
+        double? div(Map<String, dynamic> rap) {
           final d = rap['dividendePourUnEuro'];
           return d != null ? (d as num).toDouble() / 100.0 : null;
         }
@@ -2632,13 +2632,13 @@ class AlertService extends ChangeNotifier {
         if (typePari == 'E_SIMPLE_GAGNANT' && rList.isNotEmpty) {
           final rap = rList.first as Map<String, dynamic>;
           numGagnant ??= rap['combinaison']?.toString();
-          coteGagnant ??= _div(rap);
+          coteGagnant ??= div(rap);
         }
 
         // ── Simple Placé → places + cote Placé (JAMAIS un classement) ─────
         if (typePari == 'E_SIMPLE_PLACE' && rList.isNotEmpty) {
           // On garde la cote du 1er cheval placé comme référence
-          cotePlace ??= _div(rList.first as Map<String, dynamic>);
+          cotePlace ??= div(rList.first as Map<String, dynamic>);
           for (final p in rList) {
             final n = int.tryParse((p as Map)['combinaison']?.toString() ?? '');
             if (n != null && !placesOfficielles.contains(n)) {
@@ -2654,7 +2654,7 @@ class AlertService extends ChangeNotifier {
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE')) {
           // ⚠️ A6 (P5) : le dividende est conservé ; la combinaison n'alimente
           //    PLUS l'arrivée — celle-ci vient uniquement de `decision.ordre`.
-          dividendeTierce ??= _div(rList.first as Map<String, dynamic>);
+          dividendeTierce ??= div(rList.first as Map<String, dynamic>);
         }
 
         // ── Tiercé DÉSORDRE ───────────────────────────────────────────────
@@ -2663,7 +2663,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'TIERCE_DÉSORDRE' || typePari.contains('TIERCE') &&
              (typePari.contains('DESORDRE') || typePari.contains('DÉSORDRE')))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeTierceDesordre ??= _div(rap);
+          dividendeTierceDesordre ??= div(rap);
         }
 
         // ── Quarté+ ORDRE ─────────────────────────────────────────────────
@@ -2672,7 +2672,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'QUARTE'   || typePari == 'QUARTE_PLUS') &&
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE')) {
           // ⚠️ A6 (P5) : dividende conservé, combinaison non utilisée.
-          dividendeQuarte ??= _div(rList.first as Map<String, dynamic>);
+          dividendeQuarte ??= div(rList.first as Map<String, dynamic>);
         }
 
         // ── Quarté+ DÉSORDRE ──────────────────────────────────────────────
@@ -2681,7 +2681,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'QUARTE_DÉSORDRE' || typePari.contains('QUARTE') &&
              (typePari.contains('DESORDRE') || typePari.contains('DÉSORDRE')))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeQuarteDesordre ??= _div(rap);
+          dividendeQuarteDesordre ??= div(rap);
         }
 
         // ── Quinté+ ORDRE ─────────────────────────────────────────────────
@@ -2691,7 +2691,7 @@ class AlertService extends ChangeNotifier {
             !typePari.contains('DESORDRE') && !typePari.contains('DÉSORDRE') &&
             !typePari.contains('4SUR5') && !typePari.contains('4/5')) {
           // ⚠️ A6 (P5) : dividende conservé, combinaison non utilisée.
-          dividendeQuinte ??= _div(rList.first as Map<String, dynamic>);
+          dividendeQuinte ??= div(rList.first as Map<String, dynamic>);
         }
 
         // ── Quinté+ DÉSORDRE ──────────────────────────────────────────────
@@ -2700,7 +2700,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'QUINTE_DÉSORDRE' || typePari.contains('QUINTE') &&
              (typePari.contains('DESORDRE') || typePari.contains('DÉSORDRE')))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeQuinteDesordre ??= _div(rap);
+          dividendeQuinteDesordre ??= div(rap);
         }
 
         // ── Quinté+ BONUS 4/5 ─────────────────────────────────────────────
@@ -2708,7 +2708,7 @@ class AlertService extends ChangeNotifier {
             (typePari.contains('4SUR5') || typePari.contains('4_SUR_5') ||
              typePari.contains('QUINTE') && typePari.contains('4'))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeQuinte4sur5 ??= _div(rap);
+          dividendeQuinte4sur5 ??= div(rap);
         }
 
         // ── Couplé Gagnant ────────────────────────────────────────────────
@@ -2717,7 +2717,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'COUPLÉ_GAGNANT' || typePari == 'COUPLE' ||
              typePari.contains('COUPLE') && typePari.contains('GAGNANT'))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeCouple ??= _div(rap);
+          dividendeCouple ??= div(rap);
         }
 
         // ── Couplé Placé ──────────────────────────────────────────────────
@@ -2726,7 +2726,7 @@ class AlertService extends ChangeNotifier {
              typePari == 'COUPLÉ_PLACÉ' ||
              typePari.contains('COUPLE') && typePari.contains('PLACE'))) {
           final rap = rList.first as Map<String, dynamic>;
-          dividendeCouplePlace ??= _div(rap);
+          dividendeCouplePlace ??= div(rap);
         }
       }
 
@@ -3230,10 +3230,10 @@ class AlertService extends ChangeNotifier {
       // On utilise iaMemKey si disponible (clé précise depuis le pari),
       // sinon on construit la clé standard pour rétrocompatibilité.
       if (arriveeRetenue.isNotEmpty) {
-        final _aj = tc.heureDepart.day.toString().padLeft(2, '0');
-        final _am = tc.heureDepart.month.toString().padLeft(2, '0');
+        final aj = tc.heureDepart.day.toString().padLeft(2, '0');
+        final am = tc.heureDepart.month.toString().padLeft(2, '0');
         final memKey = tc.iaMemKey ??
-            '${tc.key}_$_aj$_am${tc.heureDepart.year}';
+            '${tc.key}_$aj$am${tc.heureDepart.year}';
         await IaMemoryService.instance.enregistrerResultat(
           courseKey: memKey,
           arriveeReelle: arriveeRetenue,

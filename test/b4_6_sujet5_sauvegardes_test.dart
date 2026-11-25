@@ -18,6 +18,7 @@
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -67,8 +68,7 @@ void main() {
       await Future.wait(<Future<void>>[a, b]);
 
       final prefs = await SharedPreferences.getInstance();
-      // eslint:disable-next-line avoid_print
-      print('S5-A  ordre de fin = $ordre  '
+      debugPrint('S5-A  ordre de fin = $ordre  '
           'contenu final = ${prefs.getStringList(cle)}');
 
       expect(ordre, <String>['RECENT', 'ANCIEN'],
@@ -97,8 +97,7 @@ void main() {
           .map((e) => (jsonDecode(e) as Map<String, dynamic>)['id'] as String)
           .toList();
 
-      // eslint:disable-next-line avoid_print
-      print('S5-B  entrées écrites = ${relu.length}  ids = $ids');
+      debugPrint('S5-B  entrées écrites = ${relu.length}  ids = $ids');
 
       expect(ids, hasLength(12),
           reason: 'aucune des 12 demandes ne doit être perdue');

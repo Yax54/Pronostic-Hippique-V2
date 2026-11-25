@@ -103,26 +103,26 @@ List<RapportPmu> rapportsReels() => PmuApiService.decoderRapportsDefinitifs(
 ///  mesurer « aucune arrivée » alors qu'il mesurait « arrivée complète ».
 ///
 ///  CORRECTION : trois états distincts, non confondables.
-///    • `_Arrivee.fournie(g)`  → une arrivée explicite ;
-///    • `_Arrivee.absente`     → `arriveeGroupes: null` transmis TEL QUEL ;
-///    • `_Arrivee.parDefaut`   → l'arrivée de référence, choisi EXPLICITEMENT.
+///    • `ArriveeScenario.fournie(g)`  → une arrivée explicite ;
+///    • `ArriveeScenario.absente`     → `arriveeGroupes: null` transmis TEL QUEL ;
+///    • `ArriveeScenario.parDefaut`   → l'arrivée de référence, choisi EXPLICITEMENT.
 ///  Aucun `??` ne subsiste sur cette dimension : une valeur par défaut ne peut
 ///  plus se substituer à une absence.
 /// ───────────────────────────────────────────────────────────────────────────
-class _Arrivee {
-  const _Arrivee._(this.groupes, this.estAbsente);
+class ArriveeScenario {
+  const ArriveeScenario._(this.groupes, this.estAbsente);
 
   final List<List<int>>? groupes;
   final bool estAbsente;
 
   /// Arrivée explicite.
-  const _Arrivee.fournie(List<List<int>> g) : this._(g, false);
+  const ArriveeScenario.fournie(List<List<int>> g) : this._(g, false);
 
   /// Absence EXPLICITE : `null` est transmis au moteur, sans repli.
-  const _Arrivee.absente() : this._(null, true);
+  const ArriveeScenario.absente() : this._(null, true);
 
   /// Arrivée de référence de la capture, choisie volontairement.
-  factory _Arrivee.parDefaut() => const _Arrivee.fournie(kArrivee);
+  factory ArriveeScenario.parDefaut() => const ArriveeScenario.fournie(kArrivee);
 }
 
 /// Construit l'état officiel par le CHEMIN DE PRODUCTION, sans le réécrire.
@@ -133,12 +133,12 @@ class _Arrivee {
 ///
 /// ⚠️ `statutsPartants` reste ABSENT : la capture de rapports n'en porte aucun.
 EtatCourseOfficiel etatReel({
-  _Arrivee? arrivee,
+  ArriveeScenario? arrivee,
   bool? definitive = true,
 }) {
   final conversion = convertirRapportsApi(rapportsReels());
   // Pas de `??` : si `arrivee` est omis, on choisit EXPLICITEMENT le défaut.
-  final a = arrivee ?? _Arrivee.parDefaut();
+  final a = arrivee ?? ArriveeScenario.parDefaut();
   return EtatCourseOfficiel(
     arriveeGroupes: a.groupes,
     arriveeDefinitive: definitive,
@@ -553,7 +553,7 @@ void main() {
     });
 
     test('C1/4.4 arrivée RÉELLEMENT ABSENTE ⇒ aucune perte prononcée', () {
-      // ⚠️ Le scénario négatif est désormais EXPRIMABLE : `_Arrivee.absente()`
+      // ⚠️ Le scénario négatif est désormais EXPRIMABLE : `ArriveeScenario.absente()`
       //    transmet `null` sans aucun repli.
       //
       // ★ MESURE DEMANDÉE — « Recherche toi-même dans les chemins de production
@@ -576,7 +576,7 @@ void main() {
         'Simple Gagnant',
         <int>[15],
         10,
-        etatReel(arrivee: const _Arrivee.absente(), definitive: true),
+        etatReel(arrivee: const ArriveeScenario.absente(), definitive: true),
       );
       expect(v.etat, EtatGain.nonDetermine,
           reason: 'sans arrivée, aucune perte ne peut être démontrée par '
@@ -600,7 +600,7 @@ void main() {
         'Simple Gagnant',
         <int>[15],
         10,
-        etatReel(arrivee: const _Arrivee.absente(), definitive: true),
+        etatReel(arrivee: const ArriveeScenario.absente(), definitive: true),
       );
       final avecArrivee = jouer(
         'Simple Gagnant',
@@ -640,7 +640,7 @@ void main() {
         'Simple Gagnant',
         <int>[9],
         10,
-        etatReel(arrivee: const _Arrivee.absente(), definitive: true),
+        etatReel(arrivee: const ArriveeScenario.absente(), definitive: true),
       );
       expect(v.etat, EtatGain.attribue,
           reason: 'le rapport officiel « E_SIMPLE_GAGNANT 9 » est explicite : '

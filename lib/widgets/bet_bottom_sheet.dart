@@ -1039,7 +1039,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
     // Conseil IA actuel — pour mettre en avant le type recommandé
     final conseilLabel = (_conseilIA['label'] as String? ?? '').toLowerCase();
-    String _typeRecommande() {
+    String typeRecommande() {
       if (conseilLabel.contains('quinté')) return 'Quinté+';
       if (conseilLabel.contains('quarté')) return 'Quarté+';
       if (conseilLabel.contains('tiercé')) return 'Tiercé';
@@ -1049,7 +1049,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
       if (conseilLabel.contains('gagnant+placé') || conseilLabel.contains('gagnant + placé')) return 'Gagnant+Placé';
       return 'Simple Gagnant';
     }
-    final typeRecom = _typeRecommande();
+    final typeRecom = typeRecommande();
 
     return Container(
       decoration: BoxDecoration(
@@ -2218,7 +2218,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
 
   Widget _buildTypePariSelector() {
     // Cotes à afficher sous chaque bouton de type
-    String _coteLabelForType(String type) {
+    String coteLabelForType(String type) {
       switch (type) {
         case 'Simple Gagnant':  return '×${_coteGagnant.toStringAsFixed(1)}';
         case 'Simple Placé':   return '×${_cotePlacee.toStringAsFixed(1)}';
@@ -2242,7 +2242,7 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
           child: Row(
             children: List.generate(_typesPari.length, (i) {
               final sel = i == _typePariIndex;
-              final coteLabel = _coteLabelForType(_typesPari[i]);
+              final coteLabel = coteLabelForType(_typesPari[i]);
               return GestureDetector(
                 // ★ R13 : changer de type RÉINITIALISE l'ordre saisi. Un ordre
                 //   de pronostic construit pour un Tiercé (3 chevaux) n'a aucun
@@ -2736,10 +2736,12 @@ class _BetSheetState extends State<_BetSheet> with SingleTickerProviderStateMixi
             ...() {
               final nums = _numerosFinaux.take(2).toList();
               final partants = widget.course.partants;
-              return nums.map((num) {
-                final cheval = partants.where((x) => int.tryParse(x.numero) == num).firstOrNull;
+              return nums.map((numero) {
+                final cheval = partants
+                    .where((x) => int.tryParse(x.numero) == numero)
+                    .firstOrNull;
                 final nom = cheval?.nom ?? '?';
-                return _summaryRow('🐎 Cheval', 'N°$num — $nom');
+                return _summaryRow('🐎 Cheval', 'N°$numero — $nom');
               }).toList();
             }(),
           ] else if (p != null)

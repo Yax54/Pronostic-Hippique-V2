@@ -9,7 +9,13 @@
 
 part of 'ia_performance_screen.dart';
 
-extension IaPerfSecondaryWidgets on _IaPerformanceScreenState {
+// ⚠️ Nom PRIVÉ : cette extension vit dans un fichier `part of`. Son nom
+//    n'est utilisé nulle part ailleurs, et une extension non privée
+//    exposant un type privé (`_IaPerformanceScreenState`) dans une API
+//    publique est un mensonge sur sa portée réelle. La rendre privée ne
+//    change RIEN à la visibilité des méthodes, qui reste celle de la
+//    bibliothèque — c'est-à-dire exactement ce qu'elle était déjà.
+extension _IaPerfSecondaryWidgets on _IaPerformanceScreenState {
   // ── Couleurs partagées (static const de la classe principale) ───────────
   Color get _card   => const Color(0xFF111F30);
   Color get _green  => const Color(0xFF4CAF7D);

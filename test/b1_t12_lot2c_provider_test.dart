@@ -721,7 +721,7 @@ void main() {
     ///    Un simple refus d'écriture ne suffit pas : le support conserve alors
     ///    l'ancienne valeur, la mémoire y est réalignée, et l'état est PROUVÉ
     ///    (`echec`). C'est le comportement correct, vérifié par V11/V12/R3.
-    Future<PmuProvider> _rendreDivergent(_StoreControle store) async {
+    Future<PmuProvider> rendreDivergent(_StoreControle store) async {
       final pmu = await _providerAvec(store, [_pred('p1')]);
       // ① Le support porte une valeur que la mémoire ne connaît pas.
       store.ecrirePredictionBrute(_pred('p1', montantGainManuel: 77.0).toJson());
@@ -738,14 +738,14 @@ void main() {
     test('D1 un échec non réconcilié BLOQUE le ticket', () async {
       await _sansReseau(() async {
         final store = _StoreControle();
-        await _rendreDivergent(store);
+        await rendreDivergent(store);
       });
     });
 
     test('D2 un ticket bloqué REFUSE toute nouvelle écriture', () async {
       await _sansReseau(() async {
         final store = _StoreControle();
-        final pmu = await _rendreDivergent(store);
+        final pmu = await rendreDivergent(store);
 
         final issue = await pmu.enregistrerGainManuelPrediction('p1', 20.0);
         expect(issue, IssueEcritureGain.echecNonReconcilie);
@@ -806,7 +806,7 @@ void main() {
         () async {
       await _sansReseau(() async {
         final store = _StoreControle();
-        final pmu = await _rendreDivergent(store);
+        final pmu = await rendreDivergent(store);
         // Le disque porte déjà la valeur mémoire (rollback réussite partielle
         // non survenue) : on force la concordance en écrivant l'état mémoire.
         store.ecrirePredictionBrute(pmu.predictions
@@ -822,7 +822,7 @@ void main() {
         () async {
       await _sansReseau(() async {
         final store = _StoreControle();
-        final pmu = await _rendreDivergent(store);
+        final pmu = await rendreDivergent(store);
         // Le disque porte une valeur DIFFÉRENTE de la mémoire.
         store.ecrirePredictionBrute(_pred('p1', montantGainManuel: 77.0).toJson());
         final ok = await pmu.reconcilierEtatFinancier('p1');

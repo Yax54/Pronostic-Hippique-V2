@@ -13,7 +13,7 @@ import '../../utils/format_euros.dart';
 
 class ProfileProgressionTab extends StatefulWidget {
   final PmuProvider provider;
-  const ProfileProgressionTab({required this.provider});
+  const ProfileProgressionTab({super.key, required this.provider});
   @override
   State<ProfileProgressionTab> createState() => ProfileProgressionTabState();
 }
@@ -941,7 +941,7 @@ class ProfileMetriqueCol extends StatelessWidget {
   final String label, valeur;
   final Color couleur;
   const ProfileMetriqueCol(
-      {required this.label, required this.valeur, required this.couleur});
+      {super.key, required this.label, required this.valeur, required this.couleur});
   @override
   Widget build(BuildContext context) => Column(children: [
         Text(valeur,
@@ -980,7 +980,7 @@ class ProfileGainsCumulsPainter extends CustomPainter {
       );
     }
 
-    double _y(double v) {
+    double y(double v) {
       if (range == 0) return size.height / 2;
       return size.height -
           ((v - min) / range) * size.height * 0.85 -
@@ -993,10 +993,10 @@ class ProfileGainsCumulsPainter extends CustomPainter {
         lastVal >= 0 ? const Color(0xFF4CAF7D) : const Color(0xFFEF5350);
 
     final path = Path();
-    path.moveTo(0, _y(points.first));
+    path.moveTo(0, y(points.first));
     for (int i = 1; i < n; i++) {
       final x = size.width * i / (n - 1);
-      path.lineTo(x, _y(points[i]));
+      path.lineTo(x, y(points[i]));
     }
 
     // Remplissage transparent
@@ -1017,7 +1017,7 @@ class ProfileGainsCumulsPainter extends CustomPainter {
 
     // Point final
     final lastX = size.width;
-    final lastY = _y(lastVal);
+    final lastY = y(lastVal);
     canvas.drawCircle(Offset(lastX, lastY), 5,
         Paint()..color = lineColor.withValues(alpha: 0.3));
     canvas.drawCircle(Offset(lastX, lastY), 3.5, Paint()..color = lineColor);

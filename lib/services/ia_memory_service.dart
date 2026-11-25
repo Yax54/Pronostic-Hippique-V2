@@ -851,7 +851,7 @@ class IaMemoryService extends ChangeNotifier {
   /// en lecture seule). Les filtres, les pourcentages, les paliers, la règle
   /// OR et la règle ⭐ sont inchangés.
   ///
-  /// Retourne Map<jourDuMois, DonneeJourCalendrier>
+  /// Retourne `Map<jourDuMois, DonneeJourCalendrier>`.
   Map<int, DonneeJourCalendrier> donneesCalendrierJour(int annee, int mois) {
     final Map<int, _AgregJourCal> aggr = {};
 
@@ -4644,12 +4644,12 @@ class IaMemoryService extends ChangeNotifier {
       final dateDebutElargi = dateDebut.subtract(const Duration(hours: 48));
 
       // LOG étape 1 : état de la mémoire
-      final _totalPronostics = _pronostics.length;
-      final _avecResultat    = _pronostics.where((p) => p.resultatsReels).length;
-      final _sansResultat    = _totalPronostics - _avecResultat;
+      final totalPronostics = _pronostics.length;
+      final avecResultat    = _pronostics.where((p) => p.resultatsReels).length;
+      final sansResultat    = totalPronostics - avecResultat;
       onProgress?.call(etape, 4,
-          '🧠 Mémoire : $_totalPronostics pronostics '
-          '($_avecResultat avec résultat, $_sansResultat sans)');
+          '🧠 Mémoire : $totalPronostics pronostics '
+          '($avecResultat avec résultat, $sansResultat sans)');
       await Future.delayed(const Duration(milliseconds: 300));
 
       // 1er essai : pronostics du JOUR par date (00h00–23h59, 1h tolérance)
@@ -4743,16 +4743,16 @@ class IaMemoryService extends ChangeNotifier {
 
       // Date de référence = date la plus récente parmi les pronostics sélectionnés
       // (tri décroissant → premier = le plus récent)
-      final _pronosticsTriesDesc = [...pronosticsJour]
+      final pronosticsTriesDesc = [...pronosticsJour]
           ..sort((a, b) => b.datePronostic.compareTo(a.datePronostic));
-      final _dateAnalyseReelle = _pronosticsTriesDesc.isNotEmpty
-          ? _pronosticsTriesDesc.first.datePronostic
+      final dateAnalyseReelle = pronosticsTriesDesc.isNotEmpty
+          ? pronosticsTriesDesc.first.datePronostic
           : now;
 
       // LOG VISIBLE : afficher exactement ce qu'on a trouvé
-      final dateRefLog = _pronosticsTriesDesc.isNotEmpty
-          ? '${_dateAnalyseReelle.day.toString().padLeft(2, "0")}'
-            '/${_dateAnalyseReelle.month.toString().padLeft(2, "0")}'
+      final dateRefLog = pronosticsTriesDesc.isNotEmpty
+          ? '${dateAnalyseReelle.day.toString().padLeft(2, "0")}'
+            '/${dateAnalyseReelle.month.toString().padLeft(2, "0")}'
           : '?';
       onProgress?.call(etape, 4,
           '📋 Trouvé ${pronosticsJour.length} pronostics (date: $dateRefLog) — '
@@ -4777,9 +4777,9 @@ class IaMemoryService extends ChangeNotifier {
         // réinjecter uniquement les pronostics de ce type. Guard anti-doublon par type.
         // Ne touche pas gradient, poids, seuils, apprentissage.
         final dateStrRef =
-            '${_dateAnalyseReelle.year}-'
-            '${_dateAnalyseReelle.month.toString().padLeft(2, '0')}-'
-            '${_dateAnalyseReelle.day.toString().padLeft(2, '0')}';
+            '${dateAnalyseReelle.year}-'
+            '${dateAnalyseReelle.month.toString().padLeft(2, '0')}-'
+            '${dateAnalyseReelle.day.toString().padLeft(2, '0')}';
 
         // Grouper les pronostics résolus du jour par typePariConseille
         final Map<String, List<IaPronostic>> resolusParType = {};
@@ -4815,7 +4815,7 @@ class IaMemoryService extends ChangeNotifier {
             // `apprendre: false` conserve TOUT le travail statistique de la
             // méthode (historiqueComplet, compteurs, stats par label, `_save()`)
             // et n'interdit que les mutations de paramètres d'apprentissage.
-            await _mettreAJourPrecisionIA(pronosType, _dateAnalyseReelle,
+            await _mettreAJourPrecisionIA(pronosType, dateAnalyseReelle,
                 apprendre: false);
           }
         }
@@ -4875,8 +4875,8 @@ class IaMemoryService extends ChangeNotifier {
             // Aucun effet sur l'apprentissage : `_apprendreParGradient()`
             // utilise déjà DateTime.now() en interne (l.2219) et n'a jamais
             // lu ce `now`.
-            final _refTemporelle = DateTime.now();
-            final diffMin = heureCourse.difference(_refTemporelle).inMinutes;
+            final refTemporelle = DateTime.now();
+            final diffMin = heureCourse.difference(refTemporelle).inMinutes;
             if (diffMin > 0) {
               // Course strictement future : départ pas encore arrivé
               nbCoursesFutures++;
@@ -5271,7 +5271,7 @@ class IaMemoryService extends ChangeNotifier {
 
       return AnalyseJourneeResultat(
         succes: true,
-        dateAnalysee: _dateAnalyseReelle, // date réelle des courses, pas now
+        dateAnalysee: dateAnalyseReelle, // date réelle des courses, pas now
         nbCoursesAnalysees: nbCoursesAnalysees,
         nbNouveauxResultats: nbNouveauxResultats,
         nbPronosticsAjoutes: nbPronosticsAjoutes,

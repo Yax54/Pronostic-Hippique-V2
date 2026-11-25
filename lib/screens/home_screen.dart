@@ -1839,8 +1839,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       Wrap(
                         spacing: 8,
                         runSpacing: 6,
-                        children: numeros.map((num) {
-                          final isFirst = num == numeros.first;
+                        children: numeros.map((numero) {
+                          final isFirst = numero == numeros.first;
                           return Container(
                             width: 44, height: 44,
                             decoration: BoxDecoration(
@@ -1856,7 +1856,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     alpha: isFirst ? 0.0 : 0.4)),
                             ),
                             child: Center(
-                              child: Text(num,
+                              child: Text(numero,
                                   style: TextStyle(
                                     color: isFirst ? Colors.black : const Color(0xFFFFD700),
                                     fontSize: 16,
@@ -2137,8 +2137,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             Wrap(
                               spacing: 8,
                               runSpacing: 6,
-                              children: numeros.map((num) {
-                                final isFirst = num == numeros.first;
+                              children: numeros.map((numero) {
+                                final isFirst = numero == numeros.first;
                                 return Container(
                                   width: 44, height: 44,
                                   decoration: BoxDecoration(
@@ -2154,7 +2154,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           alpha: isFirst ? 0.0 : 0.4)),
                                   ),
                                   child: Center(
-                                    child: Text(num,
+                                    child: Text(numero,
                                         style: TextStyle(
                                           color: isFirst ? Colors.black : const Color(0xFFFFD700),
                                           fontSize: 16,

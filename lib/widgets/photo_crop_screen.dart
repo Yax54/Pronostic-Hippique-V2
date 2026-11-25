@@ -121,7 +121,7 @@ class _PhotoCropScreenState extends State<PhotoCropScreen> {
                                 _offset.dx + (_cropSize + 80) / 2,
                                 _offset.dy + (_cropSize + 80) / 2,
                                 0,
-                              )..scale(_scale, _scale, 1.0),
+                              )..scaleByDouble(_scale, _scale, 1.0, 1.0),
                               alignment: Alignment.center,
                               child: Image.file(
                                 File(widget.imagePath),

@@ -21,7 +21,7 @@ import '../../screens/widget_setup_screen.dart';
 
 class ProfileProfilTab extends StatefulWidget {
   final PmuProvider provider;
-  const ProfileProfilTab({required this.provider});
+  const ProfileProfilTab({super.key, required this.provider});
 
   @override
   State<ProfileProfilTab> createState() => ProfileProfilTabState();
@@ -228,7 +228,7 @@ class ProfileProfilTabState extends State<ProfileProfilTab> {
                   await ia.setBulleActive(v);
                   setState(() {});
                 },
-                activeColor: const Color(0xFF7C4DFF),
+                activeThumbColor: const Color(0xFF7C4DFF),
               ),
             ],
           ),
@@ -1269,7 +1269,7 @@ class ProfilePhotoOption extends StatelessWidget {
   final String   label;
   final VoidCallback onTap;
   final Color    color;
-  const ProfilePhotoOption({
+  const ProfilePhotoOption({super.key, 
     required this.icon,
     required this.label,
     required this.onTap,
@@ -1365,7 +1365,7 @@ class ProfileBackupSection extends StatefulWidget {
   /// valide et garde exactement le comportement d'avant.
   final OperationsSauvegarde? operations;
 
-  const ProfileBackupSection({required this.provider, this.operations});
+  const ProfileBackupSection({super.key, required this.provider, this.operations});
   @override
   State<ProfileBackupSection> createState() => ProfileBackupSectionState();
 }
@@ -1946,7 +1946,7 @@ class ProfileBoutonBackup extends StatelessWidget {
   final Color  couleur;
   final bool   enCharge;
   final VoidCallback onTap;
-  const ProfileBoutonBackup({
+  const ProfileBoutonBackup({super.key, 
     required this.emoji, required this.label, required this.sousTitre,
     required this.couleur, required this.enCharge, required this.onTap,
   });
@@ -1990,7 +1990,7 @@ class ProfileInfoChip extends StatelessWidget {
   final IconData icon;
   final String valeur, label;
   final Color? couleur;
-  const ProfileInfoChip(this.icon, this.valeur, this.label, {this.couleur});
+  const ProfileInfoChip(this.icon, this.valeur, this.label, {super.key, this.couleur});
   @override
   Widget build(BuildContext context) {
     final iconColor = couleur ?? const Color(0xFF4CAF7D);
@@ -2019,7 +2019,7 @@ class ProfileInfoChip extends StatelessWidget {
 // ─── Carte totaux depuis le début ─────────────────────────────────────────────
 class ProfileLevelBadge extends StatelessWidget {
   final double successRate;
-  const ProfileLevelBadge({required this.successRate});
+  const ProfileLevelBadge({super.key, required this.successRate});
 
   @override
   Widget build(BuildContext context) {
@@ -2047,7 +2047,7 @@ class ProfileStatBox extends StatelessWidget {
   final String value;
   final Color? color;
   final String size; // 'normal' ou 'large'
-  const ProfileStatBox({required this.label, required this.value, this.color, this.size = 'normal'});
+  const ProfileStatBox({super.key, required this.label, required this.value, this.color, this.size = 'normal'});
 
   @override
   Widget build(BuildContext context) {
@@ -2072,7 +2072,7 @@ class ProfileSettingItem extends StatelessWidget {
   final VoidCallback onTap;
   final Color? iconColor;
 
-  const ProfileSettingItem({
+  const ProfileSettingItem({super.key, 
     required this.icon,
     required this.label,
     required this.subtitle,

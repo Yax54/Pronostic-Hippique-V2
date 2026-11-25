@@ -804,7 +804,7 @@ void main() {
     /// Compte les occurrences d'un motif dans un fichier, en ignorant les
     /// lignes de commentaire `//` — pour ne pas confondre une mention
     /// documentaire avec un appel réel.
-    int _appelsReels(String chemin, String motif) {
+    int appelsReels(String chemin, String motif) {
       final src = File(chemin).readAsLinesSync();
       var n = 0;
       for (final l in src) {
@@ -817,7 +817,7 @@ void main() {
 
     /// La première ligne RÉELLE (non commentée) portant [motif], débarrassée
     /// de son indentation.
-    String _ligneReelle(String chemin, String motif) {
+    String ligneReelle(String chemin, String motif) {
       for (final l in File(chemin).readAsLinesSync()) {
         if (l.trimLeft().startsWith('//')) continue;
         if (l.contains(motif)) return l.trim();
@@ -829,11 +829,11 @@ void main() {
         'H1 `mes_paris_screen.dart` appelle la voie sécurisée et n\'appelle '
         'PLUS l\'ancienne', () {
       const f = 'lib/screens/mes_paris_screen.dart';
-      expect(_appelsReels(f, 'appliquerVerdictGainPredictionSecurise'), 1,
+      expect(appelsReels(f, 'appliquerVerdictGainPredictionSecurise'), 1,
           reason: 'la voie sécurisée doit être empruntée');
-      expect(_appelsReels(f, 'appliquerVerdictGainPrediction('), 0,
+      expect(appelsReels(f, 'appliquerVerdictGainPrediction('), 0,
           reason: 'l\'ancienne voie dangereuse ne doit plus être appelée');
-      expect(_appelsReels(f, 'resoudrePrediction('), 0,
+      expect(appelsReels(f, 'resoudrePrediction('), 0,
           reason: 'aucune résolution sur instantané ne doit subsister');
     });
 
@@ -841,9 +841,9 @@ void main() {
         'H2 `paris_detail_screen.dart` appelle la voie sécurisée et n\'appelle '
         'PLUS l\'ancienne', () {
       const f = 'lib/screens/paris_detail_screen.dart';
-      expect(_appelsReels(f, 'appliquerVerdictGainPredictionSecurise'), 1);
-      expect(_appelsReels(f, 'appliquerVerdictGainPrediction('), 0);
-      expect(_appelsReels(f, 'resoudrePrediction('), 0);
+      expect(appelsReels(f, 'appliquerVerdictGainPredictionSecurise'), 1);
+      expect(appelsReels(f, 'appliquerVerdictGainPrediction('), 0);
+      expect(appelsReels(f, 'resoudrePrediction('), 0);
     });
 
     // ★ H3 — L'ATTENTE, ET RIEN QUE L'ATTENTE.
@@ -857,7 +857,7 @@ void main() {
         'lib/screens/mes_paris_screen.dart',
         'lib/screens/paris_detail_screen.dart',
       ]) {
-        final l = _ligneReelle(f, 'appliquerVerdictGainPredictionSecurise(');
+        final l = ligneReelle(f, 'appliquerVerdictGainPredictionSecurise(');
         expect(l.startsWith('await '), isTrue,
             reason: '$f : l\'appel doit être attendu. Ligne réelle : « $l »');
       }
@@ -869,7 +869,7 @@ void main() {
         'lib/screens/paris_detail_screen.dart',
       ]) {
         // La déclaration doit rendre un Future et être `async`.
-        final decl = _ligneReelle(f, 'Future<void> _majGainReelDansProfil(');
+        final decl = ligneReelle(f, 'Future<void> _majGainReelDansProfil(');
         expect(decl.contains('async'), isTrue,
             reason: '$f : la méthode doit être `async`. Ligne : « $decl »');
         // L'appel doit être attendu.

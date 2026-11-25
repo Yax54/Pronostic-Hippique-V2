@@ -2386,16 +2386,16 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
   /// Liste détaillée des courses avec icône colorée selon statut
   Widget _buildDetailCoursesLignes(List<String> lignes) {
     // Trier : ✓ d'abord, puis ⏳, puis 🔄, puis 🕐/🔁
-    int _priorite(String l) {
+    int priorite(String l) {
       if (l.contains('✓'))  return 0;
       if (l.contains('⏳')) return 1;
       if (l.contains('🔄')) return 2;
       if (l.contains('🕐')) return 3;
       return 4;
     }
-    final sorted = [...lignes]..sort((a, b) => _priorite(a).compareTo(_priorite(b)));
+    final sorted = [...lignes]..sort((a, b) => priorite(a).compareTo(priorite(b)));
 
-    Color _couleur(String l) {
+    Color couleur(String l) {
       if (l.contains('✓'))  return const Color(0xFF4CAF7D);   // vert  → analysé
       if (l.contains('⏳')) return Colors.orange;              // orange → en attente PMU
       if (l.contains('🔄')) return Colors.blueAccent;         // bleu  → en cours
@@ -2437,7 +2437,7 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
           ...sorted.asMap().entries.map((entry) {
             final i    = entry.key;
             final line = entry.value;
-            final col  = _couleur(line);
+            final col  = couleur(line);
             // Séparer nom de course et statut entre crochets
             final bracketIdx = line.indexOf('[');
             final nom    = bracketIdx > 0 ? line.substring(0, bracketIdx).trim() : line;

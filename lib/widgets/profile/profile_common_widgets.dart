@@ -8,7 +8,7 @@ class ProfileDateFilterBar extends StatelessWidget {
   final VoidCallback onPickDate;
   final VoidCallback onReset;
 
-  const ProfileDateFilterBar({
+  const ProfileDateFilterBar({super.key, 
     required this.dateDebut,
     required this.dateFin,
     required this.onPickDate,

@@ -21,6 +21,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -132,8 +133,7 @@ void main() {
         if (n == 0) vides++;
       }
 
-      // eslint:disable-next-line avoid_print
-      print('S3-4  fichiers=${fichiers.length} lignes=$lignes '
+      debugPrint('S3-4  fichiers=${fichiers.length} lignes=$lignes '
           'retenus=$retenus écartés=${lignes - retenus} '
           'aveugles=$aveugles vides=$vides');
 
@@ -168,8 +168,7 @@ void main() {
           }
         }
       }
-      // eslint:disable-next-line: avoid_print
-      print('S3-5  lignes=$lignes  dividendeNul=$aDividendeNul  '
+      debugPrint('S3-5  lignes=$lignes  dividendeNul=$aDividendeNul  '
           'rembourses=$rembourse  negatifs=$negatif');
       expect(lignes, 5523);
       expect(aDividendeNul, 534);
@@ -198,8 +197,7 @@ void main() {
           }
         }
       }
-      // eslint:disable-next-line avoid_print
-      print('S2-1  lignes=$total  contientD=$avecD  contientNP=$avecNP');
+      debugPrint('S2-1  lignes=$total  contientD=$avecD  contientNP=$avecNP');
       expect(avecD, 0,
           reason: 'le terme `!combinaison.contains(\'D\')` ne distinguait RIEN');
       expect(total, 4684);
@@ -225,8 +223,8 @@ void main() {
             if (!L.contains('ordre') || L.contains('sordre')) continue;
             final base = lab.replaceAll(' Ordre', '').replaceAll(' ordre', '');
             for (final lab2 in parLibelle.keys) {
-              final L2 = lab2.toLowerCase();
-              if (!L2.contains('sordre')) continue;
+              final l2 = lab2.toLowerCase();
+              if (!l2.contains('sordre')) continue;
               final base2 =
                   lab2.replaceAll(' Désordre', '').replaceAll(' désordre', '');
               if (base2 != base) continue;
@@ -239,8 +237,7 @@ void main() {
           }
         }
       }
-      // eslint:disable-next-line: avoid_print
-      print('S2-2  paires Ordre/Désordre=$paires  combinaisons identiques=$identiques');
+      debugPrint('S2-2  paires Ordre/Désordre=$paires  combinaisons identiques=$identiques');
       expect(paires, greaterThan(0));
       expect(identiques, paires,
           reason: 'seul le libellé sépare Ordre et Désordre');
@@ -307,8 +304,7 @@ void main() {
           }
         }
       }
-      // eslint:disable-next-line: avoid_print
-      print('S2-4  lignes=$total  modifiées=${modifiees.values.fold(0, (a, b) => a + b)}  $modifiees');
+      debugPrint('S2-4  lignes=$total  modifiées=${modifiees.values.fold(0, (a, b) => a + b)}  $modifiees');
       expect(total, 4684);
       // Périmètre MESURÉ, code par code. Décomposition :
       //   70 lignes explicitement « Désordre » (classées à tort « ordre »)

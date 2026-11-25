@@ -11,7 +11,7 @@ import '../../services/ia_memory_models.dart';
 
 class IaBulletPoint extends StatelessWidget {
   final String text;
-  const IaBulletPoint(this.text);
+  const IaBulletPoint(this.text, {super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +79,7 @@ class IaDialogDetailTypePari extends StatefulWidget {
   final Widget Function(String, Color) chipStat;
   final Color green;
 
-  const IaDialogDetailTypePari({
+  const IaDialogDetailTypePari({super.key, 
     required this.stats,
     required this.filtreInitial,
     required this.filtreDebutInitial,
