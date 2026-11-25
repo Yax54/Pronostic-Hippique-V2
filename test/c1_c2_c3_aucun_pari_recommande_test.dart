@@ -41,7 +41,8 @@ import 'package:pronostic_hippique/utils/type_pari_utils.dart';
 //  Fabriques
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Ticket tel que le produit `race_detail_screen.dart:348-359` lorsqu'il
+/// Ticket tel que le produisait l'ex-`race_detail_screen.dart:348-359`
+/// (fichier supprimé en BL1-A18) lorsqu'il
 /// hérite d'un libellé `'À surveiller'` via `_betType = pred.typePari` (l.59) :
 /// **aucun `montantMise`, aucun `isCorrect`, aucun `gainRealise`**.
 UserPrediction ticketSansPari({
@@ -220,7 +221,8 @@ void main() {
       final provider = await providerVide();
       provider.addPrediction(ticketSansPari());
 
-      // Arguments EXACTEMENT ceux que produisait `predictions_screen.dart:533`.
+      // Arguments EXACTEMENT ceux que produisait l'ex-`predictions_screen.dart:533`
+      // (fichier supprimé en BL1-A18).
       // Avant correction, la mesure donnait :
       //   montantMise=10.0, gainRealise=32.0, gainNet=32.0, statut='Gagné ✅'
       provider.validatePrediction('sans_pari_1',
@@ -573,11 +575,62 @@ void main() {
           reason: '$fichier doit afficher un motif compréhensible');
     }
 
-    test('C2/1 — predictions_screen.dart garde avant le repli de 10 €', () {
-      verifierGarde(
-        'lib/screens/predictions_screen.dart',
-        '_afficherAucunPariRecommande',
-      );
+    // ★ BL1-A18 — TRANSFERT DEPUIS `predictions_screen.dart` (écran SUPPRIMÉ).
+    //   Exigence d'origine (C2/1, fichier SUPPRIMÉ) : « predictions_screen.dart
+    //   garde avant le
+    //   repli de 10 € ». Cette exigence NE POUVAIT viser qu'un fichier
+    //   INACCESSIBLE : mesuré, `PredictionsScreen` n'était instancié nulle part
+    //   dans `lib/` (0 occurrence hors sa propre déclaration). La consigne
+    //   exige qu'une protection financière protège le code RÉELLEMENT utilisé.
+    //
+    //   Le transfert NE RÉDUIT PAS la protection, il l'AUGMENTE :
+    //   `profile_historique_tab.dart` contient DEUX couples garde/repli
+    //   (lignes 268→356 et 360→368 mesurées), alors que l'ancien écran n'en
+    //   avait qu'un seul vérifié. On vérifie donc TOUS les couples présents,
+    //   par paire, au lieu du seul premier.
+    test('C2/1 — profile_historique_tab : CHAQUE garde précède son repli', () {
+      final source =
+          File('lib/widgets/profile/profile_historique_tab.dart')
+              .readAsStringSync();
+      final gardes = <int>[];
+      var i = 0;
+      const motif = 'estEtatSansPariRecommande(pred.typePari)';
+      while (true) {
+        final p = source.indexOf(motif, i);
+        if (p < 0) break;
+        gardes.add(p);
+        i = p + 1;
+      }
+      final replis = <int>[];
+      i = 0;
+      const repli = ': 10.0';
+      while (true) {
+        final p = source.indexOf(repli, i);
+        if (p < 0) break;
+        replis.add(p);
+        i = p + 1;
+      }
+
+      // Le fichier VIVANT doit porter au moins la garde (exigence conservée).
+      expect(gardes, isNotEmpty,
+          reason: 'profile_historique_tab doit porter la garde C2');
+      // Le repli doit toujours exister (sinon le test passerait à vide).
+      expect(replis, isNotEmpty,
+          reason: 'profile_historique_tab doit toujours contenir son repli');
+      // CHAQUE garde doit précéder un repli : aucune garde orpheline.
+      for (final g in gardes) {
+        final suivants = replis.where((r) => r > g);
+        expect(suivants, isNotEmpty,
+            reason: 'la garde @$g doit précéder un repli « : 10.0 »');
+      }
+      // Et chaque repli doit être précédé d'une garde : aucun repli nu.
+      for (final r in replis) {
+        final precedents = gardes.where((g) => g < r);
+        expect(precedents, isNotEmpty,
+            reason: 'le repli @$r doit être protégé par une garde en amont');
+      }
+      expect(source.contains('_afficherAucunPariRecommande'), isTrue,
+          reason: 'profile_historique_tab doit afficher un motif compréhensible');
     });
 
     test('C2/2 — profile_historique_tab.dart garde avant le repli de 10 €', () {
@@ -587,17 +640,14 @@ void main() {
       );
     });
 
-    test('C2/3 — les deux boutons de validation sont conditionnés', () {
-      final a = File('lib/screens/predictions_screen.dart').readAsStringSync();
+    test('C2/3 — le bouton de validation du fichier VIVANT est conditionné', () {
+      // ★ BL1-A18 — transféré de `predictions_screen.dart` (supprimé) vers
+      //   `profile_historique_tab.dart` (seul écran vivant portant ce bouton).
+      //   L'exigence est IDENTIQUE : la condition doit être présente dans le
+      //   CODE, avec l'opérateur « et non pas un pari recommandé ».
       final b =
           File('lib/widgets/profile/profile_historique_tab.dart').readAsStringSync();
 
-      expect(
-        a.contains(
-            'if (pred.isCorrect == null && !estEtatSansPariRecommande(pred.typePari))'),
-        isTrue,
-        reason: 'predictions_screen ne doit plus proposer la validation',
-      );
       expect(
         b.contains(
             'if (isCorrect == null && !estEtatSansPariRecommande(pred.typePari))'),
@@ -608,17 +658,17 @@ void main() {
 
     test('C2/4 — le motif affiché est compréhensible et sans promesse de gain',
         () {
-      for (final f in <String>[
-        'lib/screens/predictions_screen.dart',
-        'lib/widgets/profile/profile_historique_tab.dart',
-      ]) {
-        final s = File(f).readAsStringSync();
-        expect(s.contains('Aucun pari recommandé'), isTrue, reason: f);
-        expect(s.contains('passer cette course'), isTrue,
-            reason: '$f doit reprendre le sens métier de '
-                'conseils_screen.dart:1284');
-        expect(s.contains('ni mise, ni gain, ni perte'), isTrue, reason: f);
-      }
+      // ★ BL1-A18 — `predictions_screen.dart` retiré de la liste (supprimé).
+      //   L'exigence porte désormais sur le seul fichier VIVANT.
+      final s =
+          File('lib/widgets/profile/profile_historique_tab.dart')
+              .readAsStringSync();
+      final f = 'lib/widgets/profile/profile_historique_tab.dart';
+      expect(s.contains('Aucun pari recommandé'), isTrue, reason: f);
+      expect(s.contains('passer cette course'), isTrue,
+          reason: '$f doit reprendre le sens métier de '
+              'conseils_screen.dart:1284');
+      expect(s.contains('ni mise, ni gain, ni perte'), isTrue, reason: f);
     });
   });
 
@@ -650,9 +700,10 @@ void main() {
     });
 
     test('I/3 — le résolveur PMU n\'est pas branché sur les voies modifiées', () {
+      // ★ BL1-A18 — `predictions_screen.dart` retiré (supprimé) ; les deux
+      //   fichiers VIVANTS restent vérifiés.
       for (final f in <String>[
         'lib/providers/pmu_provider.dart',
-        'lib/screens/predictions_screen.dart',
         'lib/widgets/profile/profile_historique_tab.dart',
       ]) {
         final s = File(f).readAsStringSync();

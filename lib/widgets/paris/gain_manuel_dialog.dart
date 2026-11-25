@@ -169,9 +169,9 @@ class _GainManuelDialogState extends State<GainManuelDialog> {
                 const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
               // Virgule ET point, chiffres uniquement, UN séparateur au plus.
-              // On n'utilise PAS le formateur `^\d+\.?\d{0,2}` de
-              // `mise_gain_widget` : il refuse la virgule et forcerait
-              // l'utilisateur à saisir un point.
+              // On n'utilise PAS le formateur `^\d+\.?\d{0,2}` de l'ex-widget
+              // `mise_gain_widget` (supprimé en BL1-A18) : il refusait la
+              // virgule et forçait l'utilisateur à saisir un point.
               FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
             ],
             style: const TextStyle(color: Colors.white, fontSize: 18),

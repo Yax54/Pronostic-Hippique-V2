@@ -18,7 +18,8 @@
 //  dépend aussi de la cote Placé.
 //
 //  Ce montant remontait dans SIX chemins d'affichage :
-//    1. `predictions_screen`      → montant de la carte
+//    1. `predictions_screen`      → montant de la carte (écran SUPPRIMÉ en
+//                                   BL1-A18 ; le chemin vivant est le n°2)
 //    2. `profile_historique_tab`  → montant de la carte historique
 //    3. `profile_historique_tab`  → gain partagé (carte de partage)
 //    4. `pmu_provider.totalGainsNet` / `totalGagnes`
@@ -439,19 +440,39 @@ void main() {
   // ═════════════════════════════════════════════════════════════════════════
 
   group('H3 — aucun montant G+P non prouvé affiché', () {
-    test('H3/1 — predictions_screen ne présente plus le montant brut', () {
+    test('H3/1 — le fichier VIVANT ne présente pas de montant brut non prouvé',
+        () {
+      // ★ BL1-A18 — TRANSFERT DEPUIS `predictions_screen.dart` (écran SUPPRIMÉ).
+      //   Exigence d'origine : « garde `!pred.gainGagnantPlaceEtabli` AVANT
+      //   l'affichage du montant ». Elle visait un écran MESURÉ INACCESSIBLE
+      //   (0 instanciation de `PredictionsScreen` dans `lib/`). La consigne
+      //   exige que la protection porte sur le code réellement utilisé.
+      //
+      //   Le fichier vivant exprime la MÊME décision sous une forme dérivée :
+      //   `final bool gainAffiche = pred.gainGagnantPlaceEtabli;` (l.155) puis
+      //   `!gainAffiche` (l.220) qui PRÉCÈDE le montant. On vérifie donc
+      //   l'exigence réelle (la garde est en amont du montant), pas la
+      //   tournure de l'ancien écran.
+      const f = 'lib/widgets/profile/profile_historique_tab.dart';
       // Le littéral affiché est du CONTENU de chaîne : texte brut.
-      final brut = File('lib/screens/predictions_screen.dart').readAsStringSync();
-      expect(brut.contains('gain non établi'), isTrue);
-      final code = codeSeulFichier('lib/screens/predictions_screen.dart');
-      expect(code.contains('!pred.gainGagnantPlaceEtabli'), isTrue);
-      // La garde est AVANT le montant : le montant n'est atteignable que
-      // si le gain est établi.
-      final iGarde = brut.indexOf('!pred.gainGagnantPlaceEtabli');
-      final iMontant = brut.indexOf('fmtEuros(pred.gainNet)}€');
-      expect(iGarde, greaterThanOrEqualTo(0));
-      expect(iMontant, greaterThan(iGarde),
+      final brut = File(f).readAsStringSync();
+      expect(brut.contains('Gain non établi'), isTrue,
+          reason: 'le ticket doit annoncer le gain non établi');
+
+      // Le montant affiché par la carte historique doit être sous la garde.
+      final iGarde = brut.indexOf('final bool gainAffiche = pred.gainGagnantPlaceEtabli;');
+      final iGarde2 = brut.indexOf('!gainAffiche');
+      final iMontant = brut.indexOf('fmtEuros(gain)}€');
+      expect(iGarde, greaterThanOrEqualTo(0),
+          reason: 'le drapeau d\'affichage du gain doit dériver du prédicat');
+      expect(iGarde2, greaterThanOrEqualTo(0),
+          reason: 'la garde `!gainAffiche` doit exister');
+      expect(iMontant, greaterThan(iGarde2),
           reason: 'le montant doit venir après la garde');
+
+      // Et le prédicat doit être réellement lu dans le CODE (hors commentaires).
+      final code = codeSeulFichier(f);
+      expect(code.contains('gainGagnantPlaceEtabli'), isTrue);
     });
 
     test('H3/2 — la carte historique annonce « Gain non établi »', () {
@@ -480,8 +501,10 @@ void main() {
     test('H3/5 — aucun autre type de pari n\'est filtré à l\'affichage', () {
       // Le prédicat est le SEUL point de décision : aucun test de libellé
       // n'est réécrit dans les écrans.
+      // ★ BL1-A18 — `predictions_screen.dart` retiré (supprimé). L'exigence
+      //   « aucun test de libellé réécrit à la main » reste vérifiée sur les
+      //   deux fichiers VIVANTS.
       for (final f in <String>[
-        'lib/screens/predictions_screen.dart',
         'lib/widgets/profile/profile_historique_tab.dart',
         'lib/widgets/profile/profile_progression_tab.dart',
       ]) {
@@ -718,8 +741,9 @@ void main() {
       //  l.5775-5788 depuis `IaPronostic.typePariConseille` et
       //  `_estBonConseilParType` — jamais depuis `_statsTypes`.
       //  Seules lectures de `_statsTypes` : le getter `statsParType`
-      //  (2 lecteurs d'AFFICHAGE : ia_performance_screen.dart:2673,
-      //  ia_precision_widget.dart:31) plus clear/load/save.
+      //  (2 lecteurs d'AFFICHAGE : ia_performance_screen.dart:2673, plus
+      //  l'ex-`ia_precision_widget.dart:31` supprimé en BL1-A18) plus
+      //  clear/load/save.
       //
       //  ── CE QUE H7/3 GARANTIT DÉSORMAIS ───────────────────────────────────
       //   (1) STRUCTURE : le bloc ne transmet QUE typePari / isCorrect /
@@ -887,10 +911,10 @@ void main() {
     });
 
     test('H7/5 — le résolveur PMU n\'est pas branché', () {
+      // ★ BL1-A18 — `predictions_screen.dart` retiré (supprimé).
       for (final f in <String>[
         'lib/models/pmu_models.dart',
         'lib/providers/pmu_provider.dart',
-        'lib/screens/predictions_screen.dart',
         'lib/widgets/profile/profile_historique_tab.dart',
         'lib/widgets/profile/profile_progression_tab.dart',
       ]) {
@@ -901,8 +925,8 @@ void main() {
     });
 
     test('H7/6 — la validation manuelle du lot précédent est intacte', () {
+      // ★ BL1-A18 — `predictions_screen.dart` retiré (supprimé).
       for (final f in <String>[
-        'lib/screens/predictions_screen.dart',
         'lib/widgets/profile/profile_historique_tab.dart',
       ]) {
         final s = codeSeulFichier(f);

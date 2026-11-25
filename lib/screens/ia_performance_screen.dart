@@ -3181,7 +3181,11 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
                 _buildLigneSeuilAdaptatif('🔀 Couplé Placé',    seuils.seuilCouplePlace,    60.0),
                 _buildLigneSeuilAdaptatif('🎯 Tiercé',          seuils.seuilTierce,         35.0),
                 _buildLigneSeuilAdaptatif('4️⃣ Quarté+',          seuils.seuilQuarte,         80.0),
-                _buildLigneSeuilAdaptatif('⭐ Quinté+',          seuils.seuilQuinte,          0.0),
+                // ★ BL1-A15 — AFFICHAGE HONNÊTE. `seuilQuinte` n'est JAMAIS
+                //   ajusté (aucun `case 'Quinté+'` dans `ajusterSeuil` :
+                //   mesuré, il reste 0.0 après 50 appels à +2.0 comme à -2.0).
+                //   L'afficher comme les autres laissait croire qu'il apprend.
+                _buildLigneSeuilFige('⭐ Quinté+', seuils.seuilQuinte),
               ],
             ),
           ),
@@ -4100,6 +4104,26 @@ class _IaPerformanceScreenState extends State<IaPerformanceScreen>
     });
     // ★ v10.70 : Sauvegarder la période personnalisée
     _sauvegarderFiltreIaStats();
+  }
+
+  /// ★ BL1-A15 — Ligne d'un seuil qui N'APPREND PAS.
+  ///
+  /// Un seuil figé ne doit pas être présenté comme adaptatif : sinon
+  /// l'utilisateur lit une valeur qui ne bougera jamais comme si elle
+  /// résultait d'un apprentissage. On affiche donc la valeur, sans delta,
+  /// avec la raison en clair.
+  Widget _buildLigneSeuilFige(String label, double valeur) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Expanded(child: Text(label,
+            style: const TextStyle(color: Colors.white60, fontSize: 16))),
+        Text(valeur.toStringAsFixed(1),
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        const Text('  figé (course officielle)',
+            style: TextStyle(color: Colors.white38, fontSize: 12)),
+      ]),
+    );
   }
 
   Widget _buildLigneSeuilAdaptatif(String label, double valeurActuelle, double valeurDefaut) {

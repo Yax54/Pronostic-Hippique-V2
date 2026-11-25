@@ -538,8 +538,9 @@ IdentitePari? identitePari({
   //
   // Deux pièges évités :
   //   • `montantMise` de `UserPrediction` vaut `0.0` par défaut : un ticket
-  //     sans mise saisie (race_detail_screen.dart:409 documente
-  //     explicitement « montantMise n'est PAS renseigné ») ne peut pas être
+  //     sans mise saisie (l'ancien `race_detail_screen.dart:409`, supprimé
+  //     en BL1-A18, documentait « montantMise n'est PAS renseigné » ; les
+  //     tickets ainsi créés existent toujours) ne peut pas être
   //     comparé à une mise réelle. Zéro n'est pas une mise, c'est une absence.
   //   • `Gagnant+Placé` engage `miseGagnant` ET `misePlace` : la mise totale
   //     réellement engagée est la SOMME, jamais l'une des deux. Comparer

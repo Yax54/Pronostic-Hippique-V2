@@ -26,16 +26,14 @@
 //      (`ia_performance_screen.dart:3888-3890`) et du volet « aujourd'hui »
 //      du filtre 7 j (`:3869-3870`).
 //
-//  ── COMPOSANTS NON TESTÉS, ET POURQUOI (preuve d'absence = grep vide) ─────
-//    • `SectionPrecisionIA` (`ia_precision_widget.dart:245`) : **CODE MORT**.
-//        `grep -rn "ia_precision_widget" lib/ test/ | grep -v "lib/widgets/ia/ia_precision_widget.dart:"`
-//        → résultat VIDE ⇒ aucun importateur, aucune instanciation.
-//    • `_DialogDetailTypePari` (`ia_dialog_detail_type_pari.dart:84`) :
-//        **CODE MORT**. `grep -rn "ia_dialog_detail_type_pari" lib/ test/`
-//        → 2 résultats, TOUS DEUX DES COMMENTAIRES
-//        (`ia_performance_dialogs.dart:418`, `ia_precision_widget.dart:257`).
-//      Écrire un test contre ces deux composants produirait un échec sans
-//      aucun effet observable pour l'utilisateur : exclu volontairement.
+//  ── COMPOSANTS NON TESTÉS, ET POURQUOI ──────────────────────────────────
+//    • `SectionPrecisionIA` (`ia_precision_widget.dart`) et
+//      `_DialogDetailTypePari` (`ia_dialog_detail_type_pari.dart`) :
+//      ces deux fichiers ont été SUPPRIMÉS en BL1-A18 après mesure
+//      (0 importateur, 0 instanciation). Les homonymes VIVANTS sont
+//      `_buildSectionPrecisionIA` (privé, dans `ia_performance_screen.dart`)
+//      et `IaDialogDetailTypePari` (public, dans `ia_performance_dialogs.dart`).
+//      Les tester ici n'aurait plus d'objet.
 //    • `ia_performance_screen._statsFiltre` et `ia_calendrier_tab
 //      ._estDansPeriodeStats` sont PRIVÉES. On mesure donc leurs DÉLÉGUÉS
 //      PUBLICS exacts (voir ci-dessus) et on rapporte par LECTURE ce que les

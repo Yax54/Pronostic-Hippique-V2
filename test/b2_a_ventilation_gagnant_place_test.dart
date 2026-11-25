@@ -27,7 +27,8 @@
 //
 //  ── CE QUI N'EST PAS TOUCHÉ ───────────────────────────────────────────────
 //  Aucun calcul financier, aucun rapport PMU officiel, aucune garde A-0,
-//  aucun `TrackedCourse`, aucun `race_detail_screen.dart`, aucun
+//  aucun `TrackedCourse`, aucun écran de capture (l'ex-`race_detail_screen.dart`
+//  a été supprimé en BL1-A18), aucun
 //  `mes_paris_screen.dart`, aucun apprentissage IA.
 // ═══════════════════════════════════════════════════════════════════════════
 

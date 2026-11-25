@@ -1,8 +1,21 @@
-// R1 — capture des numéros et du code PMU dans `race_detail_screen.dart`.
+// R1 — capture des numéros et du code PMU : contrat de l'ANCIEN écran
+//      `race_detail_screen.dart`, SUPPRIMÉ en BL1-A18 (mesuré : 0 instanciation
+//      externe, aucun test ne lisait le fichier).
 //
-// Contexte : cet écran ne permet de sélectionner QU'UN SEUL cheval, quel que
-// soit le type de pari choisi. Il crée pourtant des tickets Simple, Couplé,
-// Tiercé, Quarté+, Quinté+ et Gagnant+Placé.
+// POURQUOI CE FICHIER DE TEST SUBSISTE : ses assertions ne portent PAS sur
+// l'écran, mais sur les DEUX fonctions partagées qu'il utilisait et qui, elles,
+// restent VIVANTES et utilisées par le parcours actif `showBetSheet` :
+//   • `typePmuDepuisLibelleHistorique` / `codeApiPourTypePmu`
+//     (`referentiel_paris_pmu.dart`) — source du code PMU officiel ;
+//   • la construction de `UserPrediction` avec `numerosJoues` et
+//     `codePmuOfficiel`, exactement comme le fait `bet_bottom_sheet.dart`.
+// Le contrat financier préservé est donc celui du PARCOURS ACTIF. La
+// suppression des seules références au fichier disparu n'affaiblit aucune
+// assertion.
+//
+// Contexte d'origine, conservé : cet écran ne permettait de sélectionner
+// QU'UN SEUL cheval, quel que soit le type de pari choisi. Il créait pourtant
+// des tickets Simple, Couplé, Tiercé, Quarté+, Quinté+ et Gagnant+Placé.
 //
 // Ce fichier vérifie ce que la capture fait RÉELLEMENT, sans jamais supposer
 // qu'une combinaison complète existe alors qu'un seul numéro a été saisi.
@@ -10,7 +23,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pronostic_hippique/models/pmu_models.dart';
 import 'package:pronostic_hippique/services/referentiel_paris_pmu.dart';
 
-/// Les sept types RÉELLEMENT proposés par `race_detail_screen.dart`
+/// Les sept types RÉELLEMENT proposés par l'ancien `race_detail_screen.dart`
+/// (SUPPRIMÉ en BL1-A18 ; conservés ici comme contrat du parcours actif)
 /// (mesuré ligne 474 : le Couplé Placé n'y figure pas, contrairement à
 /// `bet_bottom_sheet.dart` qui en propose huit).
 const List<String> kTypesRaceDetail = [
@@ -50,7 +64,9 @@ int nbChevauxRequisPour(String libelle) {
   }
 }
 
-/// Construit le ticket EXACTEMENT comme le fait `race_detail_screen.dart`.
+/// Construit le ticket EXACTEMENT comme le faisait `race_detail_screen.dart`
+/// (SUPPRIMÉ en BL1-A18)
+/// (supprimé), c'est-à-dire comme le fait toujours `bet_bottom_sheet.dart`.
 UserPrediction construireCommeRaceDetail({
   required String typePari,
   required int numeroCheval,
@@ -80,7 +96,7 @@ UserPrediction construireCommeRaceDetail({
 
 void main() {
   // ───────────────────────────────────────────────────────────────────────
-  group('R1/1 — les sept types de race_detail restent proposés', () {
+  group('R1/1 — les sept types du référentiel restent proposés', () {
     test('il y a exactement sept types', () {
       expect(kTypesRaceDetail.length, 7);
     });

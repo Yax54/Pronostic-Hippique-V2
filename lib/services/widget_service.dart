@@ -6,7 +6,8 @@
 //      score IA, tendance, ELO, type de pari conseillé
 //   ★ Mise à jour auto depuis DataRefreshService (appelé après chaque refresh)
 //   ★ Méthode updateFromReunions() directement depuis les ZtReunion
-//      → pas besoin de BetOpportunity (découplé de best_bet_engine)
+//      → pas besoin de BetOpportunity (découplé : l'ancien moteur
+//        `best_bet_engine.dart` a été supprimé en BL1-A16/A17)
 //   ★ Top 3 courses du jour (pas seulement la première)
 //   ★ Widget "vide" si aucune course à venir aujourd'hui
 // ═══════════════════════════════════════════════════════════════════

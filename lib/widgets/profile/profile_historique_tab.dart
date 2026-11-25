@@ -363,7 +363,8 @@ class ProfileHistoriqueCard extends StatelessWidget {
     }
 
     // ★ LOT G+P — LA MISE N'EST PLUS INVENTÉE (même correction que
-    //   `predictions_screen._validerDialog`).
+    //   `_validerDialog` de l'ex-`predictions_screen`, supprimé en BL1-A18 :
+    //   le présent dialogue est désormais le SEUL à porter cette garde).
     //
     //   Avant : `double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;`
     //   Pour un Gagnant+Placé dont `montantMise` vaut 0, c'était 10 €
@@ -663,9 +664,10 @@ class ProfileHistoriqueCard extends StatelessWidget {
   /// Motif affiché lorsqu'un ticket ne porte aucun pari recommandé.
   ///
   /// Aucune écriture financière n'est proposée : le ticket n'a jamais été un
-  /// pari, il n'y a donc rien à valider. Message aligné sur
-  /// `predictions_screen.dart` et sur le sens métier de
-  /// `conseils_screen.dart:1284` (« passer »).
+  /// pari, il n'y a donc rien à valider. Message aligné sur le sens métier de
+  /// `conseils_screen.dart:1284` (« passer »). Le jumeau
+  /// `predictions_screen.dart` a été supprimé en BL1-A18 : ce dialogue est le
+  /// seul point d'affichage vivant de ce motif.
   void _afficherAucunPariRecommande(BuildContext context) {
     showDialog(
       context: context,

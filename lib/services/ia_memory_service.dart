@@ -6029,9 +6029,20 @@ class IaMemoryService extends ChangeNotifier {
         case 'Quarté+':
           seuilCibleTaux = 35.0;
           break;
-        case 'Quinté+':
-          seuilCibleTaux = 30.0; // quinté difficile
-          break;
+        // ★ BL1-A15 — `case 'Quinté+'` RETIRÉ : il était MORT.
+        //   MESURE (sonde instrumentée) : `seuilQuinte` reste 0.0 après
+        //   50 appels à `ajusterSeuil('Quinté+', +2.0)` ET 50 appels à
+        //   `ajusterSeuil('Quinté+', -2.0)`, alors que dans la MÊME boucle
+        //   `seuilSimpleGagnant` sature à 92, `seuilQuarte` à 92 et
+        //   `seuilTierce` à 55 — la boucle agit donc réellement, mais la
+        //   branche Quinté+ de `ajusterSeuil` n'existe pas (`default: break`).
+        //   Ce `case` calculait donc un `seuilCibleTaux` que seul un
+        //   `debugPrint` consommait : aucune écriture, aucune décision.
+        //   ⇒ Le retirer ne change AUCUN comportement. Le `default: 40.0`
+        //     prend le relais pour ce libellé, et `delta` ne sert qu'au
+        //     `debugPrint` (aucune écriture de seuil : voir `if (apprendre)`).
+        //   ⚠️ CONSERVÉ : la VALEUR `seuilQuinte = 0.0`, sa persistance
+        //      (`toJson`/`fromJson`, clé `qi`) et son affichage.
         default:
           seuilCibleTaux = 40.0;
       }

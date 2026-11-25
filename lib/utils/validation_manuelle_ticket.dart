@@ -9,13 +9,19 @@
 //        enregistrées sur ce ticket ? »
 //
 //  ── LE DÉFAUT CORRIGÉ (mesuré) ────────────────────────────────────────────
-//  Les deux dialogues `predictions_screen._validerDialog` et
+//  Les deux dialogues `predictions_screen._validerDialog` (fichier SUPPRIMÉ
+//  en BL1-A18) et
 //  `profile_historique_tab._validerDialog` faisaient :
+//  (★ BL1-A18 : `predictions_screen.dart` a été SUPPRIMÉ après mesure — il
+//   n'était instancié nulle part. Seul `profile_historique_tab._validerDialog`
+//   subsiste, et c'est lui que la présente correction protège. L'historique
+//   ci-dessous est conservé parce qu'il explique l'origine du défaut.)
 //
 //      double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;
 //
 //  Pour un `Gagnant+Placé`, `montantMise` vaut 0 pour tout ticket créé par
-//  `race_detail_screen.dart:348-359` (le champ n'est pas passé) : la formule
+//  l'ancien `race_detail_screen.dart:348-359` (supprimé en BL1-A18 ; le champ
+//  n'y était pas passé) : la formule
 //  ci-dessus engageait donc 10 € **inventés**, alors que le pari en engage
 //  DEUX composantes (10 € Gagnant + 10 € Placé = 20 €) et que le modèle porte
 //  déjà ces deux montants dans `miseGagnant` / `misePlace`.

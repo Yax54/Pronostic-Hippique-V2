@@ -103,7 +103,8 @@ void main() {
         () {
       // Vérification STRUCTURELLE sur la source : le formateur appliqué au
       // champ doit autoriser chiffres, virgule ET point. Un formateur qui
-      // n'autoriserait que `\d+\.?\d{0,2}` (comme `mise_gain_widget`) ferait
+      // n'autoriserait que `\d+\.?\d{0,2}` (comme l'ex-widget
+      // `mise_gain_widget`, supprimé en BL1-A18) ferait
       // échouer cette assertion — c'est précisément le défaut corrigé.
       final src = File('lib/widgets/paris/gain_manuel_dialog.dart')
           .readAsStringSync();

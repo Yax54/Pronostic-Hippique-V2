@@ -911,12 +911,37 @@ class IaPoidsAdaptatifs {
   //        donc tant que l'IA n'a jamais appris que l'échelle est dilatée de
   //        26 % — ce qui gonfle les scores absolus comparés aux seuils.
   //
-  //   ⚠️ AUCUNE VALEUR N'EST MODIFIÉE ICI. Changer une seule de ces dix-neuf
-  //      valeurs modifierait la formule IA — formellement interdit (BL1-A04 /
-  //      BL1-A06, DÉCISION UTILISATEUR INDISPENSABLE). Cette mesure est
-  //      documentaire.
+  //   ★ BL1-A06 — ALIGNEMENT EXÉCUTÉ (décision utilisateur du présent tour).
+  //
+  //      Cette table contenait encore les valeurs d'AVANT la v8.0 pour les
+  //      trois seuls critères qui ont bougé depuis : `forme` 0.32, `gains` 0.15,
+  //      `record` 0.12. Le constructeur de la même classe, lui, porte depuis
+  //      v8.0 : `forme` 0.25, `gains` 0.13, `record` 0.10 — et son en-tête
+  //      d'origine (retrouvé dans `ddde819`) documente ce rééquilibrage
+  //      volontaire (« forme 0.25 : Réduit de 0.32 → libère 7% vers les
+  //      enrichis »). Cette table est donc un VESTIGE jamais mis à jour : elle
+  //      n'a pas d'autre histoire que celle d'avoir été oubliée.
+  //
+  //      ALIGNEMENT SANS AUCUNE INCIDENCE, MESURÉE ET NON SUPPOSÉE :
+  //        • Les 16 autres clés étaient DÉJÀ identiques au constructeur ; seules
+  //          `forme`, `gains` et `record` changent.
+  //        • Les SEULS deux consommateurs de cette table sont des REPLIS
+  //          INATTEIGNABLES : `ia_memory_service.dart:4249` (`poidsDisc[c] ?? …`)
+  //          où `poidsDisc` est construit avec les 19 clés — mesuré 0/19 clés
+  //          absentes ; et `simulation_service.dart:200` (`poidsMap[nomLong] ?? …`)
+  //          où `poidsMap` vient de `poidsEffectifsPourDiscipline()`, qui
+  //          garantit elle aussi les 19 clés — mesuré 0/19 clés absentes.
+  //        • `poidsEffectifsPourDiscipline()` construit son repli avec les
+  //          CHAMPS de l'instance, jamais avec cette table.
+  //        • Les deux consommateurs divisent ensuite par le total
+  //          (`clampDiscipline()` / `totalPoids`), ce qui annulerait de toute
+  //          façon tout facteur d'échelle commun.
+  //
+  //      ⇒ Aucun score, aucun poids appris, aucune décision ne change. La table
+  //        redevient simplement la VRAIE valeur d'usine, et cesse de contredire
+  //        le constructeur qu'elle est censée représenter.
   static const Map<String, double> defauts = {
-    'forme': 0.32, 'gains': 0.15, 'record': 0.12,
+    'forme': 0.25, 'gains': 0.13, 'record': 0.10,
     'cote': 0.08, 'constance': 0.09, 'victoires': 0.04, 'discipline': 0.02,
     'distSpec': 0.08, 'jockey': 0.07, 'repos': 0.03, 'hippo': 0.04,
     'entraineur': 0.04, 'elo': 0.05, // ★ v8.0
@@ -1577,34 +1602,40 @@ class SeuilsConfianceAdaptatifs {
   double seuilQuarte;          // défaut 80 (course Quarté officielle)
   double seuilQuinte;          // défaut 0  (course Quinté officielle → toujours)
 
-  // ★ BL1-A15 — DOCUMENTATION D'UN FONCTIONNEMENT DÉCISIONNEL, AUCUNE
-  //   MODIFICATION APPLIQUÉE (la consigne l'exige : documenter, ne pas
-  //   modifier).
+  // ★ BL1-A15 — CORRIGÉ (documentation + affichage), MESURÉ.
   //
-  //   MESURE (lecture de tous les sites d'appel) : `seuilQuarte` et
-  //   `seuilQuinte` sont APPRIS, PERSISTÉS et AFFICHÉS, mais n'influencent
-  //   AUCUNE décision de pari. Leurs seules lectures sont :
-  //     • `ia_performance_screen.dart:3123-3124`  — affichage
-  //     • `ia_precision_widget.dart:756-757`      — affichage
-  //   Aucune cascade de recommandation ne les consulte. `ajusterSeuil` les
-  //   modifie pourtant (`:7693` pour le Quarté ; le Quinté est déclaré non
-  //   ajustable) puis les persiste.
+  //   `seuilQuarte` et `seuilQuinte` n'influencent AUCUNE décision de pari.
+  //   Leurs SEULES lectures (vérifié par grep exhaustif après BL1-A18) :
+  //     • `ia_performance_screen.dart:3183-3184` — AFFICHAGE
+  //   (l'ancienne référence `ia_precision_widget.dart:756-757` n'existe plus :
+  //    ce widget a été supprimé en BL1-A18 comme duplicate sans appelant.)
   //
-  //   CONSÉQUENCE RÉELLE, ET ELLE EST BÉNIGNE : les valeurs affichées dans
-  //   les écrans de performance d'IA ÉVOLUENT avec l'apprentissage, alors
-  //   qu'elles ne changent rien au comportement. Un lecteur peut donc croire
+  //   ⚠️ CE QUI A CHANGÉ CI-DESSOUS, ET CE QUI N'A PAS CHANGÉ :
+  //     • `ajusterSeuil` MODIFIE réellement `seuilQuarte` (case présent,
+  //       borné 65-92) — MESURÉ : 50 appels à +2.0 le saturent à 92.0.
+  //     • `seuilQuinte` n'est JAMAIS modifié — MESURÉ : reste 0.0 après
+  //       50 appels à +2.0 ET après 50 appels à -2.0, faute de `case` dans
+  //       `ajusterSeuil` (`default: break`). Le `case 'Quinté+'` de
+  //       `seuilCibleTaux` (`ia_memory_service.dart`) était donc MORT et a été
+  //       retiré en BL1-A15 : il ne produisait qu'un `debugPrint`.
+  //     • Les VALEURS par défaut (80.0 et 0.0), leur PERSISTANCE (`toJson` /
+  //       `fromJson`, clés `qa` et `qi`) et leur AFFICHAGE sont CONSERVÉS à
+  //       l'identique : une sauvegarde ancienne reste relisible.
+  //
+  //   CONSÉQUENCE RÉELLE, ET ELLE EST BÉNIGNE : le Quarté+ affiché ÉVOLUE avec
+  //   l'apprentissage (mais ne filtre rien) ; le Quinté+ affiché est FIGÉ à 0.0
+  //   et ne filtre rien non plus. Un lecteur doit le savoir, sinon il croira
   //   que le Quarté/Quinté est filtré par un seuil appris : c'est faux.
   //
-  //   POURQUOI ON NE « CORRIGE » PAS : deux voies existent, toutes deux
-  //   interdites ou hors périmètre.
+  //   POURQUOI ON NE « CORRIGE » PAS DAVANTAGE : deux voies existent, toutes
+  //   deux interdites ou hors périmètre.
   //     ① FAIRE PRODUIRE UN EFFET à ces seuils = créer une NOUVELLE règle
   //        métier (filtrer les paris Quarté+/Quinté+ sur un seuil appris).
   //        §3 protège les seuils adaptatifs : c'est une DÉCISION UTILISATEUR
-  //        INDISPENSABLE, pas une correction de raccordement.
-  //     ② SUPPRIMER l'apprentissage de ces deux seuils = retirer un
-  //        mécanisme existant, ce que §3 interdit.
-  //   On documente donc, sans toucher ni aux valeurs, ni à `ajusterSeuil`,
-  //   ni à la persistance.
+  //        INDISPENSABLE, non prise.
+  //     ② SUPPRIMER l'apprentissage du Quarté = retirer un mécanisme existant,
+  //        ce que §3 interdit.
+  //   On documente donc, sans toucher ni aux valeurs, ni à la persistance.
 
   SeuilsConfianceAdaptatifs({
     this.seuilSimpleGagnant  = 80.0,

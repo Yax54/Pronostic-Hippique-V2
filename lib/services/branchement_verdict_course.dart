@@ -61,8 +61,10 @@ import 'zone_turf_service.dart';
 ///
 /// MESURE, ET RAISON D'ÊTRE : les tickets ne portent pas tous la même forme.
 ///   • `bet_bottom_sheet.dart` écrit `'${year}-${mm}-${dd}'` → `2026-11-22` ;
-///   • `race_detail_screen.dart` écrit `provider.dateStr` (format PMU) →
-///     `22112026`.
+///   • l'ancien `race_detail_screen.dart` écrivait `provider.dateStr` (format
+///     PMU) → `22112026` — ce fichier est **supprimé en BL1-A18** (mesuré :
+///     0 instanciation externe), mais des tickets AINSI DATÉS existent déjà
+///     chez l'utilisateur : la compatibilité de lecture reste nécessaire.
 ///
 /// Or `ZoneTurfService` et `PmuApiService` attendent **`ddmmyyyy` sur huit
 /// caractères**. Un ticket créé par `bet_bottom_sheet` transmettait donc une

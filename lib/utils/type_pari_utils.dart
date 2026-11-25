@@ -96,8 +96,11 @@ bool estTypeGagnantPlace(String? typePari) {
 //
 //  ── MESURES QUI FONDENT CES DEUX VALEURS (et excluent les autres) ─────────
 //  • `grep -rn "typePari: 'À surveiller'\|typePari = 'À surveiller'" lib/`
-//    → 0 écriture directe dans `UserPrediction` ; la valeur n'arrive que par
-//      `race_detail_screen.dart:59` (`_betType = pred.typePari`) ;
+//    → 0 écriture directe dans `UserPrediction` ; la valeur n'arrivait que par
+//      l'ancien `race_detail_screen.dart:59` (`_betType = pred.typePari`),
+//      **supprimé en BL1-A18** — la provenance est donc HISTORIQUE. La valeur
+//      reste traitée parce que des tickets déjà enregistrés la portent, et
+//      parce qu'une sauvegarde ancienne peut la restaurer ;
 //  • `grep "UserPrediction(" -A 12 lib/ test/ | grep "À surveiller"`
 //    → AUCUNE occurrence (aucun test n'exerce ce cas) ;
 //  • `'Inconnu'` n'est JAMAIS écrit dans `UserPrediction` : c'est seulement

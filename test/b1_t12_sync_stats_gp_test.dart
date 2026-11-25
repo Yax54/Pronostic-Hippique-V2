@@ -6,7 +6,8 @@
 //  ── LE CHEMIN EXERCÉ EST LE VRAI CHEMIN DE PRODUCTION ────────────────────
 //  Ce fichier ne fabrique PAS de liste à la main : il déclenche
 //  `PmuProvider.validatePrediction`, exactement comme le fait
-//  `predictions_screen.dart:604` quand un ticket Gagnant+Placé à deux mises
+//  l'ex-`predictions_screen.dart:604` (fichier supprimé en BL1-A18) quand un
+//  ticket Gagnant+Placé à deux mises
 //  valides est déclaré gagnant :
 //
 //      validatePrediction(id, isCorrect: true,
@@ -32,7 +33,8 @@
 //    T6  Le prédicat `gainGagnantPlaceEtabli` vaut bien `false` ici
 //
 //  ── CE QUE CE FICHIER NE PROUVE PAS (assumé) ─────────────────────────────
-//    • il ne monte aucun écran : c'est `predictions_screen.dart` qui appelle
+//    • il ne monte aucun écran : c'était `predictions_screen.dart` (SUPPRIMÉ
+//      en BL1-A18) qui appelait
 //      `validatePrediction` de cette façon, reproduit ici par appel direct ;
 //    • il ne prouve rien sur `ia_performance_screen.dart:649-651`, qui est un
 //      SECOND chemin vers les mêmes statistiques et reste hors de cette
@@ -144,7 +146,8 @@ Future<PmuProvider> _validerCommeEnProduction(
       .firstWhere((e) => e.typePari == pred.typePari && e.id == pred.id)
       .id;
 
-  // Reproduit exactement l'appel de `predictions_screen.dart:604-607`
+  // Reproduit exactement l'appel de l'ex-`predictions_screen.dart:604-607`
+  // (fichier SUPPRIMÉ en BL1-A18)
   // pour un ticket à deux composantes : ni mise ni gain transmis.
   provider.validatePrediction(
     id,

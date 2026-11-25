@@ -6,13 +6,14 @@
 //  réellement engagées ne sont pas établies.
 //
 //  ── LE DÉFAUT CORRIGÉ (mesuré avant ce lot) ───────────────────────────────
-//  `predictions_screen._validerDialog` et
+//  `predictions_screen._validerDialog` (fichier supprimé en BL1-A18) et
 //  `profile_historique_tab._validerDialog` faisaient tous deux :
 //
 //      double mise = pred.montantMise > 0 ? pred.montantMise : 10.0;
 //
 //  Pour un Gagnant+Placé (`montantMise` = 0, le champ n'étant pas passé par
-//  `race_detail_screen.dart:348`) : 10 € INVENTÉS, alors que le pari engage
+//  l'ex-`race_detail_screen.dart:348`, supprimé en BL1-A18) : 10 € INVENTÉS,
+//  alors que le pari engage
 //  DEUX composantes enregistrées dans `miseGagnant` / `misePlace`.
 //  Et `profile_historique_tab` ajoutait `mise * 1.5` quand `cote <= 1.0`,
 //  soit un gain fabriqué de toutes pièces.
@@ -343,8 +344,10 @@ void main() {
   // ═════════════════════════════════════════════════════════════════════════
 
   group('G2 — les deux dialogues n\'inventent plus de mise', () {
+    // ★ BL1-A18 — `predictions_screen.dart` SUPPRIMÉ (0 instanciation mesurée).
+    //   Le fichier VIVANT qui porte ce dialogue reste seul vérifié ; les
+    //   exigences d'origine sont conservées Mot pour mot.
     const fichiers = <String>[
-      'lib/screens/predictions_screen.dart',
       'lib/widgets/profile/profile_historique_tab.dart',
     ];
 
@@ -654,15 +657,18 @@ void main() {
       provider.addPrediction(ancien);
       final avant = photo(provider.predictions.first);
 
-      // ★ La protection réelle est en amont, dans les DEUX dialogues et dans
-      //   leur garde d'accès : `isCorrect != null` ⇒ le bouton « Valider »
+      // ★ La protection réelle est en amont, dans le dialogue VIVANT et dans
+      //   sa garde d'accès : `isCorrect != null` ⇒ le bouton « Valider »
       //   n'existe pas et `_validerDialog` n'est jamais atteint.
-      final lib = codeSeulFichier('lib/screens/predictions_screen.dart');
-      expect(lib.contains('if (pred.isCorrect == null &&'), isTrue,
-          reason: 'un ticket déjà résolu n\'offre aucun bouton de validation');
+      //   ★ BL1-A18 — `predictions_screen.dart` supprimé : son assertion
+      //     `if (pred.isCorrect == null &&` est reportée ci-dessous sous la
+      //     forme EXACTE que le fichier vivant emploie, sans affaiblissement.
       final prof =
           codeSeulFichier('lib/widgets/profile/profile_historique_tab.dart');
       expect(prof.contains('if (isCorrect == null &&'), isTrue, reason: prof);
+      // L'exigence transférée : le ticket déjà résolu n'offre aucun bouton.
+      expect(prof.contains('if (isCorrect == null &&'), isTrue,
+          reason: 'un ticket déjà résolu n\'offre aucun bouton de validation');
 
       // ★ MESURÉ, NON MASQUÉ : `validatePrediction` n'a AUCUNE garde sur un
       //   ticket déjà résolu. Si on l'appelait par un autre chemin, l'ancien
@@ -774,8 +780,8 @@ void main() {
     });
 
     test('G6/6 — le résolveur PMU n\'est pas branché', () {
+      // ★ BL1-A18 — `predictions_screen.dart` retiré (supprimé).
       for (final f in <String>[
-        'lib/screens/predictions_screen.dart',
         'lib/widgets/profile/profile_historique_tab.dart',
         'lib/utils/validation_manuelle_ticket.dart',
       ]) {
