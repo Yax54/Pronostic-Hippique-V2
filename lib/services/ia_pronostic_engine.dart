@@ -18,12 +18,42 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/zt_models.dart';
+import '../data/connaissances/_core/diagnostic_alimentation.dart';
 import 'ia_memory_service.dart';
 import 'ia_memory_models.dart';
 import 'elo_service.dart';
 import 'cote_tracker_service.dart'; // ★ v9.92
 
 class IaPronosticEngine {
+
+  // ══════════════════════════════════════════════════════════════════
+  // DIAGNOSTIC D'ALIMENTATION (D-27, §9)
+  // ══════════════════════════════════════════════════════════════════
+  //
+  //   D-27 exige que le repli de discipline soit OBSERVABLE. Sans cela, une
+  //   course dont la discipline n'est pas reconnue est prédite avec la famille
+  //   `global` — mesurée inerte (variation 5.55e-17 sur 169 jours, contre
+  //   6.32e-2 pour `plat`) — sans que rien ne le signale nulle part.
+  //
+  //   Ce diagnostic est PUREMENT OBSERVATIONNEL :
+  //     • il ne change aucun poids, aucun seuil, aucun score ;
+  //     • il ne supprime pas la famille `global` (D-27 l'interdit) ;
+  //     • il est écrit après le calcul, jamais avant.
+  static DiagnosticDiscipline? _dernierDiagnosticDiscipline;
+
+  /// Diagnostic de la dernière course analysée. `null` avant tout appel.
+  static DiagnosticDiscipline? get dernierDiagnosticDiscipline =>
+      _dernierDiagnosticDiscipline;
+
+  /// Construit et mémorise le diagnostic de discipline d'une course.
+  static void _majDiagnosticDiscipline(ZtCourse course) {
+    _dernierDiagnosticDiscipline = diagnostiquerDiscipline(
+      disciplineSource: course.type,
+      normalise: IaPoidsAdaptatifs.normaliseDiscipline,
+      familleGlobalDisponible:
+          IaMemoryService.instance.poids.poidsParDiscipline.containsKey('global'),
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════
   // POINT D'ENTRÉE PRINCIPAL
@@ -35,6 +65,8 @@ class IaPronosticEngine {
 
     final poidsGlobaux   = poidsOverride ?? IaMemoryService.instance.poids;
     final poidsEffectifs = poidsGlobaux.poidsEffectifsPourDiscipline(course.type);
+    // D-27 : rendre le repli `global` observable sans toucher au calcul.
+    _majDiagnosticDiscipline(course);
 
     // ★ v9.92 : enrichir avec ELO par discipline
     final partantsEnrichis = EloService.instance.enrichirAvecElo(partants,
@@ -111,6 +143,10 @@ class IaPronosticEngine {
 
     final poidsGlobaux   = poidsOverride ?? IaMemoryService.instance.poids;
     final poidsEffectifs = poidsGlobaux.poidsEffectifsPourDiscipline(course.type);
+    // D-27 : c'est CE chemin que les producteurs persistés utilisent
+    // (`data_refresh_service`, `ia_memory_service`), donc c'est ici que le
+    // repli doit être observable pour être utile.
+    _majDiagnosticDiscipline(course);
 
     // ★ v9.92 : enrichir avec ELO par discipline
     final partantsE = EloService.instance.enrichirAvecElo(partants,

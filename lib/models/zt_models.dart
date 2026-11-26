@@ -777,6 +777,33 @@ class ZtPartant {
     return 15.0;
   }
 
+  // ── Diagnostic d'alimentation du critère progression (D-27, §9) ────
+  //
+  //   Rend visible ce qui était silencieux : le critère utilise-t-il une
+  //   donnée authentique, ou rend-il sa neutralité faute de donnée ?
+  //   Purement observationnel — ne modifie aucun score.
+  String get diagnosticProgression {
+    if (!gainsDernierAnDisponible) {
+      return 'Donnée absente : aucune valeur de gains récents fournie par le '
+          'PMU. Le critère applique son comportement neutre existant '
+          '(âge + tendance uniquement). Aucune valeur n\'est fabriquée.';
+    }
+    if (gainsDernierAn <= 0) {
+      return 'Zéro AUTHENTIQUE fourni par le PMU ($gainsDernierAnSource) : '
+          'conservé tel quel. Aucune différence de traitement avec une '
+          'absence au niveau du calcul, mais la provenance est tracée.';
+    }
+    final total = gainsInt;
+    if (total <= 0) {
+      return 'Gains récents authentiques ($gainsDernierAn EUR) mais gains '
+          'carrière absents : le ratio de progression n\'est pas calculable.';
+    }
+    final ratio = gainsDernierAn / total;
+    return 'Donnée authentique ($gainsDernierAnSource) : '
+        '$gainsDernierAn EUR sur $total EUR de carrière '
+        '= ratio ${ratio.toStringAsFixed(3)}.';
+  }
+
   // ★ v9.0 ── Q. Score progression de carrière ─────────────────────────
   // Basé sur l'âge + la dynamique des gains sur l'année passée
   // gainsDernierAn = gains des 12 derniers mois en euros
