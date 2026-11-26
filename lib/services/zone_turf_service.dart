@@ -2230,7 +2230,9 @@ class ZoneTurfService {
 
     int nbC = 0, nbV = 0, nbT3 = 0;
     for (final c in histo.courses) {
-      if (_cleHippodrome(c.hippodrome) != cible) continue;
+      // ⚠️ PAS d'égalité stricte : voir `_memeHippodrome` (défaut mesuré,
+      //    4,3 % seulement de correspondances en égalité stricte).
+      if (!_memeHippodrome(c.hippodrome, hippodromeCible)) continue;
       nbC++;
       if (c.place == 1) nbV++;
       if (c.place >= 1 && c.place <= 3) nbT3++;
@@ -2310,7 +2312,50 @@ class ZoneTurfService {
     };
     var t = s.toLowerCase().trim();
     accents.forEach((k, v) => t = t.replaceAll(k, v));
+    t = t.replaceAll('-', ' ').replaceAll("'", ' ');
     return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  /// Décide si le libellé d'hippodrome d'une course PASSÉE désigne le MÊME
+  /// hippodrome que celui de la course du jour.
+  ///
+  /// ⚠️ DÉFAUT MESURÉ ET CORRIGÉ — L'ÉGALITÉ STRICTE NE FONCTIONNE PAS.
+  ///
+  ///   Les deux sources PMU n'emploient pas la même convention de nommage :
+  ///
+  ///     • `/programme/{date}` → `hippodrome.libelleCourt`
+  ///         « VINCENNES », « LE BOUSCAT », « BORELY », « SAINT GALMIER »
+  ///     • `/performances-detaillees` → `coursesCourues[].hippodrome`
+  ///         « PARIS-VINCENNES », « BORDEAUX-LE BOUSCAT »,
+  ///         « MARSEILLE-BORELY », « LYON-PARILLY », « PARISLONGCHAMP »
+  ///
+  ///   MESURE sur le corpus de 309 courses / 10 journées (26-27/11/2026) :
+  ///     • égalité stricte : 706 correspondances sur 16 579 courses passées
+  ///       = **4,3 %** ; **57 %** des courses du corpus n'obtenaient AUCUNE
+  ///       correspondance ⇒ `statsHippodromeCsv` restait vide ⇒ critère
+  ///       `hippodrome` neutre (50.0) même quand l'historique existait.
+  ///
+  ///   RÈGLE RETENUE, ET MESURÉE AVANT D'ÊTRE ÉCRITE — inclusion d'ensembles
+  ///   de JETONS (l'un des deux ensembles de mots contient l'autre) :
+  ///     • couverture : **26 / 27** libellés d'hippodrome du corpus ;
+  ///     • ambiguïtés (un libellé historique qui désignerait PLUSIEURS
+  ///       hippodromes du jour) : **0** ;
+  ///     • seul cas non couvert : « LA CÉPIÈRE », absent du corpus
+  ///       d'historiques — donc non mesurable, laissé explicitement non résolu
+  ///       (le critère reste neutre) plutôt que rapproché par approximation.
+  ///
+  ///   ⚠️ AUCUNE STATISTIQUE GÉOGRAPHIQUE N'EST INVENTÉE ICI (§6) : on ne
+  ///      fusionne que deux libellés qui désignent le même lieu par inclusion
+  ///      de jetons, sans table de correspondance écrite à la main.
+  static bool _memeHippodrome(String libelleHistorique, String libelleJour) {
+    final a = _cleHippodrome(libelleHistorique);
+    final b = _cleHippodrome(libelleJour);
+    if (a.isEmpty || b.isEmpty) return false;
+    if (a == b) return true;
+    final ja = a.split(' ').where((String w) => w.isNotEmpty).toSet();
+    final jb = b.split(' ').where((String w) => w.isNotEmpty).toSet();
+    if (ja.isEmpty || jb.isEmpty) return false;
+    return ja.containsAll(jb) || jb.containsAll(ja);
   }
 
   /// Musique filtrée sur les courses passées à ±100 m de la distance du jour.

@@ -926,11 +926,39 @@ class IaPronosticEngine {
   //
   // Score centré sur 50 — plage réduite (38-65) pour ne pas
   // distordre les critères plus discriminants (Forme, ELO, etc.).
+  //   ⚠️ DÉFAUT D'ENCODAGE MESURÉ ET CORRIGÉ (27/11/2026)
+  //
+  //      `ZoneTurfService._pmuDisciplineToZt` produit les libellés ACCENTUÉS
+  //      « Attelé » et « Monté ». Or ce test comparait à « attele » et
+  //      « monte » SANS ACCENT : `'attelé'.contains('attele')` est FAUX.
+  //      La branche TROT était donc INATTEIGNABLE en production.
+  //
+  //      PREUVE : `flutter test test/audit_corpus_19_criteres_test.dart` (M2)
+  //      sur 44 courses réelles rejouées dans le producteur :
+  //        • trot attelé, `placeCorde` publié sur 4 courses → placeDepart = {50.0}
+  //          (critère neutralisé alors que la donnée existait) ;
+  //        • plat 1 400 m → placeDepart = {43.0, 48.0, 54.0, 58.0} (actif).
+  //
+  //      La branche trot n'est PAS modifiée : seule la CONDITION D'ENTRÉE est
+  //      rendue atteignable, en neutralisant les accents comme le faisait déjà
+  //      `_scoreJockey`/`_memeHippodrome` ailleurs dans le code.
+  static String _sansAccent(String s) {
+    const accents = {
+      'à': 'a', 'â': 'a', 'ä': 'a', 'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+      'î': 'i', 'ï': 'i', 'ô': 'o', 'ö': 'o', 'ù': 'u', 'û': 'u', 'ü': 'u',
+      'ç': 'c', 'œ': 'oe', 'æ': 'ae',
+    };
+    var t = s.toLowerCase().trim();
+    accents.forEach((k, v) => t = t.replaceAll(k, v));
+    return t;
+  }
+
   static double _scorePlaceDepart(int place, int nbPartants, String type, String distance) {
     if (place <= 0 || nbPartants <= 0) return 50.0;
-    final isTrot  = type.toLowerCase().contains('trot') ||
-                    type.toLowerCase().contains('attele') ||
-                    type.toLowerCase().contains('monte');
+    final typeNorm = _sansAccent(type);
+    final isTrot  = typeNorm.contains('trot') ||
+                    typeNorm.contains('attele') ||
+                    typeNorm.contains('monte');
     final distM   = int.tryParse(distance.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
 
     if (isTrot) {

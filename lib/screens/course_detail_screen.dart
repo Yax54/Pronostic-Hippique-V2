@@ -924,8 +924,19 @@ class _CourseDetailScreenState extends State<CourseDetailScreen>
               const SizedBox(width: 42),
               Builder(builder: (ctx) {
                 final course = widget.course;
-                final isTrot = course.type.toLowerCase().contains('trot') ||
-                    course.type.toLowerCase().contains('attele');
+                // ⚠️ MÊME DÉFAUT D'ENCODAGE QUE `_scorePlaceDepart` : le
+                //    producteur émet « Attelé »/« Monté » avec accent, le test
+                //    portait sur « attele » sans accent. La neutralisation des
+                //    accents rend la condition atteignable (aucun affichage
+                //    nouveau n'est introduit : on ne fait que corriger le test).
+                final typeNorm = course.type
+                    .toLowerCase()
+                    .replaceAll('é', 'e')
+                    .replaceAll('è', 'e')
+                    .replaceAll('ê', 'e');
+                final isTrot = typeNorm.contains('trot') ||
+                    typeNorm.contains('attele') ||
+                    typeNorm.contains('monte');
                 final distM  = int.tryParse(
                     course.distance.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
                 final isLongue = distM >= 2200;
