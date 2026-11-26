@@ -18,6 +18,7 @@ import 'screens/simulation_screen.dart';
 import 'services/alert_service.dart';
 import 'services/ia_memory_service.dart';
 import 'services/elo_service.dart';
+import 'services/reprise_restauration_service.dart';
 import 'services/data_refresh_service.dart';
 import 'services/ia_personality_service.dart'; // ★ v9.85
 import 'services/ia_user_prefs_service.dart';  // ★ v9.85
@@ -107,6 +108,17 @@ void main() async {
   //     seuil, pas d'ELO, aucun appel réseau, aucune arrivée créée.
   await ArriveeOfficielleService.instance.charger();
   await EloService.init();
+  // ★ Reprise d'une restauration interrompue (§1).
+  //
+  //   Placée APRÈS `EloService.init()` parce qu'elle a besoin du dépôt
+  //   structuré ouvert, et AVANT `runApp()` parce qu'il serait dangereux
+  //   d'afficher un état que la reprise va corriger : l'utilisateur verrait des
+  //   données périmées, croirait à un échec, et relancerait une opération.
+  //
+  //   Ne lève jamais : une reprise impossible est constatée et journalisée,
+  //   elle ne bloque pas le démarrage. N'écrit que si un travail a réellement
+  //   été interrompu — le cas normal ne coûte qu'une lecture de méta.
+  await RepriseRestaurationService.instance.executerAuDemarrage();
   await IaPersonalityService.init(); // ★ v9.85
   await IaUserPrefsService.init();   // ★ v9.85
   await IaBadgesService.init();      // ★ v9.85
