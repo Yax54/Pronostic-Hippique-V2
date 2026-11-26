@@ -2373,6 +2373,21 @@ class EloService {
   BilanBasculeElo? _bilanBascule;
   BilanBasculeElo? get bilanBascule => _bilanBascule;
 
+  /// Issue RÉELLE de la dernière réplication vers SQLite.
+  ///
+  /// `false` signifie : prefs a accepté l'écriture, SQLite ne l'a pas reçue.
+  /// Jusqu'ici cette information n'existait pas dans le service — la
+  /// réplication rendait `void` — et une perte silencieuse restait donc
+  /// indétectable. Elle est désormais observée (§27 : un défaut de repli doit
+  /// être observable, il ne doit jamais être muet).
+  bool? _derniereReplicationConfirmee;
+  bool? get derniereReplicationConfirmee => _derniereReplicationConfirmee;
+
+  /// Nombre d'écritures confirmées dans prefs dont la réplique SQLite a échoué
+  /// pendant la vie de ce processus.
+  int _nbRepliquesEnRetard = 0;
+  int get nbRepliquesEnRetard => _nbRepliquesEnRetard;
+
   static Future<void> init() async => _instance._charger();
 
   /// Relit l'état ELO depuis le stockage, après une restauration.
@@ -2859,11 +2874,72 @@ class EloService {
     //   refusé. Un échec du pont est compté et journalisé par le pont lui-même,
     //   et ne remonte jamais ici : `etat` reste celui de la persistance
     //   principale, qui est la référence.
+    //
+    // ★ §4 — DEUX MAGASINS, DEUX ÉTATS : LE DÉFAUT MESURÉ ET SA CORRECTION.
+    //
+    //   Avant ce correctif, la réplication rendait `void` et avalait l'échec.
+    //   Tant que SQLite n'était qu'un miroir jamais relu, c'était sans
+    //   conséquence. Depuis la bascule, `_charger()` lit SQLite EN PRIORITÉ :
+    //   une écriture confirmée par `setString` mais non répliquée devenait
+    //   DÉFINITIVEMENT invisible au démarrage suivant — sans exception, sans
+    //   message, sans écart observable. Une perte silencieuse.
+    //
+    //   Correction, strictement dans l'ordre de sûreté :
+    //     1. si la réplication a réussi → les deux supports sont d'accord, rien
+    //        d'autre à faire (cas nominal, aucune écriture supplémentaire) ;
+    //     2. si elle a échoué → on repose le marqueur de bascule à l'état
+    //        `migrationNecessaire`. Au démarrage suivant, `BasculeElo` voit une
+    //        base sans marqueur valide avec des ratings dans prefs, et REJOUE
+    //        la migration — qui est idempotente et vérifiée par contrôle
+    //        indépendant avant de reposer le marqueur.
+    //   Ainsi une réplique en retard est RATTRAPÉE automatiquement, et jamais
+    //   troquée contre une réimportation abusive : le marqueur n'est retiré que
+    //   lorsque SQLite est réellement en retard, jamais quand il est à jour.
+    //
+    //   ⚠️ Aucun rating n'est calculé, modifié ni fusionné ici : la marqueur ne
+    //   porte que l'état de la migration. Aucune formule, aucun poids, aucun
+    //   seuil n'est concerné.
     if (etat == EtatPersistanceElo.persistee) {
-      await PontElo.instance.repliquer(_ratings);
+      final replique = await PontElo.instance.repliquer(_ratings);
+      _derniereReplicationConfirmee = replique;
+      if (!replique) {
+        _nbRepliquesEnRetard++;
+        await _signalerRepliqueEnRetard();
+        debugPrint('[EloService] ⚠️ réplique SQLite EN RETARD : le marqueur '
+            'de bascule sera rejoué au prochain démarrage (aucune écriture '
+            'confirmée n\'est perdue)');
+      }
     }
 
     return etat;
+  }
+
+  /// Remet le marqueur de bascule en état « migration nécessaire ».
+  ///
+  /// Appelé **uniquement** quand prefs a confirmé une écriture que SQLite n'a
+  /// pas reçue. Le marqueur reste dans SQLite (il décrit la base qu'il
+  /// qualifie), il change seulement d'état : la prochaine ouverture rejouera
+  /// la migration, qui est idempotente et vérifiée.
+  ///
+  /// Ne lève jamais : un échec ici laisserait simplement la réplique en retard,
+  /// comme avant le correctif — l'application ne doit pas s'arrêter pour cela.
+  Future<void> _signalerRepliqueEnRetard() async {
+    try {
+      final depot = PontElo.instance.depotPourSauvegarde;
+      if (depot == null) return;
+      final contenu = <String, Object?>{
+        'etat': 'migration_necessaire',
+        'date': DateTime.now().toUtc().toIso8601String(),
+        'nb_lignes': await depot.compterElo(),
+        'source': 'shared_preferences',
+        'schema': 1,
+        'motif': 'replique_en_retard',
+      };
+      await depot.ecrireMeta(kMetaBasculeElo, jsonEncode(contenu));
+    } catch (e) {
+      debugPrint('[EloService] ⚠️ signalement de réplique en retard impossible '
+          '($e) : la réplique reste en retard, comme avant le correctif');
+    }
   }
   String _cleNom(String nom) =>
       nom.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');

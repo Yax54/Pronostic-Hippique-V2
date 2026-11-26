@@ -77,6 +77,11 @@ enum EtatBasculeElo {
   /// Une restauration a eu lieu : l'état vient de la sauvegarde.
   restauration,
 
+  /// Une écriture confirmée dans prefs n'a pas atteint SQLite : la réplique
+  /// est en retard et doit être REJOUÉE. Distinct de
+  /// [migrationNecessaire] uniquement par sa cause, pas par son action.
+  repliqueEnRetard,
+
   /// On ne peut pas décider (dépôt fermé, lecture en échec).
   anomalieStockage,
 }
@@ -227,6 +232,16 @@ class BasculeElo {
       return EtatBasculeElo.restauration;
     }
 
+    // Une réplique en retard est le seul cas où l'on REJOUE volontairement une
+    // migration déjà faite : des ratings confirmés dans prefs ne sont pas dans
+    // SQLite, donc lire SQLite seul perdrait de la connaissance. Le migrateur
+    // étant idempotent et vérifié, rejouer ne peut rien dégrader.
+    if (marqueur != null && marqueur['etat'] == 'migration_necessaire') {
+      return nbPrefs > 0
+          ? EtatBasculeElo.repliqueEnRetard
+          : EtatBasculeElo.migrationDejaFaite;
+    }
+
     if (marqueur != null) {
       // La migration a eu lieu. Une base vide est alors LÉGITIME : c'est le
       // cas que la consigne interdit de confondre avec une migration à faire.
@@ -336,7 +351,15 @@ class BasculeElo {
         );
 
       case EtatBasculeElo.migrationNecessaire:
-        return _migrer(d, prefs, nbPrefs: nbPrefs, messages: messages);
+        return _migrer(d, prefs,
+            nbPrefs: nbPrefs, messages: messages, etatOrigine: etat);
+
+      case EtatBasculeElo.repliqueEnRetard:
+        messages.add('réplique SQLite en retard : rejeu de la migration pour '
+            'rattraper les écritures confirmées dans prefs ($nbPrefs rating(s) '
+            'source, $nbSqlite en base)');
+        return _migrer(d, prefs,
+            nbPrefs: nbPrefs, messages: messages, etatOrigine: etat);
 
       case EtatBasculeElo.anomalieStockage:
         // Traité plus haut : ce cas est inatteignable ici.
@@ -361,6 +384,7 @@ class BasculeElo {
     SharedPreferences prefs, {
     required int nbPrefs,
     required List<String> messages,
+    required EtatBasculeElo etatOrigine,
   }) async {
     final brut = prefs.getString(clePrefsElo);
     final Map<String, dynamic> source;
@@ -452,7 +476,11 @@ class BasculeElo {
     }
 
     return BilanBasculeElo(
-      etat: EtatBasculeElo.migrationDejaFaite,
+      // L'état annoncé est celui qui a MOTIVÉ le rejeu. Annoncer
+      // `migrationDejaFaite` après un rattrapage ferait disparaître la cause
+      // réelle de la réécriture, alors que c'est précisément l'information
+      // dont un diagnostic a besoin (§27 : rendre observable).
+      etat: etatOrigine,
       nbLignesSqlite: nbFinal,
       nbLignesPrefs: nbPrefs,
       migrationExecutee: true,

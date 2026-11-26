@@ -164,9 +164,32 @@ class PontElo {
   ///
   /// Idempotent : rejouer la réplication de la même map ne change aucune
   /// valeur, seulement `maj_le`.
-  Future<void> repliquer(Map<String, EloScore> ratings) async {
+  ///
+  /// ══════════════════════════════════════════════════════════════════════════
+  ///  ⚠️ DÉFAUT MESURÉ ET CORRIGÉ ICI — LE SILENCE DE L'ÉCHEC
+  ///
+  ///  Cette méthode rendait `void` et avalait l'échec. C'était tolérable tant
+  ///  que SQLite n'était qu'un miroir d'écriture jamais relu. Depuis que la
+  ///  bascule fait de SQLite la **source lue au démarrage**, la même ligne de
+  ///  code devient une perte de données silencieuse :
+  ///
+  ///    1. `setString` confirme l'écriture dans prefs  → rating N+1 existe ;
+  ///    2. `repliquer` échoue (disque plein, verrou, base fermée) ;
+  ///    3. le démarrage suivant lit SQLite, qui porte encore N ratings ;
+  ///    4. le rating N+1, **confirmé sur disque**, n'est plus jamais relu.
+  ///
+  ///  Aucune exception, aucun message utilisateur, aucun écart visible : deux
+  ///  magasins, donc deux états — exactement ce que §4 interdit.
+  ///
+  ///  La méthode rend désormais l'issue RÉELLE de l'écriture (`true` seulement
+  ///  si la transaction SQLite a abouti). L'appelant en tire les conséquences ;
+  ///  le pont continue de ne jamais lever.
+  /// ══════════════════════════════════════════════════════════════════════════
+  Future<bool> repliquer(Map<String, EloScore> ratings) async {
     final depot = _depot;
-    if (depot == null) return;
+    // Dépôt non ouvert : rien n'a été répliqué, et le dire franchement vaut
+    // mieux que laisser croire à un succès.
+    if (depot == null) return false;
     try {
       final lignes = MigrateurElo.decoderDepuisService(ratings);
       await depot.transaction(() async {
@@ -180,13 +203,15 @@ class PontElo {
       if (kDebugMode) {
         debugPrint('[PontElo] ✅ ${lignes.length} rating(s) répliqués');
       }
+      return true;
     } catch (e) {
       _nbEchecs++;
       _dernierMessage = 'réplication échouée : $e';
       // Aucune exception propagée : la persistance principale a réussi, le
-      // pont est un service secondaire.
+      // pont est un service secondaire. Mais l'échec n'est plus muet.
       debugPrint('[PontElo] ⚠️ réplication échouée ($e) — les données '
-          'principales sont intactes');
+          'principales sont intactes, la réplique SQLite est en retard');
+      return false;
     }
   }
 
