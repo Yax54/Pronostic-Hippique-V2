@@ -1181,9 +1181,21 @@ class DataRefreshService extends ChangeNotifier {
     );
   }
 
+  /// Exécute le batch de pronostics par le chemin de PRODUCTION, y compris
+  /// l'isolate `compute()`. Réservé aux tests de mesure.
+  ///
+  /// ⚠️ Cette méthode n'existe QUE pour rendre la chaîne réelle mesurable.
+  ///    Sans elle, un test ne pourrait vérifier le chemin isolate qu'en
+  ///    appelant la fonction top-level directement — ce qui contournerait
+  ///    `compute()`, donc ne prouverait rien sur l'exécution en isolate.
+  ///    Elle ne modifie aucun comportement : elle appelle exactement la
+  ///    méthode privée utilisée par `_doRefresh`.
+  @visibleForTesting
+  Future<void> executerBatchIsolatePourMesure(List<ZtReunion> reunions) =>
+      _enregistrerPronosticsBatchIsolate(reunions);
+
   Future<void> _enregistrerPronosticsBatchIsolate(
-      List<ZtReunion> reunions) async {
-    // Filtrer les courses sans pronostic existant
+      List<ZtReunion> reunions) async {    // Filtrer les courses sans pronostic existant
     final reunionsFiltrees = <ZtReunion>[];
     for (final reunion in reunions) {
       final numRMatch = RegExp(r'R(\d+)').firstMatch(reunion.code);
