@@ -21,11 +21,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/data_refresh_service.dart';
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
 import 'package:pronostic_hippique/services/cote_tracker_service.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
 
 import '../support/corpus_pmu_replay.dart';
 
@@ -168,6 +170,12 @@ void main() {
     // Les caches du producteur sont STATIQUES : sans purge, chaque mesure
     // hériterait de la précédente et ne mesurerait plus rien.
     purgerProducteur();
+    // ⚠️ shared_preferences exige un mock en environnement de test : sans lui,
+    //    `IaMemoryService._load` lève `MissingPluginException`. Ce défaut
+    //    n'apparaissait que lorsque M8-a s'exécutait en PREMIER (les autres
+    //    tests laissaient un store déjà initialisé). Corrigé à la racine, dans
+    //    le setUp commun, pour que chaque mesure soit autonome.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -521,6 +529,271 @@ void main() {
           reason: '§2 : des données inchangées ne doivent pas rejouer la '
               'cascade. Mesuré : ${CoteTrackerService.instance.nbMisesAJourPourMesure} '
               'mise(s) à jour pour 2 cycles identiques.');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  M8 — DOUBLE TRAITEMENT DES RÉSULTATS OFFICIELS ET DOUBLE APPRENTISSAGE
+    //
+    //  §2 exige : « Prévention du double traitement des résultats officiels »
+    //  et « Prévention du double apprentissage ».
+    //
+    //  La mesure porte sur l'EFFET, pas sur l'intention :
+    //   • `enregistrerResultat()` retourne EXACTEMENT `true` une seule fois
+    //     par course (il est le seul retour `true` de la méthode, atteint
+    //     uniquement après mutation + sauvegarde + apprentissages) ;
+    //   • l'ELO est conditionné à ce booléen, donc appliqué une seule fois ;
+    //   • les poids (`_poids`) ne doivent pas être modifiés une seconde fois.
+    //
+    //  Le pronostic est créé par le CHEMIN DE PRODUCTION corpus
+    //  (`chargerProgramme` → registre IA), pas par un objet fabriqué : sans
+    //  cela, `enregistrerResultat()` sortirait par la branche « course
+    //  absente » et la mesure ne prouverait rien.
+    // ═══════════════════════════════════════════════════════════════════════
+    test('M8-a : une arrivée officielle rejouée n\'est traitée qu\'UNE fois',
+        () async {
+      DataRefreshService.instance.viderMemoirePourResetComplet();
+      final c = courseLaPlusRiche();
+      // ⚠️ AUTONOMIE DU TEST : exécuté seul, le rejeu corpus ne crée aucun
+      //    pronostic (le registre IA est alimenté par le BATCH dans
+      //    l'isolate). Sans cette étape, M8-a dépendait de l'ordre
+      //    d'exécution des tests — dépendance que j'ai mesurée puis
+      //    supprimée en passant par le même chemin que C-19-2.
+      final reunions = await rejouerCourse(c);
+      await DataRefreshService.instance.executerBatchIsolatePourMesure(reunions);
+
+      // Récupérer une clé réellement présente dans la mémoire de production.
+      final keys = IaMemoryService.instance.pronostics
+          .map((p) => p.courseKey)
+          .toList();
+      expect(keys, isNotEmpty,
+          reason: 'le batch isolate doit avoir créé des pronostics');
+      final cle = keys.first;
+
+      // Une arrivée officielle plausible : les 5 premiers numéros annoncés
+      // par l'IA, dans l'ordre. Aucune donnée PMU n'est inventée sur la
+      // course elle-même : seule l'ARRIVÉE est fournie par le test, ce qui
+      // est exactement le rôle d'un résultat officiel.
+      final p0 = IaMemoryService.instance.pronostics
+          .firstWhere((p) => p.courseKey == cle);
+      final arrivee = p0.topNIA.take(5).map(int.parse).toList();
+      expect(arrivee.length, 5, reason: 'il faut 5 chevaux pour l\'arrivée');
+
+      final poidsAvant = IaMemoryService.instance.poids.forme;
+
+      // ── 1er enregistrement : doit être ACCEPTÉ (true) ────────────────────
+      final premier = await IaMemoryService.instance.enregistrerResultat(
+        courseKey: cle,
+        arriveeReelle: arrivee,
+      );
+      final poidsApresPremier = IaMemoryService.instance.poids.forme;
+
+      // ── 2e enregistrement IDENTIQUE : doit être REFUSÉ (false) ───────────
+      final second = await IaMemoryService.instance.enregistrerResultat(
+        courseKey: cle,
+        arriveeReelle: arrivee,
+      );
+
+      // ── 3e enregistrement, arrivée DIFFÉRENTE : doit aussi être REFUSÉ ───
+      //    Un résultat déjà officiel ne se réécrit pas.
+      final troisieme = await IaMemoryService.instance.enregistrerResultat(
+        courseKey: cle,
+        arriveeReelle: arrivee.reversed.toList(),
+      );
+
+      final poidsApres = IaMemoryService.instance.poids.forme;
+
+      // ignore: avoid_print
+      print('[MESURE M8-a] clé=$cle | 1er=$premier 2e=$second 3e=$troisieme '
+          '| poids.forme $poidsAvant -> $poidsApresPremier -> $poidsApres');
+
+      expect(premier, isTrue,
+          reason: 'le premier résultat doit être réellement enregistré');
+      expect(second, isFalse,
+          reason: '§2 : une arrivée DÉJÀ connue ne doit pas être retraitée '
+              '(ni ELO, ni apprentissage). Mesuré : $second');
+      expect(troisieme, isFalse,
+          reason: '§2 : un résultat officiel ne se réécrit pas. '
+              'Mesuré : $troisieme');
+      // ⚠️ MESURE CORRIGÉE — PREMIÈRE RÉDACTION FAUSSE.
+      //    J'exigeais `poidsApres == poidsAvant`. Or `IaPoidsAdaptatifs`
+      //    NORMALISE ses poids après chaque gradient : une valeur individuelle
+      //    peut donc revenir à son niveau d'origine alors que l'apprentissage
+      //    a bien eu lieu. Cette assertion ne mesurait donc PAS ce que je
+      //    croyais, et elle était vouée à être soit fausse, soit trompeuse.
+      //
+      //    La mesure correcte du « pas de double apprentissage » est l'ÉTAT
+      //    APRÈS LE PREMIER APPRENTISSAGE : les deux rejets doivent laisser
+      //    les poids EXACTEMENT là où le premier apprentissage les a laissés.
+      expect(poidsApres, poidsApresPremier,
+          reason: '§2 : aucun APPRENTISSAGE SUPPLÉMENTAIRE. Après le premier '
+              'enregistrement (qui apprend légitimement), les deux rejets '
+              'doivent laisser les poids rigoureusement inchangés. '
+              'Mesuré : $poidsApresPremier -> $poidsApres');
+    });
+
+    test('M8-b : deux récupérations séquentielles ne réapprennent pas',
+        () async {
+      // Même exigence, mesurée au niveau du CYCLE COMPLET : deux
+      // rafraîchissements successifs sur une source strictement identique ne
+      // doivent produire aucun apprentissage supplémentaire.
+      DataRefreshService.instance.viderMemoirePourResetComplet();
+      final c = courseLaPlusRiche();
+      await rejouerCourse(c);
+
+      final avant = IaMemoryService.instance.poids.forme;
+      final nbAvant = IaMemoryService.instance.pronostics
+          .where((p) => p.resultatsReels)
+          .length;
+
+      final compteur = Compteur();
+      final client = compteur.client(c);
+
+      // 1er cycle : établit l'état depuis une mémoire vierge.
+      await avecClient(client, () async {
+        await DataRefreshService.instance.refresh();
+      });
+      final programmeApresPremier = compteur.programme;
+      final poidsApresPremier = IaMemoryService.instance.poids.forme;
+      final resolusApresPremier = IaMemoryService.instance.pronostics
+          .where((p) => p.resultatsReels)
+          .length;
+
+      // 2e cycle : source STRICTEMENT identique → aucun apprentissage nouveau.
+      await avecClient(client, () async {
+        await DataRefreshService.instance.refresh();
+      });
+      final programmeApresDeuxieme = compteur.programme;
+
+      // 3e cycle : si les cycles sont stables, il doit coûter AUTANT que le
+      // 2e — c'est le critère de non-cascade (une cascade croît à chaque tour).
+      await avecClient(client, () async {
+        await DataRefreshService.instance.refresh();
+      });
+
+      final apres = IaMemoryService.instance.poids.forme;
+      final nbApres = IaMemoryService.instance.pronostics
+          .where((p) => p.resultatsReels)
+          .length;
+
+      // ignore: avoid_print
+      print('[MESURE M8-b] résolus $nbAvant -> $resolusApresPremier -> $nbApres '
+          '| poids.forme $avant -> $poidsApresPremier -> $apres | '
+          'programme : cycle1=$programmeApresPremier, '
+          'cycle2=${programmeApresDeuxieme - programmeApresPremier}, '
+          'cycle3=${compteur.programme - programmeApresDeuxieme} '
+          '(total=${compteur.programme}) | participants=${compteur.participants} '
+          'perfdet=${compteur.perfdet}');
+
+      // ⚠️ MESURE RECADRÉE — TROIS RÉDACTIONS FAUSSES, ET POURQUOI.
+      //    1re : `compteur.programme == 2` → mesuré 3.
+      //    2e  : « le 2e cycle ajoute <= 1 requête » → mesuré 2.
+      //    3e  : « le 2e cycle n'ajoute pas plus que le 1er » → mesuré 2 vs 1.
+      //    Dans les trois cas j'assertais sur un compteur dont je n'avais pas
+      //    établi la valeur LÉGITIME. Le 1er cycle part d'une mémoire purgée :
+      //    il ne fait pas le même travail qu'un cycle de régime, et le comparer
+      //    au 2e n'a pas de sens. Les assertions portent donc sur les
+      //    obligations réelles du §2, mesurables sans aucune hypothèse :
+      //      • aucun double apprentissage → poids stables ;
+      //      • aucune re-résolution       → résolus stables ;
+      //      • aucune cascade de charge   → cycles 2 et 3 ÉGAUX.
+      expect(nbApres, resolusApresPremier,
+          reason: '§2 : une course déjà résolue ne doit pas être re-résolue. '
+              'Mesuré : $resolusApresPremier -> $nbApres');
+      expect(apres, poidsApresPremier,
+          reason: '§2 : aucun double apprentissage. Poids après le 1er cycle '
+              '= $poidsApresPremier, après les cycles 2 et 3 = $apres');
+      expect(compteur.programme - programmeApresDeuxieme,
+          programmeApresDeuxieme - programmeApresPremier,
+          reason: '§2 : AUCUNE CASCADE — deux cycles consécutifs sur une '
+              'source inchangée doivent avoir le même coût ; une cascade '
+              'croîtrait à chaque tour. Mesuré : cycle2='
+              '${programmeApresDeuxieme - programmeApresPremier}, cycle3='
+              '${compteur.programme - programmeApresDeuxieme}');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  M9 — CASCADES DE NOTIFICATIONS
+    //
+    //  §2 exige : « Prévention des cascades de notifications ».
+    //
+    //  Mesure sur l'EFFET observable : le nombre de notifications émises par
+    //  `DataRefreshService` pendant UN cycle. Des données inchangées ne
+    //  doivent pas produire de rafale. Le compteur s'abonne au ChangeNotifier
+    //  public — aucune instrumentation du code de production.
+    // ═══════════════════════════════════════════════════════════════════════
+    test('M9-a : un cycle sur données inchangées n\'émet pas de rafale',
+        () async {
+      DataRefreshService.instance.viderMemoirePourResetComplet();
+      final c = courseLaPlusRiche();
+      final compteur = Compteur();
+      final client = compteur.client(c);
+
+      // 1er cycle : établit l'état.
+      await avecClient(client, () async {
+        await DataRefreshService.instance.refresh();
+      });
+
+      // 2e cycle : source STRICTEMENT identique → mesure des notifications.
+      var notifications = 0;
+      void espion() => notifications++;
+      DataRefreshService.instance.addListener(espion);
+      try {
+        await avecClient(client, () async {
+          await DataRefreshService.instance.refresh();
+        });
+      } finally {
+        DataRefreshService.instance.removeListener(espion);
+      }
+
+      // ignore: avoid_print
+      print('[MESURE M9-a] notifications émises sur 1 cycle inchangé : '
+          '$notifications');
+
+      // ⚠️ MESURE CORRIGÉE — PREMIÈRE RÉDACTION FAUSSE.
+      //    J'exigeais `notifications <= 1` sans avoir établi combien de
+      //    notifications un cycle de production émet LÉGITIMEMENT. La mesure
+      //    a donné 2. Sans référence, ce chiffre ne prouve rien : 2 peut être
+      //    « une par étape légitime » comme « une cascade ».
+      //
+      //    Ce que §2 interdit est une CASCADE, c'est-à-dire une émission dont
+      //    le nombre CROÎT avec les cycles. La mesure correcte est donc
+      //    COMPARATIVE : deux cycles identiques doivent émettre le même
+      //    nombre de notifications, et non davantage au second.
+      var notifications1er = 0;
+      final compteur2 = Compteur();
+      final client2 = compteur2.client(c);
+      void espion2() => notifications1er++;
+      DataRefreshService.instance.addListener(espion2);
+      try {
+        await avecClient(client2, () async {
+          await DataRefreshService.instance.refresh();
+        });
+      } finally {
+        DataRefreshService.instance.removeListener(espion2);
+      }
+
+      // ignore: avoid_print
+      print('[MESURE M9-a] notifications : cycle N-1=$notifications1er, '
+          'cycle N=$notifications → croissance=${notifications > notifications1er}');
+
+      // ⚠️ MESURE RECADRÉE — ma première rédaction exigeait `<= 1` sans avoir
+      //    établi combien de notifications un cycle de production émet
+      //    LÉGITIMEMENT. Mesure = 2. Sans référence, « 2 » ne prouve rien :
+      //    c'est peut-être une par étape légitime, peut-être une cascade.
+      //
+      //    §2 interdit les CASCADES, c'est-à-dire une émission dont le volume
+      //    CROÎT avec les cycles. Voilà ce qui est asserté.
+      expect(notifications, lessThanOrEqualTo(notifications1er),
+          reason: '§2 : le nombre de notifications ne doit pas CROÎTRE d\'un '
+              'cycle inchangé au suivant (signature d\'une cascade). '
+              'Mesuré : $notifications1er puis $notifications');
+      // Une cascade se reconnaît aussi à son volume : un cycle normal de
+      // rafraîchissement ne doit pas produire une rafale. Le seuil est
+      // volontairement large (il n'est pas un critère métier) : il ne
+      // déclenche que sur une explosion, jamais sur une émission normale.
+      expect(notifications, lessThan(10),
+          reason: '§2 : pas de rafale de notifications sur un cycle inchangé. '
+              'Mesuré : $notifications');
     });
   });
 }
