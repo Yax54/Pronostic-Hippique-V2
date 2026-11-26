@@ -31,10 +31,23 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pronostic_hippique/data/connaissances/_adapters/pont_elo.dart';
 import 'package:pronostic_hippique/data/connaissances/_services/corpus_performances.dart';
+import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../support/corpus_pmu_replay.dart';
+
+/// Une course du corpus qui a RÉELLEMENT un historique publié.
+CorpusCourse premiereCourseAvecHistorique() {
+  final manifeste = chargerManifeste();
+  for (final c in manifeste) {
+    final f = File('$kCorpusDir/${c.key}_perfdet.json');
+    if (!f.existsSync()) continue;
+    final contenu = f.readAsStringSync().trim();
+    if (contenu.length > 10 && contenu != '{}') return c;
+  }
+  fail('aucune course du corpus ne porte d\'historique');
+}
 
 void main() {
   late Directory racine;
@@ -60,18 +73,6 @@ void main() {
       // best-effort
     }
   });
-
-  /// Une course du corpus qui a RÉELLEMENT un historique publié.
-  CorpusCourse premiereCourseAvecHistorique() {
-    final manifeste = chargerManifeste();
-    for (final c in manifeste) {
-      final f = File('$kCorpusDir/${c.key}_perfdet.json');
-      if (!f.existsSync()) continue;
-      final contenu = f.readAsStringSync().trim();
-      if (contenu.length > 10 && contenu != '{}') return c;
-    }
-    fail('aucune course du corpus ne porte d\'historique');
-  }
 
   group('Raccordement producteur → corpus', () {
     test(
@@ -228,6 +229,8 @@ void main() {
       timeout: const Timeout(Duration(minutes: 3)),
     );
   });
+
+  mainSuiteAlimentationDesCriteres();
 }
 
 /// Nom d'un cheval réellement présent dans la réponse PMU de la course.
@@ -271,4 +274,106 @@ List<String> _nomsDuCorpus(CorpusCourse course, {int limite = 6}) {
     }
   }
   return noms;
+}
+
+/// MAILLON SUIVANT DE LA CHAÎNE : le corpus doit RÉELLEMENT alimenter les
+/// critères qui dépendent de l'historique.
+///
+/// Ces deux critères sont mesurables sans ambiguïté :
+///   • `statsHippodromeCsv`  (« nbCourses|nbVict|nbTop3 ») — vient de
+///     l'historique détaillé, pas de la musique ;
+///   • `joursRepos`          — vient de la date de la dernière course connue.
+///
+/// Ils sont nuls quand l'historique est vide. S'ils sont renseignés alors que
+/// le PMU est COUPÉ, la preuve est faite que le corpus local alimente bien les
+/// critères, et non seulement qu'il stocke.
+void mainSuiteAlimentationDesCriteres() {
+  group('Alimentation réelle des critères', () {
+    test(
+      'PMU coupé : hippodrome et jours de repos restent alimentés par le corpus',
+      () async {
+        final course = premiereCourseAvecHistorique();
+
+        // 1) Acquisition : le PMU répond normalement.
+        await rejouerCourse(course);
+        for (var i = 0; i < 40; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+          if (await CorpusPerformancesService.instance.compter() > 0) break;
+        }
+        expect(await CorpusPerformancesService.instance.compter(),
+            greaterThan(0));
+
+        // 2) Analyse avec SEUL `performances-detaillees` indisponible.
+        //
+        //    Ce scénario est le vrai : le programme et les partants viennent
+        //    d'endpoints distincts, qui peuvent répondre alors que l'historique
+        //    détaillé échoue (c'est précisément le cas observé en production,
+        //    avec un endpoint qui renvoie 420 ou tombe en délai). Simuler une
+        //    coupure TOTALE ne prouverait rien sur le corpus : sans programme,
+        //    il n'y a aucun partant à alimenter.
+        purgerProducteur();
+        late List<ZtReunion> reunions;
+        await http.runWithClient(
+          () async {
+            reunions = await ZoneTurfService.chargerProgramme(
+              forceRefresh: true,
+              date: course.dateReelle,
+            );
+          },
+          () => MockClient((http.Request req) async {
+            if (req.url.path.contains('performances-detaillees')) {
+              // L'historique détaillé est indisponible ; tout le reste répond
+              // avec les données PMU authentiques du corpus.
+              return http.Response('', 420);
+            }
+            if (req.url.path.contains('participants')) {
+              return http.Response(
+                File('$kCorpusDir/${course.key}_participants.json')
+                    .readAsStringSync(),
+                200,
+                headers: const <String, String>{
+                  'content-type': 'application/json'
+                },
+              );
+            }
+            return http.Response(
+              jsonEncode(programmeReconstruit(course)),
+              200,
+              headers: const <String, String>{
+                'content-type': 'application/json'
+              },
+            );
+          }),
+        );
+
+        // 3) Mesure sur les partants réellement produits.
+        final partants = reunions.isEmpty
+            ? const <ZtPartant>[]
+            : reunions.first.courses.first.partants;
+        expect(partants, isNotEmpty,
+            reason: 'le programme doit rester servi sans réseau');
+
+        var avecHippodrome = 0;
+        var avecRepos = 0;
+        for (final p in partants) {
+          if (p.statsHippodromeCsv.trim().isNotEmpty) avecHippodrome++;
+          if (p.joursRepos > 0) avecRepos++;
+        }
+
+        // ignore: avoid_print
+        print('[MESURE] alimentation des critères hors ligne : '
+            '${partants.length} partant(s), '
+            '$avecHippodrome avec statistique hippodrome, '
+            '$avecRepos avec jours de repos');
+
+        // Le critère hippodrome exige des courses sur le MÊME hippodrome :
+        // sa présence n'est pas garantie sur toutes les courses, mais elle ne
+        // peut provenir que de l'historique.
+        expect(avecHippodrome + avecRepos, greaterThan(0),
+            reason: 'sans le corpus, ces deux critères seraient à zéro : '
+                'aucune alimentation historique hors ligne');
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
+  });
 }
