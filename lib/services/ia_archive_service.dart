@@ -945,6 +945,153 @@ class IaArchiveService extends ChangeNotifier {
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  CONSULTATION CIBLÉE — SANS CHARGER L'INTÉGRALITÉ DE L'ARCHIVE
+  //
+  //  ⚠️ LE DÉFAUT QUE CE BLOC CORRIGE, ET SA MESURE
+  //
+  //  `_chargerDepuisStockage` décode TOUS les shards au démarrage : chaque mois
+  //  est une chaîne base64+gzip qui est intégralement décompressée et dont
+  //  chaque pronostic est désérialisé. La mémoire de travail porte donc tout
+  //  l'historique archivé, alors que ces versions en sont précisément sorties
+  //  pour ne plus y peser.
+  //
+  //  Conséquence mesurée sur une base de démonstration : consulter UNE course
+  //  exigeait de décoder l'ensemble des mois. Le coût de la consultation était
+  //  proportionnel à la taille TOTALE de l'archive, et non à ce qui était
+  //  demandé.
+  //
+  //  ⚠️ CE QUI EST AJOUTÉ, ET RIEN DE PLUS
+  //
+  //  Une lecture CIBLÉE qui passe par le miroir segmenté (`ArchivesSegmenteess`),
+  //  lequel indexe par `cleCourse` et par période, et lit en FLUX. Elle ne
+  //  charge que les entrées demandées.
+  //
+  //  ⚠️ CE QUE CETTE LECTURE N'EST PAS
+  //
+  //  • elle n'est PAS l'autorité : les shards le restent. Une divergence du
+  //    miroir (dossier effacé, écriture interrompue) appauvrit la consultation
+  //    mais ne peut pas changer l'état logique ;
+  //  • elle n'est JAMAIS lue par l'apprentissage — aucun `_poids`, aucun seuil,
+  //    aucun gradient n'y accède (§3) ;
+  //  • elle ne réinjecte RIEN dans la mémoire de travail (§3, §17) : elle rend
+  //    des objets `IaPronostic` à l'appelant, sans les intégrer à `_pronostics`.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Versions archivées d'UNE course, lues SANS charger toute l'archive.
+  ///
+  /// Rend les entrées du miroir consultable, ou — si le miroir est absent ou
+  /// vide pour cette course — la version retenue déjà en mémoire. Cette seconde
+  /// source n'est PAS un chargement : elle est le résultat du chargement normal
+  /// du service, qui a lieu de toute façon au démarrage.
+  ///
+  /// ⚠️ Aucune donnée n'est inventée : si les deux sources sont vides, la liste
+  ///    est vide, et cela signifie « aucune version archivée connue ».
+  Future<List<IaPronostic>> versionsArchiveesPourCourse(
+      String courseKey) async {
+    if (courseKey.isEmpty) return const <IaPronostic>[];
+
+    // 1. Lecture CIBLÉE du miroir (index + les seuls segments concernés).
+    try {
+      final entrees = await ArchivesSegmenteess.instance.parCourse(courseKey);
+      if (entrees.isNotEmpty) {
+        final resultat = <IaPronostic>[];
+        for (final e in entrees) {
+          final p = _decoderPronosticArchive(e.contenu);
+          if (p != null) resultat.add(p);
+        }
+        if (resultat.isNotEmpty) return resultat;
+      }
+    } catch (e) {
+      // Miroir indisponible : ce n'est PAS une panne de l'archive. On continue
+      // vers la source en mémoire, qui reste l'autorité.
+      if (kDebugMode) {
+        debugPrint('[IaArchive] miroir indisponible pour $courseKey : $e');
+      }
+    }
+
+    // 2. Repli sur la version retenue EN MÉMOIRE (aucun chargement ajouté).
+    final retenue = _retenues[courseKey];
+    return retenue == null
+        ? const <IaPronostic>[]
+        : <IaPronostic>[retenue];
+  }
+
+  /// Entrées archivées dont la date appartient à `[du, au]`, en lecture ciblée.
+  ///
+  /// [du] et [au] sont au format ISO `AAAA-MM-JJ`, bornes INCLUSES.
+  ///
+  /// ⚠️ Utilisé par les bilans et les agrégats historiques, JAMAIS par
+  ///    l'apprentissage. Aucune réinjection : les objets rendus ne sont pas
+  ///    ajoutés à `_pronostics`.
+  Future<List<IaPronostic>> versionsArchiveesPeriode(
+      String du, String au) async {
+    try {
+      final entrees = await ArchivesSegmenteess.instance.parPeriode(du, au);
+      final resultat = <IaPronostic>[];
+      for (final e in entrees) {
+        final p = _decoderPronosticArchive(e.contenu);
+        if (p != null) resultat.add(p);
+      }
+      return resultat;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[IaArchive] miroir indisponible pour [$du, $au] : $e');
+      }
+      return const <IaPronostic>[];
+    }
+  }
+
+  /// Entrées archivées disposant d'un RÉSULTAT OFFICIEL, en lecture ciblée.
+  ///
+  /// Sert aux agrégats historiques : un pronostic sans résultat n'alimente
+  /// aucun bilan, et le charger serait un coût sans contrepartie.
+  Future<List<IaPronostic>> versionsArchiveesAvecResultat() async {
+    try {
+      final entrees =
+          await ArchivesSegmenteess.instance.avecResultatOfficiel();
+      final resultat = <IaPronostic>[];
+      for (final e in entrees) {
+        final p = _decoderPronosticArchive(e.contenu);
+        if (p != null) resultat.add(p);
+      }
+      return resultat;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[IaArchive] miroir indisponible (résultats) : $e');
+      }
+      return const <IaPronostic>[];
+    }
+  }
+
+  /// Bilan MESURÉ de l'archive : segments, entrées, octets, état de l'index.
+  ///
+  /// Rend `null` si le miroir n'est pas exploitable — auquel cas il n'existe
+  /// aucune mesure à annoncer, et en inventer une serait pire que l'absence.
+  Future<BilanArchives?> bilanMiroir() async {
+    try {
+      return await ArchivesSegmenteess.instance.bilan();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[IaArchive] bilan indisponible : $e');
+      return null;
+    }
+  }
+
+  /// Décode le contenu VERBATIM d'une entrée de miroir.
+  ///
+  /// Rend `null` — et rien d'autre — si le contenu n'est pas un JSON objet
+  /// exploitable. Aucune reconstruction approximative : mieux vaut une entrée
+  /// absente qu'une entrée inventée (§9).
+  IaPronostic? _decoderPronosticArchive(String contenu) {
+    try {
+      final j = json.decode(contenu);
+      if (j is! Map<String, dynamic>) return null;
+      return IaPronostic.fromJson(j);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _ecrireManifeste() async {
     final prefs = await SharedPreferences.getInstance();
     // ★ E3 : le manifeste décrit ce qui est RÉELLEMENT écrit (écritures
