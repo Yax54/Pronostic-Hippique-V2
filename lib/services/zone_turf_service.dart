@@ -13,10 +13,131 @@ import '../data/connaissances/_services/corpus_performances.dart';
 import 'arrivee_officielle_service.dart';
 import 'ia_pronostic_engine.dart';
 
+/// Nature de l'issue d'un chargement de programme.
+///
+/// ═══════════════════════════════════════════════════════════════════════════
+///  POURQUOI CET ENUM EXISTE — DÉFAUT MESURÉ AVANT SA CRÉATION
+///
+///  `chargerProgramme` rendait `[]` dans quatre situations de nature
+///  DIFFÉRENTE, sans aucun moyen de les distinguer :
+///
+///    • journée légitimement sans course  → ne rien réessayer ;
+///    • coupure réseau (aucune réponse)   → réessayer plus tard ;
+///    • corps illisible (JSON invalide)   → réessayer, mais c'est un incident ;
+///    • erreur serveur (HTTP ≠ 200)       → réessayer plus tard ;
+///    • programme lu, tous partants en échec → programme INCOMPLET.
+///
+///  MESURE (test/audit/mecanismes_actualisation_mesure_test.dart, M6-a) :
+///  les quatre premières produisaient toutes `length == 0`, et rien d'autre
+///  n'était publié. L'appelant ne pouvait donc pas décider entre « réessayer »
+///  et « cette journée n'a pas de course » — c'est exactement ce que §2 exige
+///  de distinguer.
+///
+///  ⚠️ CET ENUM NE MODIFIE AUCUNE RÈGLE MÉTIER : il ne fait que NOMMER ce qui
+///     était déjà vrai mais indicible. Les valeurs de retour de
+///     `chargerProgramme` sont inchangées.
+/// ═══════════════════════════════════════════════════════════════════════════
+enum IssueChargement {
+  /// Rien n'a encore été tenté dans ce processus.
+  inconnue,
+
+  /// Au moins une course a été lue avec ses partants : chargement exploitable.
+  complet,
+
+  /// Des réunions ont été lues, mais AUCUNE course n'a de partant.
+  /// Le programme existe, il n'est simplement pas encore alimenté par le PMU.
+  incomplet,
+
+  /// Le PMU a répondu 200 avec zéro réunion : journée légitimement sans course.
+  /// Ce n'est PAS une erreur et cela ne doit pas déclencher de réessai agressif.
+  aucuneCourse,
+
+  /// Aucune réponse n'a été obtenue (réseau coupé, délai dépassé).
+  reseauIndisponible,
+
+  /// Une réponse a été obtenue mais elle est inexploitable (JSON illisible,
+  /// structure absente). Distinct de « aucune réponse » : la source est
+  /// joignable, c'est son contenu qui ne l'est pas.
+  reponseInvalide,
+
+  /// La source a répondu par une erreur (HTTP ≠ 200).
+  erreurServeur,
+
+  /// Un chargement était déjà en vol pour cette date : aucune requête n'a été
+  /// émise par cet appel, il partage le résultat du chargement en cours.
+  mutualise;
+
+  /// Vrai si cette issue atteste que la SOURCE a répondu de façon exploitable.
+  ///
+  /// ⚠️ `aucuneCourse` et `incomplet` sont des RÉUSSITES, et c'est important :
+  ///    une journée sans course n'est pas une panne, et un programme encore
+  ///    sans partant n'est pas un échec réseau. Les traiter comme des échecs
+  ///    ferait afficher une erreur pour un état parfaitement normal, et
+  ///    déclencherait des réessais inutiles (§2 : prévention des boucles et
+  ///    des traitements redondants).
+  ///
+  /// ⚠️ `mutualise` n'est jamais publiée comme issue courante : elle ne décrit
+  ///    qu'un appel, pas un chargement.
+  bool get estReussite =>
+      this == IssueChargement.complet ||
+      this == IssueChargement.incomplet ||
+      this == IssueChargement.aucuneCourse;
+}
+
 class ZoneTurfService {
   // API PMU officielle (accessible depuis mobile et web)
   static const String _pmuBase = 'https://turfinfo.api.pmu.fr/rest/client/7';
   static const String _pmuSpec = 'specialisation=INTERNET';
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  MUTUALISATION DES CHARGEMENTS SIMULTANÉS
+  //
+  //  ⚠️ DÉFAUT MESURÉ AVANT CETTE CORRECTION (M1-a) :
+  //     deux appels simultanés de `chargerProgramme` pour la MÊME journée
+  //     émettaient 2 requêtes `/programme`, 2 lots de `participants` et 2 lots
+  //     de `performances-detaillees/pretty` — soit 6 requêtes mesurées.
+  //     Le cache TTL ne pouvait rien y faire : aucune des deux requêtes
+  //     n'était terminée quand la seconde a démarré, donc `_cache[dateStr]`
+  //     était encore vide pour les deux.
+  //
+  //  CE QUE FAIT CETTE TABLE : elle associe à chaque date EN VOL le `Future`
+  //  du chargement déjà commencé. Un second appel sur la même date reçoit CE
+  //  future, sans émettre de requête.
+  //
+  //  ⚠️ CE QUE CE N'EST PAS :
+  //    • ce n'est pas un cache : l'entrée est retirée dès que le chargement
+  //      se termine, qu'il réussisse ou échoue. Un appel ultérieur refait donc
+  //      le travail — c'est le TTL qui décide, pas cette table ;
+  //    • ce n'est pas une fusion de dates : la clé EST la date. Deux dates
+  //      distinctes restent deux chargements distincts (mesuré en M1-b).
+  //    • cela ne change pas le résultat : le second appel reçoit exactement la
+  //      liste du premier, sans copie ni reconstruction.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Date (`ddmmyyyy`) → chargement EN VOL. Vidée dès la fin, succès ou échec.
+  static final Map<String, Future<List<ZtReunion>>> _chargementsEnVol =
+      <String, Future<List<ZtReunion>>>{};
+
+  /// Nature de l'issue du DERNIER chargement terminé. Observée par les tests et
+  /// exploitable par l'appelant. Ne conditionne aucune règle métier.
+  static IssueChargement _issueCourante = IssueChargement.inconnue;
+  static IssueChargement get issueCourante => _issueCourante;
+
+  /// Nombre d'appels qui ont réellement ÉMIS des requêtes (par opposition à
+  /// ceux qui ont partagé un chargement en vol). Mesure la mutualisation.
+  static int _nbChargementsEmis = 0;
+  static int get nbChargementsEmis => _nbChargementsEmis;
+
+  /// Nombre d'appels qui ont PARTAGÉ un chargement en vol.
+  static int _nbChargementsMutualises = 0;
+  static int get nbChargementsMutualises => _nbChargementsMutualises;
+
+  /// Remet les compteurs à zéro. Réservé aux tests de mesure.
+  @visibleForTesting
+  static void reinitialiserCompteursMutualisation() {
+    _nbChargementsEmis = 0;
+    _nbChargementsMutualises = 0;
+  }
 
   // Proxy web uniquement (même origine)
   static String get _proxyBase {
@@ -136,6 +257,27 @@ class ZoneTurfService {
   }) async {
     final dateStr = date != null ? _dateToStr(date) : _todayStr();
 
+    // ── MUTUALISATION ─────────────────────────────────────────────────────
+    //  Placée AVANT tout `await`, donc dans la même section synchrone que la
+    //  lecture de la table : deux appels réellement simultanés ne peuvent pas
+    //  s'intercaler entre le test d'existence et l'enregistrement.
+    //
+    //  ⚠️ `forceRefresh: true` ne contourne PAS la mutualisation, et c'est
+    //     délibéré : si un chargement est DÉJÀ en vol, sa requête est en cours
+    //     d'exécution au moment où l'appelant demande la sienne. Émettre une
+    //     seconde requête ne donnerait pas une donnée plus fraîche — elle
+    //     donnerait la même, un instant plus tard. Le sens de `forceRefresh`
+    //     est « ne pas servir le cache TTL », il n'est pas « dupliquer une
+    //     requête déjà partie ».
+    final dejaEnVol = _chargementsEnVol[dateStr];
+    if (dejaEnVol != null) {
+      _nbChargementsMutualises++;
+      final resultat = await dejaEnVol;
+      // L'issue publiée reste celle du chargement réellement effectué : le
+      // fait qu'un appelant ait partagé ne change pas la nature du résultat.
+      return resultat;
+    }
+
     // ★ L1 : témoin de reset. Photographié ICI, AVANT l'appel réseau, pour
     // pouvoir détecter un reset survenu PENDANT le chargement (le réseau peut
     // durer 20 s). Si la génération a bougé, la capture L0 est abandonnée :
@@ -153,6 +295,69 @@ class ZoneTurfService {
       return cached;
     }
 
+    // Engagement du chargement : la table reçoit le future AVANT que la
+    // méthode ne le complète, de sorte qu'un appelant entrant pendant les
+    // `await` suivants le trouve.
+    final completer = Completer<List<ZtReunion>>();
+    _chargementsEnVol[dateStr] = completer.future;
+    _nbChargementsEmis++;
+
+    try {
+      final resultat = await _chargerProgrammeEffectif(
+        dateStr: dateStr,
+        forceRefresh: forceRefresh,
+        generationResetAuDemarrage: generationResetAuDemarrage,
+      );
+      completer.complete(resultat);
+      return resultat;
+    } catch (e, p) {
+      // Un échec doit être transmis TEL QUEL aux appelants mutualisés : ils
+      // partagent une issue, pas seulement un succès.
+      completer.completeError(e, p);
+      rethrow;
+    } finally {
+      // ══════════════════════════════════════════════════════════════════════
+      //  RETRAIT SYNCHRONE — C'EST ICI QUE SE JOUE LA DIFFÉRENCE ENTRE
+      //  « REQUÊTE EN VOL » ET « REQUÊTE TERMINÉE ».
+      //
+      //  ⚠️ RÉGRESSION QUE J'AI INTRODUITE, MESURÉE PUIS CORRIGÉE.
+      //     Ma première version retirait l'entrée dans un `Future.microtask`.
+      //     Or `completer.complete()` programme la reprise des appelants en
+      //     microtâche, et cette reprise passait AVANT le retrait. Un appel
+      //     SÉQUENTIEL — donc postérieur à la fin du premier — retrouvait
+      //     encore l'entrée et recevait le résultat DÉJÀ TERMINÉ sans émettre
+      //     la moindre requête.
+      //
+      //     Conséquence mesurée (M6-a) : quatre chargements séquentiels sur la
+      //     MÊME date, avec quatre causes d'échec différentes, publiaient
+      //     `[aucuneCourse, aucuneCourse, aucuneCourse, erreurServeur]` — les
+      //     trois premiers n'avaient PAS été exécutés. Le mécanisme d'issue
+      //     paraissait donc défaillant alors qu'il était court-circuité.
+      //
+      //  Un retrait SYNCHRONE dans le `finally` s'exécute avant que le future
+      //  rendu à l'appelant ne se résolve, donc avant toute reprise d'un
+      //  appelant séquentiel. À partir de cet instant, la table ne contient
+      //  plus que des chargements RÉELLEMENT en vol.
+      //
+      //  Ce `finally` couvre les trois chemins exigés : réussite, échec
+      //  (erreur propagée) et exception. Aucune entrée ne peut y rester
+      //  bloquée, ce qui interdirait définitivement les chargements de cette
+      //  date.
+      // ══════════════════════════════════════════════════════════════════════
+      _chargementsEnVol.remove(dateStr);
+    }
+  }
+
+  /// Chargement EFFECTIF d'une journée : c'est ici que les requêtes partent.
+  ///
+  /// Extrait de `chargerProgramme` pour que la mutualisation et la publication
+  /// d'issue restent lisibles séparément de la logique de lecture. Aucune
+  /// règle de lecture n'est modifiée : le corps est celui d'origine.
+  static Future<List<ZtReunion>> _chargerProgrammeEffectif({
+    required String dateStr,
+    required bool forceRefresh,
+    required int generationResetAuDemarrage,
+  }) async {
     try {
       if (kDebugMode) debugPrint('PMU API: chargement programme $dateStr...');
 
@@ -161,22 +366,56 @@ class ZoneTurfService {
           ? '$_proxyBase/programme/$dateStr'
           : '$_pmuBase/programme/$dateStr?$_pmuSpec';
 
-      final progResp = await http
-          .get(Uri.parse(progUrl), headers: _headers)
-          .timeout(const Duration(seconds: 20));
+      final http.Response progResp;
+      try {
+        progResp = await http
+            .get(Uri.parse(progUrl), headers: _headers)
+            .timeout(const Duration(seconds: 20));
+      } on Exception catch (e) {
+        // Aucune réponse obtenue : réseau coupé, DNS, délai dépassé.
+        _issueCourante = IssueChargement.reseauIndisponible;
+        if (kDebugMode) {
+          debugPrint('PMU API réseau indisponible pour $dateStr : $e');
+        }
+        return [];
+      }
 
       if (progResp.statusCode != 200) {
+        _issueCourante = IssueChargement.erreurServeur;
         if (kDebugMode) {
           debugPrint('PMU API erreur programme: HTTP ${progResp.statusCode}');
         }
         return []; // ★ v91 : pas de données fictives — erreur réelle
       }
 
-      final progData = jsonDecode(progResp.body) as Map<String, dynamic>;
+      final Map<String, dynamic> progData;
+      try {
+        progData = jsonDecode(progResp.body) as Map<String, dynamic>;
+      } catch (e) {
+        // La source est joignable mais son contenu est inexploitable.
+        _issueCourante = IssueChargement.reponseInvalide;
+        if (kDebugMode) {
+          debugPrint('PMU API réponse illisible pour $dateStr : $e');
+        }
+        return [];
+      }
+
+      final programme = progData['programme'];
+      if (programme is! Map) {
+        // StructurE absente : même famille qu'un JSON illisible.
+        _issueCourante = IssueChargement.reponseInvalide;
+        if (kDebugMode) {
+          debugPrint('PMU API structure programme absente pour $dateStr');
+        }
+        return [];
+      }
+
       final reunionsJson =
-          (progData['programme']?['reunions'] as List<dynamic>? ?? []);
+          (programme['reunions'] as List<dynamic>? ?? []);
 
       if (reunionsJson.isEmpty) {
+        // ★ Cas LÉGITIME : journée sans course. Ce n'est pas une erreur.
+        _issueCourante = IssueChargement.aucuneCourse;
         if (kDebugMode) {
           debugPrint('PMU API: aucune réunion trouvée pour $dateStr');
         }
@@ -418,11 +657,31 @@ class ZoneTurfService {
       );
 
       if (reunions.isEmpty) {
+        // Toutes les réunions ont été filtrées comme étrangères : la source a
+        // répondu, mais rien d'exploitable n'en sort. Ce n'est pas une journée
+        // sans course — c'est un résultat vide APRÈS filtrage.
+        _issueCourante = IssueChargement.aucuneCourse;
         if (kDebugMode) {
           debugPrint('PMU API: 0 réunion française après filtrage');
         }
         return []; // ★ v91 : aucune course française aujourd'hui
       }
+
+      // ── Publication de l'issue : COMPLET ou INCOMPLET ──────────────────
+      //  Mesure qui justifie ce test (M6-b) : un programme lu dont TOUTES les
+      //  courses ont échoué côté participants produisait 1 réunion, 1 course et
+      //  0 partant — et rien ne le signalait. L'appelant voyait une liste non
+      //  vide et croyait avoir chargé un programme exploitable.
+      //
+      //  ⚠️ AUCUNE DONNÉE N'EST FABRIQUÉE ICI : on ne fait que constater le
+      //     nombre de partants RÉELLEMENT lus. Un programme sans aucun partant
+      //     reste rendu tel quel ; seule sa NATURE change.
+      final nbPartantsTotal = reunions
+          .expand((r) => r.courses)
+          .fold<int>(0, (s, c) => s + c.partants.length);
+      _issueCourante = nbPartantsTotal == 0
+          ? IssueChargement.incomplet
+          : IssueChargement.complet;
 
       // Appliquer les scores IA
       final withIA = _appliquerScoresIA(reunions);
@@ -431,10 +690,15 @@ class ZoneTurfService {
 
       if (kDebugMode) {
         debugPrint(
-            'PMU API: ${withIA.length} réunions françaises chargées pour $dateStr');
+            'PMU API: ${withIA.length} réunions françaises chargées pour $dateStr '
+            '($nbPartantsTotal partants, ${_issueCourante.name})');
       }
       return withIA;
     } catch (e) {
+      // Exception non prévue par les cas ci-dessus : on ne la classe pas en
+      // « aucune course » — ce serait présenter une panne comme une journée
+      // vide, exactement le défaut que cet enum corrige.
+      _issueCourante = IssueChargement.reponseInvalide;
       if (kDebugMode) debugPrint('PMU API erreur: $e');
       return []; // ★ v91 : erreur réseau — pas de données fictives
     }

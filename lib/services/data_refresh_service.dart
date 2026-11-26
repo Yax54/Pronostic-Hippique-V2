@@ -209,6 +209,12 @@ class DataRefreshService extends ChangeNotifier {
   DateTime? _lastRefresh;
   Timer? _autoTimer;
 
+  /// Date/heure de la dernière TENTATIVE (réussie ou non). Voir [derniereTentative].
+  DateTime? _dateDerniereTentative;
+
+  /// Issue de la dernière tentative. Voir [derniereIssue].
+  IssueChargement? _derniereIssue;
+
   // ★ v9.0 : État précédent des partants par courseKey pour détection non-partants
   // Clé : courseKey (ex: "R1C3"), Valeur : set des numéros connus
   final Map<String, Set<int>> _partantsParCourse = {};
@@ -262,7 +268,52 @@ class DataRefreshService extends ChangeNotifier {
   List<ZtReunion> get reunions    => _reunions;
   bool            get loading     => _loading;
   String?         get lastError   => _lastError;
-  DateTime?       get lastRefresh => _lastRefresh;
+
+  /// Dernière actualisation **RÉUSSIE** — et non dernière tentative.
+  ///
+  /// ═══════════════════════════════════════════════════════════════════════════
+  ///  ⚠️ DÉFAUT MESURÉ AVANT CETTE CORRECTION (M4-a)
+  ///
+  ///  Une coupure réseau TOTALE (aucune réponse obtenue) produisait :
+  ///      lastError  = null
+  ///      lastRefresh = 2026-11-26 18:11:12.959362   ← renseigné !
+  ///  L'interface affichait donc « À l'instant » alors qu'aucune donnée
+  ///  n'avait été obtenue. C'est exactement « un échec présenté comme une
+  ///  réussite ».
+  ///
+  ///  CAUSE : `_lastRefresh` était réécrit inconditionnellement dans `try`,
+  ///  juste après les traitements, sans regarder ce que le producteur avait
+  ///  réellement rapporté. Le producteur rend `[]` aussi bien pour une panne
+  ///  que pour une journée sans course, et `_doRefresh` ne consultait que la
+  ///  LONGUEUR de la liste — jamais sa NATURE.
+  ///
+  ///  CORRECTION : `_lastRefresh` n'est plus écrit que si le producteur a
+  ///  publié une issue de RÉUSSITE (`complet`, `incomplet`, `aucuneCourse`).
+  ///  Les issues de PANNE (`reseauIndisponible`, `reponseInvalide`,
+  ///  `erreurServeur`) alimentent `_lastError` et laissent `_lastRefresh`
+  ///  intact : la dernière connaissance valide n'est ni effacée ni présentée
+  ///  comme fraîche.
+  ///
+  ///  L'état de la DERNIÈRE TENTATIVE, réussie ou non, est publié séparément
+  ///  par [derniereTentative], pour que l'appelant puisse distinguer « je n'ai
+  ///  pas pu actualiser » de « la dernière actualisation date de X ».
+  /// ═══════════════════════════════════════════════════════════════════════════
+  DateTime? get lastRefresh => _lastRefresh;
+
+  /// Horodatage de la dernière **tentative**, qu'elle ait réussi ou échoué.
+  ///
+  /// Distinct de [lastRefresh] par construction : une tentative ratée met ce
+  /// champ à jour et laisse [lastRefresh] inchangé. C'est la seule façon de
+  /// répondre à « quand a-t-on essayé pour la dernière fois ? » sans mentir
+  /// sur « quand a-t-on réussi pour la dernière fois ? ».
+  DateTime? get derniereTentative => _dateDerniereTentative;
+
+  /// Issue de la dernière tentative. `null` avant toute tentative.
+  IssueChargement? get derniereIssue => _derniereIssue;
+
+  /// Vrai si la dernière tentative a effectivement abouti à des données
+  /// exploitables (ou à une absence légitime de course).
+  bool get derniereTentativeReussie => _derniereIssue?.estReussite ?? false;
 
   String get lastRefreshLabel {
     if (_lastRefresh == null) return 'Jamais';
@@ -488,16 +539,74 @@ class DataRefreshService extends ChangeNotifier {
     }
   }
 
+  /// Discriminant de changement, exposé pour que la MESURE porte sur le code
+  /// de production et non sur une reproduction.
+  ///
+  /// ⚠️ POURQUOI CETTE EXPOSITION EXISTE
+  ///    Ma première mesure du mouvement de cote (M2-a) reproduisait la règle
+  ///    de `_signaturedReunions` DANS le fichier de test. Elle ne mesurait donc
+  ///    que sa propre copie : une correction de la production y serait restée
+  ///    invisible, et un défaut de la copie aurait pu être attribué au service.
+  ///    C'est exactement le raisonnement qu'il faut s'interdire.
+  ///
+  ///    Cette exposition ne change aucun comportement : `_signaturedReunions`
+  ///    est la méthode effectivement utilisée par `_doRefresh`.
+  @visibleForTesting
+  String signaturePourMesure(List<ZtReunion> reunions) =>
+      _signaturedReunions(reunions);
+
   String _signaturedReunions(List<ZtReunion> reunions) {
     final buf = StringBuffer();
+    final maintenant = DateTime.now();
     for (final r in reunions) {
       buf.write('${r.code}:${r.courses.length}');
       for (final c in r.courses) {
-        final isTerminee = DateTime.now().difference(c.heureDateTime).inMinutes > 90;
+        final isTerminee = maintenant.difference(c.heureDateTime).inMinutes > 90;
         // ★ Fix : inclure le nombre de partants dans la signature
         // Sans ça, quand les cotes apparaissent (partants 0→13), la signature
         // ne change pas → _enregistrerPronosticsAuto non appelé → pronostics jamais créés
         buf.write('|${c.numCourse}${c.heure}${isTerminee ? "T" : "A"}${c.partants.length}');
+
+        // ══════════════════════════════════════════════════════════════════
+        //  ★ §2 — LE MOUVEMENT DE COTE DOIT ÊTRE UN CHANGEMENT UTILE
+        //
+        //  ⚠️ DÉFAUT MESURÉ AVANT CETTE CORRECTION (test/audit/
+        //     mecanismes_actualisation_mesure_test.dart, M2-a) :
+        //     deux programmes ne différant QUE par la cote d'un cheval
+        //     (4,0 → 9,0) produisaient la MÊME signature :
+        //         signature(cotes 4.0)     = R1:1|113:00T8
+        //         signature(cote 1 → 9.0)  = R1:1|113:00T8
+        //     La cote était donc invisible du discriminant : un mouvement de
+        //     marché ne pouvait jamais être signalé comme un changement.
+        //
+        //  CE QUI EST AJOUTÉ, ET SON PÉRIMÈTRE EXACT :
+        //     • uniquement les cotes des courses NON TERMINÉES. Une course
+        //       terminée ne bouge plus : l'inclure ferait varier la signature
+        //       sans aucune information nouvelle, donc pour rien ;
+        //     • la cote est arrondie au dixième. Ce n'est PAS un seuil métier
+        //       et cela ne modifie aucun calcul : c'est une décision de
+        //       GRANULARITÉ du discriminant, prise pour que le bruit de
+        //       troisième décimale du flux PMU ne déclenche pas un cycle
+        //       complet de rafraîchissement toutes les 15 minutes
+        //       (§2 exige aussi la prévention des traitements redondants).
+        //     • l'ORDRE des partants est celui de la liste : deux programmes
+        //       dont les partants sont dans un ordre différent produisent donc
+        //       des signatures différentes. C'est conservateur — un faux
+        //       « changement » coûte un cycle, un faux « identique » perd une
+        //       information — et c'est le sens de l'exigence.
+        //
+        //  ⚠️ AUCUN CRITÈRE, AUCUN POIDS, AUCUN SEUIL N'EST TOUCHÉ ICI.
+        //     Le critère R (`mouvCote`) continue d'être alimenté par
+        //     `CoteTrackerService`, qui suit les snapshots horodatés : ce bloc
+        //     ne fait que rendre le mouvement VISIBLE du rafraîchissement.
+        // ══════════════════════════════════════════════════════════════════
+        if (!isTerminee) {
+          for (final p in c.partants) {
+            final cote = double.tryParse(p.cote.replaceAll(',', '.')) ?? 0.0;
+            // `toStringAsFixed(1)` : granularité assumée, voir ci-dessus.
+            buf.write('~${p.numero}:${cote.toStringAsFixed(1)}');
+          }
+        }
       }
     }
     return buf.toString();
@@ -672,6 +781,26 @@ class DataRefreshService extends ChangeNotifier {
       final reunions = await ZoneTurfService.chargerProgramme(
           forceRefresh: force);
 
+      // ═══════════════════ ISSUE DE LA TENTATIVE ════════════════════════
+      //  ★ §2 — LA NATURE DE L'ISSUE EST LUE ICI, PAS SEULEMENT LA LONGUEUR.
+      //
+      //  Avant, `_doRefresh` ne regardait que `reunions.isEmpty`. Or le
+      //  producteur rend `[]` aussi bien pour une journée sans course que pour
+      //  une coupure réseau : les deux étaient donc traitées identiquement, et
+      //  `_lastRefresh` était réécrit dans les deux cas (défaut M4-a mesuré).
+      //
+      //  ⚠️ CETTE LECTURE EST FAITE AVANT TOUT AUTRE `await` APRÈS LE
+      //     CHARGEMENT : `issueCourante` est un état global du producteur, un
+      //     autre chargement pourrait le modifier. Le lire immédiatement après
+      //     le retour garantit qu'il décrit CE chargement.
+      final issue = ZoneTurfService.issueCourante;
+      _derniereIssue = issue;
+      _dateDerniereTentative = DateTime.now();
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] issue du chargement : ${issue.name} '
+            '(${reunions.length} réunion(s))');
+      }
+
       // ═══════════════ POINT DE REPRISE ASYNCHRONE N°1 ══════════════════
       //  Le chargement réseau a pu durer 20 s, pendant lesquelles un reset
       //  complet s'est éventuellement déroulé. On ne touche plus à rien.
@@ -680,6 +809,21 @@ class DataRefreshService extends ChangeNotifier {
           debugPrint('[DataRefresh] ⏭️ refresh abandonné : reset survenu '
               'pendant le chargement réseau (génération '
               '$generationAuDemarrage → $_generationCache)');
+        }
+        return;
+      }
+
+      // ── ÉCHEC DÉCLARÉ : aucune connaissance valide n'est effacée ───────
+      //  §2 : « un échec d'actualisation ne doit pas effacer les dernières
+      //  connaissances valides ni être présenté comme une réussite ».
+      //  On sort donc AVANT toute réécriture de `_reunions`, AVANT la
+      //  sauvegarde du cache et AVANT les cinq effets secondaires.
+      if (!issue.estReussite) {
+        _lastError = _messagePourIssue(issue);
+        // `_lastRefresh` N'EST PAS TOUCHÉ : il garde la dernière réussite.
+        if (kDebugMode) {
+          debugPrint('[DataRefresh] ⚠️ tentative en échec (${issue.name}) — '
+              'dernière réussite conservée : $_lastRefresh');
         }
         return;
       }
@@ -747,8 +891,21 @@ class DataRefreshService extends ChangeNotifier {
     } catch (e) {
       // Une erreur d'un rafraîchissement OBSOLÈTE ne doit pas s'afficher :
       // elle décrit un état aboli par le reset.
+      //
+      // ★ §2 — comme pour les issues, `_lastRefresh` N'EST PAS TOUCHÉ ici :
+      //   une exception est une tentative, pas une réussite. Seul l'état de la
+      //   tentative est publié, afin que l'interface puisse dire « la dernière
+      //   tentative a échoué » sans prétendre que les données sont fraîches.
       if (!_estObsolete(generationAuDemarrage)) {
         _lastError = e.toString();
+        _dateDerniereTentative = DateTime.now();
+        // L'exception n'a pas de nature d'issue propre : on conserve celle que
+        // le producteur avait publiée si elle est déjà un échec, sinon on
+        // classe en `reponseInvalide` — l'information disponible ne permet pas
+        // d'affirmer mieux, et l'affirmer mieux serait l'inventer.
+        if (_derniereIssue == null || _derniereIssue!.estReussite) {
+          _derniereIssue = IssueChargement.reponseInvalide;
+        }
       }
       debugPrint('[DataRefresh] ❌ Erreur: $e');
     } finally {
@@ -770,6 +927,42 @@ class DataRefreshService extends ChangeNotifier {
   /// fermeture. C'est la même combinaison que `AlertService._ecrireProtege`.
   bool _estObsolete(int generation) =>
       _resetEnCours || generation != _generationCache;
+
+  /// Message destiné à l'utilisateur pour une issue d'échec.
+  ///
+  /// ⚠️ Chaque cause a son message, parce que l'action attendue diffère :
+  ///    • réseau indisponible → réessayer plus tard, la cause est extérieure ;
+  ///    • réponse invalide    → incident de la source, réessayer ne nuit pas ;
+  ///    • erreur serveur      → le PMU est en défaut, réessayer plus tard.
+  ///    Un message unique « erreur de chargement » empêcherait l'utilisateur
+  ///    de savoir s'il doit insister ou attendre — c'est précisément ce que
+  ///    §2 demande de distinguer.
+  ///
+  /// ⚠️ Aucune de ces issues n'efface les connaissances déjà chargées : le
+  ///    message décrit la TENTATIVE, pas l'état des données.
+  String? _messagePourIssue(IssueChargement issue) {
+    switch (issue) {
+      case IssueChargement.reseauIndisponible:
+        return 'Réseau indisponible : les dernières données connues sont '
+            'conservées. Nouvelle tentative au prochain rafraîchissement.';
+      case IssueChargement.reponseInvalide:
+        return 'Réponse du PMU illisible : les dernières données connues sont '
+            'conservées.';
+      case IssueChargement.erreurServeur:
+        return 'Le PMU a répondu par une erreur : les dernières données connues '
+            'sont conservées.';
+      case IssueChargement.inconnue:
+        return 'Aucune tentative de chargement n\'a encore abouti.';
+      case IssueChargement.complet:
+      case IssueChargement.incomplet:
+      case IssueChargement.aucuneCourse:
+      case IssueChargement.mutualise:
+        // Issues de RÉUSSITE : aucun message d'erreur. `incomplet` n'est pas
+        // une erreur (le programme existe, il n'est pas encore alimenté) et
+        // `aucuneCourse` non plus (journée légitimement sans course).
+        return null;
+    }
+  }
 
   /// Lance [action] en microtâche SI la génération [generation] est encore
   /// valide au moment où la microtâche s'exécute.
