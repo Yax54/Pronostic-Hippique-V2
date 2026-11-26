@@ -25,6 +25,7 @@ import 'package:http/testing.dart';
 import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/data_refresh_service.dart';
 import 'package:pronostic_hippique/services/zone_turf_service.dart';
+import 'package:pronostic_hippique/services/cote_tracker_service.dart';
 
 import '../support/corpus_pmu_replay.dart';
 
@@ -477,6 +478,49 @@ void main() {
           reason: '§2 traitements redondants : deux rafraîchissements '
               'simultanés doivent en produire UN. Mesuré : '
               '${compteur.programme}');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  M7 — LA CASCADE POST-RAFRAÎCHISSEMENT EST-ELLE CONDITIONNÉE AU
+    //       CHANGEMENT RÉEL DES DONNÉES ?
+    //
+    //  §2 exige : « Une donnée inchangée ne doit pas provoquer inutilement un
+    //  nouveau traitement. Une donnée réellement modifiée doit déclencher les
+    //  traitements nécessaires, même lorsque le nombre de données reste
+    //  identique. »
+    //
+    //  Le discriminant (`_signaturedReunions`) sait déjà répondre. La question
+    //  mesurée ici est : la CONSÉQUENCE est-elle bien conditionnée par lui ?
+    //
+    //  ⚠️ Le compteur porte sur une méthode PUBLIQUE réellement appelée par la
+    //     cascade (`CoteTrackerService.mettreAJourReunions`). Compter un appel
+    //     privé serait mesurer une intention ; compter celui-ci mesure l'effet.
+    // ═══════════════════════════════════════════════════════════════════════
+    test('M7-a : deux cycles avec des données INCHANGÉES déclenchent-ils '
+        'la cascade deux fois ?', () async {
+      DataRefreshService.instance.viderMemoirePourResetComplet();
+      CoteTrackerService.instance.reinitialiserCompteurPourTest();
+      final c = courseLaPlusRiche();
+      final compteur = Compteur();
+      final client = compteur.client(c);
+
+      // Deux cycles SÉQUENTIELS sur une source STRICTEMENT identique.
+      await avecClient(client, () async {
+        await DataRefreshService.instance.refresh();
+        await DataRefreshService.instance.refresh();
+      });
+
+      final misesAJour = CoteTrackerService.instance.nbMisesAJourPourMesure;
+      // ignore: avoid_print
+      print('[MESURE M7-a] 2 cycles inchangés → programme=${compteur.programme} '
+          'misesAJourCotes=$misesAJour');
+
+      expect(compteur.programme, 2,
+          reason: 'les deux cycles doivent réellement interroger la source');
+      expect(CoteTrackerService.instance.nbMisesAJourPourMesure, 1,
+          reason: '§2 : des données inchangées ne doivent pas rejouer la '
+              'cascade. Mesuré : ${CoteTrackerService.instance.nbMisesAJourPourMesure} '
+              'mise(s) à jour pour 2 cycles identiques.');
     });
   });
 }

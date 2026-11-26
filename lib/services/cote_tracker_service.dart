@@ -232,9 +232,23 @@ class CoteTrackerService {
   }
 
   void mettreAJourReunions(List<ZtReunion> reunions) {
+    _nbMisesAJour++;
     // Relancer le timer avec les nouvelles réunions
     demarrer(reunions);
   }
+
+  /// Compteur de mesures : nombre d'appels réels à [mettreAJourReunions].
+  ///
+  /// ⚠️ Sert à MESURER si la cascade post-rafraîchissement est conditionnée au
+  ///    changement effectif des données, ou si elle s'exécute à chaque cycle
+  ///    même quand rien n'a bougé (§2 : « une donnée inchangée ne doit pas
+  ///    provoquer inutilement un nouveau traitement »). Compter un appel privé
+  ///    mesurerait une intention ; ce compteur mesure un effet observable.
+  int _nbMisesAJour = 0;
+  int get nbMisesAJourPourMesure => _nbMisesAJour;
+
+  /// Remet le compteur à zéro. Réservé aux tests.
+  void reinitialiserCompteurPourTest() => _nbMisesAJour = 0;
 
   // ★ v9.99 : Charger les mouvements persistés (appelé au démarrage)
   Future<void> chargerMouvementsPersistes() async {

@@ -828,6 +828,41 @@ class DataRefreshService extends ChangeNotifier {
         return;
       }
 
+      // ═══════════════════════════════════════════════════════════════════
+      //  ★ §2 — LA CASCADE EST CONDITIONNÉE AU CHANGEMENT RÉEL
+      //
+      //  ⚠️ DÉFAUT MESURÉ AVANT CETTE CORRECTION (test/audit/
+      //     mecanismes_actualisation_mesure_test.dart, M7-a) :
+      //     deux cycles SÉQUENTIELS sur une source STRICTEMENT identique
+      //     produisaient  2  cascades :
+      //         [MESURE M7-a] 2 cycles inchangés → programme=2 misesAJourCotes=2
+      //     La signature avait pourtant répondu « rien n'a changé » : sa
+      //     réponse n'était simplement pas UTILISÉE pour décider. Tout le
+      //     bloc de fin (tracker de cotes, widget, alertes, conseils IA)
+      //     s'exécutait donc à chaque cycle, toutes les 15 minutes, même sur
+      //     une source figée — c'est exactement le « traitement redondant »
+      //     que §2 demande de prévenir.
+      //
+      //  CE QUI CHANGE, ET SON PÉRIMÈTRE EXACT :
+      //     • `aChangeReel` est calculé UNE fois, à partir du discriminant de
+      //       production `_signaturedReunions` (aucune règle réécrite ici) ;
+      //     • la cascade est exécutée si `aChangeReel` — ou si aucune donnée
+      //       n'a encore été chargée (premier cycle : tout est nouveau) ;
+      //     • `_recupererResultatsAuto()` reste appelé À CHAQUE cycle, et
+      //       INCONDITIONNELLEMENT. Les résultats officiels dépendent du
+      //       TEMPS, pas d'un changement de programme : une course qui vient
+      //       de se terminer doit voir son résultat récupéré même si le
+      //       programme est identique. C'est la mise à jour légitime liée au
+      //       temps que §2 exige de préserver.
+      //
+      //  ⚠️ CE QUI RESTE COUVERT PAR LE DISCRIMINANT, donc toujours déclenchant :
+      //     mouvement de cote (course non terminée, arrondi au dixième),
+      //     ajout/retrait de partant, passage « à venir → terminée »,
+      //     changement de programme. Aucune de ces informations ne peut être
+      //     perdue par ce conditionnement : elles changent toutes la signature.
+      // ═══════════════════════════════════════════════════════════════════
+      var aChangeReel = false;
+
       if (reunions.isEmpty && _reunions.isNotEmpty) {
         debugPrint('[DataRefresh] ⚠️ API retourne 0 réunion — cache conservé');
       } else {
@@ -856,7 +891,13 @@ class DataRefreshService extends ChangeNotifier {
           _reunions = reunions;
           // ★ v9.0 : Mettre à jour l'état des partants après chaque refresh
           _initialiserEtatPartants(reunions);
+          aChangeReel = true;
           debugPrint('[DataRefresh] ✅ ${reunions.length} réunions chargées');
+        } else {
+          if (kDebugMode) {
+            debugPrint('[DataRefresh] ⏸️ source inchangée : cascade ignorée '
+                '(signature identique, ${reunions.length} réunion(s))');
+          }
         }
       }
 
@@ -873,20 +914,46 @@ class DataRefreshService extends ChangeNotifier {
       _enregistrerPronosticsAuto(reunions.isNotEmpty ? reunions : _reunions);
 
       // ★ Lot 4 : Mettre à jour le widget Android avec les meilleures courses
-      WidgetService.instance.updateFromReunions(reunions).ignore();
+      //   (§2) Conditionné : un widget qui se réécrit à l'identique toutes les
+      //   15 minutes est un traitement redondant sans effet observable.
+      if (aChangeReel) {
+        WidgetService.instance.updateFromReunions(reunions).ignore();
+      }
 
       // ★ v9.92 : Démarrer/mettre à jour le tracker de mouvements de cotes
       // ★ v9.99 : charger les mouvements persistés avant de démarrer
       CoteTrackerService.instance.chargerMouvementsPersistes();
-      CoteTrackerService.instance.mettreAJourReunions(
-          reunions.isNotEmpty ? reunions : _reunions);
+      //   (§2) Conditionné : le tracker suit des snapshots horodatés. Le
+      //   relancer sur une source inchangée ne crée aucun mouvement — mais il
+      //   relance son timer à chaque cycle, ce qui est le traitement redondant
+      //   mesuré en M7-a. Les mouvements de cote étant eux-mêmes INCLUS dans
+      //   la signature, aucun mouvement réel ne peut être perdu ici.
+      if (aChangeReel) {
+        CoteTrackerService.instance.mettreAJourReunions(
+            reunions.isNotEmpty ? reunions : _reunions);
+      }
 
+      // ⚠️ INCONDITIONNEL, ET C'EST DÉLIBÉRÉ : les résultats officiels
+      //    dépendent du TEMPS, pas d'un changement de programme. Une course
+      //    qui vient de se terminer doit voir son résultat récupéré même si
+      //    les données du programme sont identiques. §2 exige de préserver
+      //    cette mise à jour légitime liée au temps.
       _recupererResultatsAuto();
 
       // ★ v10.23 : Recalculer les courses Conseil IA + notifier les nouvelles
-      final reunionsPourConseils = reunions.isNotEmpty ? reunions : _reunions;
-      AlertService.instance.recalculerCoursesConseilIA(reunionsPourConseils).ignore();
-      AlertService.instance.verifierNouvellesCoursesConseilIA(reunionsPourConseils).ignore();
+      //   (§2) Conditionné : le recalcul ne produit un résultat différent que
+      //   si les données ont changé. `verifierNouvellesCoursesConseilIA` est
+      //   également conditionné — il notifie l'utilisateur, et une
+      //   notification fondée sur un état inchangé serait un faux positif.
+      if (aChangeReel) {
+        final reunionsPourConseils = reunions.isNotEmpty ? reunions : _reunions;
+        AlertService.instance
+            .recalculerCoursesConseilIA(reunionsPourConseils)
+            .ignore();
+        AlertService.instance
+            .verifierNouvellesCoursesConseilIA(reunionsPourConseils)
+            .ignore();
+      }
 
     } catch (e) {
       // Une erreur d'un rafraîchissement OBSOLÈTE ne doit pas s'afficher :
