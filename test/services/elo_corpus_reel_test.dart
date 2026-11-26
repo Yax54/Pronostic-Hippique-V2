@@ -131,7 +131,7 @@ void main() {
     print('[MESURE] avec connaissance ELO sur "$cible" : '
         'rating=${enrichiCible.eloRating} (authentique, pas 1500), '
         'critère M=${enrichiCible.scoreElo}, '
-        '${autresNeutres}/${autres.length} autres partants à 50.0');
+        '$autresNeutres/${autres.length} autres partants à 50.0');
 
     // La connaissance est EFFECTIVEMENT exploitée : le rating réel arrive
     // jusqu'au partant, et le critère M n'est plus neutralisé pour lui.
