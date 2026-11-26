@@ -64,6 +64,8 @@ import 'dart:io'; // GZipCodec — même dépendance que ia_memory_service.dart
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/connaissances/_archives/archives_segmentees.dart';
+import '../data/connaissances/_core/empreinte_contenu.dart';
 import 'ia_memory_models.dart';
 
 // ─── Clés de persistance ────────────────────────────────────────────────────
@@ -837,9 +839,111 @@ class IaArchiveService extends ChangeNotifier {
     if (ok) {
       _clesShardsConnues.add('$_kShardPrefix$mois');
       await _ecrireManifeste();
+      // Miroir consultable — voir la documentation de _mirroirSegmentes.
+      await _mirroirSegmentes(mois, versions);
     }
     return ok;
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  MIROIR CONSULTABLE DES ARCHIVES — §4 : UN SEUL MAGASIN AUTORITAIRE
+  //
+  //  ⚠️ LE PROBLÈME QUE CE BLOC RÉSOUT
+  //
+  //  Les versions archivées vivaient dans des shards SharedPreferences, une
+  //  chaîne base64 PAR MOIS, décodée INTÉGRALEMENT au démarrage par
+  //  `_chargerDepuisStockage`. Deux conséquences, toutes deux mesurables :
+  //     • la consultation d'UNE course exigeait de décoder tous les mois ;
+  //     • la mémoire de travail portait tout l'historique archivé, alors que
+  //       ces versions en sont précisément sorties pour ne plus y peser.
+  //
+  //  Le service `ArchivesSegmenteess` apporte exactement ce qui manquait :
+  //  fichiers compressés par segment, index de ciblage, lecture en FLUX. Il ne
+  //  remplace pas les shards — il les REND CONSULTABLES sans les charger.
+  //
+  //  ⚠️ QUI FAIT AUTORITÉ, ET POURQUOI CE N'EST PAS AMBIGU
+  //
+  //  SharedPreferences reste la SOURCE DE VÉRITÉ de l'archive :
+  //    • la sauvegarde (`exporterPourBackup`) part des shards ;
+  //    • la restauration (`restaurerDepuisBackup`) écrit dans les shards ;
+  //    • la réconciliation (`VerificationArchive`) compte les shards.
+  //  Les segments sont un MIROIR dérivé, en AJOUT SEUL :
+  //    • ils ne sont JAMAIS relus par `_chargerDepuisStockage` ;
+  //    • aucune décision d'apprentissage ne les consulte ;
+  //    • une divergence (miroir incomplet, dossier supprimé) ne peut donc pas
+  //      changer l'état logique — au pire elle appauvrit la consultation.
+  //
+  //  C'est ce qui évite le « second magasin produisant un état divergent » :
+  //  un magasin qui n'est jamais lu pour décider ne peut pas diverger.
+  //
+  //  ⚠️ POURQUOI LE MIROIR NE FAIT PAS ÉCHOUER L'ARCHIVAGE
+  //
+  //  Écrire un miroir est un CONFORT de consultation. Si le disque refuse, la
+  //  version est malgré tout durablement archivée dans son shard : l'échec est
+  //  journalisé, jamais propagé, et ne retire rien à ce qui vient d'être écrit.
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> _mirroirSegmentes(String mois, List<IaPronostic> versions) async {
+    try {
+      final entrees = <EntreeArchive>[];
+      for (final p in versions) {
+        final encode = _encoderUnPronosticPourMiroir(p);
+        if (encode == null) continue;
+        entrees.add(EntreeArchive(
+          // Identité de CONTENU : deux versions de même empreinte sont la même
+          // version. Le miroir étant en ajout seul, rejouer n'ajoute rien.
+          empreinte: encode.$1,
+          cleCourse: p.courseKey,
+          dateCourse: _dateIsoDe(p.datePronostic),
+          contenu: encode.$2,
+          resultatOfficiel: p.resultatsReels && p.arriveeReelle != null
+              ? p.arriveeReelle!.join('-')
+              : null,
+        ));
+      }
+      if (entrees.isEmpty) return;
+      final res = await ArchivesSegmenteess.instance.archiver(entrees);
+      if (!res.succes) {
+        // Le miroir est en retard, PAS l'archive. On le dit, on ne le cache pas.
+        if (kDebugMode) {
+          debugPrint('[IaArchive] ⚠️ miroir segmenté non écrit pour $mois '
+              '(${res.erreur}) — les shards restent la référence intacte');
+        }
+      } else if (kDebugMode && res.ecrites > 0) {
+        debugPrint('[IaArchive] miroir segmenté : ${res.ecrites} entrée(s) '
+            'ajoutée(s) pour $mois');
+      }
+    } catch (e) {
+      // Aucune propagation : l'archivage durable a réussi, le miroir est un
+      // accélérateur de consultation.
+      if (kDebugMode) {
+        debugPrint('[IaArchive] ⚠️ miroir segmenté indisponible ($e)');
+      }
+    }
+  }
+
+  /// Sérialise un pronostic archivé pour le miroir, avec son empreinte de
+  /// CONTENU. Rend `null` si l'objet n'est pas sérialisable — auquel cas il
+  /// reste archivé dans son shard, simplement absent du miroir.
+  (String, String)? _encoderUnPronosticPourMiroir(IaPronostic p) {
+    try {
+      final j = p.toJson();
+      final contenu = json.encode(j);
+      final empreinte = empreinteValeur(<String, Object?>{
+        'courseKey': p.courseKey,
+        'date': _dateIsoDe(p.datePronostic),
+        'scoresIA': p.scoresIA,
+        'contenu': contenu,
+      });
+      return (empreinte, contenu);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _dateIsoDe(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   Future<void> _ecrireManifeste() async {
     final prefs = await SharedPreferences.getInstance();
