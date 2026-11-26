@@ -25,9 +25,11 @@
 ///    sorte que la valeur restaurée est identique bit à bit (§12).
 library;
 
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm, Database;
+
 /// Version du schéma. Toute évolution incrémente cette valeur et ajoute les
 /// instructions de migration correspondantes.
-const int kVersionSchema = 1;
+const int kVersionSchema = 2;
 
 /// Instructions de création, dans l'ordre d'exécution.
 const List<String> kInstructionsCreation = <String>[
@@ -175,6 +177,8 @@ CREATE TABLE performances (
   place            INTEGER,
   reduction_km     REAL,
   gains            REAL,
+  distance         INTEGER,
+  etat_terrain     TEXT,
   musique          TEXT,
   source           TEXT NOT NULL,
   charge_brute     TEXT,
@@ -405,3 +409,52 @@ const List<String> kTablesPermanentes = <String>[
 /// Tables dont une partie est purgable selon une règle **explicite**.
 /// Seuls les pronostics sans résultat officiel sont concernés (§11).
 const List<String> kTablesAPurgeExplicite = <String>['pronostics'];
+
+/// Migration de schéma EXPLICITE, additive et idempotente.
+///
+/// §14 : « Migration idempotente ». Cette fonction est donc rejouable sans
+/// effet supplémentaire, et ne supprime ni ne réécrit aucune donnée existante.
+///
+/// DÉFAUT RÉEL QUE LA v2 CORRIGE (mesuré, non supposé) : la table
+/// `performances` de la v1 ne portait ni la DISTANCE ni l'ÉTAT DU TERRAIN.
+/// Or ce sont précisément les deux informations dont les critères ont besoin
+/// (`scoreDistanceSpecialite` compare à ±100 m ; `scoreTerrain` compare l'état
+/// du terrain). Sans ces colonnes, le corpus local n'aurait pu alimenter les
+/// critères qu'en dégradant la donnée (« distance 0 » ou « terrain vide »),
+/// c'est-à-dire en produisant des valeurs fausses présentées comme réelles.
+/// Les deux colonnes sont donc ajoutées AVANT tout raccordement.
+///
+/// Aucune donnée n'est perdue : `ALTER TABLE ... ADD COLUMN` préserve les
+/// lignes existantes, et la valeur par défaut est `NULL`, ce qui distingue
+/// « non publié » de « 0 » (§9).
+Future<void> migrerSchema(Database db, int ancienne, int nouvelle) async {
+  if (ancienne >= nouvelle) return;
+
+  if (ancienne < 2) {
+    // v1 → v2 : colonnes manquantes de `performances`. Ajout idempotent :
+    // on vérifie d'abord la présence réelle de la colonne, car une migration
+    // interrompue puis rejouée doit produire exactement le même résultat.
+    final colonnes = await db.rawQuery('PRAGMA table_info(performances)');
+    final existantes = colonnes
+        .map((c) => (c['name'] as String?) ?? '')
+        .toSet();
+    if (!existantes.contains('distance')) {
+      await db.execute('ALTER TABLE performances ADD COLUMN distance INTEGER');
+    }
+    if (!existantes.contains('etat_terrain')) {
+      await db.execute(
+          'ALTER TABLE performances ADD COLUMN etat_terrain TEXT');
+    }
+  }
+
+  final maintenant = DateTime.now().toUtc().toIso8601String();
+  await db.insert(
+    'meta',
+    <String, Object?>{
+      'cle': 'version_schema',
+      'valeur': '$nouvelle',
+      'maj_le': maintenant,
+    },
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+}

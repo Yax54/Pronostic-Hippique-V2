@@ -45,6 +45,7 @@ class PerformanceLocale {
     required this.hippodrome,
     required this.discipline,
     this.distanceMetres,
+    this.etatTerrain = '',
     this.place,
     this.reductionKm,
     this.gainsMemeCourse,
@@ -57,6 +58,9 @@ class PerformanceLocale {
 
   /// Distance en mètres, `null` si non publiée.
   final int? distanceMetres;
+
+  /// État du terrain publié, chaîne vide si absent. Ce n'est pas la surface.
+  final String etatTerrain;
 
   /// Place réelle, `null` si non publiée. **Jamais 0 par défaut.**
   final int? place;
@@ -142,6 +146,10 @@ class CorpusPerformancesService {
           place: c.place,
           reductionKm: c.reductionKm,
           gains: c.gains,
+          // Distance et état du terrain : null si le PMU ne les publie pas.
+          // On ne substitue JAMAIS 0 ni une chaîne vide signifiante (§9).
+          distanceMetres: (c.distance ?? 0) > 0 ? c.distance : null,
+          etatTerrain: c.etatTerrain.trim().isEmpty ? null : c.etatTerrain,
           source: source,
           chargeBrute: c.chargeBrute,
         ));
@@ -192,8 +200,8 @@ class CorpusPerformancesService {
             datePerf: p.datePerf,
             hippodrome: p.hippodrome ?? '',
             discipline: p.discipline ?? '',
-            // La distance n'est pas stockée dans `performances` (le schéma ne
-            // la porte pas) : elle reste null, et l'appelant ne l'invente pas.
+            distanceMetres: p.distanceMetres,
+            etatTerrain: p.etatTerrain ?? '',
             place: p.place,
             reductionKm: p.reductionKm,
             gainsMemeCourse: p.gains,
@@ -242,6 +250,7 @@ class PerformancePmu {
     this.reductionKm,
     this.gains,
     this.chargeBrute,
+    this.etatTerrain = '',
   });
 
   final String nomCheval;
@@ -253,6 +262,10 @@ class PerformancePmu {
   final double? reductionKm;
   final double? gains;
   final String? chargeBrute;
+
+  /// État du terrain publié par le PMU (chaîne vide s'il ne le publie pas).
+  /// Ce n'est PAS la surface de la piste : la distinction est conservée.
+  final String etatTerrain;
 
   /// Une entrée sans date ni nom n'est pas exploitable : elle est écartée au
   /// lieu d'être stockée comme une ligne vide qui polluerait les comptes.

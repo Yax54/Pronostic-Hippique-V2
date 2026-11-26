@@ -93,12 +93,8 @@ class DepotSqlite implements DepotConnaissances {
           await _appliquerSchema(db);
         },
         onUpgrade: (db, ancienne, nouvelle) async {
-          // Aucune version antérieure publiée à ce jour. Si le cas se présente,
-          // la migration doit être écrite explicitement, jamais devinée.
-          throw StateError(
-            'Migration de schéma $ancienne → $nouvelle non définie. '
-            'Aucune migration implicite n\'est autorisée.',
-          );
+          // La migration est ÉCRITE, jamais devinée (voir `migrerSchema`).
+          await migrerSchema(db, ancienne, nouvelle);
         },
       ),
     );
@@ -386,6 +382,8 @@ class DepotSqlite implements DepotConnaissances {
         'place': p.place,
         'reduction_km': p.reductionKm,
         'gains': p.gains,
+        'distance': p.distanceMetres,
+        'etat_terrain': p.etatTerrain,
         'musique': p.musique,
         'source': p.source,
         'charge_brute': p.chargeBrute,
@@ -393,14 +391,30 @@ class DepotSqlite implements DepotConnaissances {
       };
 
   @override
+  /// CHOIX D'ÉCRITURE, ET SON MOTIF.
+  ///
+  ///   Le `id` de [PerformanceStockee] est une clé déterministe **jamais nulle**
+  ///   (voir `clePerformance`). La contrainte
+  ///   `UNIQUE (id_cheval, date_perf, hippodrome, source)` ne peut PAS assurer
+  ///   l'idempotence à elle seule : `id_cheval` est nullable et, en SQLite,
+  ///   `NULL != NULL`. Deux insertions avec `id_cheval` nul ne seraient donc
+  ///   jamais vues comme doublons, et la table se remplirait de copies.
+  ///
+  ///   L'idempotence est donc portée par la CLÉ PRIMAIRE `id`. Effet secondaire
+  ///   VOULU : une correction officielle publiée par le PMU pour la même
+  ///   participation a le même `id` et ÉCRASE l'ancienne valeur, au lieu
+  ///   d'être silencieusement ignorée. `ConflictAlgorithm.ignore` aurait figé
+  ///   la première valeur pour toujours.
+  ///
+  ///   `REPLACE` ne crée pas de doublon : il remplace la ligne de même clé
+  ///   primaire. Aucune connaissance antérieure n'est perdue en dehors de la
+  ///   ligne corrigée, qui est précisément celle que la source officielle
+  ///   vient de corriger.
   Future<bool> insererPerformance(PerformanceStockee performance) async {
-    // `INSERT OR IGNORE` : la contrainte UNIQUE (id_cheval, date_perf,
-    // hippodrome, source) rend un rejeu inoffensif. C'est ce qui permet de
-    // repasser sur une même course sans dupliquer la connaissance (§14).
     final id = await _executeur.insert(
       'performances',
       _lignePerformance(performance, DateTime.now().toUtc().toIso8601String()),
-      conflictAlgorithm: ConflictAlgorithm.ignore,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
     return id > 0;
   }
@@ -415,19 +429,26 @@ class DepotSqlite implements DepotConnaissances {
     // Batch plutôt que boucle d'insert : sur un lot de plusieurs centaines de
     // lignes, la différence est mesurable (§19). Le tout reste dans une
     // transaction, donc une interruption ne laisse rien à moitié écrit.
+    // Etat AVANT : distingue « lignes reellement nouvelles » de « lignes
+    // reecrites a l'identique ». Un rejeu doit annoncer 0 nouvelle
+    // connaissance meme si REPLACE a reecrit les memes valeurs.
+    final avant = await compterPerformances();
+
     final batch = _base.batch();
     for (final p in performances) {
       batch.insert(
         'performances',
         _lignePerformance(p, maintenant),
-        conflictAlgorithm: ConflictAlgorithm.ignore,
+        // Voir insererPerformance : idempotence portee par la cle primaire,
+        // et REPLACE autorise une correction officielle authentique.
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
-    final resultats = await batch.commit(noResult: false);
-    for (final r in resultats) {
-      if (r is int && r > 0) crees++;
-    }
-    return crees;
+    await batch.commit(noResult: true);
+
+    final apres = await compterPerformances();
+    crees = apres - avant;
+    return crees < 0 ? 0 : crees;
   }
 
   static PerformanceStockee _performanceDepuisLigne(
@@ -443,6 +464,8 @@ class DepotSqlite implements DepotConnaissances {
         place: (r['place'] as num?)?.toInt(),
         reductionKm: (r['reduction_km'] as num?)?.toDouble(),
         gains: (r['gains'] as num?)?.toDouble(),
+        distanceMetres: (r['distance'] as num?)?.toInt(),
+        etatTerrain: r['etat_terrain'] as String?,
         musique: r['musique'] as String?,
         source: '${r['source']}',
         chargeBrute: r['charge_brute'] as String?,

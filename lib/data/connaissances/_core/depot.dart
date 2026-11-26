@@ -87,6 +87,8 @@ class PerformanceStockee {
     this.place,
     this.reductionKm,
     this.gains,
+    this.distanceMetres,
+    this.etatTerrain,
     this.musique,
     this.chargeBrute,
   });
@@ -111,6 +113,15 @@ class PerformanceStockee {
 
   final double? reductionKm;
   final double? gains;
+
+  /// Distance de la course en mètres, `null` si non publiée. Nécessaire au
+  /// critère de distance/specialité, qui compare à ±100 m.
+  final int? distanceMetres;
+
+  /// État du terrain publié (« Bon », « PSF Standard »…), `null` si absent.
+  /// Distinct de la SURFACE de la piste : on ne confond pas les deux (§7).
+  final String? etatTerrain;
+
   final String? musique;
 
   /// Provenance : `pmu_performances_detaillees`, `pmu_participants`, etc.
@@ -130,6 +141,8 @@ class PerformanceStockee {
         'place': place,
         'reduction_km': reductionKm,
         'gains': gains,
+        'distance': distanceMetres,
+        'etat_terrain': etatTerrain,
         'musique': musique,
         'source': source,
       };
