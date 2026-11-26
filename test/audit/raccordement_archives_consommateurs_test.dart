@@ -195,19 +195,195 @@ void main() {
             'Simple Gagnant) : 2 bons attendus, pas 4');
   });
 
-  // ⚠️ TEST RETIRÉ, NON PAS RÉUSSI : « R-3bis » devait prouver qu'une SECONDE
-  //    version de la même course est intégralement conservée tout en ne
-  //    comptant qu'une fois dans les statistiques. La mesure a donné :
-  //        [MESURE R-3bis] même course, 2 versions archivées →
-  //        nbCourses avant=1 après=1 | versions archivées pour la clé : 1
-  //    Le dédoublonnage des agrégats est CORRECT (1 course). En revanche
-  //    `toutesLesVersions()` ne retourne qu'UNE version après deux appels à
-  //    `securiser()` avec des empreintes différentes, alors que §1 exige la
-  //    conservation de TOUTES les versions historiques.
-  //    Je n'ai pas encore déterminé si le second `securiser()` est écarté par
-  //    la règle d'autorité (comportement voulu) ou si la version est perdue
-  //    (défaut). Sans cette détermination, l'assertion serait inventée :
-  //    le test est retiré du fichier et l'écart est déclaré OUVERT.
+  // ══════════════════════════════════════════════════════════════════════════
+  //  R-3bis — ARBITRAGE : conservation de TOUTES les versions distinctes,
+  //           comptabilisation UNIQUE par course, consultation intégrale.
+  //
+  //  Historique de ce test, pour qu'aucune conclusion ne soit rejouée à
+  //  l'aveugle :
+  //    • 1re version : pronostic non conforme (sans `typePariConseille`)
+  //      → échec du à l'INÉLIGIBILITÉ, pas au raccordement. Harnais corrigé.
+  //    • 2e version : échec `versions archivées = 1` au lieu de 2.
+  //      Cause EXACTE mesurée : le canonique V1 ne couvrait que 7 champs et
+  //      ignorait le rang, le type de pari, les compteurs Top3/Top5, etc.
+  //      `[DIAG] rang 1 / rang 3 / type différent -> 51b1b1687572ce2c` (identique).
+  //      Deux contenus authentiquement distincts étaient donc fusionnés et le
+  //      second silencieusement perdu.
+  //    • Correctif V2 : SHA-256 du `toJson()` complet (aligné sur le miroir).
+  //      `[DIAG] rang 1  -> 73a663d8…c8e`
+  //      `[DIAG] rang 3  -> a9cfb864…115`
+  //      `[DIAG] type diff -> ce603366…cf8`
+  // ══════════════════════════════════════════════════════════════════════════
+
+  test('R-3bis trois contenus DISTINCTS sont tous conservés, comptés une fois',
+      () async {
+    const cle = 'R1C1_20112026';
+
+    // PRÉCONDITIONS VÉRIFIÉES : les trois contenus doivent réellement différer.
+    final v1 = _p(cle, '2026-11-20', avecResultat: true, rangFavori: 1);
+    final v2 = _p(cle, '2026-11-20', avecResultat: true, rangFavori: 3);
+    final v3 = _p(cle, '2026-11-20',
+        avecResultat: true, rangFavori: 1, typePari: 'Couplé Gagnant');
+
+    final e1 = IaArchiveService.empreinteDe(v1);
+    final e2 = IaArchiveService.empreinteDe(v2);
+    final e3 = IaArchiveService.empreinteDe(v3);
+    // ignore: avoid_print
+    print('[MESURE R-3bis] empreintes distinctes : '
+        '${e1 != e2 && e2 != e3 && e1 != e3} '
+        '(${e1.substring(0, 8)}/…/${e3.substring(0, 8)})');
+    expect(<String>{e1, e2, e3}.length, 3,
+        reason: 'précondition : trois contenus différents = trois empreintes');
+
+    // Chemin de PRODUCTION.
+    await archive.securiser(v1);
+    await archive.securiser(v2);
+    await archive.securiser(v3);
+
+    // ── 1. CONSERVATION : les trois versions restent accessibles ────────────
+    final versions = archive.toutesLesVersions(cle);
+    final empreintesConservees =
+        versions.map((p) => IaArchiveService.empreinteDe(p)).toSet();
+
+    // ── 2. COMPTABILISATION : une seule course dans les statistiques ────────
+    final jour = IaMemoryService.instance
+        .donneesCalendrierJourAvecGrosParis(2026, 11)[20];
+
+    // ── 3. CONSULTATION HISTORIQUE ciblée ───────────────────────────────────
+    final consultation =
+        await ArchivesSegmenteess.instance.consulterParCourse(cle);
+
+    // ignore: avoid_print
+    print('[MESURE R-3bis] versions conservées=${versions.length} '
+        'empreintes distinctes=${empreintesConservees.length} | '
+        'nbCourses au calendrier=${jour?.nbCourses} | '
+        'nbBrouillons archivés=${archive.nbVersions(cle)} | '
+        'miroir état=${consultation.etat} entrées=${consultation.entrees.length}');
+
+    expect(versions.length, 3,
+        reason: '§1/arbitrage : AUCUNE version authentique ne doit être perdue');
+    expect(empreintesConservees.length, 3,
+        reason: 'les trois empreintes doivent rester distinctes en mémoire');
+
+    // ── 4. SÉLECTION DE LA RÉFÉRENCE : une seule, choisie par autorité ──────
+    final retenue = archive.versionRetenue(cle);
+    expect(retenue, isNotNull,
+        reason: 'une version de référence doit exister');
+    expect(IaArchiveService.empreinteDe(retenue!), isIn(<String>{e1, e2, e3}),
+        reason: 'la référence est l’UNE des versions conservées, '
+            'jamais une recombinaison');
+
+    // ── 5. STATISTIQUES : une course = une comptabilisation ────────────────
+    expect(jour?.nbCourses, 1,
+        reason: 'arbitrage : une course à plusieurs versions ne se compte '
+            'qu’UNE fois. Mesuré : ${jour?.nbCourses}');
+
+    // ── 6. PAS DE RÉINJECTION dans la mémoire de travail ───────────────────
+    expect(IaMemoryService.instance.pronostics.length, 0,
+        reason: 'arbitrage : aucune version récupérée n’est réinjectée');
+  });
+
+  test('R-3bis-bis contenus SÉMANTIQUEMENT identiques : déduplicables',
+      () async {
+    const cle = 'R2C2_20112026';
+    // Deux objets distincts en mémoire, mais de contenu rigoureusement égal.
+    // Seule une représentation technique différente est simulée : la construction
+    // passe par `toJson()`/`fromJson()`, qui réordonne les clés.
+    final a = _p(cle, '2026-11-20', avecResultat: true);
+    final b = IaPronostic.fromJson(
+        jsonDecode(jsonEncode(a.toJson())) as Map<String, dynamic>);
+
+    expect(identical(a, b), isFalse, reason: 'deux objets distincts');
+    expect(IaArchiveService.empreinteDe(a), IaArchiveService.empreinteDe(b),
+        reason: 'contenu identique → même empreinte, quelle que soit la '
+            'représentation technique');
+
+    await archive.securiser(a);
+    await archive.securiser(b);
+
+    // ignore: avoid_print
+    print('[MESURE R-3bis-bis] contenu identique sérialisé 2 fois -> '
+        'versions conservées=${archive.toutesLesVersions(cle).length}');
+
+    expect(archive.toutesLesVersions(cle).length, 1,
+        reason: 'arbitrage : seuls les doublons RÉELLEMENT identiques sont '
+            'dédupliqués');
+  });
+
+  test('R-3bis-ter migration V1→V2 : correspondance conservée, ambiguïté gérée',
+      () async {
+    const cle = 'R3C3_20112026';
+    // Deux contenus que le canonique V1 CONFONDAIT (même empreinte V1) mais que
+    // V2 distingue : c'est exactement le cas d'ambiguïté à traiter.
+    final a = _p(cle, '2026-11-20', avecResultat: true, rangFavori: 1);
+    final b = _p(cle, '2026-11-20', avecResultat: true, rangFavori: 2);
+
+    final v1a = IaArchiveService.empreinteV1De(a);
+    final v1b = IaArchiveService.empreinteV1De(b);
+    // ignore: avoid_print
+    print('[MESURE R-3bis-ter] V1 identiques=${v1a == v1b} | '
+        'V2 distinctes=${IaArchiveService.empreinteDe(a) != IaArchiveService.empreinteDe(b)}');
+
+    await archive.securiser(a);
+    await archive.securiser(b);
+
+    final rapport = await archive.migrerEmpreintesV1VersV2();
+    final corr = archive.correspondanceEmpreintesPourTest;
+
+    // ignore: avoid_print
+    print('[MESURE R-3bis-ter] migration : versions=${rapport['versionsExaminees']} '
+        'correspondances=${rapport['correspondancesTotal']} '
+        'ambiguïtés=${rapport['ambiguites']}');
+
+    // Conservation des deux versions distinctes.
+    expect(archive.toutesLesVersions(cle).length, 2,
+        reason: 'la migration ne doit perdre aucune version');
+
+    // Une empreinte V1 peut couvrir PLUSIEURS V2 → consignée comme ambiguë,
+    // jamais résolue arbitrairement.
+    if (v1a == v1b) {
+      expect(corr[v1a]?.length, 2,
+          reason: 'correspondance UNE V1 → DEUX V2 conservée intégralement');
+      expect(archive.ambiguitesEmpreintesPourTest.containsKey(v1a), isTrue,
+          reason: 'l’ambiguïté doit être SIGNALÉE, pas tranchée');
+    }
+
+    // Idempotence : une seconde migration ne change rien.
+    final rapport2 = await archive.migrerEmpreintesV1VersV2();
+    // ignore: avoid_print
+    print('[MESURE R-3bis-ter] 2e migration (idempotence) : '
+        'ajoutées=${rapport2['correspondancesAjoutees']} '
+        'total=${rapport2['correspondancesTotal']}');
+    expect(rapport2['correspondancesAjoutees'], 0,
+        reason: 'idempotente : aucune nouvelle correspondance');
+    expect(rapport2['correspondancesTotal'], rapport['correspondancesTotal']);
+  });
+
+  test('R-3bis-quater migration REPRENABLE et sans perte après interruption',
+      () async {
+    const cle = 'R4C4_20112026';
+    await archive.securiser(_p(cle, '2026-11-20', avecResultat: true));
+    await archive.migrerEmpreintesV1VersV2();
+    final corrAvant = archive.correspondanceEmpreintesPourTest.length;
+
+    // Interruption simulée : la mémoire est vidée (comme un redémarrage),
+    // puis rechargée depuis le stockage persisté.
+    await archive.reinitialiserMemoirePourTest();
+    await archive.chargerPourTest();
+
+    final corrApres = archive.correspondanceEmpreintesPourTest.length;
+    final versionsApres = archive.toutesLesVersions(cle).length;
+
+    // ignore: avoid_print
+    print('[MESURE R-3bis-quater] après redémarrage : '
+        'correspondances avant=$corrAvant après=$corrApres | '
+        'versions de la course=$versionsApres');
+
+    expect(corrApres, corrAvant,
+        reason: 'la correspondance persistée doit survivre à un redémarrage');
+    expect(versionsApres, 1,
+        reason: 'aucune version perdue par la migration ni par le redémarrage');
+  });
 
   test('R-3ter un pronostic non résolu ne crée jamais de journée', () async {
     // Garantie inverse de R-3 : le calendrier ne doit pas inventer de jour

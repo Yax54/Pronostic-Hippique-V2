@@ -903,7 +903,25 @@ void main() {
       final e2 = IaArchiveService.empreinteDe(p);
       expect(e1, e2, reason: 'empreinte déterministe et stable');
       // Le motif n'est pas un paramètre de l'empreinte (signature statique).
-      expect(e1.length, 16, reason: 'FNV-1a 64 bits en hexadécimal');
+      //
+      // ⚠️ MISE EN CONFORMITÉ V2 (et non affaiblissement) : l'assertion
+      //    précédente était `e1.length == 16` avec le motif « FNV-1a 64 bits ».
+      //    Elle décrivait le canonique V1, qui ne couvrait que 7 champs et
+      //    faisait perdre des versions authentiquement distinctes (R-3bis
+      //    mesuré : rang 1, rang 3 et type de pari différent produisaient tous
+      //    `51b1b1687572ce2c`). Le canonique courant est V2 = SHA-256 du
+      //    `toJson()` complet, soit 64 caractères hexadécimaux.
+      //    L'intention du test — « l'empreinte est déterministe et le motif
+      //    n'y entre pas » — est intégralement préservée ; seule la longueur
+      //    attendue change, parce que le canonique a changé.
+      expect(e1.length, IaArchiveService.kLongueurEmpreinteV2,
+          reason: 'canonique V2 = SHA-256 en hexadécimal');
+      expect(IaArchiveService.versionEmpreinte(e1), 2);
+      // V1 reste calculable, à l'identique, pour la compatibilité historique.
+      final v1 = IaArchiveService.empreinteV1De(p);
+      expect(v1.length, IaArchiveService.kLongueurEmpreinteV1,
+          reason: 'le canonique V1 historique est conservé sans modification');
+      expect(IaArchiveService.versionEmpreinte(v1), 1);
     });
 
     test('I-9 — 10 versions d\'un courseKey sur le mois : 1 prédiction', () async {

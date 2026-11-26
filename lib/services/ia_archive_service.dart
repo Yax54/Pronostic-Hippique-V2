@@ -404,6 +404,11 @@ class IaArchiveService extends ChangeNotifier {
   Future<void> _chargerDepuisStockage() async {
     final prefs = await SharedPreferences.getInstance();
 
+    // Correspondance V1 → V2 : rechargée AVANT les shards, afin qu'elle soit
+    // disponible pour tout audit ultérieur. Elle ne conditionne aucune
+    // décision d'identité (le canonique V2 est autonome).
+    await _chargerCorrespondanceEmpreintes(prefs);
+
     final clesPresentes = prefs
         .getKeys()
         .where((k) => k.startsWith(_kShardPrefix))
@@ -562,10 +567,75 @@ class IaArchiveService extends ChangeNotifier {
   //  EMPREINTE / IDENTITÉ / AUTORITÉ
   // ═══════════════════════════════════════════════════════════════════════
 
-  /// Empreinte STABLE du CONTENU (FNV-1a 64 bits, identique d'un processus à
-  /// l'autre). Le motif technique n'y figure pas : une éviction et une
-  /// troncature du même objet produisent la même empreinte.
-  static String empreinteDe(IaPronostic p) {
+  /// ═════════════════════════════════════════════════════════════════════════
+  ///  EMPREINTE DE CONTENU — DEUX CANONIQUES VERSIONNÉS
+  ///
+  ///  DÉFAUT MESURÉ (R-3bis), cause exacte :
+  ///  le canonique **V1** ne couvrait que 7 champs — `courseKey`,
+  ///  `datePronostic`, `scoresIA`, `scoresCriteres`, `resultatsReels`,
+  ///  `arriveeReelle`, `dateResultat`. Il ignorait notamment
+  ///  `rangFavoriIaDansArrivee`, `typePariConseille`,
+  ///  `nbTop3/Top5DansArriveeReelle`, `favoriIaNom`, `varianceScores`,
+  ///  `confiancePredite`, `scorePerformance`, `precisionIA`,
+  ///  `tauxReussiteAuMoment`, `diagnosticApprentissage`, `coteFavoriPmu`,
+  ///  `cotesPmuParNumero`.
+  ///  Mesure du défaut :
+  ///    `[DIAG] rang 1         -> 51b1b1687572ce2c`
+  ///    `[DIAG] rang 3         -> 51b1b1687572ce2c`
+  ///    `[DIAG] type différent -> 51b1b1687572ce2c`
+  ///  Trois contenus AUTHENTIQUEMENT DIFFÉRENTS recevaient la MÊME empreinte :
+  ///  le second était rejeté comme doublon et **silencieusement perdu**. C'est
+  ///  la violation de l'arbitrage : « une règle d'autorité ne doit jamais
+  ///  entraîner la perte d'une autre version authentique ».
+  ///
+  ///  CORRECTIF — V2 :
+  ///  l'empreinte devient le SHA-256 du `toJson()` COMPLET, normalisé et
+  ///  sérialisé canoniquement par `_core/empreinte_contenu.dart`. C'est
+  ///  **exactement** la fonction déjà employée par le miroir consultable
+  ///  (`ArchivesSegmenteess` → `empreinteValeur`). Les deux couches partagent
+  ///  enfin la même notion d'identité au lieu d'en avoir deux divergentes.
+  ///  `toJson()` couvre tous les champs significatifs, et la sérialisation
+  ///  canonique neutralise l'ordre des clés : deux contenus sémantiquement
+  ///  identiques restent donc déduplicables quelle que soit leur
+  ///  représentation technique.
+  ///
+  ///  COMPATIBILITÉ :
+  ///  V1 est CONSERVÉ à l'identique (`empreinteV1De`) et reste calculable, ce
+  ///  qui permet de reconnaître les empreintes historiques sans les remplacer
+  ///  brutalement. Voir `migrerEmpreintesV1VersV2()`.
+  ///
+  ///  Le motif technique (éviction / troncature) n'entre dans AUCUN des deux
+  ///  canoniques : une éviction et une troncature du même contenu restent une
+  ///  seule et même version.
+  /// ═════════════════════════════════════════════════════════════════════════
+
+  /// Longueur d'une empreinte V1 (FNV-1a 64 bits en hexadécimal).
+  static const int kLongueurEmpreinteV1 = 16;
+
+  /// Longueur d'une empreinte V2 (SHA-256 en hexadécimal).
+  static const int kLongueurEmpreinteV2 = 64;
+
+  /// Version d'empreinte utilisée pour toute NOUVELLE écriture.
+  static const int kVersionEmpreinte = 2;
+
+  /// Empreinte courante (V2) : SHA-256 du contenu COMPLET canonique.
+  ///
+  /// Alignée sur `_core/empreinte_contenu.dart`, donc sur le miroir
+  /// `ArchivesSegmenteess`. Deux contenus identiques → même empreinte ; deux
+  /// contenus différents → empreintes différentes, sans exception.
+  static String empreinteDe(IaPronostic p) => empreinteV2De(p);
+
+  /// Empreinte V2 — SHA-256 du `toJson()` complet, sérialisé canoniquement.
+  static String empreinteV2De(IaPronostic p) => empreinteValeur(p.toJson());
+
+  /// Empreinte V1 — FNV-1a 64 bits sur le canonique HISTORIQUE partiel.
+  ///
+  /// Conservée SANS AUCUNE CORRECTION, pour deux raisons :
+  ///   • reconnaître les empreintes déjà persistées (journal, miroir, backups) ;
+  ///   • ne jamais modifier une donnée historique.
+  /// Elle n'est PLUS utilisée pour décider de l'identité d'une nouvelle
+  /// version : c'est précisément elle qui causait la perte.
+  static String empreinteV1De(IaPronostic p) {
     final scoresIA = p.scoresIA.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
     final criteres = p.scoresCriteres.entries.toList()
@@ -590,6 +660,166 @@ class IaArchiveService extends ChangeNotifier {
       ..write(p.dateResultat?.toIso8601String() ?? '');
 
     return _fnv1a64(canonique.toString());
+  }
+
+  /// Version d'une empreinte, déduite de sa LONGUEUR.
+  ///
+  /// Les deux canoniques produisent des longueurs disjointes (16 vs 64) : le
+  /// test est donc sûr et ne peut pas se tromper de version. Une empreinte de
+  /// longueur inattendue retourne 0 et n'est **jamais** réinterprétée de force.
+  static int versionEmpreinte(String empreinte) {
+    if (empreinte.length == kLongueurEmpreinteV2) return 2;
+    if (empreinte.length == kLongueurEmpreinteV1) return 1;
+    return 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  MIGRATION DES EMPREINTES V1 → V2
+  //
+  //  PRINCIPE : la migration ne modifie AUCUNE donnée historique. Elle
+  //  construit une table de correspondance `V1 → {V2...}` à partir des
+  //  versions réellement présentes, et la persiste pour être reprise et
+  //  auditable. C'est une opération PUREMENT DÉRIVÉE :
+  //    • idempotente (ensembles) ;
+  //    • reprenable (rien à moitié écrit : la table est réécrite en entier) ;
+  //    • sans perte (aucune version n'est touchée) ;
+  //    • sans réinitialisation.
+  //
+  //  AMBIGUÏTÉ : une empreinte V1 peut correspondre à PLUSIEURS empreintes V2,
+  //  précisément à cause du défaut corrigé. Ces cas sont ENREGISTRÉS comme
+  //  ambigus et ne sont JAMAIS résolus arbitrairement : aucune référence
+  //  persistée n'est réinterprétée de force.
+  //
+  //  PORTÉE RÉELLE (établie par lecture du code, pas supposée) :
+  //    • `_versionRetenue` n'est PAS persisté — il est reconstruit à chaque
+  //      `_load()` par `_enregistrerIndex` (ordre d'autorité total). Aucune
+  //      référence persistée n'en dépend.
+  //    • le bloc `empreintes` exporté par la sauvegarde n'est JAMAIS relu par
+  //      `restaurerDepuisBackup()` (seuls `shards` et `enAttente` le sont).
+  //    • le miroir `ArchivesSegmenteess` calcule déjà ses empreintes avec
+  //      `empreinteValeur`, c'est-à-dire le canonique V2.
+  //  La correspondance est donc une garantie d'AUDIT et de COMPATIBILITÉ, pas
+  //  un prérequis de correction : aucun consommateur ne lit une empreinte V1
+  //  pour décider quoi que ce soit. C'est dit ici explicitement pour qu'aucune
+  //  dépendance cachée ne soit ultérieurement supposée.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Clé de persistance de la table de correspondance.
+  static const String _kCorrespondanceEmpreintesKey =
+      'ia_archive_empreintes_v1_v2';
+
+  /// V1 → ensemble des V2 réellement observées.
+  final Map<String, Set<String>> _v1VersV2 = {};
+
+  /// V1 observées correspondant à PLUSIEURS V2 : ambiguïtés conservées.
+  final Map<String, Set<String>> _v1Ambigues = {};
+
+  @visibleForTesting
+  Map<String, Set<String>> get correspondanceEmpreintesPourTest =>
+      Map<String, Set<String>>.unmodifiable(
+          _v1VersV2.map((k, v) => MapEntry(k, Set<String>.unmodifiable(v))));
+
+  @visibleForTesting
+  Map<String, Set<String>> get ambiguitesEmpreintesPourTest =>
+      Map<String, Set<String>>.unmodifiable(
+          _v1Ambigues.map((k, v) => MapEntry(k, Set<String>.unmodifiable(v))));
+
+  /// Construit (ou reprend) la table de correspondance V1 → V2.
+  ///
+  /// Retourne un rapport chiffré. **Ne modifie aucune version**, n'écrit aucun
+  /// shard, ne touche ni à l'autorité ni à la version retenue.
+  Future<Map<String, int>> migrerEmpreintesV1VersV2() async {
+    await _load();
+
+    var examinees = 0;
+    var ajoutees = 0;
+    for (final liste in _shards.values) {
+      for (final p in liste) {
+        examinees++;
+        final v1 = empreinteV1De(p);
+        final v2 = empreinteV2De(p);
+        final avant = _v1VersV2[v1]?.length ?? 0;
+        _v1VersV2.putIfAbsent(v1, () => <String>{}).add(v2);
+        if ((_v1VersV2[v1]?.length ?? 0) > avant) ajoutees++;
+      }
+    }
+
+    // Les ambiguïtés sont dérivées, jamais inventées : ce sont exactement les
+    // V1 qui portent plus d'une V2.
+    _v1Ambigues.clear();
+    for (final e in _v1VersV2.entries) {
+      if (e.value.length > 1) _v1Ambigues[e.key] = e.value;
+    }
+
+    await _persisterCorrespondanceEmpreintes();
+
+    final rapport = <String, int>{
+      'versionsExaminees': examinees,
+      'correspondancesTotal': _v1VersV2.length,
+      'correspondancesAjoutees': ajoutees,
+      'ambiguites': _v1Ambigues.length,
+    };
+    if (kDebugMode) {
+      debugPrint('[IaArchive] Migration empreintes V1→V2 : '
+          '$examinees version(s), ${_v1VersV2.length} correspondance(s), '
+          '${_v1Ambigues.length} ambiguïté(s)');
+    }
+    return rapport;
+  }
+
+  Future<void> _persisterCorrespondanceEmpreintes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final charge = <String, dynamic>{
+        'version': 2,
+        'fenetre': kIaArchiveFormatVersion,
+        'v1VersV2': {
+          for (final e in _v1VersV2.entries) e.key: e.value.toList()..sort()
+        },
+        'ambigus': _v1Ambigues.keys.toList()..sort(),
+      };
+      await prefs.setString(_kCorrespondanceEmpreintesKey, json.encode(charge));
+    } catch (e) {
+      // La correspondance est une garantie d'audit : son échec d'écriture ne
+      // doit jamais empêcher l'application de fonctionner.
+      if (kDebugMode) {
+        debugPrint('[IaArchive] ⚠️ correspondance empreintes non persistée : $e');
+      }
+    }
+  }
+
+  /// Recharge la correspondance persistée, si elle existe.
+  Future<void> _chargerCorrespondanceEmpreintes(SharedPreferences prefs) async {
+    final brut = prefs.getString(_kCorrespondanceEmpreintesKey);
+    if (brut == null || brut.isEmpty) return;
+    try {
+      final j = json.decode(brut) as Map<String, dynamic>;
+      final v1v2 = j['v1VersV2'];
+      if (v1v2 is Map) {
+        for (final e in v1v2.entries) {
+          final set = _v1VersV2.putIfAbsent(e.key.toString(), () => <String>{});
+          final liste = e.value;
+          if (liste is List) {
+            for (final v in liste) {
+              set.add(v.toString());
+            }
+          }
+        }
+      }
+      final ambigus = j['ambigus'];
+      if (ambigus is List) {
+        for (final a in ambigus) {
+          final v1 = a.toString();
+          final set = _v1VersV2[v1];
+          if (set != null && set.length > 1) {
+            _v1Ambigues[v1] = <String>{...set};
+          }
+        }
+      }
+    } catch (_) {
+      // Correspondance illisible : on repart d'une table vide. Aucune version
+      // n'est perdue, la table est entièrement dérivable.
+    }
   }
 
   static String _fnv1a64(String s) {
