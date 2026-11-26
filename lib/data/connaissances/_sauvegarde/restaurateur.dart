@@ -323,6 +323,43 @@ const String kMetaRepriseDerniere = 'restauration_derniere_reprise';
 /// Ancienne dénomination, conservée pour ne pas casser l'API publique.
 typedef InstantaneRollbackLegacy = InstantaneRollback;
 
+/// Restaure les fichiers PERMANENTS (`archives/`, `config/`) d'un conteneur.
+///
+/// ═══════════════════════════════════════════════════════════════════════════
+///  POURQUOI CETTE FONCTION EST PUBLIQUE ET SÉPARÉE
+///
+///  La boucle était écrite EN LIGNE dans `Restaurateur.restaurer()`. Un test ne
+///  pouvait donc la vérifier qu'en la RECOPIANT — et une copie de test ne prouve
+///  que sa propre existence. Elle est extraite pour que la mesure porte sur le
+///  code RÉELLEMENT exécuté par une restauration.
+///
+///  ⚠️ Comportement conservé à l'identique, sans exception nouvelle :
+///     • une entrée dont la description n'est pas un `Map` est IGNORÉE ;
+///     • une entrée sans `base64` de type `String` est IGNORÉE ;
+///     • le sous-dossier cible est créé au besoin (chemins `archives/...`) ;
+///     • l'écriture est faite avec `flush: true` — rien n'est annoncé écrit
+///       avant d'être réellement sur le disque.
+///  Rend le nombre de fichiers réellement écrits, pour que l'appelant puisse
+///  distinguer « rien à restaurer » de « tout a échoué ».
+/// ═══════════════════════════════════════════════════════════════════════════
+Future<int> restaurerFichiersPermanents(
+    Map<dynamic, dynamic> bloc, String dossierBase) async {
+  var ecrits = 0;
+  for (final e in bloc.entries) {
+    final desc = e.value;
+    if (desc is! Map) continue;
+    final encode = desc['base64'];
+    if (encode is! String) continue;
+    final cible = File('$dossierBase/${e.key}');
+    if (!await cible.parent.exists()) {
+      await cible.parent.create(recursive: true);
+    }
+    await cible.writeAsBytes(base64Decode(encode), flush: true);
+    ecrits++;
+  }
+  return ecrits;
+}
+
 /// Applique une sauvegarde au dépôt structuré.
 class Restaurateur {
   const Restaurateur();
@@ -816,18 +853,8 @@ class Restaurateur {
       // ── 3c. Fichiers permanents ────────────────────────────────────────
       final blocFichiers = format.extraireBloc(contenu, 'fichiers_permanents');
       if (blocFichiers is Map) {
-        for (final e in blocFichiers.entries) {
-          final desc = e.value;
-          if (desc is! Map) continue;
-          final encode = desc['base64'];
-          if (encode is! String) continue;
-          final cible = File('$dossierBase/${e.key}');
-          if (!await cible.parent.exists()) {
-            await cible.parent.create(recursive: true);
-          }
-          await cible.writeAsBytes(base64Decode(encode), flush: true);
-          fichiersRestaures++;
-        }
+        fichiersRestaures += await restaurerFichiersPermanents(
+            blocFichiers, dossierBase);
       }
 
       // ── 4. MARQUAGE : données complètes ────────────────────────────────

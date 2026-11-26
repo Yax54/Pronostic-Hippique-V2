@@ -152,6 +152,42 @@ import '../data/connaissances/_sauvegarde/format_sauvegarde.dart';
 import '../data/connaissances/_sauvegarde/restaurateur.dart';
 import '../data/connaissances/_sauvegarde/transaction_globale.dart';
 
+/// Capture les fichiers PERMANENTS (`archives/` et `config/`) sous une racine.
+///
+/// ═══════════════════════════════════════════════════════════════════════════
+///  POURQUOI CETTE FONCTION EST PUBLIQUE ET SÉPARÉE
+///
+///  Une sauvegarde qui n'emporte pas `archives/` n'est pas complète : elle
+///  annoncerait une réussite en laissant hors conteneur des connaissances que
+///  l'application refuse de perdre (§15, §16).
+///
+///  Cette capture était écrite EN LIGNE dans `exporterDonneesStructurees()`.
+///  Un test ne pouvait donc la vérifier qu'en la RECOPIANT — et une copie de
+///  test ne prouve que sa propre existence. Elle est extraite ici pour que la
+///  mesure porte sur le code RÉELLEMENT exécuté par la sauvegarde.
+///
+///  ⚠️ Aucune donnée n'est filtrée ni plafonnée (§11) : tout fichier présent
+///     entre dans le bloc, à l'octet près.
+/// ═══════════════════════════════════════════════════════════════════════════
+Future<Map<String, Object?>> capturerFichiersPermanents(String racine) async {
+  final fichiers = <String, Object?>{};
+  for (final sousDossier in <String>['archives', 'config']) {
+    final dir = Directory('$racine/$sousDossier');
+    if (!await dir.exists()) continue;
+    await for (final e in dir.list(recursive: true)) {
+      if (e is! File) continue;
+      final relatif =
+          e.path.substring(racine.length + 1).replaceAll('\\', '/');
+      final octets = await e.readAsBytes();
+      fichiers[relatif] = <String, Object?>{
+        'base64': base64Encode(octets),
+        'octets': octets.length,
+      };
+    }
+  }
+  return fichiers;
+}
+
 class BackupService {
   BackupService._();
   static final instance = BackupService._();
@@ -1334,21 +1370,7 @@ class BackupService {
       // ── Bloc 3 : fichiers permanents (archives/ et config/) ──────────────
       final racine = PontElo.instance.racine;
       if (racine.isNotEmpty) {
-        final fichiers = <String, Object?>{};
-        for (final sousDossier in <String>['archives', 'config']) {
-          final dir = Directory('$racine/$sousDossier');
-          if (!await dir.exists()) continue;
-          await for (final e in dir.list(recursive: true)) {
-            if (e is! File) continue;
-            final relatif =
-                e.path.substring(racine.length + 1).replaceAll('\\', '/');
-            final octets = await e.readAsBytes();
-            fichiers[relatif] = <String, Object?>{
-              'base64': base64Encode(octets),
-              'octets': octets.length,
-            };
-          }
-        }
+        final fichiers = await capturerFichiersPermanents(racine);
         blocs.add(FormatSauvegarde.bloc(
           nom: 'fichiers_permanents',
           categorie: 'fichiers',
