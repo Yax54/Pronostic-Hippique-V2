@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../data/connaissances/_acquisition/acquisition_pmu.dart';
 import '../models/zt_models.dart';
 import '../data/connaissances/_services/corpus_performances.dart';
 import 'arrivee_officielle_service.dart';
@@ -86,7 +87,9 @@ enum IssueChargement {
 
 class ZoneTurfService {
   // API PMU officielle (accessible depuis mobile et web)
-  static const String _pmuBase = 'https://turfinfo.api.pmu.fr/rest/client/7';
+  /// ★ ACQUISITION CANONIQUE — `AcquisitionPmu.base` est l'unique autorité
+  /// d'URL. Cette constante DÉLÈGUE ; elle ne redéfinit rien.
+  static const String _pmuBase = AcquisitionPmu.base;
   static const String _pmuSpec = 'specialisation=INTERNET';
 
   // ══════════════════════════════════════════════════════════════════════════

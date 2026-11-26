@@ -18,8 +18,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../data/connaissances/_acquisition/acquisition_pmu.dart';
 import 'zone_turf_service.dart';
 import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + appartenance
 import 'arrivee_officielle_service.dart';      // ★ A6 : lecture L0 (RAM, copie profonde)
@@ -1545,16 +1545,39 @@ class DataRefreshService extends ChangeNotifier {
   /// résolue, donc récupérable au cycle suivant.
   Future<List<int>> _fetchArriveeOfficielle(
       int numR, int numC, String dateStr) async {
-    final url = 'https://turfinfo.api.pmu.fr/rest/client/7'
-        '/programme/$dateStr'
-        '/R$numR/C$numC'
-        '/rapports-definitifs?specialisation=INTERNET';
+    // ═══════════════════════════════════════════════════════════════════
+    //  ★ ACQUISITION CANONIQUE — plus d'URL ni de délai construits ici.
+    //
+    //  L'acquisition passe par `AcquisitionPmu`, point de passage unique :
+    //  une seule autorité d'URL, un seul délai, et surtout une NATURE de
+    //  réponse que ce service n'a plus à deviner. Avant, ce site rendait
+    //  `[]` aussi bien pour une liste vide que pour HTTP 500 ou une coupure
+    //  réseau — sans que l'appelant puisse faire la différence.
+    //
+    //  ⚠️ LE DÉLAI EST CONSERVÉ À 15 s, valeur historique de CE site.
+    //     L'uniformiser sur 20 s changerait un comportement non demandé.
+    // ═══════════════════════════════════════════════════════════════════
+    final reponse = await AcquisitionPmu.get(
+      'programme/$dateStr/R$numR/C$numC/rapports-definitifs',
+      delai: const Duration(seconds: 15),
+    );
 
-    final resp = await http
-        .get(Uri.parse(url), headers: {'Accept': 'application/json'})
-        .timeout(const Duration(seconds: 15));
+    if (!reponse.estSucces) {
+      // La cause est NOMMÉE, jamais confondue avec « aucune arrivée ».
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏸️ R${numR}C$numC : acquisition — '
+            '${reponse.nature.name}${reponse.details != null ? " (${reponse.details})" : ""}');
+      }
+      return const <int>[];
+    }
 
-    if (resp.statusCode != 200) return const <int>[];
+    final charge = reponse.charge;
+    if (charge is! List) {
+      if (kDebugMode) {
+        debugPrint('[DataRefresh] ⏸️ R${numR}C$numC : charge non-listable');
+      }
+      return const <int>[];
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     //  ★ A6 — L0 PRIORITAIRE + CONTRÔLE D'APPARTENANCE (P4).
@@ -1581,7 +1604,7 @@ class DataRefreshService extends ChangeNotifier {
       decision = deciderArriveeOfficielle(
         groupesL0: ArriveeOfficielleService.instance
             .arrivee('R${numR}C$numC' '_$dateStr'),
-        rapportsPmu: jsonDecode(resp.body) as List<dynamic>,
+        rapportsPmu: charge,
         partants: _partantsDeLaCourse(numR, numC),
       );
     } catch (e) {

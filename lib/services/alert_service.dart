@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ia_memory_service.dart';
 import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type de pari
@@ -11,6 +10,7 @@ import 'recommandation_pari_service.dart' // ★ BLOC 1 : source unique du type 
 // ★ A6 : décision d'arrivée partagée (L0 prioritaire + contrôle d'appartenance).
 // `arrivee_pmu_ordonnee.dart` n'est plus importé ici : la décision P5 ne
 // consulte plus directement `analyserRapportsPmu` (mesuré : 0 occurrence).
+import '../data/connaissances/_acquisition/acquisition_pmu.dart';
 import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + appartenance
 import 'arrivee_officielle_service.dart'; // ★ A6 : lecture L0 en RAM (copie profonde)
 import 'zone_turf_service.dart';
@@ -2554,25 +2554,42 @@ class AlertService extends ChangeNotifier {
           '${d.month.toString().padLeft(2, '0')}'
           '${d.year}';
 
-      final url =
-          'https://turfinfo.api.pmu.fr/rest/client/7'
-          '/programme/$dateStr'
-          '/R${tc.numReunion}/C${tc.numCourse}'
-          '/rapports-definitifs?specialisation=INTERNET';
+      // ── ★ ACQUISITION CANONIQUE ────────────────────────────────────────
+      //  Plus d'URL ni de délai construits ici : point de passage unique.
+      //  ⚠️ DÉFAUT CORRIGÉ AU PASSAGE : `jsonDecode(resp.body)` sur un corps
+      //     non-JSON levait une exception non rattrapée dans ce bloc, alors que
+      //     HTTP 200 était déjà considéré comme un succès. Une réponse
+      //     illisible interrompait donc le cycle d'alertes au lieu d'être
+      //     simplement signalée.
+      //  ⚠️ DÉLAI CONSERVÉ À 15 s (valeur historique de ce site).
+      final reponsePmu = await AcquisitionPmu.get(
+        'programme/$dateStr/R${tc.numReunion}/C${tc.numCourse}'
+        '/rapports-definitifs',
+        delai: const Duration(seconds: 15),
+      );
 
-      final resp = await http
-          .get(Uri.parse(url),
-              headers: {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 15));
-
-      if (resp.statusCode != 200) {
-        // API pas encore disponible — on réessaiera au prochain cycle
+      if (!reponsePmu.estSucces) {
+        // Cause NOMMÉE. L'absence de données n'est pas une erreur : on
+        // réessaiera au prochain cycle, comme avant, mais pour la bonne raison.
+        if (kDebugMode) {
+          debugPrint('[AlertService] rapports R${tc.numReunion}'
+              'C${tc.numCourse} : ${reponsePmu.nature.name}');
+        }
         _resultatsVerifies.remove(resultKey);
         return;
       }
 
-      final List<dynamic> rapports =
-          jsonDecode(resp.body) as List<dynamic>;
+      final charge = reponsePmu.charge;
+      if (charge is! List) {
+        if (kDebugMode) {
+          debugPrint('[AlertService] rapports R${tc.numReunion}'
+              'C${tc.numCourse} : charge non-listable');
+        }
+        _resultatsVerifies.remove(resultKey);
+        return;
+      }
+
+      final List<dynamic> rapports = charge;
 
       // ★ FINALISATION A6 (P5) : L0 PRIORITAIRE, décision PARTAGÉE avec
       //   P1, P2 et P3.

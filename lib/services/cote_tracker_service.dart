@@ -16,6 +16,7 @@
 //   • Hors fenêtre → score neutre (50) avec mention "données insuffisantes"
 // ═══════════════════════════════════════════════════════════════════════════
 
+import '../data/connaissances/_acquisition/acquisition_pmu.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -106,7 +107,10 @@ class CoteTrackerService {
   static CoteTrackerService get instance => _instance;
   CoteTrackerService._();
 
-  static const String _baseUrl = 'https://turfinfo.api.pmu.fr/rest/client/7';
+  /// ★ ACQUISITION CANONIQUE — plus d'URL dupliquée : `AcquisitionPmu.base`
+  /// est l'unique autorité. Cette constante locale n'est conservée que
+  /// comme point d'ancrage lisible ; elle DÉLÈGUE, elle ne redéfinit pas.
+  static const String _baseUrl = AcquisitionPmu.base;
   static const String _specialisation = 'specialisation=INTERNET';
 
   // ── État interne ────────────────────────────────────────────────────────

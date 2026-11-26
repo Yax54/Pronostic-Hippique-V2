@@ -35,7 +35,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 // flutter/material.dart not needed here (foundation.dart suffices)
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
 import '../utils/date_utils.dart'
@@ -66,6 +65,7 @@ import 'arrivee_officielle_service.dart';
 //   P1 (`analyseJourneeComplete`) et P2 (`fetchArriveeDirecte`) de ce fichier,
 //   ainsi que par P4 (`data_refresh_service`) et P5 (`alert_service`).
 //   Ce helper est PUR : aucun réseau, aucun disque, aucun état.
+import '../data/connaissances/_acquisition/acquisition_pmu.dart';
 import 'arrivee_pmu_ordonnee.dart';
 import 'arrivee_officielle_prioritaire.dart'; // ★ A6 : L0 prioritaire + décision partagée
 import 'ia_pronostic_engine.dart';
@@ -91,6 +91,32 @@ import '../models/pronostic_resultat_utilisateur.dart' show PronosticResultatUti
 enum ResultatEcriture { ecrite, refuseeParReset, echec }
 
 class IaMemoryService extends ChangeNotifier {
+  /// Libellé lisible d'une acquisition, pour les messages destinés à l'utilisateur.
+  ///
+  /// ⚠️ Chaque cause a son libellé parce que l'action attendue diffère :
+  ///    « pas encore publié » invite à attendre, « réseau » invite à vérifier
+  ///    la connexion, « illisible » signale un incident de la source. Un
+  ///    libellé unique rendrait ces situations indiscernables pour
+  ///    l'utilisateur, ce que §2 interdit.
+  static String _libelleAcquisition(ReponsePmu reponse) {
+    switch (reponse.nature) {
+      case NatureReponse.aucuneDonnee:
+        return 'résultats PMU pas encore publiés';
+      case NatureReponse.reseauIndisponible:
+        return 'réseau indisponible';
+      case NatureReponse.delaiDepasse:
+        return 'délai dépassé';
+      case NatureReponse.reponseInvalide:
+        return 'réponse PMU illisible';
+      case NatureReponse.erreurServeur:
+        return 'erreur PMU (HTTP ${reponse.statutHttp ?? "?"})';
+      case NatureReponse.nonConfigure:
+        return 'acquisition mal configurée';
+      case NatureReponse.succes:
+        return 'OK';
+    }
+  }
+
   static final IaMemoryService _instance = IaMemoryService._();
   static IaMemoryService get instance => _instance;
   IaMemoryService._();
@@ -1539,23 +1565,30 @@ class IaMemoryService extends ChangeNotifier {
           '⚙️ (${i + 1}/${aRelancer.length}) $nomCourt — $jour/$mois');
 
       try {
-        final url =
-            'https://turfinfo.api.pmu.fr/rest/client/7'
-            '/programme/$dateStr/R$numR/C$numC'
-            '/rapports-definitifs?specialisation=INTERNET';
+        // ── ★ ACQUISITION CANONIQUE (point de passage unique) ──────────
+        //  ⚠️ DÉFAUT CORRIGÉ AU PASSAGE : un HTTP 200 au corps non-JSON
+        //     levait une exception à `jsonDecode` que ce bloc ne distinguait
+        //     pas d'une absence de résultats. La cause est désormais NOMMÉE.
+        final reponsePmu = await AcquisitionPmu.get(
+          'programme/$dateStr/R$numR/C$numC/rapports-definitifs',
+          delai: const Duration(seconds: 15),
+        );
 
-        final resp = await http
-            .get(Uri.parse(url), headers: {'Accept': 'application/json'})
-            .timeout(const Duration(seconds: 15));
-
-        if (resp.statusCode != 200) {
+        if (!reponsePmu.estSucces) {
           introuvables++;
-          details.add('⏳ $nomCourt ($jour/$mois) : résultats PMU pas encore publiés (HTTP ${resp.statusCode})');
+          details.add('⏳ $nomCourt ($jour/$mois) : '
+              '${_libelleAcquisition(reponsePmu)}');
           continue;
         }
 
-        final List<dynamic> rapports =
-            jsonDecode(resp.body) as List<dynamic>;
+        final charge = reponsePmu.charge;
+        if (charge is! List) {
+          introuvables++;
+          details.add('⏳ $nomCourt ($jour/$mois) : charge non-listable');
+          continue;
+        }
+
+        final List<dynamic> rapports = charge;
 
         // ★ A6 n° 2-b-3 — LES RAPPORTS PMU NE FOURNISSENT PLUS L'ARRIVÉE.
         //
@@ -1935,17 +1968,20 @@ class IaMemoryService extends ChangeNotifier {
 
     _arriveeEnCours.add(courseKey);
     try {
-      final url =
-          'https://turfinfo.api.pmu.fr/rest/client/7'
-          '/programme/$dateStr/R$numR/C$numC'
-          '/rapports-definitifs?specialisation=INTERNET';
+      // ── ★ ACQUISITION CANONIQUE (point de passage unique) ────────────────
+      final reponsePmu = await AcquisitionPmu.get(
+        'programme/$dateStr/R$numR/C$numC/rapports-definitifs',
+        delai: const Duration(seconds: 15),
+      );
 
-      final resp = await http
-          .get(Uri.parse(url), headers: {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 15));
-
-      if (resp.statusCode != 200) {
-        // Résultats PMU pas encore publiés — on réessaiera au prochain cycle
+      if (!reponsePmu.estSucces) {
+        // Cause NOMMÉE : absence de publication, panne réseau, réponse
+        // illisible et erreur serveur ne sont plus confondues. On réessaiera
+        // au prochain cycle, comme avant, mais pour la bonne raison.
+        if (kDebugMode) {
+          debugPrint('[IaMemory] arrivée $courseKey : '
+              '${reponsePmu.nature.name}');
+        }
         _arriveeEnCours.remove(courseKey);
         return [];
       }
@@ -1995,7 +2031,7 @@ class IaMemoryService extends ChangeNotifier {
 
       final DecisionArriveeOfficielle decision = deciderArriveeOfficielle(
         groupesL0: ArriveeOfficielleService.instance.arrivee(courseKey),
-        rapportsPmu: jsonDecode(resp.body) as List<dynamic>,
+        rapportsPmu: reponsePmu.charge as List<dynamic>,
         partants: partants,
       );
 
@@ -4905,18 +4941,16 @@ class IaMemoryService extends ChangeNotifier {
             final dateStr = '$jour$mois$annee'; // JJMMAAAA
 
             // ── Récupérer rapports-définitifs (même URL qu'alert_service) ──
-            final url =
-                'https://turfinfo.api.pmu.fr/rest/client/7'
-                '/programme/$dateStr/R$numR/C$numC'
-                '/rapports-definitifs?specialisation=INTERNET';
+            // ── ★ ACQUISITION CANONIQUE (point de passage unique) ────────
+            final reponsePmu = await AcquisitionPmu.get(
+              'programme/$dateStr/R$numR/C$numC/rapports-definitifs',
+              delai: const Duration(seconds: 15),
+            );
 
-            final resp = await http
-                .get(Uri.parse(url), headers: {'Accept': 'application/json'})
-                .timeout(const Duration(seconds: 15));
-
-            if (resp.statusCode != 200) {
+            if (!reponsePmu.estSucces) {
               nbSansResultat++;
-              coursesAnalysees.add('${p.nomCourse} ⏳ [HTTP ${resp.statusCode}]');
+              coursesAnalysees.add(
+                  '${p.nomCourse} ⏳ [${reponsePmu.nature.name}]');
               nbCoursesAnalysees++;
               continue;
             }
@@ -4943,17 +4977,11 @@ class IaMemoryService extends ChangeNotifier {
             //  pas de l'ordre d'arrivée, et les perdre priverait l'apprentissage
             //  d'une information officielle.
             // ═══════════════════════════════════════════════════════════════
-            final List<dynamic> rapports;
-            try {
-              rapports = jsonDecode(resp.body) as List<dynamic>;
-            } catch (e) {
-              // Corps non décodable : refus, jamais d'exception propagée.
-              nbSansResultat++;
-              coursesAnalysees.add(
-                  '${p.nomCourse} ⏳ [rapports PMU illisibles : $e]');
-              nbCoursesAnalysees++;
-              continue;
-            }
+            // ★ ACQUISITION CANONIQUE : la charge est déjà décodée ET
+            //   qualifiée. Un corps illisible n'arrive jamais ici — il a été
+            //   classé `reponseInvalide` en amont, et n'est donc pas présenté
+            //   comme une absence de résultats.
+            final List<dynamic> rapports = reponsePmu.charge as List<dynamic>;
 
             // ★ v10.31 : cotes PMU Simple Gagnant par numéro (INCHANGÉES).
             //   Les cotes ne dépendent pas de l'ordre d'arrivée : les perdre
