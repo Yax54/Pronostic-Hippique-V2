@@ -260,6 +260,17 @@ class DepotSqlite implements DepotConnaissances {
     return _eloDepuisLigne(rows.first);
   }
 
+  /// Supprime un rating par sa clé.
+  ///
+  /// Existe pour que la suppression volontaire soit une **opération du dépôt**
+  /// et non un `DELETE` improvisé ailleurs. Aucun code de production ne
+  /// supprime de rating : D-20 l'interdit. Cette méthode sert à rendre
+  /// testable l'état « base légitimement vide », qui doit être distingué
+  /// d'une migration à faire — c'est le cœur de la bascule.
+  Future<void> supprimerEloPourTest(String cle) async {
+    await _executeur.delete('elo_ratings', where: 'id = ?', whereArgs: <Object?>[cle]);
+  }
+
   @override
   Future<List<LigneElo>> tousLesElo() async {
     final rows = await _executeur.query('elo_ratings', orderBy: 'id ASC');

@@ -20,6 +20,7 @@ import '../models/zt_models.dart';
 // justification : la persistance principale reste SharedPreferences, le dépôt
 // est un miroir d'écriture consultable en lecture indexée.
 import '../data/connaissances/_adapters/pont_elo.dart';
+import '../data/connaissances/_migration/bascule_elo.dart';
 // ★ A7 (3.3-B2-b) : validation de la date portée par une `courseKey`.
 //   `date_utils.dart` n'a AUCUN import (mesuré) : aucune dépendance circulaire.
 import '../utils/date_utils.dart' show dateDepuisCourseKey;
@@ -2365,6 +2366,13 @@ class EloService {
   int _nbAbandonsFileParGeneration = 0;
   int get nbAbandonsFileParGeneration => _nbAbandonsFileParGeneration;
 
+  /// Bilan de la dernière bascule ELO, pour le diagnostic et l'interface.
+  ///
+  /// Exposé volontairement : la décision « SQLite est-il la référence ? » ne
+  /// doit pas être une supposition de l'extérieur, elle doit être lisible.
+  BilanBasculeElo? _bilanBascule;
+  BilanBasculeElo? get bilanBascule => _bilanBascule;
+
   static Future<void> init() async => _instance._charger();
 
   /// Relit l'état ELO depuis le stockage, après une restauration.
@@ -2392,37 +2400,113 @@ class EloService {
       //   SharedPreferences reste la référence (aucune donnée perdue).
       await PontElo.instance.ouvrir();
 
-      // ── Migration v1 → v2 ─────────────────────────────────────────
-      // Si la nouvelle clé est absente mais l'ancienne présente →
-      // on importe les anciens ELO avec discipline vide (clé globale)
-      final jsonV2 = prefs.getString(_prefsKey);
-      if (jsonV2 == null || jsonV2.isEmpty) {
-        final jsonV1 = prefs.getString(_prefsKeyOld);
-        if (jsonV1 != null && jsonV1.isNotEmpty) {
-          final Map<String, dynamic> old = jsonDecode(jsonV1) as Map<String, dynamic>;
-          // Les anciens ELO sont stockés sans discipline — on les garde
-          // sous la clé "NOM|" (discipline vide) pour ne pas les perdre
-          // mais ils ne seront plus mis à jour (les nouvelles mises à jour
-          // utilisent la clé avec discipline).
-          old.forEach((key, val) {
+      // ════════════════════════════════════════════════════════════════════
+      //  ★ BASCULE ELO (§1 du présent tour) — SQLITE DEVIENT LA RÉFÉRENCE
+      //
+      //  Avant cette bascule, SQLite n'était qu'un miroir d'ÉCRITURE : chaque
+      //  `setString` confirmé y était répliqué, mais la LECTURE au démarrage
+      //  se faisait exclusivement depuis SharedPreferences. Deux supports,
+      //  une seule source lue, donc un second état possible — exactement ce
+      //  que §4 interdit.
+      //
+      //  Le point délicat, et la raison d'être de `BasculeElo` : « la base est
+      //  vide » a six causes possibles, dont cinq n'appellent PAS une
+      //  réimportation. Le discriminant est un marqueur DURABLE, jamais un
+      //  nombre de lignes. Sans lui, une base vidée après migration serait
+      //  réalimentée par les anciennes données restées dans prefs.
+      // ════════════════════════════════════════════════════════════════════
+      final depot = PontElo.instance.depotPourSauvegarde;
+      var bilanBascule = await const BasculeElo().executer(
+        depot: depot,
+        prefs: prefs,
+      );
+      _bilanBascule = bilanBascule;
+      if (kDebugMode) {
+        debugPrint('[EloService] bascule : ${bilanBascule.etat.name} — '
+            '${bilanBascule.nbLignesSqlite} ligne(s) SQLite, '
+            '${bilanBascule.nbLignesPrefs} ligne(s) prefs');
+        for (final m in bilanBascule.messages) {
+          debugPrint('[EloService]   $m');
+        }
+      }
+
+      // ── LECTURE : SQLite d'abord, quand il est la référence ────────────
+      //
+      // La règle est stricte : on ne lit SQLite que si la bascule l'a déclaré
+      // référence. Dans le cas contraire (migration refusée, anomalie), on
+      // reste sur SharedPreferences — jamais un mélange des deux, qui
+      // produirait un état qui n'existe nulle part sur le disque.
+      var luDepuisSqlite = false;
+      if (bilanBascule.sqliteEstReference && depot != null) {
+        try {
+          final lignes = await depot.tousLesElo();
+          if (lignes.isNotEmpty) {
+            for (final l in lignes) {
+              _ratings[l.cle] = EloScore(
+                nomCheval: l.nomOrigine,
+                rating: l.rating,
+                nbCourses: l.nb,
+                variationMois: l.var_,
+              );
+            }
+            luDepuisSqlite = true;
+            debugPrint('[EloService] ✅ ${_ratings.length} ratings lus depuis '
+                'SQLITE (source de référence)');
+          } else if (bilanBascule.etat == EtatBasculeElo.baseLegitimementVide ||
+              bilanBascule.etat == EtatBasculeElo.premiereInstallation) {
+            // Base vide ET marqueur valide : l'état légitime est « aucun
+            // rating ». On ne va surtout pas chercher les anciennes données
+            // de prefs, qui ne sont que des archives de migration.
+            luDepuisSqlite = true;
+            debugPrint('[EloService] base vide légitime : 0 rating, aucune '
+                'réimportation depuis SharedPreferences');
+          }
+        } catch (e) {
+          // Une lecture SQLite en échec ne doit pas vider la mémoire : on
+          // retombe sur prefs, et l'écart est signalé.
+          debugPrint('[EloService] ⚠️ lecture SQLite échouée ($e) : repli sur '
+              'SharedPreferences pour cette session');
+        }
+      }
+
+      if (!luDepuisSqlite) {
+        // ── Migration v1 → v2 (anciennes clés sans discipline) ──────────
+        final jsonV2 = prefs.getString(_prefsKey);
+        if (jsonV2 == null || jsonV2.isEmpty) {
+          final jsonV1 = prefs.getString(_prefsKeyOld);
+          if (jsonV1 != null && jsonV1.isNotEmpty) {
+            final Map<String, dynamic> old =
+                jsonDecode(jsonV1) as Map<String, dynamic>;
+            // Les anciens ELO sont stockés sans discipline — on les garde
+            // sous la clé "NOM|" (discipline vide) pour ne pas les perdre
+            // mais ils ne seront plus mis à jour (les nouvelles mises à jour
+            // utilisent la clé avec discipline).
+            old.forEach((key, val) {
+              try {
+                _ratings['$key|'] =
+                    EloScore.fromJson(val as Map<String, dynamic>);
+              } catch (_) {}
+            });
+            debugPrint('[EloService] ✅ Migration v1→v2 : '
+                '${_ratings.length} ELO importés');
+            // ★ v9.99 : supprimer l'ancienne clé après migration pour libérer
+            //   l'espace. Ce retrait est sans risque : les valeurs viennent
+            //   d'être copiées en mémoire sous une clé plus riche.
+            await prefs.remove(_prefsKeyOld);
+          }
+        } else {
+          final Map<String, dynamic> data =
+              jsonDecode(jsonV2) as Map<String, dynamic>;
+          data.forEach((key, val) {
             try {
-              _ratings['$key|'] = EloScore.fromJson(val as Map<String, dynamic>);
+              _ratings[key] = EloScore.fromJson(val as Map<String, dynamic>);
             } catch (_) {}
           });
-          debugPrint('[EloService] ✅ Migration v1→v2 : ${_ratings.length} ELO importés');
-          // ★ v9.99 : supprimer l'ancienne clé après migration pour libérer l'espace
-          await prefs.remove(_prefsKeyOld);
         }
-      } else {
-        final Map<String, dynamic> data = jsonDecode(jsonV2) as Map<String, dynamic>;
-        data.forEach((key, val) {
-          try {
-            _ratings[key] = EloScore.fromJson(val as Map<String, dynamic>);
-          } catch (_) {}
-        });
       }
       _charge = true;
-      debugPrint('[EloService] ✅ ${_ratings.length} ratings chargés (v2)');
+      debugPrint('[EloService] ✅ ${_ratings.length} ratings chargés '
+          '(${luDepuisSqlite ? "sqlite" : "prefs"})');
 
       // ★ D-20 / §11 — PURGE DES ORPHELINS SUPPRIMÉE.
       //
