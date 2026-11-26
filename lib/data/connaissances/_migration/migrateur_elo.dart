@@ -30,6 +30,7 @@ library;
 
 import 'dart:convert';
 
+import '../../../models/zt_models.dart' show EloScore;
 import '../_adapters/depot_sqlite.dart';
 import '../_core/depot.dart';
 import '../_core/identifiants.dart';
@@ -134,6 +135,40 @@ class MigrateurElo {
         nb: nb ?? 0,
         var_: variation ?? 0.0,
         idCheval: null, // identité non résolue à ce stade : conservée telle quelle
+      ));
+    }
+    return out;
+  }
+
+  /// Convertit les ratings vivants du service en lignes de dépôt.
+  ///
+  /// ⚠️ Ce chemin est celui de la PRODUCTION : il ne passe pas par du JSON
+  /// intermédiaire, ce qui évite toute perte de précision ou de type. Les
+  /// valeurs sont recopiées telles quelles, sans arrondi ni normalisation.
+  ///
+  /// Aucune fusion n'est opérée : deux clés distinctes produisent deux lignes,
+  /// même si elles désignent le même nom dans deux disciplines (D-24).
+  ///
+  /// Aucune ligne n'est écartée : un rating d'identité non résolue (discipline
+  /// vide, clé se terminant par « | ») est conservé tel quel (D-20).
+  static List<LigneElo> decoderDepuisService(Map<String, EloScore> ratings) {
+    final out = <LigneElo>[];
+    for (final entree in ratings.entries) {
+      final cle = entree.key;
+      final score = entree.value;
+      final i = cle.lastIndexOf('|');
+      final nomDepuisCle = i < 0 ? cle : cle.substring(0, i);
+      final discipline = i < 0 ? '' : cle.substring(i + 1);
+      out.add(LigneElo(
+        cle: cle,
+        // `nomCheval` est la source de vérité quand il est renseigné ; sinon on
+        // retombe sur la clé, sans jamais inventer de nom.
+        nomOrigine: score.nomCheval.isNotEmpty ? score.nomCheval : nomDepuisCle,
+        discipline: discipline,
+        rating: score.rating,
+        nb: score.nbCourses,
+        var_: score.variationMois,
+        idCheval: null,
       ));
     }
     return out;

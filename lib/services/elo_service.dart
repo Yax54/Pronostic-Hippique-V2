@@ -16,6 +16,10 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/zt_models.dart';
+// ★ Raccordement du dépôt structuré (pont ELO). Voir pont_elo.dart pour la
+// justification : la persistance principale reste SharedPreferences, le dépôt
+// est un miroir d'écriture consultable en lecture indexée.
+import '../data/connaissances/_adapters/pont_elo.dart';
 // ★ A7 (3.3-B2-b) : validation de la date portée par une `courseKey`.
 //   `date_utils.dart` n'a AUCUN import (mesuré) : aucune dépendance circulaire.
 import '../utils/date_utils.dart' show dateDepuisCourseKey;
@@ -2368,6 +2372,11 @@ class EloService {
     try {
       final prefs = await SharedPreferences.getInstance();
 
+      // ★ Ouverture du dépôt structuré. Non bloquante pour la suite : si le
+      //   dépôt ne peut pas s'ouvrir, `_charger()` continue normalement et
+      //   SharedPreferences reste la référence (aucune donnée perdue).
+      await PontElo.instance.ouvrir();
+
       // ── Migration v1 → v2 ─────────────────────────────────────────
       // Si la nouvelle clé est absente mais l'ancienne présente →
       // on importe les anciens ELO avec discipline vide (clé globale)
@@ -2400,28 +2409,47 @@ class EloService {
       _charge = true;
       debugPrint('[EloService] ✅ ${_ratings.length} ratings chargés (v2)');
 
-      // ★ v9.98 : Purge one-shot des entrées orphelines "NOM|" (discipline vide)
-      // Issues de la migration v1→v2 : nb=1 chacune, rating ≈ 1500 ± K, jamais lues
-      // car le moteur cherche "NOM|DISCIPLINE" — elles n'apportent rien à l'IA.
+      // ★ D-20 / §11 — PURGE DES ORPHELINS SUPPRIMÉE.
+      //
+      //   ⚠️ COMPORTEMENT MESURÉ AVANT CORRECTION. Le code faisait :
+      //        `_ratings.remove(k)` pour toute clé se terminant par « | »,
+      //      c'est-à-dire tout rating dont la discipline n'a pas pu être
+      //      résolue, issu de la migration v1→v2. Ces ratings étaient donc
+      //      DÉFINITIVEMENT DÉTRUITS, puis la suppression était persistée
+      //      immédiatement sur le disque (`_sauvegarder()`).
+      //
+      //   ⚠️ POURQUOI C'EST INTERDIT. D-20 est sans ambiguïté :
+      //      « Conserver intégralement les ratings existants, y compris ceux
+      //      dont l'identité n'est pas encore résolue. Aucune suppression
+      //      arbitraire. » Le motif invoqué par le code (« jamais lues car le
+      //      moteur cherche NOM|DISCIPLINE ») est un argument d'UTILITÉ, pas
+      //      une preuve d'ABSENCE D'INFORMATION : ces lignes portent un nom et
+      //      un rating, donc de la connaissance issue de l'apprentissage, non
+      //      reconstructible sans rejouer l'historique (§17).
+      //
+      //   ✅ CE QUI EST FAIT À LA PLACE. Les ratings sont CONSERVÉS dans
+      //      `_ratings` et rendus consultables. Le marqueur historique
+      //      `elo_orphelins_purges_v1` est écrit pour que le comportement soit
+      //      idempotent (aucune re-purge au prochain démarrage), et le nombre
+      //      conservé est journalisé. Aucune valeur n'est modifiée, aucune
+      //      fusion n'est faite, aucun rating n'est recalculé.
       final flagPurge = prefs.getBool('elo_orphelins_purges_v1') ?? false;
       if (!flagPurge) {
-        final keysOrphelins = _ratings.keys
+        final clefsOrphelines = _ratings.keys
             .where((k) => k.endsWith('|'))
-            .toList();
-        for (final k in keysOrphelins) {
-          _ratings.remove(k);
-        }
+            .toList(growable: false);
+
+        // Marqueur écrit même si la liste est vide : le traitement est ainsi
+        // exécuté une seule fois, sans dépendre du nombre trouvé.
         await prefs.setBool('elo_orphelins_purges_v1', true);
-        if (keysOrphelins.isNotEmpty) {
-          debugPrint('[EloService] 🧹 Purge orphelins : ${keysOrphelins.length} entrées "NOM|" supprimées');
-          // ★ A7 (3.2) : le résultat est CONNU et journalisé, jamais ignoré.
-          // Aucune exception ne peut s'en échapper (option A validée) : le
-          // chemin de chargement reste donc inchangé sur le plan du contrôle.
-          final etatPurge = await _sauvegarder(); // persister immédiatement
-          if (etatPurge != EtatPersistanceElo.persistee) {
-            debugPrint('[EloService] ⚠️ Purge orphelins non confirmée sur le '
-                'disque : ${etatPurge.name}');
-          }
+
+        if (clefsOrphelines.isNotEmpty) {
+          debugPrint('[EloService] ✅ ${clefsOrphelines.length} rating(s) '
+              'd\'identité non résolue CONSERVÉ(S) (D-20) — aucune purge. '
+              'Ces valeurs restent consultables et restaurées par la '
+              'sauvegarde.');
+          // Persistance non requise ici : rien n'a changé dans `_ratings`.
+          // Écrire coûterait une réécriture complète du volume pour rien.
         }
       }
     } catch (e) {
@@ -2725,9 +2753,19 @@ class EloService {
           '(défaut SECONDAIRE — le rating n\'est PAS concerné) : $e');
     }
 
+    // ── RACCORDEMENT AU DÉPÔT STRUCTURÉ (pont ELO) ────────────────────────
+    //
+    //   La réplication n'a lieu QUE si la persistance principale est confirmée :
+    //   le dépôt ne contient donc jamais un état que SharedPreferences a
+    //   refusé. Un échec du pont est compté et journalisé par le pont lui-même,
+    //   et ne remonte jamais ici : `etat` reste celui de la persistance
+    //   principale, qui est la référence.
+    if (etat == EtatPersistanceElo.persistee) {
+      await PontElo.instance.repliquer(_ratings);
+    }
+
     return etat;
   }
-  // ── Normalisation ─────────────────────────────────────────────────
   String _cleNom(String nom) =>
       nom.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
 
