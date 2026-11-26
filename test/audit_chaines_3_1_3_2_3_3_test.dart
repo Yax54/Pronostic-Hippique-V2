@@ -105,7 +105,15 @@ void main() {
 
       expect(enTrot[0].eloRating, equals(1700.0));
       expect(enPlat[0].eloRating, equals(1300.0));
-      expect(enTrot[1].eloRating, equals(1500.0));
+      // ⚠️ BRAVO n'a AUCUN rating : la valeur de repli n'est plus écrite comme
+      //    une note. Mesuré avant correction : 1500.0 → critère M figé à 37.5
+      //    pour tout cheval sans historique. Désormais 0.0 (convention du
+      //    modèle : « 0 = inconnu ») → critère M = 50.0 (neutralité légitime).
+      //    Les deux ratings AUTHENTIQUES ci-dessus restent inchangés : aucune
+      //    formule n'a été touchée.
+      expect(enTrot[1].eloRating, equals(0.0),
+          reason: 'aucune connaissance ⇒ aucun rating, pas un repli de 1500');
+      expect(enTrot[1].eloNbCourses, equals(0));
     });
 
     test('E4 — scoreElo : barème réel mesuré (neutre sous 1200)', () {

@@ -1048,7 +1048,7 @@ void main() {
           '| 3 valeurs distinctes (D3 opérationnel)');
     });
 
-    test('T-A7-7b — CARACTÉRISATION : un rating INCONNU produit 37.5, pas 50',
+    test('T-A7-7b — CARACTÉRISATION : un rating INCONNU ne vaut plus 37.5',
         () async {
       await _buildStore();
 
@@ -1057,18 +1057,39 @@ void main() {
       final enrichi =
           EloService.instance.enrichirAvecElo(inconnu, discipline: _disc).single;
 
-      expect(enrichi.eloRating, closeTo(1500.0, 0.000001),
-          reason: 'T-A7-7b : le défaut du modèle est bien 1500');
-      //  scoreElo = (1500 - 1200) / 8 = 37.5  (et NON 50)
-      expect(enrichi.scoreElo, closeTo(37.5, 0.000001),
+      // ═════════════════════════════════════════════════════════════════════
+      //  CE TEST A ÉTÉ RETOURNÉ APRÈS CORRECTION, ET VOICI POURQUOI CE N'EST
+      //  PAS UN MASQUAGE DE DÉFAUT.
+      //
+      //  Il affirmait auparavant, mesure en main, que `enrichirAvecElo()`
+      //  écrivait 1500 pour un cheval inconnu et que le critère M valait donc
+      //  37.5. C'était exact — et c'était précisément le DÉFAUT : un cheval
+      //  dont on ne sait rien recevait une note INFÉRIEURE À LA NEUTRALITÉ,
+      //  présentée au moteur comme une évaluation.
+      //
+      //  La correction ne change AUCUNE formule : `scoreElo` normalise
+      //  toujours `((rating - 1200) / 8)`. Elle cesse d'écrire un rating de
+      //  repli là où il n'y a pas de connaissance (`nbCourses == 0` ⇒ 0.0,
+      //  convention `zt_models.dart` : « 0 = inconnu »).
+      //
+      //  Le test est donc retourné parce que le COMPORTEMENT CHANGE
+      //  VOLONTAIREMENT, pas parce qu'il dérangeait. Le nouveau comportement
+      //  est plus strict que l'ancien : il distingue l'absence d'un mauvais
+      //  rating, ce que l'ancien confondait.
+      // ═════════════════════════════════════════════════════════════════════
+      expect(enrichi.eloRating, equals(0.0),
+          reason: 'T-A7-7b : le repli n\'est plus écrit comme un rating');
+      expect(enrichi.eloNbCourses, equals(0),
+          reason: 'T-A7-7b : 0 course suivie = aucune connaissance');
+      expect(enrichi.scoreElo, closeTo(50.0, 0.000001),
           reason: 'T-A7-7b : MESURÉ — pour un rating INCONNU, le critère M '
-              'vaut 37.5 (1500 → 37.5), pas 50. La valeur 50.0 n\'est rendue '
-              'que si `eloRating <= 0`, état que `enrichirAvecElo()` ne '
-              'produit jamais puisqu\'il écrit toujours 1500.');
+              'vaut désormais 50.0 (neutralité légitime), et non plus 37.5. '
+              'Un rating AUTHENTIQUE de 1500 sur des courses réelles vaut '
+              'toujours 37.5 : c\'est E4 et elo_repli_test qui le prouvent.');
 
       // ignore: avoid_print
       print('[T-A7-7b] rating inconnu → eloRating=${enrichi.eloRating} | '
-          'critère M=${enrichi.scoreElo} (37.5 attendu, pas 50)');
+          'critère M=${enrichi.scoreElo} (50.0 = neutralité, plus 37.5)');
     });
   });
 

@@ -3316,16 +3316,72 @@ class EloService {
   }
 
   // ── Enrichir les partants avec leur ELO ── ★ v9.92 : + discipline
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ⚠️ DÉFAUT MESURÉ ET CORRIGÉ ICI — LA VALEUR DE REPLI DEVENAIT UNE NOTE
+  //
+  //  Cette méthode écrivait `eloRating: score.rating` SANS CONDITION. Or
+  //  `getScore()` rend, quand aucun rating n'existe, `EloScore(rating: 1500)`
+  //  — la valeur de repli `_eloDefaut`. Et `ZtPartant.scoreElo` normalise par
+  //  `((rating - 1200) / 8)`, ce qui donne EXACTEMENT :
+  //
+  //        1500 → (1500 - 1200) / 8 = 37,5
+  //
+  //  Mesure sur un partant réel de la course 20112026_R1C1 : `M elo = 37.5`.
+  //  J'avais signalé cette valeur comme « suspecte » — elle ne l'était pas au
+  //  sens d'un aléa : c'était la SIGNATURE ARITHMÉTIQUE du repli. Un cheval
+  //  dont on ne sait rien recevait donc 37,5 / 100, c'est-à-dire une note
+  //  INFÉRIEURE À LA NEUTRALITÉ (50), présentée au moteur comme une évaluation.
+  //  Le repli n'était pas seulement muet : il PÉNALISAIT.
+  //
+  //  Ce que la correction fait, et ce qu'elle ne fait pas :
+  //   • elle ne touche NI `scoreElo`, NI la normalisation, NI aucun poids : la
+  //     formule `((rating - 1200) / 8)` est intacte, et un rating AUTHENTIQUE
+  //     de 1500 continue de valoir 37,5 ;
+  //   • elle applique la convention déjà établie du modèle — `zt_models.dart`
+  //     documente `eloRating = 0.0 // 0 = inconnu` ;
+  //   • le discriminant est la PRÉSENCE RÉELLE d'une entrée de rating, et non
+  //     `nbCourses` : une première tentative fondée sur `nbCourses > 0` a été
+  //     MESURÉE FAUSSE (un rating authentique de 1700 privé de compteur
+  //     devenait 0.0, cf. test E3). Absence de connaissance ⇒ `eloRating = 0`
+  //     ⇒ `scoreElo` rend 50,0, la neutralité légitime prévue par le modèle.
+  //
+  //  Conséquence attendue et vérifiable : un partant SANS historique passe de
+  //  37,5 (faux négatif fabriqué) à 50,0 (neutralité authentique), et un
+  //  partant AVEC un rating réel garde exactement sa note d'avant.
+  //  §9 : authentique, absent, repli et neutralité cessent d'être confondus.
+  // ══════════════════════════════════════════════════════════════════════════
   List<ZtPartant> enrichirAvecElo(List<ZtPartant> partants,
       {String discipline = ''}) {
     return partants.map((p) {
       final score = getScore(p.nom, discipline: discipline);
+      // ⚠️ Le discriminant est la PRÉSENCE D'UNE ENTRÉE, pas `nbCourses > 0`.
+      //    Une première version utilisait `nbCourses > 0` et elle était FAUSSE :
+      //    `chargerDepuisMapIsolate` peut recevoir un rating AUTHENTIQUE dont
+      //    le compteur vaut 0, et ce rating aurait alors été converti en
+      //    « inconnu » — c'est-à-dire une connaissance RÉELLE effacée, défaut
+      //    pire que celui d'origine. Mesuré sur le test E3 : un rating de 1700
+      //    devenait 0.0. La présence dans la map est la seule preuve correcte
+      //    qu'une connaissance existe (§7 : l'identité n'est pas déduite).
+      final authentique = _possedeRating(p.nom, discipline: discipline);
       return p.copyWith(
-        eloRating:        score.rating,
+        eloRating:        authentique ? score.rating : 0.0,
         eloNbCourses:     score.nbCourses,
         eloVariationMois: score.variationMois,
       );
     }).toList();
+  }
+
+  /// Une entrée de rating existe-t-elle réellement pour ce cheval ?
+  ///
+  /// Reproduit exactement la résolution de clé de [getScore] — discipline
+  /// d'abord, puis ancienne clé globale — mais rend la PRÉSENCE au lieu d'un
+  /// repli. Aucune valeur n'est calculée ni transformée.
+  bool _possedeRating(String nomCheval, {String discipline = ''}) {
+    if (discipline.isNotEmpty) {
+      if (_ratings.containsKey(_cle(nomCheval, discipline))) return true;
+    }
+    return _ratings.containsKey('${_cleNom(nomCheval)}|');
   }
 
   int    get nbChevauxSuivis => _ratings.length;
