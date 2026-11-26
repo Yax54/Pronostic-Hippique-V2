@@ -6,11 +6,9 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/zt_models.dart';
-import '../data/connaissances/_adapters/pont_elo.dart';
 import '../data/connaissances/_services/corpus_performances.dart';
 import 'arrivee_officielle_service.dart';
 import 'ia_pronostic_engine.dart';
@@ -58,25 +56,23 @@ class ZoneTurfService {
   static final Map<String, Map<String, _HistoCheval>> _cachePerfDetail = {};
   static final Map<String, DateTime> _cachePerfDetailTime = {};
 
-  /// Index DURABLE des noms de partants, par course (`date/R/C`).
-  ///
-  /// POURQUOI PAS UNE SIMPLE MAP EN MÉMOIRE — c'est un défaut réellement
-  /// mesuré, pas une précaution théorique. Le repli sur le corpus local a
-  /// besoin de NOMS pour interroger `performancesParNom`. Tant que cet index
-  /// vivait en RAM, il était vidé par le moindre `viderCachePourResetComplet`
-  /// et disparaissait à chaque redémarrage : le corpus existait alors sans
-  /// être interrogeable, exactement dans la situation où il est le plus utile
-  /// (installation neuve, réseau absent). Mesure avant correction : 14
-  /// partants produits hors ligne, 0 critère alimenté.
-  ///
-  /// L'index est donc un FICHIER, rechargé au besoin. Il ne contient qu'un
-  /// index de correspondance numéro PMU → nom tel que PUBLIÉ par le PMU :
-  /// aucune identité n'est déduite, aucun cheval n'est fusionné (§7, D-11),
-  /// c'est une clé de recherche, pas une preuve d'identité.
-  static Map<String, Map<String, String>>? _indexNoms;
-  static String? _racineIndex;
-
-  static const String _nomFichierIndexNoms = 'index_noms_partants.json';
+  // Composition des courses : PLUS AUCUN FICHIER.
+  //
+  // Historique de la correction, parce qu'elle est instructive :
+  //   1. la composition vivait d'abord dans une map en mémoire → vidée par
+  //      tout reset, corpus inexploitable hors ligne (mesuré : 0 critère
+  //      alimenté sur 14 partants) ;
+  //   2. elle a été déplacée dans `cache/index_noms_partants.json` → le
+  //      problème du reset était réglé, mais la connaissance permanente
+  //      dépendait d'un dossier JETABLE, ce qui est une faute de conception :
+  //      vider `cache/` rendait le corpus muet ;
+  //   3. elle est désormais stockée en SQLite, dans la table `observations`
+  //      (déclarée PERMANENTE : jamais purgée, sauvegardée et restaurée avec
+  //      le reste, indexée sur `id_course`).
+  //
+  // Elle est donc AUTOMATIQUEMENT RECONSTRUCTIBLE depuis la base : aucun
+  // fichier temporaire n'est nécessaire, et aucun nettoyage de cache ne peut
+  // rendre les connaissances inaccessibles.
 
   /// Durée de validité du cache d'historiques. Alignée sur la sémantique du
   /// cache de programme (15 min) : un historique de courses PASSÉES ne change
@@ -543,7 +539,8 @@ class ZoneTurfService {
         // Noms mémorisés lors d'un chargement précédent de CETTE course,
         // relus depuis l'INDEX DURABLE : ils survivent au reset du cache et au
         // redémarrage, et rendent le repli local réellement opérant.
-        nomsParNumero: await _nomsDeLaCourse('$dateStr/R$numR/C$numC'),
+        nomsParNumero: await CorpusPerformancesService.instance
+            .chargerComposition(dateStr: dateStr, numR: numR, numC: numC),
       );
 
       // Hippodrome RÉEL de la course analysée, nécessaire au critère
@@ -2121,11 +2118,9 @@ class ZoneTurfService {
     //   après.
     _cachePerfDetail.clear();
     _cachePerfDetailTime.clear();
-    // ⚠️ L'index des noms N'EST PAS vidé ici : il est DURABLE et c'est lui
-    // qui rend le corpus interrogeable après un reset. Seule la copie en
-    // mémoire est oubliée, elle sera relue au besoin.
-    _indexNoms = null;
-    _racineIndex = null;
+    // La composition n'est plus un état mémoire : elle est lue depuis SQLite
+    // (table permanente `observations`). Rien à invalider ici, donc rien ne
+    // peut être perdu par un reset.
     _hippodromeCourant = null;
     _distanceCourante = null;
     // ★ L1 : invalide toute capture L0 EN VOL (chargement réseau en cours au
@@ -2192,7 +2187,8 @@ class ZoneTurfService {
         // nouvelles connaissances PMU reste prioritaire.
         final noms = nomsParNumero.isNotEmpty
             ? nomsParNumero
-            : await _nomsDeLaCourse(cle);
+            : await CorpusPerformancesService.instance.chargerComposition(
+                dateStr: dateStr, numR: numR, numC: numC);
         final repli = await _histosDepuisCorpus(noms);
         _cachePerfDetail[cle] = repli;
         // TTL court conservé : la donnée PMU peut redevenir disponible, il faut
@@ -2302,7 +2298,14 @@ class ZoneTurfService {
       // Mémorisation des noms RÉELLEMENT vus : c'est ce qui rendra le repli
       // local possible plus tard, y compris après un redémarrage suivi d'une
       // coupure réseau (le corpus existerait sinon sans être interrogeable).
-      unawaited(_memoriserNomsCourse(cle, nomsDecouverts));
+      // Écriture STRUCTURÉE en base (table permanente `observations`), plus
+      // aucun fichier : la composition est reconstructible depuis SQLite.
+      unawaited(CorpusPerformancesService.instance.enregistrerComposition(
+        dateStr: dateStr,
+        numR: numR,
+        numC: numC,
+        nomsParNumero: nomsDecouverts,
+      ));
 
       // Écriture en tâche de fond, ASSUMÉE et documentée : elle ne bloque pas
       // l'analyse en cours d'une course. Si le processus est tué avant la fin
@@ -2325,7 +2328,8 @@ class ZoneTurfService {
       }
       final noms = nomsParNumero.isNotEmpty
           ? nomsParNumero
-          : await _nomsDeLaCourse(cle);
+          : await CorpusPerformancesService.instance.chargerComposition(
+              dateStr: dateStr, numR: numR, numC: numC);
       final repli = await _histosDepuisCorpus(noms);
       _cachePerfDetail[cle] = repli;
       _cachePerfDetailTime[cle] =
@@ -2338,67 +2342,6 @@ class ZoneTurfService {
   //  ENSEMBLE 2 — RACCORDEMENT PRODUCTEUR → CORPUS LOCAL
   // ══════════════════════════════════════════════════════════════════════
 
-
-  /// Charge l'index durable des noms, une seule fois par racine.
-  static Future<Map<String, Map<String, String>>> _chargerIndexNoms() async {
-    final dejaEnMemoire = _indexNoms;
-    final racine = PontElo.instance.racine;
-    if (dejaEnMemoire != null && _racineIndex == racine) return dejaEnMemoire;
-    final index = <String, Map<String, String>>{};
-    if (racine.isEmpty) {
-      _indexNoms = index;
-      _racineIndex = racine;
-      return index;
-    }
-    final f = File('$racine/cache/$_nomFichierIndexNoms');
-    try {
-      if (await f.exists()) {
-        final brut = jsonDecode(await f.readAsString());
-        if (brut is Map) {
-          brut.forEach((k, v) {
-            if (v is Map) {
-              index['$k'] = <String, String>{
-                for (final e in v.entries) '${e.key}': '${e.value}',
-              };
-            }
-          });
-        }
-      }
-    } catch (e) {
-      // Un index illisible ne doit pas casser l'analyse : on repart d'un
-      // index vide, qui sera reconstruit au prochain chargement PMU réussi.
-      if (kDebugMode) debugPrint('[ZoneTurf] index noms illisible : $e');
-    }
-    _indexNoms = index;
-    _racineIndex = racine;
-    return index;
-  }
-
-  /// Mémorise les noms vus pour une course, en mémoire ET sur disque.
-  static Future<void> _memoriserNomsCourse(
-    String cle,
-    Map<String, String> noms,
-  ) async {
-    if (noms.isEmpty) return;
-    final index = await _chargerIndexNoms();
-    index[cle] = noms;
-    final racine = PontElo.instance.racine;
-    if (racine.isEmpty) return;
-    try {
-      final f = File('$racine/cache/$_nomFichierIndexNoms');
-      await f.parent.create(recursive: true);
-      await f.writeAsString(jsonEncode(index));
-    } catch (e) {
-      // Écriture best-effort : l'index en mémoire suffit pour la session.
-      if (kDebugMode) debugPrint('[ZoneTurf] index noms non écrit : $e');
-    }
-  }
-
-  /// Noms connus pour une course, depuis l'index durable.
-  static Future<Map<String, String>> _nomsDeLaCourse(String cle) async {
-    final index = await _chargerIndexNoms();
-    return index[cle] ?? const <String, String>{};
-  }
 
   /// Convertit l'historique décodé en format de transport et l'enregistre.
   ///

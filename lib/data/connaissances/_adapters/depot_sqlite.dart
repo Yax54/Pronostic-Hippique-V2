@@ -22,7 +22,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint, visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 
 import '../_core/depot.dart';
@@ -391,63 +391,193 @@ class DepotSqlite implements DepotConnaissances {
       };
 
   @override
-  /// CHOIX D'ÉCRITURE, ET SON MOTIF.
+  /// Écriture d'une performance : ACTUALISATION CIBLÉE, jamais remplacement
+  /// intégral.
   ///
-  ///   Le `id` de [PerformanceStockee] est une clé déterministe **jamais nulle**
-  ///   (voir `clePerformance`). La contrainte
-  ///   `UNIQUE (id_cheval, date_perf, hippodrome, source)` ne peut PAS assurer
-  ///   l'idempotence à elle seule : `id_cheval` est nullable et, en SQLite,
-  ///   `NULL != NULL`. Deux insertions avec `id_cheval` nul ne seraient donc
-  ///   jamais vues comme doublons, et la table se remplirait de copies.
+  /// ═══════════════════════════════════════════════════════════════════════
+  ///  DÉFAUT RÉEL CORRIGÉ ICI, ET SA MESURE
   ///
-  ///   L'idempotence est donc portée par la CLÉ PRIMAIRE `id`. Effet secondaire
-  ///   VOULU : une correction officielle publiée par le PMU pour la même
-  ///   participation a le même `id` et ÉCRASE l'ancienne valeur, au lieu
-  ///   d'être silencieusement ignorée. `ConflictAlgorithm.ignore` aurait figé
-  ///   la première valeur pour toujours.
+  ///  La première version utilisait `ConflictAlgorithm.replace`. Mesure sur le
+  ///  moteur SQLite réel : une republication **partielle** (le PMU ne renvoie
+  ///  que la place corrigée, sans gains ni musique) a produit
+  ///  `{id:A, nom:X, place:1, gains:null, musique:null}` — les deux champs
+  ///  authentiques déjà connus ont été EFFACÉS.
   ///
-  ///   `REPLACE` ne crée pas de doublon : il remplace la ligne de même clé
-  ///   primaire. Aucune connaissance antérieure n'est perdue en dehors de la
-  ///   ligne corrigée, qui est précisément celle que la source officielle
-  ///   vient de corriger.
+  ///  Autre conséquence de `replace`, moins visible et plus grave : `REPLACE`
+  ///  exécute en réalité un DELETE puis un INSERT. Toute ligne d'une autre
+  ///  table qui référencerait cette performance par clé étrangère verrait sa
+  ///  référence supprimée ou mise à NULL selon la clause `ON DELETE`.
+  ///  Remplacer une ligne n'est donc jamais une opération neutre.
+  ///
+  ///  CONSÉQUENCE DES DEUX EXIGENCES DU MANDAT :
+  ///    • « une réponse PMU incomplète ne doit pas dégrader les connaissances
+  ///      déjà acquises » → on n'écrit QUE les champs réellement publiés ;
+  ///    • « ne pas perdre la traçabilité des anciennes valeurs » → l'ancienne
+  ///      valeur est conservée dans le journal avant d'être corrigée.
+  ///
+  ///  Aucune donnée n'est devinée : un champ non publié laisse la valeur
+  ///  existante intacte, il ne l'écrase pas par NULL.
+  /// ═══════════════════════════════════════════════════════════════════════
+  @override
   Future<bool> insererPerformance(PerformanceStockee performance) async {
-    final id = await _executeur.insert(
+    final maintenant = DateTime.now().toUtc().toIso8601String();
+    final ligne = _lignePerformance(performance, maintenant);
+
+    // Champs réellement publiés : tout sauf la clé et l'horodatage d'écriture.
+    final aEcrire = <String, Object?>{
+      for (final e in ligne.entries)
+        if (e.key != 'id' && e.key != 'cree_le' && e.value != null)
+          e.key: e.value,
+    };
+
+    final existante = await _executeur.query(
       'performances',
-      _lignePerformance(performance, DateTime.now().toUtc().toIso8601String()),
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'id = ?',
+      whereArgs: <Object?>[performance.id],
+      limit: 1,
     );
-    return id > 0;
+
+    if (existante.isEmpty) {
+      // Première connaissance de cette participation : insertion complète.
+      final id = await _executeur.insert(
+        'performances',
+        ligne,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      return id > 0;
+    }
+
+    final avant = existante.first;
+
+    // Y a-t-il réellement quelque chose à corriger ? Si tous les champs
+    // publiés sont déjà identiques, on n'écrit RIEN : c'est la détection du
+    // « changement utile » exigée par le mandat, et cela évite une écriture
+    // disque par rejeu.
+    var changeUtile = false;
+    aEcrire.forEach((k, v) {
+      if (avant[k] != v) changeUtile = true;
+    });
+    if (!changeUtile) return false;
+
+    // Traçabilité : on note les ANCIENNES valeurs des champs effectivement
+    // corrigés, avant de les remplacer. Une correction officielle cesse ainsi
+    // d'être une perte silencieuse d'information.
+    final anciennes = <String, Object?>{
+      for (final k in aEcrire.keys) k: avant[k],
+    };
+    try {
+      await journaliser(
+        operation: 'performance_corrigee',
+        etape: performance.id,
+        statut: 'correction_officielle',
+        detail: '{"avant":${_jsonSur(anciennes)},"apres":${_jsonSur(aEcrire)}}',
+      );
+    } catch (e) {
+      // Un journal indisponible ne doit pas empêcher l'enregistrement de la
+      // correction officielle : on continue, le défaut est tracé.
+      if (kDebugMode) debugPrint('[DepotSqlite] journal correction : $e');
+    }
+
+    await _executeur.update(
+      'performances',
+      aEcrire,
+      where: 'id = ?',
+      whereArgs: <Object?>[performance.id],
+    );
+    return true;
   }
+
+  /// Sérialise une petite map en JSON sans dépendre de `dart:convert` dans
+  /// l'adaptateur : les valeurs sont des scalaires SQLite.
+  static String _jsonSur(Map<String, Object?> m) {
+    final parties = m.entries.map((e) {
+      final v = e.value;
+      final val = v == null ? 'null' : (v is num ? '$v' : '"$v"');
+      return '"${e.key}":$val';
+    });
+    return '{${parties.join(",")}}';
+  }
+
+  /// Colonnes d'une performance qui peuvent être mises à jour.
+  ///
+  /// `id` est la clé (jamais mise à jour) et `cree_le` la trace d'écriture ;
+  /// tout le reste est une donnée publiée, donc susceptible d'être corrigée.
+  static const List<String> _colonnesPerfMaj = <String>[
+    'id_cheval',
+    'nom_cheval_brut',
+    'discipline',
+    'date_perf',
+    'hippodrome',
+    'place',
+    'reduction_km',
+    'gains',
+    'distance',
+    'etat_terrain',
+    'musique',
+    'source',
+    'charge_brute',
+  ];
 
   @override
   Future<int> insererPerformancesEnLot(
     List<PerformanceStockee> performances,
   ) async {
     if (performances.isEmpty) return 0;
+
     final maintenant = DateTime.now().toUtc().toIso8601String();
-    var crees = 0;
-    // Batch plutôt que boucle d'insert : sur un lot de plusieurs centaines de
-    // lignes, la différence est mesurable (§19). Le tout reste dans une
-    // transaction, donc une interruption ne laisse rien à moitié écrit.
-    // Etat AVANT : distingue « lignes reellement nouvelles » de « lignes
-    // reecrites a l'identique ». Un rejeu doit annoncer 0 nouvelle
-    // connaissance meme si REPLACE a reecrit les memes valeurs.
     final avant = await compterPerformances();
 
-    final batch = _base.batch();
-    for (final p in performances) {
-      batch.insert(
-        'performances',
-        _lignePerformance(p, maintenant),
-        // Voir insererPerformance : idempotence portee par la cle primaire,
-        // et REPLACE autorise une correction officielle authentique.
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    }
-    await batch.commit(noResult: true);
+    // ══════════════════════════════════════════════════════════════════════
+    //  UPSERT CIBLÉ, DANS UNE SEULE TRANSACTION
+    //
+    //  Deux défauts réels sont corrigés ici, tous deux MESURÉS :
+    //
+    //  ① `ConflictAlgorithm.replace` faisait un DELETE+INSERT : une
+    //     republication partielle effaçait les champs authentiques non
+    //     republiés (mesure : gains 12500 → null, musique effacée).
+    //
+    //  ② Une boucle d'écritures unitaires NON transactionnelles (version
+    //     intermédiaire) laissait la base dans un état PARTIEL observable
+    //     pendant l'écriture : mesure 69 → 9 lignes visibles en cours de lot.
+    //     Un lot doit être atomique.
+    //
+    //  `ON CONFLICT(id) DO UPDATE SET c = COALESCE(excluded.c, performances.c)`
+    //  donne exactement la sémantique exigée :
+    //    • la ligne n'est JAMAIS supprimée (aucun DELETE, donc aucune
+    //      référence orpheline possible) ;
+    //    • un champ NON publié (NULL côté source) laisse la valeur existante
+    //      intacte, au lieu de l'écraser ;
+    //    • un champ publié et différent est corrigé.
+    // ══════════════════════════════════════════════════════════════════════
+    final affectations = _colonnesPerfMaj
+        .map((c) => '$c = COALESCE(excluded.$c, performances.$c)')
+        .join(', ');
+
+    final placeholders =
+        List<String>.filled(_colonnesPerfMaj.length + 2, '?').join(', ');
+    final colonnes = <String>['id', ..._colonnesPerfMaj, 'cree_le'].join(', ');
+
+    final sql = 'INSERT INTO performances ($colonnes) '
+        'VALUES ($placeholders) '
+        'ON CONFLICT(id) DO UPDATE SET $affectations';
+
+    // `transaction(action)` du dépôt encapsule l'unité de travail ; le batch
+    // est celui de l'exécuteur courant, donc il participe à cette transaction.
+    await transaction(() async {
+      final batch = _executeur.batch();
+      for (final p in performances) {
+        final ligne = _lignePerformance(p, maintenant);
+        batch.rawInsert(sql, <Object?>[
+          ligne['id'],
+          for (final c in _colonnesPerfMaj) ligne[c],
+          ligne['cree_le'],
+        ]);
+      }
+      await batch.commit(noResult: true);
+    });
 
     final apres = await compterPerformances();
-    crees = apres - avant;
+    final crees = apres - avant;
     return crees < 0 ? 0 : crees;
   }
 
@@ -507,6 +637,63 @@ class DepotSqlite implements DepotConnaissances {
       limit: limite,
     );
     return rows.map(_performanceDepuisLigne).toList(growable: false);
+  }
+
+  @override
+  Future<bool> enregistrerObservation({
+    required String type,
+    String? idCourse,
+    String? idCheval,
+    required String contenu,
+    required String source,
+  }) async {
+    final maintenant = DateTime.now().toUtc().toIso8601String();
+    // Empreinte = identité de CONTENU. Réenregistrer la même composition
+    // n'ajoute donc pas de ligne : la contrainte UNIQUE(empreinte) et
+    // `ignore` rendent l'opération idempotente. On n'utilise PAS `replace`
+    // ici : une observation est un fait daté, on ne réécrit pas un fait.
+    final empreinte = empreinteValeur(<String, Object?>{
+      'type': type,
+      'id_course': idCourse,
+      'id_cheval': idCheval,
+      'contenu': contenu,
+    });
+    final id = await _executeur.insert(
+      'observations',
+      <String, Object?>{
+        'id': empreinte.substring(0, 32),
+        'type': type,
+        'id_course': idCourse,
+        'id_cheval': idCheval,
+        'horodatage': maintenant,
+        'contenu': contenu,
+        'empreinte': empreinte,
+        'source': source,
+        'cree_le': maintenant,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    return id > 0;
+  }
+
+  @override
+  Future<String?> chargerObservation({
+    required String type,
+    String? idCourse,
+  }) async {
+    final rows = await _executeur.query(
+      'observations',
+      columns: <String>['contenu'],
+      where: idCourse == null ? 'type = ?' : 'type = ? AND id_course = ?',
+      whereArgs: idCourse == null ? <Object?>[type] : <Object?>[type, idCourse],
+      // La plus récente d'abord : une composition republiée plus tard prime,
+      // sans que l'ancienne soit effacée (traçabilité conservée).
+      orderBy: 'horodatage DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final v = rows.first['contenu'];
+    return v is String ? v : null;
   }
 
   @override

@@ -27,6 +27,8 @@
 ///  ═══════════════════════════════════════════════════════════════════════════
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../_adapters/depot_sqlite.dart';
@@ -84,6 +86,99 @@ class CorpusPerformancesService {
       CorpusPerformancesService._();
 
   DepotSqlite? get _depot => PontElo.instance.depotPourSauvegarde;
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  COMPOSITION DES COURSES — connaissance PERMANENTE, indexée en SQLite
+  //
+  //  POURQUOI ICI, ET PAS DANS UN FICHIER DE CACHE.
+  //
+  //  Le repli sur le corpus a besoin, pour une course donnée, de la
+  //  correspondance « numéro PMU → nom publié ». Cette correspondance avait
+  //  d'abord été écrite dans `cache/index_noms_partants.json` : c'était une
+  //  ERREUR DE CONCEPTION. Un dossier `cache/` est par définition jetable ;
+  //  faire dépendre la consultation de connaissances permanentes de son
+  //  contenu contredit l'exigence « un nettoyage du cache ne doit jamais
+  //  rendre les connaissances inaccessibles ».
+  //
+  //  La composition est donc stockée dans la table `observations`, qui est
+  //  déclarée PERMANENTE (`kTablesPermanentes`) : aucune purge automatique,
+  //  sauvegardée et restaurée avec le reste, indexée sur `id_course`. Elle ne
+  //  dépend plus d'aucun fichier temporaire.
+  //
+  //  ⚠️ Ce qui est stocké n'est PAS une identité : c'est le nom tel que le PMU
+  //  l'a publié, rangé sous son numéro de participation. Deux chevaux
+  //  homonymes restent deux entrées distinctes ; aucune fusion n'est faite ni
+  //  suggérée (règle §7 et décision D-11).
+  // ══════════════════════════════════════════════════════════════════════
+
+  static const String kTypeObservationComposition = 'composition_course';
+
+  /// Id de course stable utilisé comme clé d'index (`AAAA-MM-JJ|R|C`).
+  static String cleCourse({
+    required String dateStr,
+    required int numR,
+    required int numC,
+  }) {
+    final iso = _dateIso(dateStr) ?? dateStr;
+    return '$iso|R$numR|C$numC';
+  }
+
+  /// Enregistre la composition telle que le PMU l'a publiée.
+  ///
+  /// [nomsParNumero] associe le numéro PMU au nom brut. Rien d'autre n'est
+  /// déduit. Idempotent : une empreinte identique n'écrit rien de nouveau.
+  Future<bool> enregistrerComposition({
+    required String dateStr,
+    required int numR,
+    required int numC,
+    required Map<String, String> nomsParNumero,
+  }) async {
+    final d = _depot;
+    if (d == null || nomsParNumero.isEmpty) return false;
+    try {
+      final idCourse = cleCourse(dateStr: dateStr, numR: numR, numC: numC);
+      final contenu = jsonEncode(nomsParNumero);
+      return await d.enregistrerObservation(
+        type: kTypeObservationComposition,
+        idCourse: idCourse,
+        contenu: contenu,
+        source: 'pmu_participants',
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[CorpusPerf] composition non écrite : $e');
+      return false;
+    }
+  }
+
+  /// Relit la composition publiée pour une course.
+  ///
+  /// Retourne une map vide si elle n'a jamais été enregistrée. Le résultat est
+  /// reconstruit depuis SQLite : il ne dépend d'aucun fichier de cache, donc il
+  /// survit à un nettoyage de `cache/` et à une réinstallation du cache mémoire.
+  Future<Map<String, String>> chargerComposition({
+    required String dateStr,
+    required int numR,
+    required int numC,
+  }) async {
+    final d = _depot;
+    if (d == null) return const <String, String>{};
+    try {
+      final idCourse = cleCourse(dateStr: dateStr, numR: numR, numC: numC);
+      final contenu = await d.chargerObservation(
+        type: kTypeObservationComposition,
+        idCourse: idCourse,
+      );
+      if (contenu == null || contenu.isEmpty) return const <String, String>{};
+      final brut = jsonDecode(contenu);
+      if (brut is! Map) return const <String, String>{};
+      return <String, String>{
+        for (final e in brut.entries) '${e.key}': '${e.value}',
+      };
+    } catch (e) {
+      if (kDebugMode) debugPrint('[CorpusPerf] composition illisible : $e');
+      return const <String, String>{};
+    }
+  }
 
   /// Nombre de performances connues localement.
   Future<int> compter() async {

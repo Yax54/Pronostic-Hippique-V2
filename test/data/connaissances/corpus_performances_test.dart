@@ -212,6 +212,115 @@ void main() {
     );
 
     test(
+      'une réponse PARTIELLE ne dégrade pas les champs déjà authentiques',
+      () async {
+        // DÉFAUT MESURÉ AVANT CORRECTION : `ConflictAlgorithm.replace` produisait
+        // {place:1, gains:null, musique:null} — les gains et la musique déjà
+        // connus étaient EFFACÉS par une republication qui ne les portait pas.
+        final depot = fixture.depot;
+        const idPerf = 'perf-partielle';
+        await depot.insererPerformance(const PerformanceStockee(
+          id: idPerf,
+          idCheval: 'ch_p',
+          nomChevalBrut: 'PARTIEL',
+          source: 'pmu_performances_detaillees',
+          datePerf: '2026-04-04',
+          hippodrome: 'CHANTILLY',
+          place: 5,
+          gains: 12500.0,
+          musique: '1p 3p 2p',
+        ));
+
+        // Republication PARTIELLE : le PMU ne renvoie que la place corrigée.
+        await depot.insererPerformance(const PerformanceStockee(
+          id: idPerf,
+          idCheval: 'ch_p',
+          nomChevalBrut: 'PARTIEL',
+          source: 'pmu_performances_detaillees',
+          datePerf: '2026-04-04',
+          hippodrome: 'CHANTILLY',
+          place: 1, // seule information publiée
+        ));
+
+        final lues = await depot.performancesDuCheval('ch_p');
+        expect(lues.length, 1);
+        expect(lues.first.place, 1, reason: 'la correction officielle prime');
+        expect(lues.first.gains, 12500.0,
+            reason: 'un champ non republié ne doit PAS être effacé');
+        expect(lues.first.musique, '1p 3p 2p',
+            reason: 'un champ non republié ne doit PAS être effacé');
+
+        // ignore: avoid_print
+        print('[MESURE] réponse partielle : place corrigée 5 → 1, '
+            'gains=${lues.first.gains}, musique="${lues.first.musique}" '
+            'CONSERVÉS');
+      },
+    );
+
+    test(
+      'la correction officielle laisse une TRACE des anciennes valeurs',
+      () async {
+        final depot = fixture.depot;
+        const idPerf = 'perf-tracee';
+        await depot.insererPerformance(const PerformanceStockee(
+          id: idPerf,
+          idCheval: 'ch_t',
+          nomChevalBrut: 'TRACE',
+          source: 'pmu_performances_detaillees',
+          datePerf: '2026-02-02',
+          hippodrome: 'CAGNES',
+          place: 7,
+        ));
+        await depot.insererPerformance(const PerformanceStockee(
+          id: idPerf,
+          idCheval: 'ch_t',
+          nomChevalBrut: 'TRACE',
+          source: 'pmu_performances_detaillees',
+          datePerf: '2026-02-02',
+          hippodrome: 'CAGNES',
+          place: 2,
+        ));
+
+        final journal = await depot.journalDeLOperation('performance_corrigee');
+        expect(journal, isNotEmpty,
+            reason: 'une correction doit être traçable, pas silencieuse');
+        final detail = '${journal.first['detail']}';
+        expect(detail, contains('"avant"'));
+        expect(detail, contains('"apres"'));
+
+        // ignore: avoid_print
+        print('[MESURE] traçabilité : ${journal.length} entrée(s) de journal, '
+            'detail=${detail.length} caractères');
+      },
+    );
+
+    test(
+      'un rejeu IDENTIQUE n\'écrit rien (détection du changement utile)',
+      () async {
+        final depot = fixture.depot;
+        const p = PerformanceStockee(
+          id: 'perf-identique',
+          idCheval: 'ch_i',
+          nomChevalBrut: 'IDENTIQUE',
+          source: 'pmu_performances_detaillees',
+          datePerf: '2026-01-01',
+          hippodrome: 'PAU',
+          place: 3,
+          gains: 900.0,
+        );
+        final premiere = await depot.insererPerformance(p);
+        final seconde = await depot.insererPerformance(p);
+        expect(premiere, isTrue);
+        expect(seconde, isFalse,
+            reason: 'aucun changement utile ⇒ aucune écriture');
+
+        // ignore: avoid_print
+        print('[MESURE] changement utile : 1re écriture=$premiere, '
+            'rejeu identique=$seconde (0 écriture)');
+      },
+    );
+
+    test(
       'une CORRECTION OFFICIELLE écrase l\'ancienne place (ignore l\'aurait figée)',
       () async {
         final depot = fixture.depot;

@@ -378,6 +378,29 @@ abstract class DepotConnaissances {
 
   Future<int> compterPerformances();
 
+  /// Enregistre une OBSERVATION permanente (composition d'une course, etc.).
+  ///
+  /// La table `observations` est déclarée permanente : aucune purge
+  /// automatique, sauvegarde et restauration incluses. C'est ce qui permet de
+  /// ne pas dépendre d'un fichier de cache pour consulter une connaissance.
+  ///
+  /// Idempotent sur l'empreinte du contenu : réenregistrer la même observation
+  /// n'ajoute ni doublon ni nouvelle ligne.
+  Future<bool> enregistrerObservation({
+    required String type,
+    String? idCourse,
+    String? idCheval,
+    required String contenu,
+    required String source,
+  });
+
+  /// Contenu de la dernière observation connue pour ([type], [idCourse]).
+  /// `null` si elle n'a jamais été enregistrée.
+  Future<String?> chargerObservation({
+    required String type,
+    String? idCourse,
+  });
+
   // ------------------------------------------------------------ rapports
   Future<bool> insererRapport(RapportStocke rapport);
   Future<void> ajouterCopieRapport(CopieRapport copie);
