@@ -1,22 +1,8 @@
 name: Build APK
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  POURQUOI CE DÉCLENCHEUR N'EST PLUS `push: branches: [main]`
-#
-#  Ce workflow compilait un APK à CHAQUE push sur `main`. Un push devenait donc
-#  une compilation Android, ce que la consigne de sauvegarde interdit
-#  explicitement (« ne déclenche aucun workflow de génération APK »).
-#
-#  Le déclenchement passe en MANUEL (`workflow_dispatch`) : la capacité de
-#  produire un APK est conservée à l'identique — aucune étape, aucune version
-#  d'outil, aucun artefact n'est retiré — mais elle ne se produit plus à
-#  l'occasion d'une sauvegarde de code.
-#
-#  ⚠️ Aucune autre modification : les étapes, leurs versions et l'artefact
-#     produit sont inchangés.
-# ═══════════════════════════════════════════════════════════════════════════
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
   build:
