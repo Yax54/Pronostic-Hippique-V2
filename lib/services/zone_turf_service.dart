@@ -4,10 +4,12 @@
 //     mobile Android. Ce service utilise maintenant l'API PMU directement.
 // ═══════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/zt_models.dart';
+import '../data/connaissances/_services/corpus_performances.dart';
 import 'arrivee_officielle_service.dart';
 import 'ia_pronostic_engine.dart';
 
@@ -53,6 +55,14 @@ class ZoneTurfService {
   //   collision entre deux courses de même numéro sur des dates différentes.
   static final Map<String, Map<String, _HistoCheval>> _cachePerfDetail = {};
   static final Map<String, DateTime> _cachePerfDetailTime = {};
+
+  /// Noms des partants réellement vus par course (`date/R/C`).
+  ///
+  /// Utile quand la réponse PMU d'une course est indisponible : le repli sur
+  /// le corpus local a besoin de noms pour interroger `performancesParNom`.
+  /// Sans cette mémoire, un redémarrage suivi d'une coupure réseau rendrait le
+  /// repli inopérant faute de noms — le corpus existerait sans être lisible.
+  static final Map<String, Map<String, String>> _nomsPartantsParCourse = {};
 
   /// Durée de validité du cache d'historiques. Alignée sur la sémantique du
   /// cache de programme (15 min) : un historique de courses PASSÉES ne change
@@ -512,7 +522,16 @@ class ZoneTurfService {
       //   ⚠️ DÉGRADATION MAÎTRISÉE : cette map peut être VIDE (réseau, délai,
       //      JSON). Dans ce cas les critères concernés restent neutres selon
       //      leur définition, sans qu'aucune valeur ne soit inventée.
-      final histos = await _chargerPerformancesDetaillees(dateStr, numR, numC);
+      final histos = await _chargerPerformancesDetaillees(
+        dateStr,
+        numR,
+        numC,
+        // Noms mémorisés lors d'un chargement précédent de CETTE course : ils
+        // permettent le repli local si le PMU est indisponible maintenant.
+        nomsParNumero:
+            _nomsPartantsParCourse['$dateStr/R$numR/C$numC'] ??
+                const <String, String>{},
+      );
 
       // Hippodrome RÉEL de la course analysée, nécessaire au critère
       // `hippodrome` (comparer le passé sur le MÊME hippodrome). Renseigné par
@@ -2089,6 +2108,7 @@ class ZoneTurfService {
     //   après.
     _cachePerfDetail.clear();
     _cachePerfDetailTime.clear();
+    _nomsPartantsParCourse.clear();
     _hippodromeCourant = null;
     _distanceCourante = null;
     // ★ L1 : invalide toute capture L0 EN VOL (chargement réseau en cours au
@@ -2116,8 +2136,12 @@ class ZoneTurfService {
   static Future<Map<String, _HistoCheval>> _chargerPerformancesDetaillees(
     String dateStr,
     int numR,
-    int numC,
-  ) async {
+    int numC, {
+    /// Noms des partants, utilisés UNIQUEMENT pour le repli sur le corpus
+    /// local quand le PMU ne répond rien. Vide ⇒ aucun repli possible, ce qui
+    /// est le comportement d'avant (map vide) et jamais une régression.
+    Map<String, String> nomsParNumero = const <String, String>{},
+  }) async {
     final cle = '$dateStr/R$numR/C$numC';
 
     // ① Cache : une course déjà téléchargée dans la fenêtre n'est pas rejouée.
@@ -2142,18 +2166,32 @@ class ZoneTurfService {
           .timeout(const Duration(seconds: 12));
 
       if (resp.statusCode != 200) {
-        // Réponse partielle / indisponible : on mémorise une map vide pour
-        // ne pas marteler le serveur sur la même course, mais avec un TTL
-        // court (5 min) afin de retenter si la donnée devient disponible.
-        _cachePerfDetail[cle] = const {};
+        // Réponse partielle / indisponible.
+        //
+        // ENSEMBLE 2 : on ne rend plus systématiquement une map vide alors que
+        // le corpus local peut contenir la connaissance déjà payée. Le repli
+        // est explicite et tracé ; il ne remplace JAMAIS une réponse
+        // authentique (il n'intervient que sur échec), donc l'acquisition de
+        // nouvelles connaissances PMU reste prioritaire.
+        final noms = nomsParNumero.isNotEmpty
+            ? nomsParNumero
+            : (_nomsPartantsParCourse[cle] ?? const <String, String>{});
+        final repli = await _histosDepuisCorpus(noms);
+        _cachePerfDetail[cle] = repli;
+        // TTL court conservé : la donnée PMU peut redevenir disponible, il faut
+        // retenter. Le repli local, lui, ne périme pas — il sera reconstruit.
         _cachePerfDetailTime[cle] =
             DateTime.now().subtract(_ttlPerfDetail - const Duration(minutes: 5));
-        return const {};
+        return repli;
       }
 
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final participants = data['participants'];
       final resultat = <String, _HistoCheval>{};
+      // Noms RÉELLEMENT rencontrés dans CETTE réponse. Une réponse partielle
+      // (certains partants manquants) ne doit pas faire chercher au corpus des
+      // chevaux qu'elle n'a pas nommés.
+      final nomsDecouverts = <String, String>{};
 
       if (participants is List) {
         for (final raw in participants) {
@@ -2212,23 +2250,185 @@ class ZoneTurfService {
             ));
           }
 
-          resultat[numPmu.toString()] =
-              _HistoCheval(nomCheval: nom, courses: courses);
+          final cleNum = numPmu.toString();
+          resultat[cleNum] = _HistoCheval(nomCheval: nom, courses: courses);
+          nomsDecouverts[cleNum] = nom;
         }
       }
+
+      // ══════════════════════════════════════════════════════════════════
+      //  ENSEMBLE 2 — PERSISTANCE DE CE QUE LE PMU VIENT DE PUBLIER
+      //
+      //  Avant ce raccordement, `resultat` vivait uniquement en mémoire avec
+      //  un TTL de 20 minutes : au redémarrage, toute la connaissance
+      //  historique était reperdue, et la même course était retéléchargée
+      //  indéfiniment. La table `performances` existait dans le schéma mais
+      //  n'était jamais écrite.
+      //
+      //  Ce qui est écrit : EXACTEMENT ce que le PMU a publié, sans
+      //  interprétation, sans calcul de critère, sans fusion d'entités.
+      //
+      //  ⚠️ CE QUI N'EST JAMAIS ÉCRIT :
+      //    • une place non publiée (0 chez le producteur) reste `null` en base,
+      //      elle ne devient pas « dernier » (§9) ;
+      //    • une distance absente reste `null`, elle ne devient pas 0 ;
+      //    • un état de terrain absent reste vide.
+      //
+      //  L'écriture est idempotente (clé primaire déterministe) : rejouer la
+      //  même course n'ajoute rien, mais une correction officielle du PMU est
+      //  bien enregistrée (REPLACE, pas IGNORE).
+      //
+      //  Elle est aussi NON BLOQUANTE : `enregistrer` absorbe toute erreur
+      //  SQLite et rend 0. Une panne du corpus ne casse donc jamais l'analyse
+      //  d'une course en cours.
+      // ══════════════════════════════════════════════════════════════════
+      // Mémorisation des noms RÉELLEMENT vus : c'est ce qui rendra le repli
+      // local possible plus tard, y compris après un redémarrage suivi d'une
+      // coupure réseau (le corpus existerait sinon sans être interrogeable).
+      _nomsPartantsParCourse[cle] = nomsDecouverts;
+
+      // Écriture en tâche de fond, ASSUMÉE et documentée : elle ne bloque pas
+      // l'analyse en cours d'une course. Si le processus est tué avant la fin
+      // de l'écriture, aucune connaissance n'est perdue DÉFINITIVEMENT —
+      // l'écriture est idempotente et sera rejouée au prochain chargement de
+      // cette course ; seul le moment de la persistance est différé.
+      unawaited(_persisterCorpus(dateStr, numR, numC, resultat));
 
       _cachePerfDetail[cle] = resultat;
       _cachePerfDetailTime[cle] = DateTime.now();
       return resultat;
     } catch (e) {
-      // Panne réseau, délai dépassé, JSON invalide : neutre explicite.
+      // Panne réseau, délai dépassé, JSON invalide.
+      //
+      // ENSEMBLE 2 : repli sur le CORPUS LOCAL avant de déclarer l'absence de
+      // connaissance. Conserver la connaissance déjà acquise est explicitement
+      // exigé ; la perdre parce que le réseau est coupé ne l'est pas.
       if (kDebugMode) {
         debugPrint('PMU perf-detail R${numR}C$numC indisponible: $e');
       }
-      _cachePerfDetail[cle] = const {};
+      final noms = nomsParNumero.isNotEmpty
+          ? nomsParNumero
+          : (_nomsPartantsParCourse[cle] ?? const <String, String>{});
+      final repli = await _histosDepuisCorpus(noms);
+      _cachePerfDetail[cle] = repli;
       _cachePerfDetailTime[cle] =
           DateTime.now().subtract(_ttlPerfDetail - const Duration(minutes: 5));
-      return const {};
+      return repli;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ENSEMBLE 2 — RACCORDEMENT PRODUCTEUR → CORPUS LOCAL
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Convertit l'historique décodé en format de transport et l'enregistre.
+  ///
+  /// Cette méthode ne fait AUCUN calcul : elle transporte. La conversion
+  /// « place 0 ⇒ null » est la seule transformation, et elle est requise par
+  /// le §9 : chez le producteur, `place` vaut 0 aussi bien pour « non publié »
+  /// que pour « non classé ». Écrire 0 en base reviendrait à affirmer une
+  /// dernière place qui n'a jamais été constatée.
+  static Future<void> _persisterCorpus(
+    String dateStr,
+    int numR,
+    int numC,
+    Map<String, _HistoCheval> histos,
+  ) async {
+    if (histos.isEmpty) return;
+    try {
+      final parNumero = <String, List<PerformancePmu>>{};
+      histos.forEach((numPmu, histo) {
+        if (histo.courses.isEmpty) return;
+        parNumero[numPmu] = <PerformancePmu>[
+          for (final c in histo.courses)
+            PerformancePmu(
+              nomCheval: histo.nomCheval,
+              // Date locale sans fuseau : c'est ce que le producteur a résolu,
+              // et le corpus ne prétend pas mieux savoir que lui.
+              dateIso: _isoDateDe(c.dateLocale),
+              hippodrome: c.hippodrome,
+              discipline: c.discipline,
+              distance: c.distance > 0 ? c.distance : null,
+              // 0 chez le producteur = « non publié / non classé » ⇒ null (§9).
+              place: c.place > 0 ? c.place : null,
+              reductionKm: null,
+              gains: null,
+              etatTerrain: c.etatTerrain,
+              chargeBrute: '{"origine":"performances-detaillees",'
+                  '"R":$numR,"C":$numC,"numPmu":$numPmu}',
+            ),
+        ];
+      });
+
+      await CorpusPerformancesService.instance.enregistrer(
+        dateStr: dateStr,
+        numR: numR,
+        numC: numC,
+        parNumero: parNumero,
+        source: 'pmu_performances_detaillees',
+      );
+    } catch (e) {
+      // Aucune panne du corpus ne doit remonter : l'analyse continue.
+      if (kDebugMode) debugPrint('[ZoneTurf] corpus non persisté : $e');
+    }
+  }
+
+  /// `AAAA-MM-JJ` à partir d'une date locale. `null` si la date est absurde.
+  static String? _isoDateDe(DateTime d) {
+    if (d.year < 1900 || d.year > 2200) return null;
+    final m = d.month.toString().padLeft(2, '0');
+    final j = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$m-$j';
+  }
+
+  /// Reconstruit un historique exploitable depuis le CORPUS LOCAL.
+  ///
+  /// Utilisée **uniquement** quand le PMU n'a rien pu fournir (réseau coupé,
+  /// délai dépassé, réponse illisible). Elle ne remplace jamais une réponse
+  /// authentique : la source PMU reste prioritaire, conformément à l'exigence
+  /// « la présence de connaissances locales ne doit pas empêcher l'acquisition
+  /// de nouvelles connaissances PMU ».
+  ///
+  /// Elle restitue `place` à 0 quand la base porte `null`, ce qui est la
+  /// convention du producteur pour « non publié » et laisse les critères dans
+  /// leur comportement neutre documenté — aucune victoire ni top 3 inventés.
+  static Future<Map<String, _HistoCheval>> _histosDepuisCorpus(
+    Map<String, String> nomParNumero,
+  ) async {
+    if (nomParNumero.isEmpty) return const <String, _HistoCheval>{};
+    try {
+      final resultat = <String, _HistoCheval>{};
+      for (final entree in nomParNumero.entries) {
+        final lignes = await CorpusPerformancesService.instance.charger(
+          nomBrut: entree.value,
+          limite: 30,
+        );
+        if (lignes.isEmpty) continue;
+        final courses = <_CoursePassee>[];
+        for (final l in lignes) {
+          final date = DateTime.tryParse(l.datePerf ?? '');
+          if (date == null) continue;
+          courses.add(_CoursePassee(
+            dateLocale: date,
+            hippodrome: l.hippodrome,
+            discipline: l.discipline.toUpperCase(),
+            distance: l.distanceMetres ?? 0,
+            etatTerrain: l.etatTerrain,
+            place: l.place ?? 0,
+          ));
+        }
+        if (courses.isEmpty) continue;
+        resultat[entree.key] =
+            _HistoCheval(nomCheval: entree.value, courses: courses);
+      }
+      if (resultat.isNotEmpty && kDebugMode) {
+        debugPrint('[ZoneTurf] historique reconstitué depuis le CORPUS LOCAL '
+            'pour ${resultat.length} cheval(aux) — PMU indisponible');
+      }
+      return resultat;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[ZoneTurf] repli corpus impossible : $e');
+      return const <String, _HistoCheval>{};
     }
   }
 
