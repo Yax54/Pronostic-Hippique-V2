@@ -20,6 +20,15 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 const _cheminSauvegarde =
     '/home/user/uploaded_files/backup_pronostic_hippique_13112026.json.txt';
 
+/// Exige la présence de la sauvegarde réelle. Aucun test n'est désactivé :
+/// l'absence de données rend le test NON CONCLUANT, donc en échec explicite.
+void exigereSauvegarde() {
+  if (!File(_cheminSauvegarde).existsSync()) {
+    fail('DONNEES REELLES ABSENTES : la sauvegarde 13/11/2026 est requise '
+        'pour verifier la recuperation du corpus. Test non concluant.');
+  }
+}
+
 void main() {
   late Directory dossierTest;
   late DepotSqlite depot;
@@ -63,37 +72,25 @@ void main() {
     });
 
     test('524 copies physiques sont récupérées', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       expect(analyse.copies, 524,
           reason: 'mesure de référence : 195 collection + 185 semaines + 144 mois');
     });
 
     test('les 3 sources sont distinguées et totalisées', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       expect(analyse.repartitionParSource['collection'], 195);
       expect(analyse.repartitionParSource['bilanSemaine'], 185);
       expect(analyse.repartitionParSource['bilanMois'], 144);
     });
 
     test('225 contenus bruts distincts', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       expect(analyse.contenusBruts, 225);
     });
 
     test('225 contenus distincts après normalisation du schéma', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       // ⚠️ MESURE CORRIGÉE. La valeur 219 annoncée dans le rapport V2 n'est
       //    PAS reproduite par la normalisation par complétion de schéma : le
       //    décompte mesuré est 225, identique au décompte strict. Autrement
@@ -108,10 +105,7 @@ void main() {
     });
 
     test('24 rapports n\'existent que dans les bilans', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       // Mesuré : 30 (et non 24). L'écart avec la référence de 24 n'est pas
       // expliqué à ce stade ; il est consigné, pas masqué.
       expect(analyse.rapportsUniquementEnBilan.length, 30,
@@ -120,18 +114,12 @@ void main() {
     });
 
     test('6 divergences de même date sont détectées', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       expect(analyse.divergencesMemeDate.length, 6);
     });
 
     test('les divergences de même date NE sont PAS toutes dues à fnum2', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       // Pour chaque date divergente, après retrait de fnum2 des deux côtés,
       // les contenus doivent être identiques. C'est la mesure qui a établi
       // que fnum2 était la seule cause — sans pour autant prouver qu'il est
@@ -163,10 +151,7 @@ void main() {
     });
 
     test('la date n\'est jamais un identifiant', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       // 219 contenus distincts pour un nombre de dates différent : c'est la
       // preuve que la date ne peut pas servir de clé.
       final dates = <String>{
@@ -178,10 +163,7 @@ void main() {
     });
 
     test('la sauvegarde source n\'est pas modifiée par la lecture', () {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       final fichier = File(_cheminSauvegarde);
       expect(fichier.lengthSync(), tailleFichierAvant);
       expect(empreinteValeur(fichier.readAsStringSync()), empreinteFichierAvant,
@@ -191,10 +173,7 @@ void main() {
 
   group('Enregistrement et conservation', () {
     test('le corpus réel est enregistré sans perte', () async {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       final racine = jsonDecode(File(_cheminSauvegarde).readAsStringSync());
       final copies = recup.extraire(<String, Object?>{
         for (final e in (racine as Map).entries) '${e.key}': e.value
@@ -214,10 +193,7 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('fnum2 survit intégralement à l\'enregistrement', () async {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       final racine = jsonDecode(File(_cheminSauvegarde).readAsStringSync());
       final copies = recup.extraire(<String, Object?>{
         for (final e in (racine as Map).entries) '${e.key}': e.value
@@ -229,10 +205,7 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('un rapport présent uniquement en bilan est bien récupéré', () async {
-      if (!File(_cheminSauvegarde).existsSync()) {
-        markTestSkipped('Sauvegarde réelle absente.');
-        return;
-      }
+      exigereSauvegarde();
       final racine = jsonDecode(File(_cheminSauvegarde).readAsStringSync());
       final copies = recup.extraire(<String, Object?>{
         for (final e in (racine as Map).entries) '${e.key}': e.value

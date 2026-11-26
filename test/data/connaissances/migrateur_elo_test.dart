@@ -208,11 +208,12 @@ void main() {
           break;
         }
       }
+      // Aucun test n'est désactivé : si la sauvegarde réelle est absente, le
+      // test DOIT échouer avec un message explicite. Un succès silencieux
+      // ferait croire à une vérification qui n'a pas eu lieu (§25).
       if (chemin == null) {
-        // La sauvegarde n'est pas présente dans cet environnement : on le dit
-        // explicitement plutôt que de simuler un succès.
-        markTestSkipped('Sauvegarde réelle absente de cet environnement.');
-        return;
+        fail('DONNEES REELLES ABSENTES : la sauvegarde 13/11/2026 est requise '
+            'pour verifier l\'identite des valeurs ELO. Test non concluant.');
       }
 
       // Empreinte du fichier AVANT lecture, pour prouver qu'il n'est pas modifié.
