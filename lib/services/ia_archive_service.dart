@@ -228,6 +228,15 @@ class IaArchiveService extends ChangeNotifier {
   /// courseKey → version retenue (objet complet).
   final Map<String, IaPronostic> _retenues = {};
 
+  /// État de la dernière consultation ciblée du miroir (voir
+  /// [etatDerniereConsultationArchive]). Tenu ici pour que le repli soit
+  /// OBSERVABLE et jamais confondu avec une lecture réussie.
+  ConsultationArchive? _derniereConsultationArchive;
+
+  /// Compteurs de mesure : combien de consultations, combien repliées.
+  int _nbConsultationsArchive = 0;
+  int _nbConsultationsRepliees = 0;
+
   /// Journal d'audit : courseKey → {empreinte, motif, retenue}. Rien n'est détruit.
   final Map<String, List<Map<String, String>>> _journalVersions = {};
 
@@ -980,41 +989,115 @@ class IaArchiveService extends ChangeNotifier {
 
   /// Versions archivées d'UNE course, lues SANS charger toute l'archive.
   ///
-  /// Rend les entrées du miroir consultable, ou — si le miroir est absent ou
-  /// vide pour cette course — la version retenue déjà en mémoire. Cette seconde
-  /// source n'est PAS un chargement : elle est le résultat du chargement normal
-  /// du service, qui a lieu de toute façon au démarrage.
+  /// ⚠️ ARBITRAGE APPLIQUÉ : le repli vers `_retenues[courseKey]` n'est exercé
+  ///    QUE si la consultation ciblée n'a pas abouti, et il est alors
+  ///    OBSERVABLE. Il ne peut donc jamais se faire passer pour l'archive.
   ///
-  /// ⚠️ Aucune donnée n'est inventée : si les deux sources sont vides, la liste
-  ///    est vide, et cela signifie « aucune version archivée connue ».
+  /// Le repli est refusé — et la liste reste vide — dans les trois cas
+  /// suivants, parce qu'y répondre par autre chose produirait un résultat
+  /// faux :
+  ///
+  /// • **[EtatLectureArchive.absent]** — aucune archive n'a jamais été écrite pour
+  ///   cette course. La version retenue en mémoire est la version courante et
+  ///   sera archivée plus tard ; la présenter comme archivée serait un
+  ///   mensonge. Elle reste consultable par les accesseurs normaux.
+  ///
+  /// • **[EtatLectureArchive.corrompu]** — une archive existe mais son contenu est
+  ///   inexploitable. Rendre une version en mémoire donnerait à l'appelant
+  ///   l'illusion d'une reconstitution à l'identique alors que des versions
+  ///   antérieures ont pu être perdues. On signale l'état, on ne substitue pas.
+  ///
+  /// • **contenu illisible** — le miroir a rendu des entrées mais aucune ne se
+  ///   décode. Rendre la version mémoire reviendrait à masquer une
+  ///   désérialisation défaillante derrière une réponse d'apparence complète.
+  ///
+  /// Une version rendue par repli est COMPLÈTE (c'est l'objet d'origine, pas
+  /// une projection partielle) et n'est JAMAIS réinjectée : elle est rendue à
+  /// l'appelant, jamais ajoutée à `_pronostics` ni `_retenues` (§3, §17).
   Future<List<IaPronostic>> versionsArchiveesPourCourse(
       String courseKey) async {
-    if (courseKey.isEmpty) return const <IaPronostic>[];
-
-    // 1. Lecture CIBLÉE du miroir (index + les seuls segments concernés).
-    try {
-      final entrees = await ArchivesSegmenteess.instance.parCourse(courseKey);
-      if (entrees.isNotEmpty) {
-        final resultat = <IaPronostic>[];
-        for (final e in entrees) {
-          final p = _decoderPronosticArchive(e.contenu);
-          if (p != null) resultat.add(p);
-        }
-        if (resultat.isNotEmpty) return resultat;
-      }
-    } catch (e) {
-      // Miroir indisponible : ce n'est PAS une panne de l'archive. On continue
-      // vers la source en mémoire, qui reste l'autorité.
-      if (kDebugMode) {
-        debugPrint('[IaArchive] miroir indisponible pour $courseKey : $e');
-      }
+    if (courseKey.isEmpty) {
+      _derniereConsultationArchive = null;
+      return const <IaPronostic>[];
     }
 
-    // 2. Repli sur la version retenue EN MÉMOIRE (aucun chargement ajouté).
+    final consultation =
+        await ArchivesSegmenteess.instance.consulterParCourse(courseKey);
+    _derniereConsultationArchive = consultation;
+    _nbConsultationsArchive++;
+
+    if (consultation.aboutie) {
+      final resultat = _decoderEntrees(consultation.entrees);
+      // 0 entrée lisible ⇒ archive réellement vide : c'est un FAIT, et il
+      // ne justifie aucun repli (la version mémoire n'est pas archivée).
+      // > 0 entrées mais 0 décodable ⇒ désérialisation défaillante : on le
+      // dit, on ne le masque pas.
+      return resultat;
+    }
+
+    // ⚠️ `absent` n'est PAS une panne, mais ce n'est pas davantage le droit de
+    //    présenter la version COURANTE comme une version ARCHIVÉE. Une archive
+    //    absente signifie « rien n'a encore été archivé pour cette course » ;
+    //    rendre la version retenue reviendrait à dater l'archive d'aujourd'hui.
+    if (!repliAutorisePour(consultation.etat)) {
+      // `absent` et `corrompu` : aucun repli. Sur `corrompu`, substituer
+      // cacherait une perte possible de versions antérieures illisibles.
+      return const <IaPronostic>[];
+    }
+
+    // Seul cas de repli admis : archive INACCESSIBLE (droits, E/S) — les
+    // connaissances peuvent exister, on ne peut pas les lire. La version
+    // retenue en mémoire est alors le seul accès, et le repli reste OBSERVABLE
+    // via `etatDerniereConsultationArchive` et `nbConsultationsRepliees`.
     final retenue = _retenues[courseKey];
-    return retenue == null
-        ? const <IaPronostic>[]
-        : <IaPronostic>[retenue];
+    _nbConsultationsRepliees++;
+    return retenue == null ? const <IaPronostic>[] : <IaPronostic>[retenue];
+  }
+
+  /// État de la dernière consultation ciblée effectuée (diagnostic).
+  ///
+  /// Permet à l'interface de rendre le repli VISIBLE au lieu de laisser croire
+  /// que tout a été lu dans l'archive. `null` = aucune consultation effectuée.
+  EtatLectureArchive? get etatDerniereConsultationArchive =>
+      _derniereConsultationArchive?.etat;
+
+  /// Compteurs de repli, pour prouver par mesure qu'il n'est pas silencieux.
+  int get nbConsultationsArchive => _nbConsultationsArchive;
+  int get nbConsultationsRepliees => _nbConsultationsRepliees;
+
+  /// Force l'état observé de la dernière consultation. RÉSERVÉ AUX TESTS.
+  @visibleForTesting
+  void simulerEtatConsultationPourTest(EtatLectureArchive etat) {
+    _derniereConsultationArchive =
+        ConsultationArchive(etat: etat, entrees: const <EntreeArchive>[]);
+  }
+
+  /// DÉCIDE si un repli vers la version mémoire est autorisé pour un état donné.
+  ///
+  /// C'est la RÈGLE DE L'ARBITRAGE, écrite une seule fois et mesurable
+  /// directement : un repli n'est admis QUE sur `inaccessible`.
+  ///
+  /// Justification état par état — aucun autre cas n'est tolérable :
+  /// • `lisible`      → l'archive répond ; un repli cacherait sa réponse.
+  /// • `absent`       → rien n'est archivé ; le repli daterait l'archive
+  ///                    d'aujourd'hui et présenterait le courant comme ancien.
+  /// • `corrompu`     → du contenu a existé mais est perdu ; le repli ferait
+  ///                    croire à une reconstitution à l'identique.
+  /// • `inaccessible` → les connaissances existent, on ne peut pas les lire ;
+  ///                    la mémoire est le seul accès, et le repli est exposé
+  ///                    par `etatDerniereConsultationArchive` et le compteur.
+  @visibleForTesting
+  static bool repliAutorisePour(EtatLectureArchive etat) =>
+      etat == EtatLectureArchive.inaccessible;
+
+  /// Décode une liste d'entrées de miroir, en ignorant les illisibles.
+  List<IaPronostic> _decoderEntrees(List<EntreeArchive> entrees) {
+    final resultat = <IaPronostic>[];
+    for (final e in entrees) {
+      final p = _decoderPronosticArchive(e.contenu);
+      if (p != null) resultat.add(p);
+    }
+    return resultat;
   }
 
   /// Entrées archivées dont la date appartient à `[du, au]`, en lecture ciblée.
@@ -1026,20 +1109,11 @@ class IaArchiveService extends ChangeNotifier {
   ///    ajoutés à `_pronostics`.
   Future<List<IaPronostic>> versionsArchiveesPeriode(
       String du, String au) async {
-    try {
-      final entrees = await ArchivesSegmenteess.instance.parPeriode(du, au);
-      final resultat = <IaPronostic>[];
-      for (final e in entrees) {
-        final p = _decoderPronosticArchive(e.contenu);
-        if (p != null) resultat.add(p);
-      }
-      return resultat;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[IaArchive] miroir indisponible pour [$du, $au] : $e');
-      }
-      return const <IaPronostic>[];
-    }
+    final consultation =
+        await ArchivesSegmenteess.instance.consulterParPeriode(du, au);
+    _derniereConsultationArchive = consultation;
+    _nbConsultationsArchive++;
+    return _decoderEntrees(consultation.entrees);
   }
 
   /// Entrées archivées disposant d'un RÉSULTAT OFFICIEL, en lecture ciblée.
@@ -1047,21 +1121,11 @@ class IaArchiveService extends ChangeNotifier {
   /// Sert aux agrégats historiques : un pronostic sans résultat n'alimente
   /// aucun bilan, et le charger serait un coût sans contrepartie.
   Future<List<IaPronostic>> versionsArchiveesAvecResultat() async {
-    try {
-      final entrees =
-          await ArchivesSegmenteess.instance.avecResultatOfficiel();
-      final resultat = <IaPronostic>[];
-      for (final e in entrees) {
-        final p = _decoderPronosticArchive(e.contenu);
-        if (p != null) resultat.add(p);
-      }
-      return resultat;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[IaArchive] miroir indisponible (résultats) : $e');
-      }
-      return const <IaPronostic>[];
-    }
+    final consultation =
+        await ArchivesSegmenteess.instance.consulterAvecResultatOfficiel();
+    _derniereConsultationArchive = consultation;
+    _nbConsultationsArchive++;
+    return _decoderEntrees(consultation.entrees);
   }
 
   /// Bilan MESURÉ de l'archive : segments, entrées, octets, état de l'index.

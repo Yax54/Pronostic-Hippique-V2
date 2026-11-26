@@ -161,6 +161,77 @@ class ResultatArchivage {
   bool get succes => erreur == null;
 }
 
+/// ═══════════════════════════════════════════════════════════════════════════
+///  ÉTAT D'UNE CONSULTATION D'ARCHIVE — QUATRE CAS DEUX À DEUX DISTINCTS
+///
+///  ⚠️ LE DÉFAUT QUE CET ENUM CORRIGE
+///
+///  Les trois consultations ciblées (`parCourse`, `parPeriode`,
+///  `avecResultatOfficiel`) enveloppaient leur corps dans un `try/catch` qui
+///  rendait une liste VIDE en cas d'exception. Un dossier d'archives effacé, un
+///  segment tronqué, un disque plein et une archive réellement vierge
+///  produisaient donc la MÊME réponse : `[]`.
+///
+///  L'appelant ne pouvait pas distinguer « il n'existe aucune connaissance »
+///  de « les connaissances existent mais je n'ai pas pu les lire ». La première
+///  est une information ; la seconde est une panne. Les confondre revient à
+///  annoncer une absence de connaissance là où il y a une perte d'accès —
+///  c'est exactement ce qu'un repli ne doit jamais masquer.
+///
+///  ⚠️ CE QUE CET ENUM NE FAIT PAS
+///
+///  Il ne dispense d'aucun contrôle : il nomme ce que le contrôle a constaté.
+///  Un `inaccessible` ou un `corrompu` n'autorise AUCUN repli silencieux ; il
+///  oblige l'appelant à choisir explicitement quoi faire.
+/// ═══════════════════════════════════════════════════════════════════════════
+enum EtatLectureArchive {
+  /// Le dossier d'archives existe et la lecture a abouti : `entrees` fait foi.
+  /// Zéro entrée signifie alors — et alors seulement — « aucune connaissance
+  /// archivée », ce qui est un fait, pas une panne.
+  lisible,
+
+  /// Le dossier n'existe pas encore : aucune archive n'a jamais été écrite.
+  /// Ce n'est PAS une panne, et ce n'est PAS une perte : c'est une installation
+  /// neuve. Ne jamais le présenter comme une anomalie.
+  absent,
+
+  /// Le dossier existe mais la lecture a échoué (droits, disque, E/S).
+  /// Les connaissances peuvent exister : on ne peut simplement pas les lire.
+  inaccessible,
+
+  /// Le dossier existe, les fichiers sont là, mais leur contenu est
+  /// inexploitable : index irrécupérable ET segments illisibles ou tronqués.
+  /// Distinct d'`inaccessible` : ici on a lu, et ce qu'on a lu est invalide.
+  corrompu,
+}
+
+/// Réponse d'une consultation ciblée : l'état constaté ET les entrées trouvées.
+///
+/// [entrees] n'est JAMAIS `null`. Il est vide pour `absent`, `inaccessible` et
+/// `corrompu` — mais [etat] interdit alors de lire ce vide comme une absence de
+/// connaissance.
+class ConsultationArchive {
+  const ConsultationArchive({
+    required this.etat,
+    required this.entrees,
+    this.details,
+  });
+
+  final EtatLectureArchive etat;
+  final List<EntreeArchive> entrees;
+  final String? details;
+
+  /// Vrai seulement si la consultation a réellement abouti. Un repli n'est
+  /// légitime que sur `false` — et il doit alors rester OBSERVABLE.
+  bool get aboutie => etat == EtatLectureArchive.lisible;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'etat': etat.name,
+        'entrees': entrees.length,
+        'details': details,
+      };
+}
+
 /// Statistiques de consultation, mesurées et non estimées.
 class BilanArchives {
   const BilanArchives({
@@ -438,26 +509,33 @@ class ArchivesSegmenteess {
   }
 
   /// Consultation CIBLÉE : une course précise, sans ouvrir les autres segments.
-  Future<List<EntreeArchive>> parCourse(String cleCourse) async {
-    try {
-      final dossier = await _dossierArchives();
-      final index = await _chargerIndex(dossier);
+  Future<List<EntreeArchive>> parCourse(String cleCourse) async =>
+      (await consulterParCourse(cleCourse)).entrees;
+
+  /// Consultation CIBLÉE **avec état constaté** — voir [EtatLectureArchive].
+  ///
+  /// C'est la forme à utiliser dès qu'un appelant doit décider d'un repli : le
+  /// repli n'est légitime que sur un état non `lisible`, et il doit rester
+  /// visible. La forme `parCourse` (liste seule) subsiste pour les appelants
+  /// qui n'ont rien à décider, mais elle ne permet PAS de distinguer un vide
+  /// réel d'une panne — c'est pourquoi elle délègue ici.
+  Future<ConsultationArchive> consulterParCourse(String cleCourse) async {
+    return _consulter('course "$cleCourse"', (index) {
       final cibles = <Map>[];
       for (final e in (index['entrees'] as List? ?? const [])) {
         if (e is Map && '${e['c']}' == cleCourse) cibles.add(e);
       }
-      return _chargerEntrees(dossier, cibles);
-    } catch (e) {
-      if (kDebugMode) debugPrint('[Archives] parCourse échoué : $e');
-      return const <EntreeArchive>[];
-    }
+      return cibles;
+    });
   }
 
   /// Consultation CIBLÉE : une période `[du, au]` en ISO, bornes incluses.
-  Future<List<EntreeArchive>> parPeriode(String du, String au) async {
-    try {
-      final dossier = await _dossierArchives();
-      final index = await _chargerIndex(dossier);
+  Future<List<EntreeArchive>> parPeriode(String du, String au) async =>
+      (await consulterParPeriode(du, au)).entrees;
+
+  /// Consultation CIBLÉE par période, **avec état constaté**.
+  Future<ConsultationArchive> consulterParPeriode(String du, String au) async {
+    return _consulter('période [$du, $au]', (index) {
       final cibles = <Map>[];
       for (final e in (index['entrees'] as List? ?? const [])) {
         if (e is! Map) continue;
@@ -465,32 +543,96 @@ class ArchivesSegmenteess {
         if (d.isEmpty) continue;
         if (d.compareTo(du) >= 0 && d.compareTo(au) <= 0) cibles.add(e);
       }
-      return _chargerEntrees(dossier, cibles);
-    } catch (e) {
-      if (kDebugMode) debugPrint('[Archives] parPeriode échoué : $e');
-      return const <EntreeArchive>[];
-    }
+      return cibles;
+    });
   }
 
   /// Consultation CIBLÉE : uniquement les versions portant un résultat officiel
   /// (donc permanentes au sens de la politique `pronostics_archives`).
-  Future<List<EntreeArchive>> avecResultatOfficiel() async {
-    try {
-      final dossier = await _dossierArchives();
-      final index = await _chargerIndex(dossier);
+  Future<List<EntreeArchive>> avecResultatOfficiel() async =>
+      (await consulterAvecResultatOfficiel()).entrees;
+
+  /// Consultation des versions à résultat officiel, **avec état constaté**.
+  Future<ConsultationArchive> consulterAvecResultatOfficiel() async {
+    return _consulter('résultat officiel', (index) {
       final cibles = <Map>[];
       for (final e in (index['entrees'] as List? ?? const [])) {
-        if (e is Map &&
-            e['r'] != null &&
-            '${e['r']}'.trim().isNotEmpty) {
+        if (e is Map && e['r'] != null && '${e['r']}'.trim().isNotEmpty) {
           cibles.add(e);
         }
       }
-      return _chargerEntrees(dossier, cibles);
+      return cibles;
+    });
+  }
+
+  /// Corps commun des consultations ciblées : CONSTATE l'état, ne l'avale pas.
+  ///
+  /// ⚠️ La distinction `absent` / `inaccessible` se fait sur l'existence du
+  ///    dossier, AVANT toute lecture : un dossier inexistant est une
+  ///    installation neuve, jamais une panne.
+  ///
+  /// ⚠️ Un index irrécupérable n'est PAS un état `corrompu` à lui seul : les
+  ///    segments restent la référence, et l'index se reconstruit. On ne déclare
+  ///    `corrompu` que si la relecture après reconstruction échoue aussi.
+  Future<ConsultationArchive> _consulter(
+    String cible,
+    List<Map> Function(Map<String, Object?> index) selection,
+  ) async {
+    final String dossier;
+    try {
+      dossier = await _dossierArchives();
     } catch (e) {
-      if (kDebugMode) debugPrint('[Archives] avecResultatOfficiel échoué : $e');
-      return const <EntreeArchive>[];
+      return ConsultationArchive(
+        etat: EtatLectureArchive.inaccessible,
+        entrees: const <EntreeArchive>[],
+        details: 'racine d\'archives indéterminable : $e',
+      );
     }
+
+    // 1. Le dossier existe-t-il ? Sinon : installation neuve, pas une panne.
+    bool existe;
+    try {
+      existe = await Directory(dossier).exists();
+    } catch (e) {
+      return ConsultationArchive(
+        etat: EtatLectureArchive.inaccessible,
+        entrees: const <EntreeArchive>[],
+        details: 'existence du dossier non vérifiable : $e',
+      );
+    }
+    if (!existe) {
+      return ConsultationArchive(
+        etat: EtatLectureArchive.absent,
+        entrees: const <EntreeArchive>[],
+        details: 'aucun dossier d\'archives ($cible)',
+      );
+    }
+
+    // 2. L'index (reconstruit s'il manque) puis la sélection.
+    Map<String, Object?> index;
+    try {
+      index = await _chargerIndex(dossier);
+    } catch (e) {
+      return ConsultationArchive(
+        etat: EtatLectureArchive.corrompu,
+        entrees: const <EntreeArchive>[],
+        details: 'index irrécupérable ($cible) : $e',
+      );
+    }
+
+    // 3. Lecture des seuls segments concernés.
+    final List<EntreeArchive> entrees;
+    try {
+      entrees = await _chargerEntrees(dossier, selection(index));
+    } catch (e) {
+      return ConsultationArchive(
+        etat: EtatLectureArchive.inaccessible,
+        entrees: const <EntreeArchive>[],
+        details: 'segments illisibles ($cible) : $e',
+      );
+    }
+
+    return ConsultationArchive(etat: EtatLectureArchive.lisible, entrees: entrees);
   }
 
   /// Charge les entrées désignées par l'index, en GROUPANT par segment pour
