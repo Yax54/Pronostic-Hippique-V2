@@ -144,6 +144,15 @@ import 'ia_user_prefs_service.dart'; // ★ B5c
 import 'data_refresh_service.dart'; // ★ B5c-RDR-01-b
 import 'zone_turf_service.dart'; // ★ B5c-RDR-01-b
 
+// ★ ENSEMBLE 4 — nouveau système de sauvegarde/restauration.
+import '../data/connaissances/_adapters/pont_elo.dart';
+import '../data/connaissances/_adapters/depot_sqlite.dart';
+import '../data/connaissances/_core/depot.dart';
+import '../data/connaissances/_migration/migrateur_elo.dart';
+import '../data/connaissances/_migration/recuperateur_rapports.dart';
+import '../data/connaissances/_sauvegarde/format_sauvegarde.dart';
+import '../data/connaissances/_sauvegarde/transaction_globale.dart';
+
 class BackupService {
   BackupService._();
   static final instance = BackupService._();
@@ -1225,6 +1234,172 @@ class BackupService {
   }
 
   // ════════════════════════════════════════════════════════════════════════
+  //  ★ ENSEMBLE 4 — EXPORT AU FORMAT `.ptg` (multi-blocs, vérifiable)
+  //
+  //  Le format historique reste produit par [exporterDonnees] : il est conservé
+  //  parce que les anciennes sauvegardes doivent rester lisibles, et parce que
+  //  les tests de non-régression le verrouillent. Ce nouveau chemin s'ajoute.
+  //
+  //  Ce qu'il apporte, et que le JSON unique ne peut pas apporter :
+  //   • manifeste lisible sans décompresser aucun bloc ;
+  //   • empreinte par bloc ET empreinte globale couvrant l'inventaire ;
+  //   • provenance et nombre d'enregistrements par bloc ;
+  //   • exclusions justifiées ;
+  //   • écriture atomique (fichier temporaire + vérification de relecture +
+  //     renommage) : une interruption ne détruit pas la sauvegarde précédente.
+  //
+  //  ⚠️ EXHAUSTIVITÉ. Le bloc `prefs_complet` couvre **toutes** les clés
+  //  SharedPreferences réellement présentes, et non une liste recopiée à la
+  //  main. C'est la seule façon de garantir qu'une clé ajoutée plus tard soit
+  //  sauvegardée sans qu'on ait à y penser — et donc de ne pas reproduire le
+  //  défaut de la liste historique, qui n'a cessé de dériver.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /// Produit une sauvegarde au format `.ptg`, couvrant tous les supports.
+  ///
+  /// Prend un instantané cohérent : SharedPreferences **intégralement**, SQLite
+  /// via `VACUUM INTO` (sans chargement en RAM), et les fichiers permanents de
+  /// `archives/` et `config/`.
+  ///
+  /// Retourne un [ExportResult] dont `fileName` porte l'extension `.ptg`. En cas
+  /// d'indisponibilité du dépôt structuré (par exemple sur une installation qui
+  /// n'a jamais ouvert la base), le bloc SQLite est déclaré en EXCLUSION
+  /// JUSTIFIÉE au lieu d'être omis en silence : le manifeste dit alors
+  /// exactement ce qui manque.
+  Future<ExportResult> exporterDonneesStructurees() async {
+    try {
+      final now = DateTime.now();
+      final fileName = nomFichierBackup(now).replaceFirst('.json', '.ptg');
+      final tmpDir = await getTemporaryDirectory();
+      final chemin = '${tmpDir.path}/$fileName';
+
+      const format = FormatSauvegarde();
+      final prefs = await SharedPreferences.getInstance();
+      const magasin = MagasinPrefs();
+
+      // ── Bloc 1 : SharedPreferences INTÉGRAL ──────────────────────────────
+      // Aucun filtre : une clé écrite par un module oublié doit être
+      // sauvegardée. Les seules exclusions admises sont les caches
+      // reconstructibles, et elles sont déclarées au manifeste.
+      final prefsComplet = magasin.capturer(prefs);
+
+      // ── Bloc 2 : SQLite, si le dépôt est ouvert ──────────────────────────
+      final blocs = <Map<String, Object?>>[
+        FormatSauvegarde.bloc(
+          nom: 'prefs_complet',
+          categorie: 'parametres_et_memoire',
+          nature: NatureBloc.permanente,
+          contenu: prefsComplet,
+          provenance: 'SharedPreferences intégral',
+          nbEnregistrements: prefsComplet.length,
+        ),
+      ];
+      final exclusions = <Map<String, String>>[];
+      final avertissements = <String>[];
+
+      final depot = PontElo.instance.depotPourSauvegarde;
+      if (depot != null) {
+        final sqliteDir = await getTemporaryDirectory();
+        final cheminDb = '${sqliteDir.path}/_snap_'
+            '${now.millisecondsSinceEpoch}.db';
+        try {
+          final inventaire = await depot.instantaneVers(cheminDb);
+          final octets = await File(cheminDb).readAsBytes();
+          blocs.add(FormatSauvegarde.bloc(
+            nom: 'sqlite_complet',
+            categorie: 'base_structuree',
+            nature: NatureBloc.permanente,
+            contenu: <String, Object?>{
+              'base64': base64Encode(octets),
+              'inventaire': inventaire,
+              'octets': octets.length,
+            },
+            provenance: 'VACUUM INTO (copie cohérente produit par le moteur)',
+            nbEnregistrements: inventaire.values.fold<int>(0, (s, n) => s + n),
+          ));
+        } finally {
+          final f = File(cheminDb);
+          if (await f.exists()) await f.delete();
+        }
+      } else {
+        // Exclusion DÉCLARÉE, pas omission silencieuse. Le manifeste porte la
+        // raison, et la restauration saura que ce bloc n'existait pas.
+        exclusions.add(<String, String>{
+          'bloc': 'sqlite_complet',
+          'justification': 'dépôt structuré non ouvert à cet instant : aucune '
+              'base à copier. Les données restent intégralement dans '
+              'prefs_complet.',
+        });
+      }
+
+      // ── Bloc 3 : fichiers permanents (archives/ et config/) ──────────────
+      final racine = PontElo.instance.racine;
+      if (racine.isNotEmpty) {
+        final fichiers = <String, Object?>{};
+        for (final sousDossier in <String>['archives', 'config']) {
+          final dir = Directory('$racine/$sousDossier');
+          if (!await dir.exists()) continue;
+          await for (final e in dir.list(recursive: true)) {
+            if (e is! File) continue;
+            final relatif =
+                e.path.substring(racine.length + 1).replaceAll('\\', '/');
+            final octets = await e.readAsBytes();
+            fichiers[relatif] = <String, Object?>{
+              'base64': base64Encode(octets),
+              'octets': octets.length,
+            };
+          }
+        }
+        blocs.add(FormatSauvegarde.bloc(
+          nom: 'fichiers_permanents',
+          categorie: 'fichiers',
+          nature: NatureBloc.permanente,
+          contenu: fichiers,
+          provenance: 'archives/ et config/',
+          nbEnregistrements: fichiers.length,
+        ));
+      }
+
+      final conteneur = format.construire(
+        blocs: blocs,
+        appVersion: _backupVersion,
+        exclusions: exclusions,
+      );
+      await format.ecrireAtomiquement(conteneur, chemin);
+
+      // Relecture obligatoire : une sauvegarde dont on n'a pas vérifié
+      // l'intégrité ne doit pas être annoncée comme réussie.
+      final verif = format.verifier(await File(chemin).readAsString());
+      if (!verif.utilisable) {
+        return ExportResult(
+          succes: false,
+          erreur: 'sauvegarde produite mais non vérifiable : '
+              '${verif.messages.join(" ; ")}',
+        );
+      }
+
+      final taille = await File(chemin).length();
+      if (kDebugMode) {
+        debugPrint('[Backup] Export .ptg OK -> $chemin '
+            '(${(taille / 1024).toStringAsFixed(1)} Ko, '
+            '${blocs.length} bloc(s), empreinte '
+            '${verif.manifeste!.empreinteGlobale.substring(0, 12)}…, '
+            'ratio ${format.tauxCompression(verif.manifeste!).toStringAsFixed(2)}x)');
+      }
+      return ExportResult(
+        succes: true,
+        filePath: chemin,
+        fileName: fileName,
+        tailleOctets: taille,
+        avertissements: avertissements,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Backup] Export .ptg ERREUR : $e');
+      return ExportResult(succes: false, erreur: e.toString());
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   //  EXPORT — Genere le fichier JSON de sauvegarde
   // ════════════════════════════════════════════════════════════════════════
 
@@ -1434,7 +1609,10 @@ class BackupService {
     try {
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['json'],
+        // ★ ENSEMBLE 4 : `.ptg` (nouveau conteneur vérifiable) accepté à côté
+        // de `.json` (format historique). Aucun ancien fichier ne devient
+        // illisible : `.json` est toujours listé et toujours pris en charge.
+        allowedExtensions: ['json', 'ptg'],
         withData: true,
       );
 
@@ -1443,21 +1621,367 @@ class BackupService {
       }
 
       final file = picked.files.first;
-      String jsonStr;
+      String contenu;
 
       if (file.bytes != null) {
-        jsonStr = utf8.decode(file.bytes!);
+        contenu = utf8.decode(file.bytes!);
       } else if (file.path != null) {
-        jsonStr = await File(file.path!).readAsString();
+        contenu = await File(file.path!).readAsString();
       } else {
         return ImportResult(
             succes: false, erreur: 'Impossible de lire le fichier');
       }
 
-      return await _restaurerDepuisJson(jsonStr);
+      // Le FORMAT est déterminé par le CONTENU, pas par l'extension : un
+      // fichier renommé à la main doit quand même être traité correctement.
+      const format = FormatSauvegarde();
+      final verif = format.verifier(contenu);
+      if (verif.formatReconnu && !verif.legacy) {
+        return await _restaurerDepuisConteneur(verif, contenu);
+      }
+      return await _restaurerDepuisJson(contenu);
     } catch (e) {
       if (kDebugMode) debugPrint('[Backup] Import ERREUR : $e');
       return ImportResult(succes: false, erreur: e.toString());
+    }
+  }
+
+  /// Point d'entrée de restauration à partir d'un CONTENU déjà lu.
+  ///
+  /// Existe pour que les tests et un futur import par lien puissent exercer
+  /// EXACTEMENT le même aiguillage que [importerDepuisFichier] (format déterminé
+  /// par le contenu, `.ptg` ou JSON historique), sans passer par le sélecteur de
+  /// fichiers natif — indisponible en test. Aucune logique n'est dupliquée ici :
+  /// la méthode appelle les mêmes chemins privés que la production.
+  Future<ImportResult> restaurerDepuisContenu(String contenu) async {
+    const format = FormatSauvegarde();
+    final verif = format.verifier(contenu);
+    if (verif.formatReconnu && !verif.legacy) {
+      return _restaurerDepuisConteneur(verif, contenu);
+    }
+    if (!verif.lisible) {
+      return ImportResult(
+        succes: false,
+        erreur: 'contenu illisible : ${verif.messages.join(" ; ")}',
+      );
+    }
+    return _restaurerDepuisJson(contenu);
+  }
+
+  @visibleForTesting
+  Future<ImportResult> restaurerDepuisContenuPourTest(String contenu) =>
+      restaurerDepuisContenu(contenu);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  ★ ENSEMBLE 4 — AVANCÉE DU MAGASIN STRUCTURÉ APRÈS RESTAURATION JSON
+  //
+  //  Pourquoi cette méthode existe :
+  //
+  //  La restauration JSON écrit dans SharedPreferences puis s'arrête là. Le
+  //  dépôt SQLite reste alors figé sur l'état d'avant la restauration. Deux
+  //  magasins, deux états : exactement la situation que §4 interdit
+  //  (« ne laisse pas subsister deux magasins concurrents susceptibles de
+  //  produire des états divergents »).
+  //
+  //  Cette méthode reporte l'état restauré vers le dépôt, en réutilisant le
+  //  migreur ELO déjà validé (1 934 et 9 001 clés, zéro écart mesuré). Elle ne
+  //  recalcule AUCUN rating : elle recopie, et vérifie.
+  //
+  //  ⚠️ ELLE NE LÈVE JAMAIS. Un échec de report est journalisé et compté : la
+  //  restauration SharedPreferences, elle, a bien eu lieu, et prétendre le
+  //  contraire tromperait l'utilisateur. L'écart est ensuite visible dans le
+  //  journal du dépôt.
+  // ════════════════════════════════════════════════════════════════════════
+
+  Future<void> _avancerMagasinStructure(SharedPreferences prefs) async {
+    final depot = PontElo.instance.depotPourSauvegarde;
+    if (depot == null) {
+      if (kDebugMode) {
+        debugPrint('[Backup] dépôt structuré non ouvert : report sauté '
+            '(SharedPreferences reste la référence, aucune donnée perdue)');
+      }
+      return;
+    }
+    try {
+      // ── 1. ELO : report des ratings restaurés ──────────────────────────
+      final ratings = EloService.instance.exporterPourBackup();
+      if (ratings.isNotEmpty) {
+        final resultat = await const MigrateurElo().migrer(
+          depot,
+          ratings,
+          operation: 'report_apres_restauration_json',
+        );
+        if (kDebugMode) {
+          debugPrint('[Backup] ELO reporté au dépôt : '
+              '${resultat.clesEcrites} clé(s), '
+              'écarts=${resultat.ecartsValeur}, conforme=${resultat.conforme}');
+        }
+        if (!resultat.conforme) {
+          // Un écart de valeur après report signale un défaut de transport.
+          // Il est journalisé comme conflit, jamais corrigé d'office.
+          await depot.enregistrerConflit(
+            categorie: 'report_elo',
+            description: 'Report ELO non conforme après restauration JSON : '
+                '${resultat.ecartsValeur} écart(s) de valeur, '
+                '${resultat.ecartsChamp} écart(s) de champ',
+            valeurLocale: '${resultat.clesLues}',
+            valeurDistante: '${resultat.clesEcrites}',
+          );
+        }
+      }
+
+      // ── 2. Rapports et bilans : reconstruction du corpus ───────────────
+      //     `enregistrer` est idempotent (empreinte de contenu) : rejouer ne
+      //     duplique rien. Aucune donnée historique n'est supprimée.
+      const recup = RecuperateurRapports();
+      final racine = <String, Object?>{
+        for (final cle in prefs.getKeys()) cle: prefs.get(cle),
+      };
+      final copies = recup.extraire(racine);
+      await recup.enregistrer(depot, copies);
+      final avant = await depot.compterRapports();
+      if (kDebugMode) {
+        debugPrint('[Backup] corpus reporté : ${copies.length} copie(s), '
+            '$avant contenu(s) distinct(s) en base');
+      }
+
+      await depot.journaliser(
+        operation: 'report_apres_restauration_json',
+        etape: 'application',
+        statut: 'termine',
+        detail: 'elo=${ratings.length} copies=${copies.length} '
+            'rapports=$avant',
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Backup] report au dépôt ERREUR : $e');
+      try {
+        await depot.journaliser(
+          operation: 'report_apres_restauration_json',
+          etape: 'application',
+          statut: 'echec',
+          detail: '$e',
+        );
+      } catch (_) {
+        // Le journal lui-même peut échouer si le dépôt s'est fermé : ce n'est
+        // pas une raison de faire échouer la restauration déjà appliquée.
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  ★ ENSEMBLE 4 — RESTAURATION TRANSACTIONNELLE (tous les supports)
+  //
+  //  Garanties effectives, et leurs limites réelles :
+  //
+  //  1. **Vérification AVANT toute écriture.** Un conteneur dont un bloc est
+  //     altéré est refusé, sans qu'aucune donnée ne soit touchée.
+  //  2. **Instantané global vérifié.** Les quatre supports sont capturés dans
+  //     un `.ptg` avant la première écriture. Si l'instantané échoue (disque
+  //     plein, permission), la restauration est refusée : c'est là que
+  //     l'espace insuffisant devient inoffensif.
+  //  3. **Retour arrière automatique.** Si une étape échoue après le début des
+  //     écritures, `TransactionGlobale.annuler()` rétablit l'état antérieur des
+  //     quatre supports. Une transaction SQLite seule ne protégerait pas les
+  //     SharedPreferences ni les fichiers — c'est précisément pourquoi ce
+  //     mécanisme existe séparément.
+  //  4. **Aucun double apprentissage.** Les poids, seuils, rapports et journal
+  //     sont ÉCRITS tels quels, jamais recalculés. Aucun `enregistrerPronostics`
+  //     ni calcul de gradient n'est déclenché ici.
+  //  5. **Conflits ELO explicites.** Aucun rating divergent n'est remplacé
+  //     silencieusement : chaque divergence produit une ligne de conflit (D-24).
+  // ════════════════════════════════════════════════════════════════════════
+
+  Future<ImportResult> _restaurerDepuisConteneur(
+    VerificationSauvegarde verif,
+    String contenu,
+  ) async {
+    const format = FormatSauvegarde();
+
+    if (!verif.utilisable) {
+      return ImportResult(
+        succes: false,
+        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
+        erreur: verif.blocsAlteres.isNotEmpty
+            ? 'sauvegarde altérée : ${verif.blocsAlteres.join(", ")}'
+            : 'sauvegarde inutilisable',
+      );
+    }
+
+    final depot = PontElo.instance.depotPourSauvegarde;
+    final racine = PontElo.instance.racine;
+    if (depot == null || racine.isEmpty) {
+      // Sans dépôt structuré, la restauration concernerait SharedPreferences
+      // seule. Elle est refusée plutôt que d'être appliquée partiellement : une
+      // restauration partielle non annoncée est exactement ce que §16 interdit.
+      return ImportResult(
+        succes: false,
+        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
+        erreur: 'dépôt structuré indisponible : restauration refusée pour ne '
+            'pas appliquer un état partiel',
+      );
+    }
+
+    final transaction = TransactionGlobale(
+      depot: depot,
+      dossierTemp: '$racine/temp',
+      dossierBase: racine,
+      versionLocale: _backupVersion,
+    );
+
+    // ── 1. INSTANTANÉ AVANT ÉCRITURE ─────────────────────────────────────
+    InstantaneGlobal instantane;
+    try {
+      instantane = await transaction.capturer(nom: 'avant_restauration');
+    } catch (e) {
+      return ImportResult(
+        succes: false,
+        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
+        erreur: 'instantané de retour arrière impossible ($e) : restauration '
+            'refusée avant toute modification',
+      );
+    }
+
+    // ── 2. DECLARATION D'INTENTION ───────────────────────────────────────
+    final blocPrefs = format.extraireBloc(contenu, 'prefs_complet');
+    final clesCibles = blocPrefs is Map
+        ? <String>[for (final k in blocPrefs.keys) '$k']
+        : const <String>[];
+    await transaction.declarerIntention(
+      operation: 'restauration_ptg',
+      clesPrefsTouchees: clesCibles,
+    );
+
+    // ── 3. APPLICATION ───────────────────────────────────────────────────
+    try {
+      // 3a. SharedPreferences : toutes les clés du bloc, avec leur type.
+      var nbPrefs = 0;
+      if (blocPrefs is Map) {
+        const magasin = MagasinPrefs();
+        final prefs = await SharedPreferences.getInstance();
+        for (final e in blocPrefs.entries) {
+          final valeur = ValeurPref.fromJson(e.value);
+          if (valeur == null) continue;
+          await magasin.ecrire(prefs, '${e.key}', valeur);
+          nbPrefs++;
+        }
+      }
+
+      // 3b. SQLite : recopie transactionnelle, valeurs ELO contrôlées.
+      var rapportElo = '';
+      final blocSqlite = format.extraireBloc(contenu, 'sqlite_complet');
+      var eloIdentiques = 0;
+      var eloConflits = 0;
+      if (blocSqlite is Map && blocSqlite['base64'] is String) {
+        final octets = base64Decode(blocSqlite['base64'] as String);
+        final cheminTemp = '$racine/temp/restauration_'
+            '${DateTime.now().millisecondsSinceEpoch}.db';
+        await File(cheminTemp).writeAsBytes(octets, flush: true);
+        try {
+          // Les ratings ELO sont comparés AVANT recopie, un par un : un écart
+          // devient une ligne de conflit, jamais un remplacement muet (D-24).
+          final source = DepotSqlite(
+            chemin: cheminTemp,
+            fabrique: depot.fabriquePourRelecture,
+          );
+          await source.ouvrir();
+          try {
+            final avant = <String, LigneElo>{
+              for (final l in await depot.tousLesElo()) l.cle: l,
+            };
+            for (final l in await source.tousLesElo()) {
+              final locale = avant[l.cle];
+              if (locale == null) continue;
+              if (locale.rating == l.rating &&
+                  locale.nb == l.nb &&
+                  locale.var_ == l.var_) {
+                eloIdentiques++;
+                continue;
+              }
+              await depot.enregistrerConflit(
+                categorie: 'elo_rating',
+                cleEntite: l.cle,
+                description: 'Rating divergent à la restauration : '
+                    'local=${locale.rating}, sauvegarde=${l.rating}. '
+                    'Aucune fusion arithmétique (D-24).',
+                valeurLocale: '${locale.rating}',
+                valeurDistante: '${l.rating}',
+              );
+              eloConflits++;
+            }
+          } finally {
+            await source.fermer();
+          }
+
+          await depot.restaurerDepuisInstantane(cheminTemp);
+          rapportElo = '$eloIdentiques identique(s), $eloConflits conflit(s)';
+        } finally {
+          final f = File(cheminTemp);
+          if (await f.exists()) await f.delete();
+        }
+      }
+
+      // 3c. Fichiers permanents.
+      var nbFichiers = 0;
+      final blocFichiers = format.extraireBloc(contenu, 'fichiers_permanents');
+      if (blocFichiers is Map) {
+        for (final e in blocFichiers.entries) {
+          final desc = e.value;
+          if (desc is! Map) continue;
+          final encode = desc['base64'];
+          if (encode is! String) continue;
+          final cible = File('$racine/${e.key}');
+          if (!await cible.parent.exists()) {
+            await cible.parent.create(recursive: true);
+          }
+          await cible.writeAsBytes(base64Decode(encode), flush: true);
+          nbFichiers++;
+        }
+      }
+
+      // 3d. Les services en mémoire doivent relire l'état restauré : sans cela,
+      //     l'application continuerait d'afficher l'ancien état jusqu'au
+      //     prochain redémarrage, ce qui donnerait l'illusion d'un échec.
+      await IaMemoryService.instance.recharger();
+      await EloService.instance.rechargerDepuisStockage();
+
+      await depot.journaliser(
+        operation: 'restauration_ptg',
+        etape: 'application',
+        statut: 'termine',
+        detail: 'prefs=$nbPrefs fichiers=$nbFichiers elo[$rapportElo]',
+      );
+
+      final prefsApres = await SharedPreferences.getInstance();
+      return ImportResult(
+        succes: true,
+        version: 'ptg/${verif.manifeste!.versionFormat}',
+        nbClesRestaurees: nbPrefs + nbFichiers,
+        nbIA: nbPrefs,
+        nbPronosticsIA:
+            (prefsApres.getStringList('ia_pronostics_v2') ?? []).length,
+        nbParis: (prefsApres.getStringList('user_predictions_v2') ?? []).length,
+        nbAlertes:
+            (prefsApres.getStringList('alert_history_v1') ?? []).length,
+        nbEloRestaures: eloIdentiques + eloConflits,
+        dateBackup: verif.manifeste!.dateCreation,
+        avertissementElo: eloConflits > 0
+            ? '$eloConflits rating(s) divergent(s) : conservés selon le mode, '
+                'tracés en conflit, aucune fusion (D-24)'
+            : null,
+      );
+    } catch (e) {
+      // ── 4. RETOUR ARRIÈRE AUTOMATIQUE ─────────────────────────────────
+      final annulation = await transaction.annuler(instantane);
+      return ImportResult(
+        succes: false,
+        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
+        erreur: 'échec pendant la restauration : $e. '
+            '${annulation.reussie ? "État antérieur rétabli "
+                "(${annulation.prefsEcrites} clés, "
+                "${annulation.eloRestaures} ratings)." : "RETOUR ARRIÈRE "
+                "ÉCHOUÉ (${annulation.erreur}) — instantané conservé : "
+                "${instantane.chemin}"}',
+      );
     }
   }
 
@@ -1543,6 +2067,18 @@ class BackupService {
           prefs, data['widget'] as Map<String, dynamic>?);
       total += nbWidget;
       if (kDebugMode) debugPrint('[Backup] Widget restaure : $nbWidget cles');
+
+      // ── ★ ENSEMBLE 4 : AVANCÉE DU MAGASIN STRUCTURÉ ──────────────────────
+      //
+      // La restauration JSON historique écrit dans SharedPreferences. Le dépôt
+      // SQLite de production doit refléter ce même état, sinon deux magasins
+      // concurrents produiraient des états divergents — ce que §4 interdit.
+      //
+      // Ce bloc est donc exécuté APRÈS les écritures SharedPreferences, et
+      // seulement si un dépôt est ouvert. Il est IDEMPOTENT : `enregistrer` et
+      // `migrer` reposent sur des clés déterministes, donc un rejeu ne duplique
+      // rien (§14).
+      await _avancerMagasinStructure(prefs);
 
       // ── 🏇 ELO SERVICE ★ v8.0 ────────────────────────────────────────────
       // Restaurer les ratings ELO depuis le backup si présents

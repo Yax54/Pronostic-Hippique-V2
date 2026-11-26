@@ -2367,6 +2367,21 @@ class EloService {
 
   static Future<void> init() async => _instance._charger();
 
+  /// Relit l'état ELO depuis le stockage, après une restauration.
+  ///
+  /// Sans cette méthode, une restauration écrirait bien les nouvelles valeurs
+  /// sur le disque mais l'application continuerait d'afficher les anciennes
+  /// jusqu'au redémarrage suivant — ce qui donnerait l'illusion d'un échec et
+  /// pousserait l'utilisateur à relancer l'opération, donc à risquer un double
+  /// apprentissage. La relecture est volontairement forcée : elle ne dépend pas
+  /// de l'état `_charge`.
+  ///
+  /// Aucune formule n'est touchée : la méthode se contente de relire.
+  Future<void> rechargerDepuisStockage() async {
+    _charge = false;
+    await _charger();
+  }
+
   Future<void> _charger() async {
     if (_charge) return;
     try {

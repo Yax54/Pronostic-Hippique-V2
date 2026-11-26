@@ -81,6 +81,17 @@ class PontElo {
 
   bool get ouvert => _depot != null;
 
+  /// Dépôt structuré ouvert, ou `null` s'il ne l'est pas.
+  ///
+  /// Exposé pour que la **sauvegarde et la restauration** puissent opérer sur
+  /// les mêmes données que le chemin de production, au lieu d'ouvrir une
+  /// seconde base concurrente — ce que §4 du présent tour interdit
+  /// explicitement (« ne laisse pas subsister deux magasins concurrents »).
+  DepotSqlite? get depotPourSauvegarde => _depot;
+
+  /// Racine contenant `base/`, `archives/`, `config/`, `sauvegardes/`, `temp/`.
+  String get racine => _organisation?.racine.path ?? '';
+
   EtatPontElo get etat => EtatPontElo(
         ouvert: ouvert,
         chemin: _organisation?.cheminBase ?? '',

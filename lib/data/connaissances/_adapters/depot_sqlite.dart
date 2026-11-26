@@ -20,7 +20,9 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 
 import '../_core/depot.dart';
@@ -67,6 +69,13 @@ class DepotSqlite implements DepotConnaissances {
   DatabaseExecutor get _executeur => _txn ?? _base;
 
   DatabaseFactory get _factory => _fabrique ?? databaseFactory;
+
+  /// Fabrique utilisée par ce dépôt.
+  ///
+  /// Exposée pour qu'un lecteur secondaire (instantané de restauration) ouvre la
+  /// MÊME famille de moteur que le dépôt de production. Sans cela, un test
+  /// ouvrirait une base FFI pour en lire une autre via le moteur Android.
+  DatabaseFactory get fabriquePourRelecture => _factory;
 
   @override
   Future<void> ouvrir() async {
@@ -270,6 +279,18 @@ class DepotSqlite implements DepotConnaissances {
 
   @override
   Future<int> compterElo() async => _compter('elo_ratings');
+
+  /// Note du rating d'une clé, ou `null` si la clé est absente.
+  ///
+  /// Réservé aux contrôles de non-régression : permet de vérifier une valeur
+  /// précise sans charger toute la table.
+  @visibleForTesting
+  Future<double?> tireEloPourTest(String cle) async {
+    final rows = await _base.query('elo_ratings',
+        columns: <String>['rating'], where: 'id = ?', whereArgs: <Object?>[cle]);
+    if (rows.isEmpty) return null;
+    return (rows.first['rating'] as num).toDouble();
+  }
 
   @override
   Future<void> upsertEloEnLot(List<LigneElo> lignes) async {
@@ -712,4 +733,144 @@ class DepotSqlite implements DepotConnaissances {
 
   /// Sérialise une ligne de rating pour les tests de non-régression.
   static String encoderElo(LigneElo ligne) => jsonEncode(ligne.toJson());
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  INSTANTANÉ ET RESTAURATION DU MAGASIN SQLITE ENTIER
+  //
+  //  Pourquoi ces deux méthodes existent :
+  //
+  //  Une transaction SQLite ne protège QUE SQLite. Or une sauvegarde/restauration
+  //  doit couvrir SharedPreferences (aucune transaction), SQLite et les fichiers
+  //  permanents. La cohérence entre ces supports ne peut donc pas venir d'une
+  //  transaction : elle vient d'un INSTANTANÉ commun pris avant toute écriture,
+  //  dont le retour arrière restaure chaque support séparément.
+  //
+  //  L'instantané utilise `VACUUM INTO`, qui produit un fichier SQLite complet et
+  //  cohérent SANS charger la base en RAM (§15, §19). Les données déjà écrites
+  //  restent lisibles : le fichier produit est une base valide, ouvrable, et
+  //  contrôlable par `PRAGMA integrity_check`.
+  //
+  //  La restauration ne remplace pas le fichier par un `rename` : elle rouvre
+  //  l'instantané comme source et recopie les lignes dans les tables existantes,
+  //  dans une transaction unique. Cela évite d'invalider les descripteurs ouverts
+  //  et garde le schéma courant, donc les migrations déjà appliquées.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /// Écrit une copie cohérente de la base entière vers [cheminCible].
+  ///
+  /// Retourne le nombre de lignes copiées, par table. Aucune donnée chargée en
+  /// RAM : `VACUUM INTO` est exécuté par le moteur.
+  Future<Map<String, int>> instantaneVers(String cheminCible) async {
+    final cible = File(cheminCible);
+    if (await cible.exists()) await cible.delete();
+    final parent = cible.parent;
+    if (!await parent.exists()) await parent.create(recursive: true);
+
+    // `VACUUM INTO` refuse d'écraser un fichier existant : la suppression
+    // ci-dessus est donc nécessaire, et volontairement limitée à la cible.
+    await _base.execute('VACUUM INTO ?', <Object?>[cheminCible]);
+    await _base.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    return inventaire();
+  }
+
+  /// Remplace le CONTENU de la base courante par celui d'un instantané.
+  ///
+  /// Toutes les tables sont vidées puis rechargées dans une **transaction
+  /// unique** : soit l'état de l'instantané est intégralement rétabli, soit la
+  /// base reste exactement dans son état antérieur.
+  ///
+  /// [verifierClesEtrangeres] est activé par défaut : après recharge, un
+  /// `PRAGMA foreign_key_check` doit ne rien signaler. Un instantané
+  /// incohérent est donc détecté ici, jamais découvert plus tard.
+  Future<void> restaurerDepuisInstantane(
+    String cheminInstantane, {
+    bool verifierClesEtrangeres = true,
+  }) async {
+    final source = await _factory.openDatabase(
+      cheminInstantane,
+      options: OpenDatabaseOptions(readOnly: true),
+    );
+    try {
+      // Inventaire de l'instantané : une table du schéma courant absente de
+      // l'instantané est un cas normal (instantané plus ancien) ; une table de
+      // l'instantané absente du schéma courant est ignorée, car elle ne peut pas
+      // être écrite. Les deux cas sont comptés, pas devinés.
+      final tablesInstantane = <String>{
+        for (final r in await source.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        ))
+          '${r['name']}',
+      };
+      final tablesCourantes = <String>{
+        for (final r in await _base.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_%'",
+        ))
+          '${r['name']}',
+      };
+      final aRemplir = tablesInstantane.intersection(tablesCourantes).toList()
+        ..sort();
+
+      await _base.transaction<void>((txn) async {
+        // Ordre inverse des dépendances pour vider : les références d'abord.
+        for (final table in _ordreSuppression(aRemplir)) {
+          await txn.delete(table);
+        }
+        for (final table in aRemplir) {
+          final lignes = await source.query(table);
+          for (final ligne in lignes) {
+            await txn.insert(table, ligne,
+                conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+        }
+      });
+
+      if (verifierClesEtrangeres) {
+        final violations = await _base.rawQuery('PRAGMA foreign_key_check');
+        if (violations.isNotEmpty) {
+          throw StateError(
+            'instantané incohérent : ${violations.length} violation(s) de clé '
+            'étrangère après restauration',
+          );
+        }
+      }
+    } finally {
+      await source.close();
+    }
+  }
+
+  /// Ordre de suppression respectant les dépendances déclarées par le schéma.
+  ///
+  /// Les tables enfant passent avant leur parent. Toute table non listée est
+  /// simplement ajoutée à la fin : aucune table n'est oubliée.
+  List<String> _ordreSuppression(List<String> tables) {
+    const ordre = <String>[
+      'bilans_references', // référence bilans + rapports
+      'rapports_sources', // référence rapports
+      'participations', // référence courses + chevaux
+      'performances', // référence participations
+      'observations', // référence chevaux
+      'chevaux_alias', // référence chevaux
+      'bilans',
+      'pronostics',
+      'tickets',
+      'conflits',
+      'journal_operations',
+      'elo_etats',
+      'elo_ratings',
+      'rapports',
+      'courses',
+      'chevaux',
+      'entites_nommees',
+      'meta',
+    ];
+    final restantes = List<String>.from(tables);
+    final resultat = <String>[];
+    for (final t in ordre) {
+      if (restantes.remove(t)) resultat.add(t);
+    }
+    resultat.addAll(restantes);
+    return resultat;
+  }
 }
