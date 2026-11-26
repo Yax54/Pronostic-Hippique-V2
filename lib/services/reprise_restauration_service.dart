@@ -55,7 +55,11 @@ class BilanRepriseDemarrage {
             'antérieures ont été rétablies.';
       case ResultatReprise.actionControlesRejoues:
         return 'Une restauration interrompue a été finalisée : les données '
-            'restaurées ont été conservées.';
+            'restaurées ont été conservées après vérification d\'intégrité.';
+      case ResultatReprise.actionIncoherence:
+        return 'Une restauration interrompue s\'est révélée incohérente à la '
+            'vérification : elle a été annulée et vos données antérieures ont '
+            'été rétablies. Détail dans le journal.';
       case ResultatReprise.actionIrrecuperable:
         return 'Une restauration interrompue n\'a pas pu être analysée. '
             'Aucune donnée n\'a été supprimée. Détail dans le journal.';

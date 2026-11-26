@@ -282,6 +282,14 @@ class ResultatReprise {
   /// Écritures complètes mais contrôles non faits : données conservées.
   static const String actionControlesRejoues = 'controles_rejoues';
 
+  /// Écritures complètes mais contrôles EN ÉCHEC : retour arrière appliqué.
+  ///
+  /// Distinct de [actionAnnulee] : ici le retour arrière est une conséquence
+  /// d'une incohérence constatée, pas d'une interruption d'écriture. La
+  /// distinction compte pour l'utilisateur, qui doit savoir que sa
+  /// restauration a été défaite **parce qu'elle était incohérente**.
+  static const String actionIncoherence = 'incoherence';
+
   /// L'état ne peut pas être établi (instantané disparu, méta illisible).
   static const String actionIrrecuperable = 'irrecuperable';
 
@@ -1031,41 +1039,161 @@ class Restaurateur {
     final aFichiers = blocs.any((b) => b.nom == 'fichiers_permanents');
 
     if (marqueAppliquee == enCours) {
-      // ── Données complètes, contrôles non faits : les garder ────────────
+      // ══════════════════════════════════════════════════════════════════
+      //  §2 — LA FIN DES ÉCRITURES N'EST PAS UNE PREUVE DE COHÉRENCE
+      //
+      //  « Lorsque les écritures ont été effectuées mais que les contrôles
+      //  n'ont pas été terminés, reprendre les contrôles d'intégrité avant de
+      //  déclarer la restauration réussie. La fin des écritures ne constitue
+      //  pas à elle seule une preuve de cohérence. En cas d'échec des
+      //  contrôles, appliquer le mécanisme de récupération approprié. »
+      //
+      //  Ce bloc ne se contente donc pas de « garder les données » : il
+      //  exécute les contrôles réels, et si l'un échoue, il applique le
+      //  retour arrière — le mécanisme de récupération — au lieu de déclarer
+      //  un succès qu'il n'a pas vérifié.
+      // ══════════════════════════════════════════════════════════════════
       final controles = <String>[];
+
+      // (a) Intégrité SQLite elle-même : une base corrompue invalide tout le
+      //     reste, quel que soit le nombre de lignes.
       try {
-        // L'inventaire d'avant n'est plus disponible dans l'instantané de
-        // reprise : le contrôle se limite donc aux clés critiques et aux
-        // références orphelines, qui ne demandent aucune référence externe.
-        final prefs = await SharedPreferences.getInstance();
-        for (final cle in TransactionGlobale.clesCritiques) {
-          if (!prefs.containsKey(cle)) controles.add('clé critique absente : $cle');
+        final integrite = await depot.integrite();
+        if (!integrite.toLowerCase().contains('ok')) {
+          controles.add('intégrité SQLite en échec : $integrite');
         }
       } catch (e) {
-        controles.add('contrôle impossible : $e');
+        controles.add('contrôle d\'intégrité SQLite impossible : $e');
       }
-      final orphelines = await depot.compterReferencesOrphelines();
-      if (orphelines > 0) {
-        controles.add('$orphelines référence(s) de bilan orpheline(s)');
+
+      // (b) Clés critiques : le contrôle correct n'est PAS « la clé est
+      //     absente » — une installation neuve n'a aucune clé critique, et une
+      //     sauvegarde restaurée peut légitimement n'en contenir aucune. Le
+      //     contrôle est donc **comparatif** : une clé qui existait dans
+      //     l'instantané d'avant restauration et qui a disparu est une perte
+      //     réelle. C'est la seule forme de contrôle qui ne produise pas de
+      //     faux positif.
+      try {
+        final blocPrefs = format.extraireBloc(
+          await File(enCours).readAsString(),
+          'prefs_complet',
+        );
+        if (blocPrefs is Map) {
+          final prefs = await SharedPreferences.getInstance();
+          final avant = <String>{for (final k in blocPrefs.keys) '$k'};
+          for (final cle in TransactionGlobale.clesCritiques) {
+            // Seules les clés critiques PRÉSENTES AVANT sont concernées.
+            if (!avant.contains(cle)) continue;
+            if (!prefs.containsKey(cle)) {
+              controles.add('clé critique PERDUE : $cle existait dans '
+                  'l\'instantané, absente après restauration');
+            }
+          }
+        }
+      } catch (e) {
+        controles.add('contrôle des clés critiques impossible : $e');
       }
+
+      // (c) Cohérence entre magasins : aucune référence de bilan orpheline.
+      try {
+        final orphelines = await depot.compterReferencesOrphelines();
+        if (orphelines > 0) {
+          controles.add('$orphelines référence(s) de bilan orpheline(s)');
+        }
+      } catch (e) {
+        controles.add('contrôle des références impossible : $e');
+      }
+
+      // (d) Volumétrie annoncée par le manifeste vs réelle, quand le bloc
+      //     SQLite est présent : un écart signale une copie incomplète.
+      try {
+        final blocSqlite = format.extraireBloc(
+          await File(enCours).readAsString(),
+          'sqlite_complet',
+        );
+        if (blocSqlite is Map) {
+          final inv = blocSqlite['inventaire'];
+          if (inv is Map) {
+            final annonce = (inv['elo_ratings'] as num?)?.toInt() ?? 0;
+            final reel = await depot.compterElo();
+            if (annonce > 0 && reel < annonce) {
+              controles.add('volumétrie ELO inférieure au contenu restauré : '
+                  '$reel ligne(s) pour $annonce annoncée(s)');
+            }
+          }
+        }
+      } catch (e) {
+        controles.add('contrôle de volumétrie impossible : $e');
+      }
+
+      // ── DÉCISION ───────────────────────────────────────────────────────
+      // Un contrôle en échec n'est pas une observation cosmétique : il signifie
+      // que l'état restauré n'est pas cohérent. Dans ce cas, le mécanisme de
+      // récupération s'applique — retour arrière depuis l'instantané.
+      if (controles.isNotEmpty) {
+        final transaction = TransactionGlobale(
+          depot: depot,
+          dossierTemp: dossierTemp,
+          dossierBase: dossierBase,
+          versionLocale: versionLocale,
+        );
+        final instantane = InstantaneGlobal(
+          chemin: enCours,
+          dateCreation: DateTime.now(),
+          nbClefsPrefs: 0,
+          nbLignesSqlite: 0,
+          nbFichiers: aFichiers ? 1 : 0,
+          empreinte: verif.manifeste?.empreinteGlobale ?? '',
+          clesPrefs: const <String>[],
+        );
+        final annulation = await transaction.annuler(instantane);
+        if (annulation.reussie) {
+          await _ecrireMeta(depot, kMetaRestaurationEnCours, '');
+          await _ecrireMeta(depot, kMetaRestaurationAppliquee, '');
+        }
+        await depot.journaliser(
+          operation: 'reprise_restauration',
+          etape: 'controles',
+          statut: 'incoherent',
+          detail: '${controles.length} contrôle(s) en échec : '
+              '${controles.take(5).join(" | ")}. '
+              'Retour arrière ${annulation.reussie ? "rétabli" : "ÉCHOUÉ"}.',
+        );
+        if (kDebugMode) {
+          debugPrint('[Restaurateur] reprise : ${controles.length} contrôle(s) '
+              'en échec, retour arrière '
+              '${annulation.reussie ? "rétabli" : "ÉCHOUÉ"}');
+        }
+        return ResultatReprise(
+          action: ResultatReprise.actionIncoherence,
+          instantane: enCours,
+          detail: 'écritures terminées mais contrôles en échec : retour '
+              'arrière ${annulation.reussie ? "appliqué" : "impossible"}',
+          annulation: annulation,
+          controles: controles,
+          erreur: controles.join(' ; '),
+        );
+      }
+
       await _ecrireMeta(depot, kMetaRestaurationEnCours, '');
       await _ecrireMeta(depot, kMetaRestaurationAppliquee, '');
       await depot.journaliser(
         operation: 'reprise_restauration',
         etape: 'controles',
         statut: 'termine',
-        detail: 'interruption après application : contrôles rejoués '
-            '(${controles.length} observation(s)), données conservées',
+        detail: 'interruption après application : 0 échec sur 4 contrôles, '
+            'données conservées',
       );
       if (kDebugMode) {
         debugPrint('[Restaurateur] reprise : données conservées, '
-            '${controles.length} observation(s)');
+            '4 contrôles passés');
       }
       return ResultatReprise(
         action: ResultatReprise.actionControlesRejoues,
         instantane: enCours,
-        detail: 'la restauration avait été appliquée ; les données sont '
-            'conservées et les contrôles rejoués',
+        detail: 'la restauration avait été appliquée ; les contrôles '
+            'd\'intégrité ont été rejoués et passés, les données sont '
+            'conservées',
         controles: controles,
       );
     }

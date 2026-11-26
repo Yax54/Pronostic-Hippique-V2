@@ -251,6 +251,110 @@ void main() {
       expect((await depot.lireMeta(kMetaRestaurationAppliquee)) ?? '', isEmpty);
     });
 
+    test(
+        '§2 — écritures terminées mais contrôles EN ÉCHEC : le retour arrière '
+        'est appliqué, la restauration n\'est pas déclarée réussie', () async {
+      await depot.upsertEloEnLot(<LigneElo>[
+        const LigneElo(
+            cle: 'ALPHA|trot', nomOrigine: 'ALPHA', discipline: 'trot',
+            rating: 1500.0, nb: 0, var_: 0.0),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('ia_poids_v3', '{"forme":0.31}');
+
+      final transaction = TransactionGlobale(
+        depot: depot,
+        dossierTemp: '${racine.path}/temp',
+        dossierBase: racine.path,
+        versionLocale: 'test',
+      );
+      final instantane = await transaction.capturer(nom: 'avant_restauration');
+      await transaction.declarerIntention(
+        operation: kOperationRestaurationPtg,
+        clesPrefsTouchees: <String>['ia_poids_v3'],
+        cheminInstantane: instantane.chemin,
+      );
+      await depot.ecrireMeta(kMetaRestaurationEnCours, instantane.chemin);
+
+      // Écritures appliquées, marqueur « appliquée » posé, puis le processus
+      // meurt. MAIS l'état est incohérent : une clé critique a disparu.
+      await prefs.setString('ia_poids_v3', '{"forme":0.77}');
+      await depot.upsertElo(const LigneElo(
+          cle: 'NOUVEAU|trot', nomOrigine: 'NOUVEAU', discipline: 'trot',
+          rating: 1234.0, nb: 0, var_: 0.0));
+      // On retire toutes les clés critiques : les contrôles DOIVENT échouer.
+      await prefs.remove('ia_poids_v3');
+      await depot.ecrireMeta(kMetaRestaurationAppliquee, instantane.chemin);
+
+      final reprise = await restaurateur.reprendre(
+        depot: depot,
+        dossierTemp: '${racine.path}/temp',
+        dossierBase: racine.path,
+        versionLocale: 'test',
+      );
+
+      expect(reprise, isNotNull);
+      expect(reprise!.action, ResultatReprise.actionIncoherence,
+          reason: 'des contrôles en échec ne doivent pas être présentés comme '
+              'un succès');
+      expect(reprise.controles, isNotEmpty);
+      expect(reprise.annulation, isNotNull,
+          reason: 'le mécanisme de récupération doit être appliqué');
+      expect(reprise.annulation!.reussie, isTrue);
+
+      // Le retour arrière a bien rétabli l'état antérieur : la clé critique
+      // est revenue, le rating ajouté a disparu.
+      final prefsApres = await SharedPreferences.getInstance();
+      expect(prefsApres.getString('ia_poids_v3'), '{"forme":0.31}',
+          reason: 'l\'état antérieur doit être rétabli');
+      expect(await depot.lireElo('NOUVEAU|trot'), isNull,
+          reason: 'le rating introduit par la restauration incohérente doit '
+              'avoir disparu');
+      expect(await depot.lireElo('ALPHA|trot'), isNotNull);
+
+      // Le journal dit la vérité sur ce qui s'est passé.
+      final journal = await depot.journalDeLOperation('reprise_restauration');
+      expect(journal.any((l) => l['statut'] == 'incoherent'), isTrue);
+    });
+
+    test('§2 — reprise idempotente : un second appel ne fait rien', () async {
+      await depot.upsertEloEnLot(<LigneElo>[
+        const LigneElo(
+            cle: 'ALPHA|trot', nomOrigine: 'ALPHA', discipline: 'trot',
+            rating: 1500.0, nb: 0, var_: 0.0),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('ia_poids_v3', '{}');
+
+      final transaction = TransactionGlobale(
+        depot: depot,
+        dossierTemp: '${racine.path}/temp',
+        dossierBase: racine.path,
+        versionLocale: 'test',
+      );
+      final instantane = await transaction.capturer(nom: 'avant_restauration');
+      await depot.ecrireMeta(kMetaRestaurationEnCours, instantane.chemin);
+      await depot.ecrireMeta(kMetaRestaurationAppliquee, instantane.chemin);
+
+      final premier = await restaurateur.reprendre(
+        depot: depot,
+        dossierTemp: '${racine.path}/temp',
+        dossierBase: racine.path,
+        versionLocale: 'test',
+      );
+      expect(premier, isNotNull);
+
+      final second = await restaurateur.reprendre(
+        depot: depot,
+        dossierTemp: '${racine.path}/temp',
+        dossierBase: racine.path,
+        versionLocale: 'test',
+      );
+      expect(second, isNull,
+          reason: 'une reprise déjà traitée ne doit jamais être rejouée : '
+              'c\'est la condition pour ne pas produire de double traitement');
+    });
+
     test('interruption PENDANT le retour arrière : le rejeu est idempotent',
         () async {
       await depot.upsertEloEnLot(<LigneElo>[
