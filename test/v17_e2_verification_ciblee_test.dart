@@ -26,6 +26,7 @@ import 'package:pronostic_hippique/services/ia_archive_service.dart';
 import 'package:pronostic_hippique/services/ia_memory_service.dart';
 import 'package:pronostic_hippique/services/pronostic_resultats_repository.dart';
 import 'package:pronostic_hippique/services/quasi_gros_paris_service.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
 import 'package:pronostic_hippique/widgets/ia/ia_calendrier_tab.dart';
 
 import 'v17_faux_store.dart';
@@ -48,6 +49,69 @@ void _surfaceHaute(WidgetTester t) {
 void _surfaceNormale(WidgetTester t) {
   t.view.resetPhysicalSize();
   t.view.resetDevicePixelRatio();
+}
+
+/// Prépare une archive RÉELLE dans la zone RÉELLE du test, puis laisse
+/// l'archive NON chargée (comme au démarrage de l'application).
+///
+/// ═══════════════════════════════════════════════════════════════════════════
+///  CAUSE EXACTE DU BLOCAGE DE L-2 / L-3 / L-4 / L-6 (MESURÉE)
+///
+///  SYMPTÔME : ces tests ne rendaient JAMAIS la main. Aucune exception,
+///  aucune assertion en échec, aucun `[E]` : le processus était tué par le
+///  garde-fou après plusieurs minutes. `pumpAndSettle` ne convergeait pas.
+///
+///  LOCALISATION PAR BISSECTION (6 sondes successives) :
+///    • `setUp` complet ......................... termine ;
+///    • `pumpWidget(IaCalendrierTab())` .......... termine ;
+///    • `enregistrerEviction()` seul ............. termine ;
+///    • `SharedPreferences.getInstance()` ........ termine ;
+///    • `IaArchiveService.charger()` seul ........ termine ;
+///    • `archiver(...)` .......................... NE TERMINE PAS  ← ici.
+///  Dernière trace avant blocage : `[SONDE-C] préparation faite`, c'est-à-dire
+///  l'instruction qui PRÉCÈDE l'appel à `archiver(...)`.
+///
+///  MÉCANISME : `archiver()` appelle `persisterEnAttente()`, qui attend
+///  `_persisterShard()`, qui CHAÎNE l'écriture sur `_writeChain`
+///  (`ia_archive_service.dart:1083`) :
+///      _writeChain = _writeChain.then((_) async { … completer.complete(…) });
+///  Une `Future` propage ses rappels dans la ZONE où elle a été créée. Créée
+///  dans le corps d'un `testWidgets`, la chaîne vit dans la zone `fakeAsync`
+///  du test : sa microtâche n'est drainée que par un `pump`. Or `archiver()`
+///  est attendu AVANT tout `pump` — donc la microtâche n'est jamais exécutée,
+///  `completer` n'est jamais complété, et `archiver()` attend indéfiniment.
+///  Le `setUp`, lui, s'exécute en zone réelle et ne produisait donc pas le
+///  problème : c'est bien le CORPS du `testWidgets` qui le déclenche.
+///
+///  POURQUOI CE N'EST PAS UN DÉFAUT DE PRODUCTION : en production, la chaîne
+///  est ancrée dans la zone racine et la boucle d'événements draine ses
+///  microtâches normalement. Le défaut est propre au harnais, qui exécute des
+///  E/S réelles dans une zone où le temps est simulé.
+///
+///  CORRECTION RETENUE : exécuter la PRÉPARATION (et elle seule) dans
+///  `tester.runAsync`, qui rend une zone RÉELLE. Le montage du widget,
+///  `pumpAndSettle` et TOUTES les assertions restent dans la zone de test —
+///  c'est ce qui permet de continuer à prouver le comportement du widget, y
+///  compris son cycle asynchrone de chargement.
+///
+///  CE QUI N'EST PAS FAIT : aucune fonctionnalité de production n'est
+///  désactivée ; aucun timeout n'est augmenté ; aucune assertion n'est
+///  retirée ; `pumpAndSettle` n'est remplacé par aucune temporisation.
+/// ═══════════════════════════════════════════════════════════════════════════
+Future<void> _preparerArchiveEnZoneReelle(
+  WidgetTester tester,
+  List<IaPronostic> lots,
+) async {
+  await tester.runAsync(() async {
+    // La chaîne d'écriture est réancrée DANS cette zone : `archiver()` et
+    // l'attente qui suit vivent ainsi dans la même zone, et l'attente se
+    // résout. Sans ce réancrage, la chaîne resterait ancrée dans le `setUp`.
+    preparerArchiveDansLaZoneDeTest();
+    await archiver(lots);
+  });
+  // L'archive est écrite sur le disque mais NON chargée : c'est l'état du
+  // démarrage réel, que ces tests doivent observer.
+  IaArchiveService.instance.oublierChargementPourTest();
 }
 
 void main() {
@@ -415,10 +479,29 @@ void main() {
 
       final now = DateTime.now();
       final j = DateTime(now.year, now.month, 2);
-      await archiver([pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)]);
+
+      // ═══════════════════════════════════════════════════════════════
+      //  CAUSE DU BLOCAGE, MESURÉE — voir [_preparerArchiveEnZoneReelle]
+      //
+      //  `archiver()` fait de VRAIES E/S (SharedPreferences) et attend
+      //  `persisterEnAttente()`, qui dépend de `_writeChain` — une chaîne de
+      //  `Future.then()` créée dans la zone où elle est instanciée. Exécutée
+      //  dans le corps d'un `testWidgets` (zone `fakeAsync`), la microtâche
+      //  du `.then()` n'est JAMAIS drainée : `persisterEnAttente()` ne rend
+      //  pas la main, et le test se bloque SANS exception (mesuré : aucune
+      //  sortie après « [SONDE-C] préparation faite », FrameTiming bloqué).
+      //
+      //  `runAsync` exécute le corps dans la zone RÉELLE, où l'attente se
+      //  résout normalement. C'est la préparation qui change de zone — pas
+      //  l'assertion, pas la production, et aucune temporisation n'est
+      //  substituée à une attente.
+      // ═══════════════════════════════════════════════════════════════
+      await _preparerArchiveEnZoneReelle(
+        tester,
+        [pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)],
+      );
 
       // Archive NON chargée au moment du montage.
-      IaArchiveService.instance.oublierChargementPourTest();
       expect(IaArchiveService.instance.archiveDisponible, isFalse);
 
       await tester.pumpWidget(
@@ -440,8 +523,10 @@ void main() {
 
       final now = DateTime.now();
       final j = DateTime(now.year, now.month, 3);
-      await archiver([pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)]);
-      IaArchiveService.instance.oublierChargementPourTest();
+      await _preparerArchiveEnZoneReelle(
+        tester,
+        [pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)],
+      );
 
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: IaCalendrierTab())),
@@ -469,9 +554,14 @@ void main() {
 
       final now = DateTime.now();
       final j = DateTime(now.year, now.month, 4);
-      await archiver([pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)]);
-      IaArchiveService.instance.oublierChargementPourTest();
-      await IaArchiveService.instance.charger();
+      await _preparerArchiveEnZoneReelle(
+        tester,
+        [pronoGagnant(courseKey: cleCourse(1, 1, j), date: j)],
+      );
+      // L-4 exige l'archive DÉJÀ CHARGÉE avant le montage : c'est le scénario
+      // testé (exploitation immédiate). Le chargement est donc demandé ici,
+      // en zone réelle, et son effet est vérifié AVANT tout widget.
+      await tester.runAsync(() => IaArchiveService.instance.charger());
       expect(IaArchiveService.instance.archiveDisponible, isTrue);
 
       await tester.pumpWidget(
@@ -545,10 +635,10 @@ void main() {
           .donneesCalendrierJour(now.year, now.month);
 
       // Archive : une course sur le 6.
-      await archiver([
-        pronoGagnant(courseKey: cleCourse(2, 1, jArch), date: jArch),
-      ]);
-      IaArchiveService.instance.oublierChargementPourTest();
+      await _preparerArchiveEnZoneReelle(
+        tester,
+        [pronoGagnant(courseKey: cleCourse(2, 1, jArch), date: jArch)],
+      );
 
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: IaCalendrierTab())),
