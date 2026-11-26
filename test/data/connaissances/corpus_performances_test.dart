@@ -189,7 +189,6 @@ void main() {
         // PAS égaux : la contrainte UNIQUE ne protégerait donc pas l'idempotence.
         // C'est la CLÉ PRIMAIRE `id` qui la porte. Ce test le prouve.
         final depot = fixture.depot;
-        final maintenant = DateTime.now().toUtc().toIso8601String();
         final p = PerformanceStockee(
           id: 'cle-fixe-sans-id-cheval',
           nomChevalBrut: 'ORPHELIN',
