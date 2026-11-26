@@ -152,7 +152,21 @@ class ZtPartant {
   final String statsTerrainCsv;
   // P — Poids porté total en kg (déjà dans poids, renommé pour clarté)
   // Q — Gains sur 12 derniers mois pour la progression (en euros)
+  //
+  //   D-10 : le champ reste un `int` pour ne casser aucune sérialisation
+  //   existante. `gainsDernierAnDisponible` porte l'information qui manquait :
+  //   un zéro peut être AUTHENTIQUE (l'API a répondu zéro) ou signifier
+  //   ABSENT (l'API n'a rien fourni). Les deux états étaient confondus, ce qui
+  //   avait conduit à fabriquer la valeur. `gainsDernierAnSource` conserve la
+  //   provenance exacte de la donnée (« pmu_gainsSaison », « pmu_gainsAnnee »
+  //   ou « absent »).
   final int gainsDernierAn;
+
+  /// `true` si et seulement si la valeur provient réellement d'une réponse PMU.
+  final bool gainsDernierAnDisponible;
+
+  /// Provenance de `gainsDernierAn`. « absent » ⇒ aucune observation.
+  final String gainsDernierAnSource;
 
   // Scores IA calculés
   late final double scoreIA;
@@ -185,6 +199,8 @@ class ZtPartant {
     this.eloVariationMois = 0.0, // ★ v8.0
     this.statsTerrainCsv = '', // ★ v9.0 : terrain
     this.gainsDernierAn = 0, // ★ v9.0 : progression
+    this.gainsDernierAnDisponible = false, // D-10 : absent ≠ zéro authentique
+    this.gainsDernierAnSource = 'absent', // D-10 : provenance
     double? scoreIA,
     String? labelIA,
     String? explicationIA,
@@ -221,6 +237,12 @@ class ZtPartant {
         eloVariationMois: (j['elo_v'] as num?)?.toDouble() ?? 0.0, // ★ v8.0
         statsTerrainCsv: j['stats_terrain_csv'] as String? ?? '', // ★ v9.0
         gainsDernierAn: j['gains_an'] as int? ?? 0, // ★ v9.0
+        // D-10 : compatibilité ascendante. Les JSON anciens n'ont pas
+        // `gains_dispo` ; on ne peut pas affirmer que leur valeur est
+        // authentique, donc on la laisse indisponible pour le critère, tout
+        // en conservant le nombre pour l'affichage.
+        gainsDernierAnDisponible: j['gains_dispo'] as bool? ?? false,
+        gainsDernierAnSource: j['gains_src'] as String? ?? 'absent',
         scoreIA: (j['score_ia'] as num?)?.toDouble() ?? 0.0,
         labelIA: j['label_ia'] as String? ?? '',
         explicationIA: j['explication_ia'] as String? ?? '',
@@ -244,6 +266,8 @@ class ZtPartant {
         'elo_v': eloVariationMois, // ★ v8.0
         'stats_terrain_csv': statsTerrainCsv, // ★ v9.0
         'gains_an': gainsDernierAn, // ★ v9.0
+        'gains_dispo': gainsDernierAnDisponible, // D-10
+        'gains_src': gainsDernierAnSource, // D-10
         'score_ia': scoreIA, 'label_ia': labelIA,
         'explication_ia': explicationIA, 'rang': rang,
       };
@@ -387,6 +411,11 @@ class ZtPartant {
     double? eloVariationMois, // ★ v8.0
     String? statsTerrainCsv, // ★ v9.0
     int? gainsDernierAn, // ★ v9.0
+    // D-10 : la provenance suit la valeur dans la copie. Sans cela, un
+    // partant copié perdrait la distinction absent / zéro authentique et
+    // redeviendrait indistinguable.
+    bool? gainsDernierAnDisponible,
+    String? gainsDernierAnSource,
     // ★ LOT Z2-D — le score du critère R doit SURVIVRE à la copie.
     //
     //   DÉFAUT MESURÉ (`test/z2_reproduction_n1_coursekey_test.dart`, Z2-D) :
@@ -429,6 +458,9 @@ class ZtPartant {
       eloVariationMois: eloVariationMois ?? this.eloVariationMois,
       statsTerrainCsv: statsTerrainCsv ?? this.statsTerrainCsv, // ★ v9.0
       gainsDernierAn: gainsDernierAn ?? this.gainsDernierAn, // ★ v9.0
+      gainsDernierAnDisponible:
+          gainsDernierAnDisponible ?? this.gainsDernierAnDisponible, // D-10
+      gainsDernierAnSource: gainsDernierAnSource ?? this.gainsDernierAnSource,
       scoreIA: scoreIA ?? this.scoreIA,
       labelIA: labelIA ?? this.labelIA,
       explicationIA: explicationIA ?? this.explicationIA,
@@ -775,8 +807,21 @@ class ZtPartant {
     }
 
     // 2. Gains dernière année vs gains totaux (ratio progression)
+    //
+    //    ⚠️ D-10 — SEULE LA DISPONIBILITÉ CHANGE, PAS LA FORMULE.
+    //       Avant : le bloc s'exécutait dès que `gainsDernierAn > 0`, valeur
+    //       qui pouvait avoir été FABRIQUÉE à 20 % des gains carrière par le
+    //       producteur. Le critère recevait donc une observation inexistante.
+    //       Après : le bloc exige `gainsDernierAnDisponible`, c'est-à-dire une
+    //       valeur réellement fournie par le PMU. Les seuils, les bonus et la
+    //       structure du calcul sont INCHANGÉS au chiffre près.
+    //
+    //       Un zéro AUTHENTIQUE (`gainsDernierAnDisponible == true` et
+    //       `gainsDernierAn == 0`) ne satisfait pas `gainsDernierAn > 0` et
+    //       n'entre donc pas dans le bloc : c'est le comportement existant,
+    //       conservé tel quel, et il n'est remplacé par aucune invention.
     final gainsTotal = gainsInt;
-    if (gainsTotal > 0 && gainsDernierAn > 0) {
+    if (gainsDernierAnDisponible && gainsTotal > 0 && gainsDernierAn > 0) {
       // Si les gains de l'an dernier représentent une forte fraction des gains totaux
       // → le cheval progresse vite (a beaucoup gagné récemment)
       final ratioAnnee = gainsDernierAn / gainsTotal.toDouble();

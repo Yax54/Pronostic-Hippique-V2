@@ -1001,22 +1001,50 @@ class ZoneTurfService {
         }
 
         // ★ v9.0 — I) GAINS DERNIER AN — extraire depuis l'API PMU
-        // L'API peut exposer pm['gainsParticipant']['gainsSaison'] ou pm['gainsAnnee']
+        //
+        //    ⚠️ DÉCISION D-10 APPLIQUÉE (§4). L'ancien code fabriquait une
+        //       valeur : `gainsDernierAn = (gainsCarriere * 0.20).round()`
+        //       quand l'API ne fournissait rien. C'était une donnée INVENTÉE
+        //       présentée comme une observation, et elle alimentait le critère
+        //       de progression (`scoreProgression`, ratio gains 12 mois /
+        //       gains carrière). Le fallback est SUPPRIMÉ.
+        //
+        //    ⚠️ DISTINCTION ABSENT / ZÉRO AUTHENTIQUE (§9, D-10) :
+        //       `gainsDernierAnDisponible` porte cette distinction. Un zéro
+        //       fourni par l'API est un zéro AUTHENTIQUE : il est conservé tel
+        //       quel et n'est pas remplacé. Une absence n'est pas un zéro : le
+        //       critère garde alors son comportement neutre existant
+        //       (`scoreProgression` n'applique pas le bloc ratio, la formule
+        //       n'est pas touchée).
+        //
+        //    ⚠️ AUCUNE FORMULE MODIFIÉE (§3) : seule la FABRICATION de la
+        //       donnée d'entrée disparaît. Le calcul de `scoreProgression`
+        //       reste identique, il reçoit simplement une entrée honnête.
+        //
+        //    ⚠️ ANNÉE CIVILE ≠ 12 DERNIERS MOIS (D-10) : `gainsSaison` est la
+        //       seule grandeur réellement fournie par le PMU. On ne la
+        //       présente pas comme « 12 derniers mois » : le champ
+        //       `gainsDernierAnSource` conserve la provenance exacte, ce qui
+        //       rend la limite visible au lieu de la masquer.
         int gainsDernierAn = 0;
+        bool gainsDernierAnDisponible = false;
+        String gainsDernierAnSource = 'absent';
         final gainsMap = pm['gainsParticipant'];
         if (gainsMap is Map) {
           final gainsSaison =
               (gainsMap['gainsSaison'] as num?)?.toDouble() ?? 0.0;
           final gainsAnnee =
               (gainsMap['gainsAnnee'] as num?)?.toDouble() ?? 0.0;
-          final raw = gainsSaison > 0 ? gainsSaison : gainsAnnee;
-          // Convertir centimes → euros si nécessaire
-          gainsDernierAn = (raw > 10000 ? raw / 100.0 : raw).round();
+          if (gainsSaison > 0 || gainsAnnee > 0) {
+            final raw = gainsSaison > 0 ? gainsSaison : gainsAnnee;
+            // Convertir centimes → euros si nécessaire
+            gainsDernierAn = (raw > 10000 ? raw / 100.0 : raw).round();
+            gainsDernierAnDisponible = true;
+            gainsDernierAnSource =
+                gainsSaison > 0 ? 'pmu_gainsSaison' : 'pmu_gainsAnnee';
+          }
         }
-        if (gainsDernierAn <= 0) {
-          // Fallback : estimé à 20% des gains totaux si non disponible
-          gainsDernierAn = (gainsCarriere * 0.20).round();
-        }
+        // Aucun fallback : une absence reste une absence.
 
         partants.add(ZtPartant(
           numero: (pm['numPmu'] ?? pm['numero'] ?? 0).toString(),
@@ -1037,6 +1065,8 @@ class ZoneTurfService {
           statsHippodromeCsv: statsHippoCsv,
           statsTerrainCsv: statsTerrainCsv, // ★ v9.0
           gainsDernierAn: gainsDernierAn, // ★ v9.0
+          gainsDernierAnDisponible: gainsDernierAnDisponible, // D-10
+          gainsDernierAnSource: gainsDernierAnSource, // D-10
         ));
       }
 
