@@ -272,6 +272,63 @@ class DepotSqlite implements DepotConnaissances {
   Future<int> compterElo() async => _compter('elo_ratings');
 
   @override
+  Future<void> upsertEloEnLot(List<LigneElo> lignes) async {
+    if (lignes.isEmpty) return;
+    final maintenant = DateTime.now().toUtc().toIso8601String();
+    // Découpage en paquets : chaque paquet reste très en dessous des limites de
+    // variables liées d'une instruction SQLite (999 par défaut), tout en
+    // évitant 9 001 allers-retours.
+    const int taillePaquet = 100;
+    for (var debut = 0; debut < lignes.length; debut += taillePaquet) {
+      final fin = (debut + taillePaquet).clamp(0, lignes.length);
+      final paquet = lignes.sublist(debut, fin);
+      final valeurs = <Object?>[];
+      final marques = <String>[];
+      for (final l in paquet) {
+        marques.add('(?,?,?,?,?,?,?,?,?,?)');
+        valeurs
+          ..add(l.cle)
+          ..add(l.nomOrigine)
+          ..add(normaliserNom(l.nomOrigine))
+          ..add(l.discipline)
+          ..add(l.rating)
+          ..add(l.nb)
+          ..add(l.var_)
+          ..add(l.idCheval)
+          ..add(maintenant)
+          ..add(maintenant);
+      }
+      await _executeur.rawInsert(
+        'INSERT OR REPLACE INTO elo_ratings '
+        '(id, nom_origine, nom_normalise, discipline, rating, nb, var, '
+        'id_cheval, cree_le, maj_le) VALUES ${marques.join(",")}',
+        valeurs,
+      );
+    }
+  }
+
+  @override
+  Future<Map<String, LigneElo>> lireEloEnLot(List<String> cles) async {
+    final resultat = <String, LigneElo>{};
+    if (cles.isEmpty) return resultat;
+    const int taillePaquet = 400;
+    for (var debut = 0; debut < cles.length; debut += taillePaquet) {
+      final fin = (debut + taillePaquet).clamp(0, cles.length);
+      final paquet = cles.sublist(debut, fin);
+      final marques = List<String>.filled(paquet.length, '?').join(',');
+      final rows = await _executeur.rawQuery(
+        'SELECT * FROM elo_ratings WHERE id IN ($marques)',
+        paquet,
+      );
+      for (final r in rows) {
+        final ligne = _eloDepuisLigne(r);
+        resultat[ligne.cle] = ligne;
+      }
+    }
+    return resultat;
+  }
+
+  @override
   Future<void> ecrireEtatElo(String cle, String valeur) async {
     final maintenant = DateTime.now().toUtc().toIso8601String();
     await _executeur.insert(
@@ -354,6 +411,109 @@ class DepotSqlite implements DepotConnaissances {
               chemin: r['chemin'] as String?,
             ))
         .toList(growable: false);
+  }
+
+  // ---------------------------------------------------------------- bilans
+
+  @override
+  Future<bool> insererBilan(BilanStocke bilan) async {
+    final maintenant = DateTime.now().toUtc().toIso8601String();
+    // `INSERT OR IGNORE` sur `empreinte` UNIQUE : rejouer une migration ne
+    // duplique aucun bilan (§14, idempotence).
+    final id = await _executeur.insert(
+      'bilans',
+      <String, Object?>{
+        'id': bilan.id,
+        'type': bilan.type,
+        'periode_debut': bilan.periodeDebut,
+        'periode_fin': bilan.periodeFin,
+        'annee': bilan.annee,
+        'mois': bilan.mois,
+        'semaine': bilan.semaine,
+        'contenu': bilan.contenu,
+        'empreinte': bilan.empreinte,
+        'schema_version': bilan.schemaVersion,
+        'cree_le': maintenant,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    return id != 0;
+  }
+
+  @override
+  Future<void> ajouterReferenceBilan(
+    ReferenceRapport reference,
+    String idBilan,
+  ) async {
+    // La clé primaire (id_bilan, role, ordre) conserve ordre ET multiplicité.
+    // `empreinte` pointe une version EXACTE du rapport (§13).
+    await _executeur.insert(
+      'bilans_references',
+      <String, Object?>{
+        'id_bilan': idBilan,
+        'role': reference.role,
+        'empreinte': reference.empreinte,
+        'ordre': reference.ordre,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  @override
+  Future<List<BilanStocke>> tousLesBilans({String? type}) async {
+    final rows = await _executeur.query(
+      'bilans',
+      where: type == null ? null : 'type = ?',
+      whereArgs: type == null ? null : <Object?>[type],
+      orderBy: 'periode_debut ASC, id ASC',
+    );
+    final resultats = <BilanStocke>[];
+    for (final r in rows) {
+      final id = '${r['id']}';
+      final refs = await _executeur.query('bilans_references',
+          where: 'id_bilan = ?', whereArgs: <Object?>[id], orderBy: 'ordre ASC');
+      resultats.add(BilanStocke(
+        id: id,
+        type: '${r['type']}',
+        contenu: '${r['contenu']}',
+        empreinte: '${r['empreinte']}',
+        schemaVersion: (r['schema_version'] as num).toInt(),
+        periodeDebut: r['periode_debut'] as String?,
+        periodeFin: r['periode_fin'] as String?,
+        annee: (r['annee'] as num?)?.toInt(),
+        mois: (r['mois'] as num?)?.toInt(),
+        semaine: (r['semaine'] as num?)?.toInt(),
+        references: <ReferenceRapport>[
+          for (final x in refs)
+            ReferenceRapport(
+              role: '${x['role']}',
+              empreinte: '${x['empreinte']}',
+              ordre: (x['ordre'] as num).toInt(),
+            ),
+        ],
+      ));
+    }
+    return resultats;
+  }
+
+  @override
+  Future<int> compterBilans({String? type}) async {
+    if (type == null) return _compter('bilans');
+    final rows = await _executeur.rawQuery(
+      'SELECT COUNT(*) AS n FROM bilans WHERE type = ?',
+      <Object?>[type],
+    );
+    return (rows.first['n'] as num).toInt();
+  }
+
+  @override
+  Future<int> compterReferencesOrphelines() async {
+    final rows = await _executeur.rawQuery(
+      'SELECT COUNT(*) AS n FROM bilans_references r '
+      'LEFT JOIN rapports p ON p.empreinte = r.empreinte '
+      'WHERE p.empreinte IS NULL',
+    );
+    return (rows.first['n'] as num).toInt();
   }
 
   // -------------------------------------------------------------- pronostics

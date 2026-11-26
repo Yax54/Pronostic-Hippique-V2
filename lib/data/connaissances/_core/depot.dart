@@ -119,6 +119,61 @@ class CopieRapport {
   final String? chemin;
 }
 
+/// Bilan hebdomadaire ou mensuel conservé comme agrégat historique.
+///
+/// Consigne §13 : un bilan référence les versions **exactes** des rapports
+/// utilisés, jamais « la dernière version disponible ». D'où [references] qui
+/// porte des empreintes, et non des dates.
+class BilanStocke {
+  const BilanStocke({
+    required this.id,
+    required this.type,
+    required this.contenu,
+    required this.empreinte,
+    required this.schemaVersion,
+    this.periodeDebut,
+    this.periodeFin,
+    this.annee,
+    this.mois,
+    this.semaine,
+    this.references = const <ReferenceRapport>[],
+  });
+
+  /// `bilan_semaine` ou `bilan_mois`.
+  final String type;
+
+  final String id;
+  final String contenu;
+  final String empreinte;
+  final int schemaVersion;
+  final String? periodeDebut;
+  final String? periodeFin;
+  final int? annee;
+  final int? mois;
+  final int? semaine;
+
+  /// Références vers les versions exactes de rapports consommées.
+  final List<ReferenceRapport> references;
+}
+
+/// Référence d'un bilan vers une version exacte de rapport.
+class ReferenceRapport {
+  const ReferenceRapport({
+    required this.role,
+    required this.empreinte,
+    required this.ordre,
+  });
+
+  /// `rj` (rapport journalier), `sem` (bilan de semaine imbriqué), ...
+  final String role;
+
+  /// Empreinte du **contenu** du rapport : identifie une version exacte.
+  final String empreinte;
+
+  /// Position, qui conserve l'ordre et la multiplicité.
+  final int ordre;
+}
+
 /// Résultat de comparaison avant/après migration, sur les valeurs protégées.
 class ControleMigration {
   ControleMigration({
@@ -189,6 +244,16 @@ abstract class DepotConnaissances {
   Future<LigneElo?> lireElo(String cle);
   Future<List<LigneElo>> tousLesElo();
   Future<int> compterElo();
+  /// Écrit un lot de ratings dans une seule instruction SQL.
+  ///
+  /// Exigence §19 : éviter les requêtes répétées et les réécritures inutiles.
+  /// Une restauration de 9 001 ratings ne doit pas produire 9 001 allers-retours
+  /// SQL. Le remplacement se fait sur la clé d'origine, sans fusion (D-24).
+  Future<void> upsertEloEnLot(List<LigneElo> lignes);
+
+  /// Lit un lot de ratings par leurs clés, en une seule requête.
+  Future<Map<String, LigneElo>> lireEloEnLot(List<String> cles);
+
   Future<void> ecrireEtatElo(String cle, String valeur);
 
   // ------------------------------------------------------------ rapports
@@ -198,6 +263,21 @@ abstract class DepotConnaissances {
   Future<int> compterRapports();
   Future<int> compterCopiesRapport();
   Future<List<CopieRapport>> copiesDuRapport(String empreinte);
+
+  // ---------------------------------------------------------------- bilans
+  /// Enregistre un bilan. Idempotent sur son empreinte de contenu.
+  Future<bool> insererBilan(BilanStocke bilan);
+
+  /// Référence un rapport par sa **version exacte** (empreinte de contenu).
+  Future<void> ajouterReferenceBilan(ReferenceRapport reference, String idBilan);
+
+  Future<List<BilanStocke>> tousLesBilans({String? type});
+
+  Future<int> compterBilans({String? type});
+
+  /// Vérifie qu'aucune référence de bilan ne pointe vers un rapport absent.
+  /// Une référence orpheline signalerait une restauration partielle.
+  Future<int> compterReferencesOrphelines();
 
   // -------------------------------------------------------------- pronostics
   Future<bool> insererPronostic({
