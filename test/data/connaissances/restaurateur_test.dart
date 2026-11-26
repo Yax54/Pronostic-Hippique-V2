@@ -49,6 +49,97 @@ void exigereSauvegarde(String chemin) {
   }
 }
 
+/// Résultat d'un contrôle exhaustif de ratings ELO.
+class BilanControleElo {
+  BilanControleElo(this.verifies, this.sansDiscipline, this.ecarts);
+  final int verifies;
+  final int sansDiscipline;
+  final List<String> ecarts;
+}
+
+/// Compare **tous** les ratings d'une source à ceux du dépôt, attribut par
+/// attribut.
+///
+/// Exigence §5 : « la comparaison des ratings ELO avant et après migration doit
+/// être exhaustive, et non limitée à un échantillon ». Cette fonction ne prend
+/// donc aucun pas d'échantillonnage : elle parcourt la totalité des clés.
+///
+/// Attributs vérifiés pour chaque rating : **clé** (identifiant conservé
+/// verbatim), **nom d'origine**, **discipline**, **rating**, **nb** et **var**.
+/// La comparaison est stricte, sans tolérance : un rating ELO n'est jamais
+/// « à peu près » égal (§12).
+Future<BilanControleElo> _controlerEloExhaustif(
+  DepotSqlite depot,
+  Map<String, Object?> source, {
+  required String etiquette,
+}) async {
+  final cles = source.keys.toList()..sort();
+  final ecarts = <String>[];
+  var verifies = 0;
+  var sansDiscipline = 0;
+
+  for (final cle in cles) {
+    final attendu = source[cle];
+    if (attendu is! Map) {
+      ecarts.add('$cle : entrée source non exploitable (${attendu.runtimeType})');
+      continue;
+    }
+    final obtenu = await depot.lireElo(cle);
+    if (obtenu == null) {
+      ecarts.add('$cle : rating ABSENT après restauration');
+      continue;
+    }
+
+    if (obtenu.cle != cle) {
+      ecarts.add('$cle : clé altérée en "${obtenu.cle}"');
+    }
+
+    // Nom d'origine : fourni par la source, sinon déduit de la clé jusqu'au
+    // dernier `|` (jamais jusqu'au premier : un nom peut en contenir).
+    final i = cle.lastIndexOf('|');
+    final nomAttendu = '${attendu['nom'] ?? (i < 0 ? cle : cle.substring(0, i))}';
+    if (obtenu.nomOrigine != nomAttendu) {
+      ecarts.add('$cle : nom "${obtenu.nomOrigine}" != "$nomAttendu"');
+    }
+
+    // Discipline : dérivée du dernier `|`, conservée telle quelle. Une
+    // discipline absente reste VIDE, jamais remplacée par `global` (D-09, D-27).
+    final disciplineAttendue = i < 0 ? '' : cle.substring(i + 1);
+    if (obtenu.discipline != disciplineAttendue) {
+      ecarts.add('$cle : discipline "${obtenu.discipline}" != '
+          '"$disciplineAttendue"');
+    }
+    if (disciplineAttendue.isEmpty) sansDiscipline++;
+
+    final ratingAttendu = (attendu['rating'] as num?)?.toDouble();
+    if (ratingAttendu == null) {
+      // Une source sans rating numérique n'est pas devinée : elle est signalée.
+      ecarts.add('$cle : la source ne porte pas de rating numérique');
+      continue;
+    }
+    if (obtenu.rating != ratingAttendu) {
+      ecarts.add('$cle : rating ${obtenu.rating} != $ratingAttendu');
+    }
+    final nbAttendu = (attendu['nb'] as num?)?.toInt() ?? 0;
+    if (obtenu.nb != nbAttendu) {
+      ecarts.add('$cle : nb ${obtenu.nb} != $nbAttendu');
+    }
+    final varAttendue = (attendu['var'] as num?)?.toDouble() ?? 0.0;
+    if (obtenu.var_ != varAttendue) {
+      ecarts.add('$cle : var ${obtenu.var_} != $varAttendue');
+    }
+    verifies++;
+  }
+
+  // Mesure consignée pour que le rapport final puisse citer un chiffre réel.
+  // ignore: avoid_print
+  print('[MESURE] contrôle ELO exhaustif $etiquette : $verifies/${cles.length} '
+      'ratings vérifiés sur 6 attributs, $sansDiscipline sans discipline '
+      'résolue (D-20), ${ecarts.length} écart(s)');
+
+  return BilanControleElo(verifies, sansDiscipline, ecarts);
+}
+
 void main() {
   late Directory dossierTest;
   late DepotSqlite depot;
@@ -696,24 +787,21 @@ void main() {
           reason: 'mesure de référence : 9 001 clés dans la sauvegarde 13/11');
       expect(r.eloRestaures, 9001);
 
-      // Contrôle valeur par valeur sur un échantillon déterministe, plus les
-      // orphelins comptés globalement.
+      // ── CONTRÔLE EXHAUSTIF, ET NON ÉCHANTILLONNÉ (§5) ──────────────────
       final source = jsonDecode(contenu) as Map;
       final eloSource = <String, Object?>{
         for (final e in (source['elo_service'] as Map).entries)
           '${e.key}': e.value
       };
       final cles = eloSource.keys.toList()..sort();
-      for (var i = 0; i < cles.length; i += 97) {
-        final cle = cles[i];
-        final attendu = eloSource[cle] as Map;
-        final obtenu = await depot.lireElo(cle);
-        expect(obtenu, isNotNull, reason: 'rating $cle absent après restauration');
-        expect(obtenu!.rating, (attendu['rating'] as num).toDouble(),
-            reason: 'valeur ELO modifiée pour $cle');
-        expect(obtenu.nb, (attendu['nb'] as num).toInt());
-        expect(obtenu.var_, (attendu['var'] as num).toDouble());
-      }
+
+      final bilan = await _controlerEloExhaustif(depot, eloSource, etiquette: '13/11');
+      expect(bilan.ecarts, isEmpty,
+          reason: 'écarts constatés sur ${bilan.ecarts.length} rating(s) parmi '
+              '${cles.length} : ${bilan.ecarts.take(10).join(" ; ")}');
+      expect(bilan.verifies, cles.length,
+          reason: 'TOUS les ratings doivent être vérifiés, pas un échantillon');
+      expect(bilan.verifies, 9001);
 
       // D-20 : les ratings d'identité non résolue sont comptés et conservés.
       final orphelins = cles.where((k) => k.endsWith('|')).length;
@@ -807,6 +895,25 @@ void main() {
       expect(r.reussie, isTrue, reason: r.erreur ?? '');
       expect(await depot.compterElo(), 1934,
           reason: 'mesure de référence : 1 934 clés dans la sauvegarde 28/05');
+
+      // ── CONTRÔLE EXHAUSTIF DES 1 934 RATINGS (§5) ─────────────────────
+      // L'exigence porte explicitement sur les DEUX sauvegardes historiques :
+      // 1 934 ratings pour le 28/05, 9 001 pour le 13/11. Aucune ne doit être
+      // vérifiée par échantillonnage.
+      final source = jsonDecode(contenu) as Map;
+      final eloSource = <String, Object?>{
+        for (final e in (source['elo_service'] as Map).entries)
+          '${e.key}': e.value
+      };
+      final bilan =
+          await _controlerEloExhaustif(depot, eloSource, etiquette: '28/05');
+      expect(bilan.ecarts, isEmpty,
+          reason: '${bilan.ecarts.length} écart(s) : '
+              '${bilan.ecarts.take(10).join(" ; ")}');
+      expect(bilan.verifies, eloSource.length,
+          reason: 'TOUS les ratings doivent être vérifiés');
+      expect(bilan.verifies, 1934);
+
       expect(sha256Fichier(_cheminSauvegarde28), empreinteAvant);
     });
   });

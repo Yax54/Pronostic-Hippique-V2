@@ -146,11 +146,10 @@ import 'zone_turf_service.dart'; // ★ B5c-RDR-01-b
 
 // ★ ENSEMBLE 4 — nouveau système de sauvegarde/restauration.
 import '../data/connaissances/_adapters/pont_elo.dart';
-import '../data/connaissances/_adapters/depot_sqlite.dart';
-import '../data/connaissances/_core/depot.dart';
 import '../data/connaissances/_migration/migrateur_elo.dart';
 import '../data/connaissances/_migration/recuperateur_rapports.dart';
 import '../data/connaissances/_sauvegarde/format_sauvegarde.dart';
+import '../data/connaissances/_sauvegarde/restaurateur.dart';
 import '../data/connaissances/_sauvegarde/transaction_globale.dart';
 
 class BackupService {
@@ -1791,22 +1790,22 @@ class BackupService {
   //     silencieusement : chaque divergence produit une ligne de conflit (D-24).
   // ════════════════════════════════════════════════════════════════════════
 
+  /// Traduit une restauration multi-supports en `ImportResult`.
+  ///
+  /// ⚠️ CETTE MÉTHODE NE CONTIENT PLUS AUCUNE RÈGLE MÉTIER.
+  ///
+  /// Avant unification, elle réimplémentait ici la comparaison ELO, la trace
+  /// des conflits (D-24) et l'ordre des écritures — en parallèle de
+  /// `Restaurateur`, qui faisait la même chose autrement. Deux logiques pour un
+  /// même acte, c'est deux comportements possibles selon le chemin emprunté.
+  ///
+  /// Désormais, tout est dans `Restaurateur.restaurer()` : aiguillage par
+  /// layout, instantané vérifié, intention, application, contrôles, retour
+  /// arrière, reprise. Ici, on ne fait que traduire le résultat.
   Future<ImportResult> _restaurerDepuisConteneur(
     VerificationSauvegarde verif,
     String contenu,
   ) async {
-    const format = FormatSauvegarde();
-
-    if (!verif.utilisable) {
-      return ImportResult(
-        succes: false,
-        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
-        erreur: verif.blocsAlteres.isNotEmpty
-            ? 'sauvegarde altérée : ${verif.blocsAlteres.join(", ")}'
-            : 'sauvegarde inutilisable',
-      );
-    }
-
     final depot = PontElo.instance.depotPourSauvegarde;
     final racine = PontElo.instance.racine;
     if (depot == null || racine.isEmpty) {
@@ -1821,168 +1820,47 @@ class BackupService {
       );
     }
 
-    final transaction = TransactionGlobale(
+    final resultat = await const Restaurateur().restaurer(
       depot: depot,
+      contenuSauvegarde: contenu,
+      mode: ModeRestauration.complet,
       dossierTemp: '$racine/temp',
       dossierBase: racine,
       versionLocale: _backupVersion,
     );
 
-    // ── 1. INSTANTANÉ AVANT ÉCRITURE ─────────────────────────────────────
-    InstantaneGlobal instantane;
-    try {
-      instantane = await transaction.capturer(nom: 'avant_restauration');
-    } catch (e) {
+    if (!resultat.reussie) {
       return ImportResult(
         succes: false,
         version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
-        erreur: 'instantané de retour arrière impossible ($e) : restauration '
-            'refusée avant toute modification',
+        erreur: resultat.erreur,
       );
     }
 
-    // ── 2. DECLARATION D'INTENTION ───────────────────────────────────────
-    final blocPrefs = format.extraireBloc(contenu, 'prefs_complet');
-    final clesCibles = blocPrefs is Map
-        ? <String>[for (final k in blocPrefs.keys) '$k']
-        : const <String>[];
-    await transaction.declarerIntention(
-      operation: 'restauration_ptg',
-      clesPrefsTouchees: clesCibles,
+    // ── Les services en mémoire doivent relire l'état restauré (§4) ───────
+    // Sans cela, l'application continuerait d'afficher l'ancien état jusqu'au
+    // redémarrage : l'utilisateur croirait à un échec et retenterait, ce qui
+    // risquerait de produire un second apprentissage.
+    await IaMemoryService.instance.recharger();
+    await EloService.instance.rechargerDepuisStockage();
+
+    final prefs = await SharedPreferences.getInstance();
+    return ImportResult(
+      succes: true,
+      version: 'ptg/${verif.manifeste!.versionFormat}',
+      nbClesRestaurees: resultat.nbPrefsEcrites + resultat.nbFichiersRestaures,
+      nbIA: resultat.nbPrefsEcrites,
+      nbPronosticsIA: (prefs.getStringList('ia_pronostics_v2') ?? []).length,
+      nbParis: (prefs.getStringList('user_predictions_v2') ?? []).length,
+      nbAlertes: (prefs.getStringList('alert_history_v1') ?? []).length,
+      nbEloRestaures: resultat.eloIdentiques + resultat.eloConflits +
+          resultat.eloRestaures,
+      dateBackup: verif.manifeste!.dateCreation,
+      avertissementElo: resultat.eloConflits > 0
+          ? '${resultat.eloConflits} rating(s) divergent(s) : tracés en '
+              'conflit, aucune fusion (D-24)'
+          : null,
     );
-
-    // ── 3. APPLICATION ───────────────────────────────────────────────────
-    try {
-      // 3a. SharedPreferences : toutes les clés du bloc, avec leur type.
-      var nbPrefs = 0;
-      if (blocPrefs is Map) {
-        const magasin = MagasinPrefs();
-        final prefs = await SharedPreferences.getInstance();
-        for (final e in blocPrefs.entries) {
-          final valeur = ValeurPref.fromJson(e.value);
-          if (valeur == null) continue;
-          await magasin.ecrire(prefs, '${e.key}', valeur);
-          nbPrefs++;
-        }
-      }
-
-      // 3b. SQLite : recopie transactionnelle, valeurs ELO contrôlées.
-      var rapportElo = '';
-      final blocSqlite = format.extraireBloc(contenu, 'sqlite_complet');
-      var eloIdentiques = 0;
-      var eloConflits = 0;
-      if (blocSqlite is Map && blocSqlite['base64'] is String) {
-        final octets = base64Decode(blocSqlite['base64'] as String);
-        final cheminTemp = '$racine/temp/restauration_'
-            '${DateTime.now().millisecondsSinceEpoch}.db';
-        await File(cheminTemp).writeAsBytes(octets, flush: true);
-        try {
-          // Les ratings ELO sont comparés AVANT recopie, un par un : un écart
-          // devient une ligne de conflit, jamais un remplacement muet (D-24).
-          final source = DepotSqlite(
-            chemin: cheminTemp,
-            fabrique: depot.fabriquePourRelecture,
-          );
-          await source.ouvrir();
-          try {
-            final avant = <String, LigneElo>{
-              for (final l in await depot.tousLesElo()) l.cle: l,
-            };
-            for (final l in await source.tousLesElo()) {
-              final locale = avant[l.cle];
-              if (locale == null) continue;
-              if (locale.rating == l.rating &&
-                  locale.nb == l.nb &&
-                  locale.var_ == l.var_) {
-                eloIdentiques++;
-                continue;
-              }
-              await depot.enregistrerConflit(
-                categorie: 'elo_rating',
-                cleEntite: l.cle,
-                description: 'Rating divergent à la restauration : '
-                    'local=${locale.rating}, sauvegarde=${l.rating}. '
-                    'Aucune fusion arithmétique (D-24).',
-                valeurLocale: '${locale.rating}',
-                valeurDistante: '${l.rating}',
-              );
-              eloConflits++;
-            }
-          } finally {
-            await source.fermer();
-          }
-
-          await depot.restaurerDepuisInstantane(cheminTemp);
-          rapportElo = '$eloIdentiques identique(s), $eloConflits conflit(s)';
-        } finally {
-          final f = File(cheminTemp);
-          if (await f.exists()) await f.delete();
-        }
-      }
-
-      // 3c. Fichiers permanents.
-      var nbFichiers = 0;
-      final blocFichiers = format.extraireBloc(contenu, 'fichiers_permanents');
-      if (blocFichiers is Map) {
-        for (final e in blocFichiers.entries) {
-          final desc = e.value;
-          if (desc is! Map) continue;
-          final encode = desc['base64'];
-          if (encode is! String) continue;
-          final cible = File('$racine/${e.key}');
-          if (!await cible.parent.exists()) {
-            await cible.parent.create(recursive: true);
-          }
-          await cible.writeAsBytes(base64Decode(encode), flush: true);
-          nbFichiers++;
-        }
-      }
-
-      // 3d. Les services en mémoire doivent relire l'état restauré : sans cela,
-      //     l'application continuerait d'afficher l'ancien état jusqu'au
-      //     prochain redémarrage, ce qui donnerait l'illusion d'un échec.
-      await IaMemoryService.instance.recharger();
-      await EloService.instance.rechargerDepuisStockage();
-
-      await depot.journaliser(
-        operation: 'restauration_ptg',
-        etape: 'application',
-        statut: 'termine',
-        detail: 'prefs=$nbPrefs fichiers=$nbFichiers elo[$rapportElo]',
-      );
-
-      final prefsApres = await SharedPreferences.getInstance();
-      return ImportResult(
-        succes: true,
-        version: 'ptg/${verif.manifeste!.versionFormat}',
-        nbClesRestaurees: nbPrefs + nbFichiers,
-        nbIA: nbPrefs,
-        nbPronosticsIA:
-            (prefsApres.getStringList('ia_pronostics_v2') ?? []).length,
-        nbParis: (prefsApres.getStringList('user_predictions_v2') ?? []).length,
-        nbAlertes:
-            (prefsApres.getStringList('alert_history_v1') ?? []).length,
-        nbEloRestaures: eloIdentiques + eloConflits,
-        dateBackup: verif.manifeste!.dateCreation,
-        avertissementElo: eloConflits > 0
-            ? '$eloConflits rating(s) divergent(s) : conservés selon le mode, '
-                'tracés en conflit, aucune fusion (D-24)'
-            : null,
-      );
-    } catch (e) {
-      // ── 4. RETOUR ARRIÈRE AUTOMATIQUE ─────────────────────────────────
-      final annulation = await transaction.annuler(instantane);
-      return ImportResult(
-        succes: false,
-        version: 'ptg/${verif.manifeste?.versionFormat ?? "?"}',
-        erreur: 'échec pendant la restauration : $e. '
-            '${annulation.reussie ? "État antérieur rétabli "
-                "(${annulation.prefsEcrites} clés, "
-                "${annulation.eloRestaures} ratings)." : "RETOUR ARRIÈRE "
-                "ÉCHOUÉ (${annulation.erreur}) — instantané conservé : "
-                "${instantane.chemin}"}',
-      );
-    }
   }
 
   Future<ImportResult> _restaurerDepuisJson(String jsonStr) async {

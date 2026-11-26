@@ -332,6 +332,7 @@ class TransactionGlobale {
       nbFichiers: fichiers.length,
       empreinte: verif.manifeste!.empreinteGlobale,
       clesPrefs: <String>[for (final k in clesPrefs.keys) k],
+      inventaireAvant: inventaireSqlite,
     );
     if (kDebugMode) {
       debugPrint('[TransactionGlobale] instantané ${instantane.empreinte} '
@@ -383,17 +384,21 @@ class TransactionGlobale {
 
   /// Consigne l'intention d'écriture avant de commencer.
   ///
-  /// Après une interruption, ce journal permet de constater ce qui a pu être
-  /// appliqué. Il ne remplace pas le retour arrière : il le rend interprétable.
+  /// [cheminInstantane] n'est pas décoratif : sans lui, une reprise après
+  /// interruption ne saurait pas **quel** instantané rejouer, et la protection
+  /// deviendrait inutilisable au moment précis où elle sert. Il est donc
+  /// obligatoire.
   Future<void> declarerIntention({
     required String operation,
     required List<String> clesPrefsTouchees,
+    required String cheminInstantane,
   }) async {
     await depot.journaliser(
       operation: operation,
       etape: 'intention',
       statut: 'declaree',
       detail: jsonEncode(<String, Object?>{
+        'instantane': cheminInstantane,
         'cles_prefs': clesPrefsTouchees,
         'nb_cles': clesPrefsTouchees.length,
         'supports': const <String>['sqlite', 'shared_preferences', 'fichiers'],
@@ -606,6 +611,7 @@ class InstantaneGlobal {
     required this.nbFichiers,
     required this.empreinte,
     required this.clesPrefs,
+    this.inventaireAvant = const <String, int>{},
   });
 
   final String chemin;
@@ -620,6 +626,13 @@ class InstantaneGlobal {
   /// Clés SharedPreferences présentes dans l'instantané.
   final List<String> clesPrefs;
 
+  /// Nombre de lignes par table au moment de la capture.
+  ///
+  /// Conservé en mémoire pour que le contrôle de cohérence d'après
+  /// restauration puisse détecter une perte, sans relire l'instantané ni
+  /// dépendre d'une valeur recalculée après coup.
+  final Map<String, int> inventaireAvant;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'chemin': chemin,
         'date_creation': dateCreation.toIso8601String(),
@@ -627,5 +640,6 @@ class InstantaneGlobal {
         'nb_lignes_sqlite': nbLignesSqlite,
         'nb_fichiers': nbFichiers,
         'empreinte': empreinte,
+        'inventaire_avant': inventaireAvant,
       };
 }
