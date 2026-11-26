@@ -34,6 +34,61 @@ class ZoneTurfService {
   static final Map<String, List<ZtReunion>> _cache = {};
   static final Map<String, DateTime> _cacheTime = {};
 
+  // ── Cache des HISTORIQUES DÉTAILLÉS (`performances-detaillees/pretty`) ──
+  //
+  //   MESURES QUI JUSTIFIENT CE CACHE (mesurées le 26/11/2026, pas supposées):
+  //     • `/programme/{date}/R{n}/performances-detaillees/pretty`  → HTTP 420
+  //     • `/programme/{date}/performances-detaillees/pretty`       → HTTP 420
+  //     • `/programme/{date}/R{n}/C{n}/performances-detaillees/pretty` → HTTP 200
+  //   ⇒ AUCUNE mutualisation par réunion ni par journée n'est possible. Le seul
+  //     niveau servi est celui de la COURSE (~47 Ko dans le cas mesuré).
+  //
+  //   CONSÉQUENCE ASSUMÉE ET MESURÉE : l'enrichissement coûte UN appel réseau
+  //   supplémentaire PAR COURSE. Sans ce cache, un simple rafraîchissement de
+  //   l'écran d'accueil (qui relit tout le programme) rejouerait 50 requêtes
+  //   pour un programme de 50 courses. Le cache évite cela : une même course
+  //   n'est téléchargée qu'une fois par fenêtre de validité.
+  //
+  //   Clé = `{dateStr}/R{nR}/C{nC}` — même identité que l'URL, donc aucune
+  //   collision entre deux courses de même numéro sur des dates différentes.
+  static final Map<String, Map<String, _HistoCheval>> _cachePerfDetail = {};
+  static final Map<String, DateTime> _cachePerfDetailTime = {};
+
+  /// Durée de validité du cache d'historiques. Alignée sur la sémantique du
+  /// cache de programme (15 min) : un historique de courses PASSÉES ne change
+  /// plus, mais le cache reste borné pour ne pas retenir indéfiniment un
+  /// programme dont la journée est terminée.
+  static const Duration _ttlPerfDetail = Duration(minutes: 20);
+
+  /// Nombre d'appels réseau réellement effectués vers
+  /// `performances-detaillees/pretty` depuis le démarrage du processus.
+  /// Sert UNIQUEMENT à mesurer le coût réel de l'enrichissement (tests et
+  /// rapport d'audit). Ne conditionne aucune décision métier.
+  static int _nbAppelsPerfDetail = 0;
+  @visibleForTesting
+  static int get nbAppelsPerfDetail => _nbAppelsPerfDetail;
+  @visibleForTesting
+  static void reinitialiserCompteurPerfDetail() {
+    _nbAppelsPerfDetail = 0;
+  }
+
+  /// Hippodrome de la course en cours de chargement, renseigné par
+  /// `chargerProgramme` juste avant d'appeler `_chargerPartants`.
+  ///
+  /// Pourquoi un champ statique plutôt qu'un paramètre : `_chargerPartants`
+  /// est appelé depuis la boucle de `chargerProgramme`, qui dispose déjà du
+  /// libellé de la réunion (`lieu`). Ajouter un paramètre aurait modifié la
+  /// signature d'une méthode appelée depuis un seul endroit, mais ce champ
+  /// évite de propager un 5ᵉ argument à travers un appel déjà dense. Il est
+  /// réinitialisé à chaque réunion pour ne jamais fuiter d'une course à
+  /// l'autre.
+  static String? _hippodromeCourant;
+
+  /// Distance (en mètres) de la course en cours de chargement, renseignée par
+  /// `chargerProgramme` avant l'appel à `_chargerPartants`. Sert au filtre
+  /// ±100 m de la musique par distance.
+  static int? _distanceCourante;
+
   /// ★ L1 — Compteur de reset, incrémenté UNIQUEMENT par
   /// [viderCachePourResetComplet]. Il ne sert qu'à une chose : permettre à un
   /// `chargerProgramme()` EN VOL de constater qu'un reset a eu lieu pendant son
@@ -130,6 +185,14 @@ class ZoneTurfService {
             'Inconnu';
         final numOfficiel = r['numOfficiel'] as int? ?? 0;
         final coursesJson = (r['courses'] as List<dynamic>? ?? []);
+
+        // ★ ENRICHISSEMENT — hippodrome RÉEL de la réunion, exposé au
+        //   chargement des partants pour alimenter le critère `hippodrome`.
+        //   Source : `hippodrome.libelleCourt` du JSON `/programme/{date}`,
+        //   c'est-à-dire exactement le même libellé que celui publié dans
+        //   `coursesCourues[].hippodrome` des historiques détaillés (mesuré :
+        //   « PORNICHET » dans les deux sources pour la même réunion).
+        _hippodromeCourant = lieu;
 
         // Déduire la discipline principale
         String discipline = 'Plat';
@@ -267,6 +330,7 @@ class ZoneTurfService {
           }
 
           // Charger les partants via API PMU
+          _distanceCourante = distanceM;
           final List<ZtPartant> partants =
               await _chargerPartants(dateStr, numOfficiel, numOrdre, heureDt);
 
@@ -435,6 +499,26 @@ class ZoneTurfService {
   static Future<List<ZtPartant>> _chargerPartants(
       String dateStr, int numR, int numC, DateTime heureDt) async {
     try {
+      // ★ ENRICHISSEMENT — HISTORIQUES DÉTAILLÉS (`performances-detaillees`)
+      //
+      //   Chargé AVANT la boucle des partants, une seule fois par course, et
+      //   servi depuis le cache si la course a déjà été vue dans la fenêtre
+      //   de validité (voir `_chargerPerformancesDetaillees`).
+      //
+      //   ⚠️ COÛT RÉEL ASSUMÉ : +1 requête réseau PAR COURSE (mesuré : la
+      //      mutualisation par réunion et par journée renvoie HTTP 420). Le
+      //      cache garantit qu'un rafraîchissement ne rejoue pas ces requêtes.
+      //
+      //   ⚠️ DÉGRADATION MAÎTRISÉE : cette map peut être VIDE (réseau, délai,
+      //      JSON). Dans ce cas les critères concernés restent neutres selon
+      //      leur définition, sans qu'aucune valeur ne soit inventée.
+      final histos = await _chargerPerformancesDetaillees(dateStr, numR, numC);
+
+      // Hippodrome RÉEL de la course analysée, nécessaire au critère
+      // `hippodrome` (comparer le passé sur le MÊME hippodrome). Renseigné par
+      // `chargerProgramme` avant l'appel ; vide = non déterminé.
+      final hippodromeCourse = _hippodromeCourant ?? '';
+
       final url = kIsWeb
           ? '${Uri.base.origin}/api/pmu/programme/$dateStr/R$numR/C$numC/participants'
           : '$_pmuBase/programme/$dateStr/R$numR/C$numC/participants?$_pmuSpec';
@@ -497,9 +581,47 @@ class ZoneTurfService {
         final sexe = pm['sexe'] as String? ?? '';
 
         // ── ENRICHISSEMENT IA — NOUVEAUX CHAMPS ────────────────────────
-        // A) Poids porté (en grammes dans l'API → convertir en kg)
-        final poidsGrammes = (pm['handicapPoids'] as num?)?.toDouble() ?? 0.0;
-        final poidsKg = poidsGrammes > 0 ? poidsGrammes / 1000.0 : 0.0;
+        // A) POIDS PORTÉ — `handicapPoids` est en DIXIÈMES DE KILOGRAMME.
+        //
+        //    ⚠️ DÉFAUT MESURÉ ET CORRIGÉ : le code divisait par 1000, ce qui
+        //       produisait des poids de 0,58 kg — manifestement incohérent et
+        //       souligné au §10 du mandat.
+        //
+        //    PREUVE DE L'UNITÉ, PAR RECOUPEMENT AVEC UNE SOURCE INDÉPENDANTE.
+        //    La course du 14/11/2026 R6C6 (PORNICHET, 1 700 m, PLAT) est la
+        //    dernière course réellement disputée par VIKTOR RAPIDE. Pour cette
+        //    MÊME course, deux sources PMU distinctes publient :
+        //      • `/participants`          → `handicapPoids` (entier)
+        //      • `performances-detaillees` → `poidsJockey` (réel, en kg)
+        //    Résultat mesuré, 6 chevaux présents dans les deux sources :
+        //
+        //      MELEKS          580 → 58.0  | poidsJockey réel 58.0  ✔
+        //      VIKTOR RAPIDE   580 → 58.0  | poidsJockey réel 58.0  ✔
+        //      YES OR NO       565 → 56.5  | poidsJockey réel 56.5  ✔
+        //      ACQUIRED        565 → 56.5  | poidsJockey réel 56.5  ✔
+        //      VENETIAN BELLE  565 → 56.5  | poidsJockey réel 56.5  ✔
+        //      BREIZH STORY    565 → 56.5  | poidsJockey réel 56.5  ✔
+        //
+        //    6 concordances sur 6. Une division par 100 donnerait 5,8 kg
+        //    (enfant), par 1000 donnerait 0,58 kg (absurde). L'unité est donc
+        //    le dixième de kilogramme, et la division correcte est par 10.
+        //    Recoupement complémentaire : le trot monté publie 630, 620, 560,
+        //    valeurs dans la plage réelle des poids de monte.
+        //
+        //    ⚠️ DISTINCTION EXIGÉE PAR LE §10, CONSERVÉE :
+        //      • `handicapPoids`      = POIDS PORTÉ (ce qui est lu ici) ;
+        //      • `handicapValeur`     = VALEUR de handicap (ex. 23,5) — ce
+        //                               n'est PAS un poids, jamais converti ;
+        //      • `poidsConditionMonte`= poids de condition (ex. 555 → 55,5 kg),
+        //                               distinct et plus léger (mesuré : 530
+        //                               pour ACQUIRED contre 565 de poids porté).
+        //      Seul `handicapPoids` alimente `poids`, donc `scorePoids`.
+        //
+        //    ⚠️ AUCUNE FORMULE TOUCHÉE. `scorePoids`, son coefficient
+        //       `poidsRel: 0.03` et sa neutralité hors galop sont intacts.
+        //       Seule la CONVERSION D'UNITÉ est corrigée.
+        final poidsDixiemesKg = (pm['handicapPoids'] as num?)?.toDouble() ?? 0.0;
+        final poidsKg = poidsDixiemesKg > 0 ? poidsDixiemesKg / 10.0 : 0.0;
 
         // A2) RECORD PERSONNEL DU CHEVAL — Extraire depuis l'API PMU
         // L'API expose 'recordAbsolu' ou dans 'performances' le meilleur temps
@@ -543,18 +665,79 @@ class ZoneTurfService {
           }
         }
 
-        // B) Position de départ (numéro de stalle/corde)
-        final placeDepart = pm['placeDepartCourse'] as int? ?? 0;
+        // B) POSITION AU DÉPART — `placeCorde`
+        //
+        //    ⚠️ DÉFAUT MESURÉ ET CORRIGÉ : le code lisait `placeDepartCourse`,
+        //       clé qui N'EXISTE PAS dans `/participants` (mesuré : 0/98
+        //       participants sur 8 courses / 4 disciplines). Le critère
+        //       `placeDepart` était donc TOUJOURS à 0, donc toujours neutre.
+        //
+        //    SOURCE AUTHENTIQUE : `placeCorde`, publiée par le PMU.
+        //    Mesures sur la journée du 26/11/2026 (50 courses) :
+        //      • présent sur 330 participants ;
+        //      • valeurs observées formant une PERMUTATION 1..n sur les
+        //        courses où il est publié — donc ce n'est PAS le numéro du
+        //        cheval. Contre-exemple mesuré : R2C1, le cheval n° 1 a
+        //        `placeCorde = 6` ;
+        //      • disciplines où il apparaît : PLAT et ATTELE (mesuré).
+        //
+        //    ⚠️ CORRECTION D'UNE DE MES AFFIRMATIONS ANTÉRIEURES : j'avais
+        //       écrit « absent en TROT ATTELE (0/16) ». C'était FAUX — mesuré
+        //       sur une seule course à départ volté, puis généralisé à tort.
+        //       Le 26/11/2026, R1C5 (ATTELE, 2 100 m, AUTOSTART) publie bien
+        //       `placeCorde` = 1..6. La présence dépend du MODE DE DÉPART,
+        //       pas de la discipline.
+        //
+        //    ⚠️ LIMITE DÉCLARÉE, NON MASQUÉE : `placeCorde` est la position à
+        //       la CORDE sur un hippodrome de galop. Elle ne représente NI la
+        //       position derrière l'autostart, NI la première/deuxième ligne,
+        //       NI les échelons de distance. Le §11 exige de distinguer ces
+        //       notions : elles ne sont donc PAS fusionnées ici. En trot, le
+        //       PMU publie `handicapDistance` (la distance réelle du cheval,
+        //       ex. 2 850 m), qui encode le recul — mais `_scorePlaceDepart`
+        //       n'a aucun paramètre pour l'exploiter, et l'inventer ici
+        //       reviendrait à modifier la définition du critère.
+        //
+        //    ⇒ CE QUI EST FAIT : lecture de la clé authentique, sans
+        //      substitution. Ce qui reste à décider (exploitation du recul en
+        //      trot) est remonté au rapport final comme décision à valider.
+        //
+        //    ⚠️ LE CRITÈRE N'EST PAS SUPPRIMÉ EN TROT (§11) : si `placeCorde`
+        //       est absent, la valeur reste 0 et `_scorePlaceDepart` rend sa
+        //       neutralité documentée de 50.0.
+        final int placeDepart = (pm['placeCorde'] as num?)?.toInt() ?? 0;
 
         // C) Musique globale
         final musiqueGlobale = pm['musique'] as String? ?? '';
 
-        // D) JOURS DE REPOS — calculer depuis dateLastPerf
-        //    Ordre de priorité :
-        //    1. nbJoursAbsence (champ direct PMU)
-        //    2. dateDernierePerformance (champ date ISO)
-        //    3. Extraction depuis performances[] → champ date de la plus récente
-        //    4. Extraction depuis musique PMU datée (format "JJ/MM/YYYY:musique")
+        // D) JOURS DE REPOS
+        //
+        //    ⚠️ ÉTAT MESURÉ AVANT CORRECTION : les trois premières sources
+        //       étaient TOUTES absentes de `/participants` — `nbJoursAbsence`
+        //       0/98, `dateDernierePerformance` 0/98, `performances` et
+        //       `historiquePerformances` 0/98. La valeur restait donc à 0 pour
+        //       100 % des partants, et `scoreRepos` rendait 50.0
+        //       (`if (joursRepos <= 0) return 50.0`).
+        //
+        //    SOURCE AUTHENTIQUE AJOUTÉE : la date de la dernière course
+        //    EFFECTIVEMENT DISPUTÉE, lue dans
+        //    `performances-detaillees/coursesCourues[].date`.
+        //
+        //    ⚠️ CE QUI N'EST PAS FAIT, CONFORMÉMENT AU §5 :
+        //      • aucune écriture de zéro pour représenter une donnée inconnue.
+        //        Un cheval DÉBUTANT (aucune course passée) reçoit `null`, donc
+        //        `joursRepos` reste 0 et le critère rend sa neutralité LÉGITIME
+        //        de 50.0 — laquelle est explicitement distinguée d'un repos de
+        //        0 jour par la définition même de `scoreRepos`.
+        //      • `coursesCourues` ne contient que des courses courues : une
+        //        inscription, un non-partant ou une course future ne peuvent
+        //        pas s'y trouver. Il n'y a donc rien à filtrer d'autre.
+        //
+        //    Ordre de priorité conservé, enrichi en dernier recours :
+        //    1. `nbJoursAbsence` (champ direct, absent en pratique)
+        //    2. `dateDernierePerformance` (absent en pratique)
+        //    3. dates dans `performances[]` (absent en pratique)
+        //    4. ★ NOUVEAU — historique détaillé `coursesCourues[].date`
         int joursRepos = 0;
         final nbJoursAbsence = pm['nbJoursAbsence'];
         if (nbJoursAbsence is int && nbJoursAbsence > 0) {
@@ -616,32 +799,79 @@ class ZoneTurfService {
               }
             }
           }
-        }
 
-        // E) MUSIQUE FILTRÉE PAR DISTANCE ±100m
-        //    PMU expose parfois 'performancesParDistance' (liste d'objets)
-        String musiqueDistSpe = '';
-        final perfParDist = pm['performancesParDistance'];
-        if (perfParDist is List && perfParDist.isNotEmpty) {
-          // Extraire la distance de la course depuis le contexte (on passe heureDt)
-          // On ne peut pas accéder facilement ici, donc on stocke tout et filtre côté IA
-          // Format : "DDDD:musique" séparé par virgules
-          final buf = StringBuffer();
-          for (final entry in perfParDist) {
-            if (entry is Map) {
-              final dist = entry['distance'] as int?;
-              final muse = entry['musique'] as String? ?? '';
-              if (dist != null && muse.isNotEmpty) {
-                if (buf.isNotEmpty) buf.write(',');
-                buf.write('$dist:$muse');
-              }
-            }
+          // ★ Priorité 4 — NOUVEAU : historique détaillé authentique.
+          //   N'écrase jamais une valeur déjà obtenue par une source amont.
+          if (joursRepos == 0) {
+            final histo = histos[(pm['numPmu'] ?? pm['numero'] ?? 0).toString()];
+            final jours = _joursReposDepuisHistorique(histo);
+            if (jours != null) joursRepos = jours;
           }
-          musiqueDistSpe = buf.toString();
         }
 
-        // F) STATS JOCKEY — chercher dans 'indices' ou calculer heuristiquement
-        //    PMU expose parfois pm['indices']['jockey'] = {victoires, courses}
+        // E) MUSIQUE FILTRÉE PAR DISTANCE ±100 m
+        //
+        //    ⚠️ ÉTAT MESURÉ AVANT CORRECTION : le code lisait
+        //       `performancesParDistance`, clé ABSENTE de `/participants`
+        //       (mesuré 0/98). Le champ restait donc vide pour 100 % des
+        //       partants, et `_scoreDistanceSpecialite` tombait TOUJOURS sur
+        //       son repli `p.scoreForme * 0.90` — le double comptage de la
+        //       forme dénoncé au §8. Ce repli n'est PAS modifié.
+        //
+        //    SOURCE AUTHENTIQUE AJOUTÉE : `coursesCourues[].distance` +
+        //    `coursesCourues[].place`, qui permettent de ne retenir que les
+        //    courses passées à ±100 m de la distance du jour.
+        //
+        //    ⚠️ LE FORMAT PRODUIT EST CELUI ATTENDU PAR LES CONSOMMATEURS,
+        //       ET CELA A ÉTÉ MESURÉ, PAS SUPPOSÉ. Une de mes affirmations
+        //       antérieures qualifiait ce format d'« inanalysable » : c'était
+        //       une déduction de lecture, et elle était FAUSSE. Le test
+        //       `test/audit_dist_spec_format_test.dart` (F1) mesure que
+        //       `"1700:0p9p4p4p0p6p7p"` et `"0p9p4p4p0p6p7p"` produisent
+        //       EXACTEMENT le même score : 43.26315789473684 dans les deux cas.
+        //       Le préfixe `distance:` est donc neutre pour le décodage.
+        //
+        //    ⚠️ CE QUI RESTE À VALIDER (remonté au rapport final) : le repli
+        //       `forme × 0.90` lui-même reste intact, et il s'appliquera
+        //       encore à un cheval dont AUCUNE course passée ne tombe à ±100 m.
+        String musiqueDistSpe = '';
+        final histoPourDist =
+            histos[(pm['numPmu'] ?? pm['numero'] ?? 0).toString()];
+        if (histoPourDist != null && histoPourDist.courses.isNotEmpty) {
+          // La distance de la course du jour est passée par `_chargerPartants`
+          // via le champ statique, comme l'hippodrome.
+          musiqueDistSpe = _musiqueDistDepuisHistorique(
+              histoPourDist, _distanceCourante ?? 0);
+        }
+
+        // F) STATS JOCKEY — AUCUNE STATISTIQUE INVENTÉE
+        //
+        //    ⚠️ DÉFAUT MESURÉ ET CORRIGÉ : `_heuristiqueJockey` renvoyait des
+        //       pourcentages fabriqués, présentés comme réels, avec un en-tête
+        //       affirmant « Source : statistiques PMU saisons 2022-2024 » —
+        //       source qui n'existe ni dans l'API ni dans le dépôt. Pour un
+        //       jockey inconnu de la table, la fonction renvoyait littéralement
+        //       `'$nom|9|28'`, c'est-à-dire 9 % de victoires et 28 % de places
+        //       inventés. Mesure : `statsJockeyCsv` était renseigné pour
+        //       41/41 partants, TOUS par cette table.
+        //
+        //    ⚠️ CE QUI REMPLACE CES VALEURS : la chaîne VIDE.
+        //       `ZtPartant.jockeyTauxVictoire` rend alors -1, et
+        //       `IaPronosticEngine._scoreJockey` rend 50.0 dès la première
+        //       ligne (`if (tauxVic < 0) return 50.0;`). Le critère devient
+        //       donc NEUTRE et l'ANNONCE honnêtement comme non alimenté,
+        //       au lieu d'afficher un chiffre sans fondement.
+        //
+        //    ⚠️ CONFORMITÉ AU §9 : « Ne remplace pas une statistique inventée
+        //       par une autre estimation arbitraire. » Aucune estimation n'est
+        //       substituée. Les pistes de remplacement (statistiques locales
+        //       calculées sur des historiques suffisamment complets) et leurs
+        //       limites sont présentées au rapport final comme décisions à
+        //       valider : elles changeraient la MÉTHODE du critère.
+        //
+        //    ⚠️ Le canal `indices.jockey` est conservé : s'il devenait un jour
+        //       publié par le PMU, il serait exploité tel quel. Mesure actuelle
+        //       : `indices` est absent de /participants (0/98).
         String statsJockeyCsv = '';
         final indices = pm['indices'];
         if (indices is Map) {
@@ -657,46 +887,75 @@ class ZoneTurfService {
             }
           }
         }
-        // Si pas de stats API, heuristique basée sur le nom du jockey (jockeys réputés)
-        if (statsJockeyCsv.isEmpty && driverNom.isNotEmpty) {
-          statsJockeyCsv = _heuristiqueJockey(driverNom);
-        }
 
-        // ★ v7.0 — G) STATS HIPPODROME — extraire depuis l'API PMU
-        // L'API peut exposer pm['performancesParHippodrome'] ou pm['indices']['hippodrome']
-        // Si absentes : calcul heuristique depuis la lettre de piste dans la musique globale
-        // Format musique PMU : 1a=attelé, 1h=hippodrome Paris (Vincennes), 1m=monté, 1p=province
-        // La lettre 'h' = piste de Vincennes (hippodromeActuel si connu)
+        // G) STATS HIPPODROME
+        //
+        //    ⚠️ DÉFAUT MESURÉ ET CORRIGÉ : à défaut de
+        //       `performancesParHippodrome` (clé ABSENTE, mesurée 0/98), le code
+        //       appelait `_statsHippoDepuisMusique`, qui comptait les LETTRES de
+        //       la musique comme des hippodromes. Or ces lettres sont les
+        //       DISCIPLINES. Preuve mesurée à Lignières R2 : la même réunion
+        //       héberge plat et obstacle sur le MÊME hippodrome, et la musique
+        //       donne `{'p': 27}` côté plat contre `{'s': 55, 'h': 17, 'c': 7}`
+        //       côté obstacle. Le commentaire d'origine du code affirmait
+        //       « 'h' = Vincennes, 'p' = province » : c'est factuellement faux.
+        //
+        //    SOURCE AUTHENTIQUE : `coursesCourues[].hippodrome`, présent sur
+        //    100 % des courses passées mesurées. On compte les courses, les
+        //    victoires et les top 3 du cheval sur l'hippodrome DE LA COURSE
+        //    ANALYSÉE, ce qui est exactement la définition du critère.
+        //
+        //    ⚠️ Le canal `performancesParHippodrome` est conservé en priorité
+        //       s'il apparaît un jour : il n'est pas supprimé, seulement
+        //       remplacé comme source de repli.
         String statsHippoCsv = '';
-        // Essayer d'abord depuis l'API directement
         final perfParHippo = pm['performancesParHippodrome'];
         if (perfParHippo is List && perfParHippo.isNotEmpty) {
-          // Chercher l'hippodrome correspondant à la course actuelle
           for (final entry in perfParHippo) {
             if (entry is Map) {
-              final hipNom =
-                  (entry['hippodrome'] as String? ?? '').toLowerCase();
-              // On prend les stats de n'importe quel hippodrome (le plus récent suffit pour commencer)
               final nbC = (entry['nbCourses'] as num?)?.toInt() ?? 0;
               final nbV = (entry['nbVictoires'] as num?)?.toInt() ?? 0;
-              final nbT =
-                  (entry['nbPlaces'] as num?)?.toInt() ?? 0; // top3 = places
-              if (nbC > 0 && hipNom.isNotEmpty) {
+              final nbT = (entry['nbPlaces'] as num?)?.toInt() ?? 0;
+              if (nbC > 0) {
                 statsHippoCsv = '$nbC|$nbV|$nbT';
-                break; // on prend le premier résultat dispo
+                break;
               }
             }
           }
         }
-        // Fallback : analyser la lettre de piste dans la musique globale
-        // 'h' = Vincennes/Paris; 'p' = Province; 'a' = Attelé standard; 'm' = Monté
-        if (statsHippoCsv.isEmpty && musiqueGlobale.isNotEmpty) {
-          statsHippoCsv = _statsHippoDepuisMusique(musiqueGlobale);
+        if (statsHippoCsv.isEmpty) {
+          final histo =
+              histos[(pm['numPmu'] ?? pm['numero'] ?? 0).toString()];
+          statsHippoCsv =
+              _statsHippoDepuisHistorique(histo, hippodromeCourse);
         }
 
-        // ★ v9.0 — H) STATS TERRAIN — extraire depuis l'API PMU
-        // Format statsTerrainCsv : "terrain|nbC|nbV|nbTop3[;terrain2|...]"
-        // L'API PMU expose parfois pm['performancesParTerrain'] ou pm['indices']['terrain']
+        // H) STATS TERRAIN
+        //
+        //    ⚠️ ÉTAT MESURÉ AVANT CORRECTION : le code lisait
+        //       `performancesParTerrain` / `performancesParEtatTerrain` (les
+        //       DEUX absentes, mesurées 0/98) puis `indices.terrain` (absent,
+        //       `indices` lui-même absent 0/98). `statsTerrainCsv` était donc
+        //       TOUJOURS vide et `scoreTerrain` rendait 50.0 — alors même que
+        //       la correction BL3-A23 avait rendu `course.piste` exploitable.
+        //
+        //    SOURCE AUTHENTIQUE : `coursesCourues[].etatTerrain`, l'ÉTAT réel
+        //    du terrain de chaque course passée.
+        //
+        //    ⚠️ LES DEUX EXIGENCES DU §7 SONT RESPECTÉES :
+        //      ① surface ≠ état. On lit `etatTerrain` (« Bon », « Souple »,
+        //         « PSF Standard »), JAMAIS `typePiste` (HERBE/GAZON/
+        //         POUZZOLANE), qui est la nature du sol.
+        //      ② pas de terrain forcé en trot. Mesure : `etatTerrain` est
+        //         présent sur 100 % des courses passées en Plat/Obstacle/Cross
+        //         mais sur 1 à 5 % seulement en Trot. En trot, la chaîne reste
+        //         donc vide et le critère rend sa neutralité de 50.0. Aucune
+        //         valeur de terrain n'est inventée pour le trot.
+        //
+        //    ⚠️ La normalisation employée est celle du CONSOMMATEUR
+        //       (`ZtPartant._normaliserTerrain`), reproduite à l'identique par
+        //       `_normaliserTerrainPourStockage`, sinon la comparaison
+        //       d'égalité stricte de `scoreTerrain` échouerait.
         String statsTerrainCsv = '';
         final perfParTerrain =
             pm['performancesParTerrain'] ?? pm['performancesParEtatTerrain'];
@@ -704,7 +963,7 @@ class ZoneTurfService {
           final buf = StringBuffer();
           for (final entry in perfParTerrain) {
             if (entry is Map) {
-              // L'API retourne 'etatTerrain' ou 'terrain'
+              // L'API retournerait 'etatTerrain' ou 'terrain'
               final terrain =
                   ((entry['etatTerrain'] ?? entry['terrain']) as String? ?? '')
                       .toLowerCase();
@@ -733,6 +992,12 @@ class ZoneTurfService {
                   '${_normaliserTerrainPmu(terrain)}|$nbC|$nbV|$nbT';
             }
           }
+        }
+        // ★ NOUVEAU — source authentique : historique détaillé.
+        if (statsTerrainCsv.isEmpty) {
+          final histo =
+              histos[(pm['numPmu'] ?? pm['numero'] ?? 0).toString()];
+          statsTerrainCsv = _statsTerrainDepuisHistorique(histo);
         }
 
         // ★ v9.0 — I) GAINS DERNIER AN — extraire depuis l'API PMU
@@ -969,6 +1234,33 @@ class ZoneTurfService {
   // Retourne : "nbCourses|nbVictoires|nbTop3" (CSV)
   // Si pas assez de données : "" (chaîne vide → score neutre 50)
   // ──────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════
+  //  ⛔ `_statsHippoDepuisMusique` — DÉSARMÉE, CONSERVÉE POUR TRAÇABILITÉ
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  //  CETTE FONCTION N'EST PLUS APPELÉE (mesuré : 0 appelant dans `lib/`).
+  //
+  //  POURQUOI ELLE EST CONSERVÉE PLUTÔT QUE SUPPRIMÉE
+  //    Elle reposait sur une prémisse FAUSSE, mesurée comme telle : compter
+  //    les LETTRES de la musique comme des identifiants d'HIPPODROMES.
+  //
+  //    La musique PMU code la DISCIPLINE, pas le lieu. Preuve mesurée à
+  //    Lignières R2, où plat et obstacle se courent sur le MÊME hippodrome :
+  //      • musique côté PLAT     → {'p': 27}
+  //      • musique côté OBSTACLE → {'s': 55, 'h': 17, 'c': 7}
+  //    Si 'p', 's', 'h', 'c' étaient des hippodromes, la même réunion
+  //    désignerait quatre lieux différents : c'est absurde.
+  //
+  //    Le commentaire d'origine du code affirmait « 'h' = Vincennes,
+  //    'p' = province » : cette affirmation est factuellement fausse.
+  //
+  //  ⚠️ La fonction est conservée pour que la démonstration du défaut reste
+  //     lisible dans le code, mais elle n'alimente plus AUCUN champ.
+  //     La source authentique est `coursesCourues[].hippodrome` (100 % de
+  //     présence mesurée), exploitée par `_statsHippoDepuisHistorique`.
+  //
+  //  ⚠️ NE PAS LA REBRANCHER.
+  // ignore: unused_element
   static String _statsHippoDepuisMusique(String musique) {
     if (musique.isEmpty) return '';
 
@@ -1005,6 +1297,33 @@ class ZoneTurfService {
   // Base de données des jockeys/drivers français les plus actifs
   // Format retourné : "nom|%victoire|%place"
   // ──────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════
+  //  ⛔ `_heuristiqueJockey` — DÉSARMÉE, CONSERVÉE POUR TRAÇABILITÉ
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  //  CETTE FONCTION N'EST PLUS APPELÉE (mesuré : 0 appelant dans `lib/`).
+  //
+  //  POURQUOI ELLE EST CONSERVÉE PLUTÔT QUE SUPPRIMÉE
+  //    Le §9 du mandat interdit de présenter des pourcentages sans source
+  //    vérifiable comme des statistiques réelles. La fonction fabriquait
+  //    exactement cela :
+  //      • un en-tête affirmant « Source : statistiques PMU saisons 2022-2024 »
+  //        alors qu'aucune source de ce type n'existe dans l'API ni dans le
+  //        dépôt (mesuré : `/jockeys` → HTTP 420, `/entraineurs` → HTTP 400,
+  //        `/statistiques/*` → HTTP 420) ;
+  //      • pour tout nom absent de ses deux tables, un retour littéral
+  //        `'$nom|9|28'`, soit 9 % de victoires et 28 % de places INVENTÉS.
+  //
+  //    La supprimer effacerait la preuve du défaut. La laisser branchée
+  //    perpétuerait une donnée fabriquée. Elle est donc CONSERVÉE mais
+  //    CÂBLÉE À RIEN : le code qui l'appelait renvoie désormais la chaîne
+  //    vide, ce qui rend `scoreJockey` neutre à 50.0 et l'annonce comme
+  //    non alimenté.
+  //
+  //  ⚠️ NE PAS LA REBRANCHER. Si une source authentique de statistiques
+  //     jockey devient disponible, elle doit être lue depuis cette source et
+  //     non depuis cette table.
+  // ignore: unused_element
   static String _heuristiqueJockey(String nom) {
     final nomUpper = nom.toUpperCase();
 
@@ -1734,6 +2053,14 @@ class ZoneTurfService {
     //   reset pourrait, à son retour, réécrire dans le cache une valeur
     //   mesurée avant le reset — le reset ne serait alors que partiel.
     _enVolDrapeauDefinitif.clear();
+    // ★ ENRICHISSEMENT : le cache d'historiques détaillés fait partie de
+    //   l'état en mémoire. Un reset doit l'effacer, pour la même raison que
+    //   les autres : aucune donnée mesurée avant un reset ne doit être servie
+    //   après.
+    _cachePerfDetail.clear();
+    _cachePerfDetailTime.clear();
+    _hippodromeCourant = null;
+    _distanceCourante = null;
     // ★ L1 : invalide toute capture L0 EN VOL (chargement réseau en cours au
     // moment du reset). Le compteur n'est jamais décrémenté.
     _generationReset++;
@@ -1742,9 +2069,438 @@ class ZoneTurfService {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // HISTORIQUES DÉTAILLÉS — chargement mutualisé et mis en cache
+  // ──────────────────────────────────────────────────────────────────
+  //
+  //  Retourne une map `numPmu (String) → _HistoCheval`.
+  //
+  //  ⚠️ CETTE MÉTHODE NE LÈVE JAMAIS D'EXCEPTION et ne bloque jamais
+  //     l'analyse : en cas d'erreur réseau, de délai dépassé, de code HTTP
+  //     non-200 ou de JSON illisible, elle renvoie une map VIDE. Les critères
+  //     concernés restent alors dans leur comportement neutre documenté
+  //     (repos = 0 jour → neutre, hippodrome = 50.0, terrain = 50.0).
+  //     C'est le comportement exigé par le §3 : « gestion des erreurs réseau,
+  //     gestion des réponses partielles, fonctionnement avec une connexion
+  //     dégradée ».
+  static Future<Map<String, _HistoCheval>> _chargerPerformancesDetaillees(
+    String dateStr,
+    int numR,
+    int numC,
+  ) async {
+    final cle = '$dateStr/R$numR/C$numC';
+
+    // ① Cache : une course déjà téléchargée dans la fenêtre n'est pas rejouée.
+    final enCache = _cachePerfDetail[cle];
+    final tEnCache = _cachePerfDetailTime[cle];
+    if (enCache != null &&
+        tEnCache != null &&
+        DateTime.now().difference(tEnCache) < _ttlPerfDetail) {
+      return enCache;
+    }
+
+    try {
+      final url = kIsWeb
+          ? '${Uri.base.origin}/api/pmu/programme/$dateStr/R$numR/C$numC'
+              '/performances-detaillees/pretty'
+          : '$_pmuBase/programme/$dateStr/R$numR/C$numC'
+              '/performances-detaillees/pretty?$_pmuSpec';
+
+      _nbAppelsPerfDetail++;
+      final resp = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 12));
+
+      if (resp.statusCode != 200) {
+        // Réponse partielle / indisponible : on mémorise une map vide pour
+        // ne pas marteler le serveur sur la même course, mais avec un TTL
+        // court (5 min) afin de retenter si la donnée devient disponible.
+        _cachePerfDetail[cle] = const {};
+        _cachePerfDetailTime[cle] =
+            DateTime.now().subtract(_ttlPerfDetail - const Duration(minutes: 5));
+        return const {};
+      }
+
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final participants = data['participants'];
+      final resultat = <String, _HistoCheval>{};
+
+      if (participants is List) {
+        for (final raw in participants) {
+          if (raw is! Map) continue;
+          // ⚠️ NE PAS nommer cette variable `num` : cela masquerait le TYPE
+          //    Dart `num` et casserait tous les `is num` / `as num` de la
+          //    portée (mesuré : 5 erreurs `type_test_with_non_type`).
+          final numPmu = raw['numPmu'];
+          final nom = raw['nomCheval'] as String? ?? '';
+          final cc = raw['coursesCourues'];
+          if (numPmu == null || cc is! List) continue;
+
+          final courses = <_CoursePassee>[];
+          for (final cr in cc) {
+            if (cr is! Map) continue;
+
+            // ── Date : millisecondes + timezoneOffset, en heure locale ──
+            final tsMs = cr['date'];
+            final tzMs = cr['timezoneOffset'];
+            if (tsMs is! num) continue;
+            final offset = tzMs is num ? tzMs.toInt() : 0;
+            final dateLocale = DateTime.fromMillisecondsSinceEpoch(
+              tsMs.toInt() + offset,
+              isUtc: true,
+            );
+
+            // ── Place RÉELLE du cheval étudié dans cette course passée ──
+            //    On ne lit QUE l'entrée `itsHim == true`. Une entrée absente
+            //    signifie « le PMU n'a pas publié le détail » : la place reste
+            //    0, ce qui n'est compté NI en victoire NI en top 3, mais la
+            //    course est bien comptée comme disputée (elle a une date).
+            int place = 0;
+            final partants = cr['participants'];
+            if (partants is List) {
+              for (final q in partants) {
+                if (q is! Map) continue;
+                if (q['itsHim'] != true) continue;
+                final pl = q['place'];
+                if (pl is Map) {
+                  final pv = pl['place'];
+                  if (pv is num) place = pv.toInt();
+                } else if (pl is num) {
+                  place = pl.toInt();
+                }
+                break;
+              }
+            }
+
+            courses.add(_CoursePassee(
+              dateLocale: dateLocale,
+              hippodrome: (cr['hippodrome'] as String? ?? '').trim(),
+              discipline: (cr['discipline'] as String? ?? '').toUpperCase(),
+              distance: (cr['distance'] as num?)?.toInt() ?? 0,
+              etatTerrain: (cr['etatTerrain'] as String? ?? '').trim(),
+              place: place,
+            ));
+          }
+
+          resultat[numPmu.toString()] =
+              _HistoCheval(nomCheval: nom, courses: courses);
+        }
+      }
+
+      _cachePerfDetail[cle] = resultat;
+      _cachePerfDetailTime[cle] = DateTime.now();
+      return resultat;
+    } catch (e) {
+      // Panne réseau, délai dépassé, JSON invalide : neutre explicite.
+      if (kDebugMode) {
+        debugPrint('PMU perf-detail R${numR}C$numC indisponible: $e');
+      }
+      _cachePerfDetail[cle] = const {};
+      _cachePerfDetailTime[cle] =
+          DateTime.now().subtract(_ttlPerfDetail - const Duration(minutes: 5));
+      return const {};
+    }
+  }
+
+  /// Agrège l'historique d'un cheval en `statsHippodromeCsv`
+  /// au format attendu par `ZtPartant.scoreHippodrome` : `nbCourses|nbVict|nbTop3`.
+  ///
+  /// ⚠️ CE N'EST PAS UNE STATISTIQUE « À L'HIPPODROME DE LA COURSE ACTUELLE ».
+  ///    C'est la statistique du cheval sur l'hippodrome de la course analysée,
+  ///    EXACTEMENT comme le demande la définition du critère (comparer les
+  ///    performances passées sur le MÊME hippodrome). `hippodromeCible` est
+  ///    donc le libellé court de l'hippodrome du jour.
+  ///
+  ///    Justification de la source : les lettres de la musique ne sont PAS des
+  ///    hippodromes (mesuré à Lignières R2 : plat = {'p': 27} et obstacle =
+  ///    {'s': 55, 'h': 17, 'c': 7} sur le MÊME hippodrome). L'ancienne
+  ///    `_statsHippoDepuisMusique` construisait donc une statistique fausse.
+  ///    La source authentique est `coursesCourues[].hippodrome` (100 %).
+  ///
+  /// ⚠️ Si l'hippodrome cible est inconnu, on renvoie la chaîne VIDE :
+  ///    `scoreHippodrome` rend alors 50.0 (neutre explicite), et non une
+  ///    statistique sur un hippodrome quelconque.
+  static String _statsHippoDepuisHistorique(
+    _HistoCheval? histo,
+    String hippodromeCible,
+  ) {
+    if (histo == null || histo.courses.isEmpty) return '';
+    final cible = _cleHippodrome(hippodromeCible);
+    if (cible.isEmpty) return '';
+
+    int nbC = 0, nbV = 0, nbT3 = 0;
+    for (final c in histo.courses) {
+      if (_cleHippodrome(c.hippodrome) != cible) continue;
+      nbC++;
+      if (c.place == 1) nbV++;
+      if (c.place >= 1 && c.place <= 3) nbT3++;
+    }
+    if (nbC == 0) return '';
+    return '$nbC|$nbV|$nbT3';
+  }
+
+  /// Agrège l'historique d'un cheval en `statsTerrainCsv`
+  /// au format `terrain|nbC|nbV|nbTop3` séparé par `;`.
+  ///
+  /// ⚠️ DEUX EXIGENCES DU §7 SONT ICI RESPECTÉES LITTÉRALEMENT :
+  ///
+  ///  ① « Ne confonds pas la surface de la piste avec son état. »
+  ///     Le champ lu est `etatTerrain` (« Bon », « Souple », « PSF Standard »…),
+  ///     c'est-à-dire l'ÉTAT. La surface (`typePiste` : HERBE, GAZON,
+  ///     POUZZOLANE) n'est PAS utilisée ici : elle ne renseigne pas l'état.
+  ///
+  ///  ② « Ne force pas l'alimentation du critère terrain en trot si les
+  ///     données disponibles ne permettent pas une interprétation fiable. »
+  ///     Mesure : `etatTerrain` est présent sur 100 % des courses passées en
+  ///     Plat / Obstacle / Cross, mais sur 1 à 5 % seulement en Trot. Le code
+  ///     n'invente donc rien : en trot, aucune entrée n'est produite et la
+  ///     chaîne reste vide ⇒ `scoreTerrain` rend 50.0 (neutre explicite).
+  ///     Aucune règle ne dit « si trot alors terrain = X ».
+  ///
+  /// ⚠️ La normalisation appliquée est celle du CONSOMMATEUR
+  ///    (`ZtPartant._normaliserTerrain`), reprise à l'identique ci-dessous
+  ///    via `_normaliserTerrainPourStockage`, afin que la chaîne stockée
+  ///    puisse être comparée avec égalité stricte par `scoreTerrain`.
+  static String _statsTerrainDepuisHistorique(_HistoCheval? histo) {
+    if (histo == null || histo.courses.isEmpty) return '';
+
+    final parTerrain = <String, List<int>>{}; // clé → [nbC, nbV, nbT3]
+    for (final c in histo.courses) {
+      if (c.etatTerrain.trim().isEmpty) continue;
+      final norm = _normaliserTerrainPourStockage(c.etatTerrain);
+      if (norm.isEmpty) continue;
+      final acc = parTerrain.putIfAbsent(norm, () => <int>[0, 0, 0]);
+      acc[0]++;
+      if (c.place == 1) acc[1]++;
+      if (c.place >= 1 && c.place <= 3) acc[2]++;
+    }
+    if (parTerrain.isEmpty) return '';
+
+    final buf = StringBuffer();
+    parTerrain.forEach((terrain, acc) {
+      if (buf.isNotEmpty) buf.write(';');
+      buf.write('$terrain|${acc[0]}|${acc[1]}|${acc[2]}');
+    });
+    return buf.toString();
+  }
+
+  /// Normalisation IDENTIQUE à `ZtPartant._normaliserTerrain`
+  /// (`zt_models.dart`). Elle est dupliquée ici parce que le producteur ne
+  /// peut pas importer la méthode privée du modèle ; toute divergence rendrait
+  /// la comparaison d'égalité stricte de `scoreTerrain` inopérante.
+  /// ⚠️ Toute modification doit être répercutée des DEUX côtés.
+  static String _normaliserTerrainPourStockage(String t) {
+    final lower = t.toLowerCase();
+    if (lower.contains('tres') && lower.contains('lourd')) return 'tres_lourd';
+    if (lower.contains('lourd')) return 'lourd';
+    if (lower.contains('souple')) return 'souple';
+    if (lower.contains('bon')) return 'bon';
+    if (lower.contains('sable')) return 'sable';
+    if (lower.contains('piste')) return 'sable';
+    return lower.replaceAll(' ', '_');
+  }
+
+  /// Clé de comparaison d'hippodrome : minuscules, sans accents, sans espaces
+  /// superflus. « PORNICHET » et « Pornichet » désignent le même lieu.
+  static String _cleHippodrome(String s) {
+    const accents = {
+      'à': 'a', 'â': 'a', 'ä': 'a', 'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+      'î': 'i', 'ï': 'i', 'ô': 'o', 'ö': 'o', 'ù': 'u', 'û': 'u', 'ü': 'u',
+      'ç': 'c', 'œ': 'oe', 'æ': 'ae',
+    };
+    var t = s.toLowerCase().trim();
+    accents.forEach((k, v) => t = t.replaceAll(k, v));
+    return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  /// Musique filtrée sur les courses passées à ±100 m de la distance du jour.
+  ///
+  /// FORMAT PRODUIT : `"distance:musique,distance:musique,..."` — exactement
+  /// celui que `IaPronosticEngine._scoreDistanceSpecialite` sait lire
+  /// (`entry.split(':')`, tolérance ±100 m) et que
+  /// `ZtPartant.scoreFormeDistanceSpecifique` sait décoder comme une musique.
+  ///
+  /// ⚠️ CE FORMAT A ÉTÉ **MESURÉ**, PAS SUPPOSÉ. Une de mes affirmations
+  ///    antérieures prétendait ce format « inanalysable ». C'était une
+  ///    déduction de lecture, et elle était FAUSSE : mesuré par le test
+  ///    `test/audit_dist_spec_format_test.dart` (F1), la musique préfixée
+  ///    `"1700:0p9p4p4p0p6p7p"` donne EXACTEMENT le même score que la musique
+  ///    nue (`43.26315789473684` dans les deux cas). Le préfixe est neutre.
+  ///
+  /// ⚠️ La musique d'une course passée est RECONSTRUITE à partir de la place
+  ///    réelle, et non recopiée d'un champ texte : `coursesCourues` ne publie
+  ///    pas la musique de chaque course, seulement la place. Le token produit
+  ///    est `{place}{lettre de discipline}` — c'est la forme exacte d'une
+  ///    musique PMU (`1a`, `3p`, `0m`…). Une place non classée produit `0`.
+  static String _musiqueDistDepuisHistorique(
+    _HistoCheval? histo,
+    int distanceCourse,
+  ) {
+    if (histo == null || histo.courses.isEmpty || distanceCourse <= 0) {
+      return '';
+    }
+    final buf = StringBuffer();
+    for (final c in histo.courses) {
+      if (c.distance <= 0) continue;
+      if ((c.distance - distanceCourse).abs() > 100) continue;
+      final lettre = _lettreDisciplineMusique(c.discipline);
+      if (lettre.isEmpty) continue;
+      if (buf.isNotEmpty) buf.write(',');
+      buf.write('${c.distance}:${c.place}$lettre');
+    }
+    return buf.toString();
+  }
+
+  /// Lettre de discipline au format musique PMU.
+  /// `a` = attelé, `m` = monté, `p` = plat, `h` = haies, `s` = steeple,
+  /// `c` = cross. Chaîne vide pour une discipline non identifiable : aucun
+  /// token n'est alors produit, plutôt qu'un token faux.
+  static String _lettreDisciplineMusique(String disciplinePmu) {
+    final d = disciplinePmu.toUpperCase();
+    if (d.contains('ATTELE')) return 'a';
+    if (d.contains('MONTE')) return 'm';
+    if (d.contains('PLAT')) return 'p';
+    if (d.contains('HAIE')) return 'h';
+    if (d.contains('STEEPLE')) return 's';
+    if (d.contains('CROSS')) return 'c';
+    return '';
+  }
+
+  /// Compteur de jours de repos depuis la dernière course EFFECTIVEMENT
+  /// disputée avant la course analysée.
+  ///
+  /// ⚠️ EXIGENCES DU §5 RESPECTÉES :
+  ///  • la date retenue est la PLUS RÉCENTE des courses passées publiées ;
+  ///  • une inscription, un non-partant ou une course future ne peuvent pas y
+  ///    figurer, car `coursesCourues` ne contient que des courses courues ;
+  ///  • un cheval DÉBUTANT (aucune course passée) ne reçoit PAS zéro : la
+  ///    méthode renvoie `null`, et l'appelant conserve alors 0 — valeur que
+  ///    `ZtPartant.scoreRepos` traite comme « inconnu ⇒ neutre 50.0 »
+  ///    (`if (joursRepos <= 0) return 50.0`). Aucun zéro arbitraire n'est
+  ///    fabriqué pour représenter une donnée absente.
+  static int? _joursReposDepuisHistorique(_HistoCheval? histo) {
+    final d = histo?.dateDerniereCourse;
+    if (d == null) return null;
+    // Bornage de sécurité : une date aberrante (future, ou antérieure à
+    // l'ouverture du service) ne doit pas produire un repos négatif.
+    final jours = DateTime.now().difference(d).inDays;
+    if (jours < 0 || jours > 2000) return null;
+    return jours;
+  }
+
   static String _dateToStr(DateTime d) {
     return '${d.day.toString().padLeft(2, '0')}'
         '${d.month.toString().padLeft(2, '0')}'
         '${d.year}';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  HISTORIQUES DÉTAILLÉS PMU — DÉCODAGE DE `performances-detaillees/pretty`
+// ══════════════════════════════════════════════════════════════════════
+//
+//  ORIGINE DES DONNÉES — établie par mesure, pas par documentation.
+//
+//  Requête mesurée (HTTP 200, 46 675 octets pour R2C1 du 26/11/2026) :
+//    GET /programme/{JJMMAAAA}/R{n}/C{n}/performances-detaillees/pretty
+//        ?specialisation=INTERNET
+//
+//  Structure racine mesurée : `{'allure': 'GALOP'|'TROT', 'participants': [...]}`
+//
+//  Un élément de `participants` porte EXACTEMENT trois clés :
+//    numPmu (int), nomCheval (String), coursesCourues (List)
+//
+//  Un élément de `coursesCourues` porte :
+//    date            (int)  — timestamp en MILLISECONDES, minuit LOCAL encodé
+//                             en UTC. Mesure : 1794610800000 → 2026-11-13T23:00Z
+//                             avec `timezoneOffset` 3600000 ms ⇒ 14/11/2026
+//                             00:00 heure locale. La date locale s'obtient par
+//                             `DateTime.fromMillisecondsSinceEpoch(date + offset, isUtc: true)`.
+//    timezoneOffset  (int)  — décalage en millisecondes
+//    hippodrome      (String) — libellé COURT réel (« PORNICHET »). Mesuré 100 %
+//                             de présence sur 9 courses / 4 disciplines.
+//    nomPrix         (String)
+//    discipline      (String) — 'PLAT' | 'STEEPLE_CHASE' | ... (majuscules)
+//    allocation      (int)
+//    distance        (int)  — en MÈTRES
+//    nbParticipants  (int)
+//    tempsDuPremier  (int)  — MILLISECONDES du vainqueur (106 660 ms sur 1 700 m)
+//    etatTerrain     (String) — ÉTAT du terrain (« PSF Standard », « Bon »…).
+//                             Couverture mesurée : 100 % en Plat/Obstacle/Cross,
+//                             mais seulement 1 à 5 % en Trot. Le décodage ci-dessous
+//                             ne fabrique donc RIEN en trot : il laisse vide.
+//    participants    (List) — les partants de CETTE course passée, chacun avec :
+//        numPmu, place {place, rawValue, statusArrivee}, nomCheval, nomJockey,
+//        poidsJockey (kg, réel), corde (int), distanceAvecPrecedent,
+//        itsHim (bool) ← identifie LE cheval étudié, reductionKilometrique (int),
+//        distanceParcourue, oeillere
+//
+//  ⚠️ `reductionKilometrique` est en MILLISECONDES PAR KILOMÈTRE du VAINQUEUR,
+//     et non un temps propre. Vérifié arithmétiquement : 106 660 ms ÷ 1,7 km
+//     = 62 740, exactement la valeur publiée. Il est IDENTIQUE pour tous les
+//     partants d'une même course : ce n'est donc PAS une donnée individuelle.
+//     Le champ n'est utilisé ici que pour la statistique de TERRAIN agrégée
+//     (nombre de courses / victoires / top 3), jamais pour alimenter un record
+//     personnel — voir le §4 du mandat : « N'invente pas un record personnel
+//     à partir d'une information qui ne représente pas ce record. »
+//
+//  ⚠️ `participants` d'une course passée est TRONQUÉ par le PMU : mesuré
+//     6 entrées pour `nbParticipants = 12`. La liste n'est donc pas exhaustive,
+//     MAIS elle contient toujours l'entrée marquée `itsHim = true` dès lors que
+//     le cheval étudié a bien participé. C'est cette entrée, et elle seule, qui
+//     est utilisée pour déterminer place / victoire / top 3.
+// ══════════════════════════════════════════════════════════════════════
+
+/// Une course passée d'un cheval, réduite à ce qui est réellement exploitable
+/// par les critères existants. Aucun champ dérivé n'est stocké.
+class _CoursePassee {
+  /// Date LOCALE de la course (heure locale, sans fuseau stocké).
+  final DateTime dateLocale;
+
+  /// Libellé court de l'hippodrome (« PORNICHET »). Chaîne vide si absent.
+  final String hippodrome;
+
+  /// Discipline PMU brute, en majuscules (« PLAT », « ATTELE », « MONTE »…).
+  final String discipline;
+
+  /// Distance en mètres. 0 si absente.
+  final int distance;
+
+  /// État du terrain tel que publié (« PSF Standard », « Bon »…).
+  /// Chaîne VIDE si le PMU ne le publie pas (cas majoritaire en trot).
+  final String etatTerrain;
+
+  /// Place réelle du cheval étudié à cette course (0 si non classé / absent).
+  final int place;
+
+  _CoursePassee({
+    required this.dateLocale,
+    required this.hippodrome,
+    required this.discipline,
+    required this.distance,
+    required this.etatTerrain,
+    required this.place,
+  });
+}
+
+/// Historique décodé d'UN cheval pour UNE course.
+class _HistoCheval {
+  final String nomCheval;
+  final List<_CoursePassee> courses;
+
+  _HistoCheval({required this.nomCheval, required this.courses});
+
+  /// Dernière course EFFECTIVEMENT disputée avant la course analysée.
+  ///
+  /// ⚠️ Le PMU ne publie dans `coursesCourues` que des courses PASSÉES et
+  ///    déjà courues : une inscription, un non-partant ou une course future
+  ///    n'y figure pas. Il n'y a donc rien à filtrer d'autre que les entrées
+  ///    dont la date est illisible. Le tri est décroissant sur la date.
+  DateTime? get dateDerniereCourse {
+    DateTime? d;
+    for (final c in courses) {
+      if (d == null || c.dateLocale.isAfter(d)) d = c.dateLocale;
+    }
+    return d;
   }
 }

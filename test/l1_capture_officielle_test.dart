@@ -295,8 +295,17 @@ void main() {
     // TÉMOIN : la capture n'ajoute AUCUNE requête réseau.
     // ⚠️ `.../programme/{date}/R1/C1/participants` contient aussi « programme » :
     // on isole l'URL du PROGRAMME seul (celle qui ne va pas aux partants).
+    // ⚠️ PRÉCISION AJOUTÉE (chantier « alimentation des 19 critères ») :
+    //    l'URL d'enrichissement `/programme/{date}/R{n}/C{n}/performances-
+    //    detaillees/pretty` contient elle aussi « programme ». Sans cette
+    //    exclusion, le témoin compterait 2 au lieu de 1 et signalerait à tort
+    //    que la CAPTURE coûte une requête. L'assertion reste portée sur le
+    //    SEUL endpoint `/programme/{date}` : son intention (« la capture
+    //    n'ajoute aucune requête ») est préservée, pas affaiblie.
     bool estUrlProgramme(Uri u) =>
-        u.path.contains('programme') && !u.path.contains('participants');
+        u.path.contains('programme') &&
+        !u.path.contains('participants') &&
+        !u.path.contains('performances-detaillees');
     final requetesProgramme = urls.where(estUrlProgramme).length;
     final requetesPartants =
         urls.where((u) => u.path.contains('participants')).length;
@@ -532,11 +541,15 @@ void main() {
     expect(store.nbSetsSur(kArriveePendingKey), lessThanOrEqualTo(2),
         reason: 'La file d\'attente n\'est jamais écrite une fois par course');
     // Une seule requête /programme : la capture ne coûte aucun appel.
+    // ⚠️ Même précision que L1-1 : on exclut l'endpoint d'enrichissement
+    //    `performances-detaillees` (dont le chemin contient « programme »)
+    //    pour ne compter QUE les appels à `/programme/{date}`.
     expect(
         urls
             .where((u) =>
                 u.path.contains('programme') &&
-                !u.path.contains('participants'))
+                !u.path.contains('participants') &&
+                !u.path.contains('performances-detaillees'))
             .length,
         1,
         reason: 'TÉMOIN : une seule requête programme, 5 requêtes partants');
