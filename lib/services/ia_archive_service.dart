@@ -625,8 +625,30 @@ class IaArchiveService extends ChangeNotifier {
   /// contenus différents → empreintes différentes, sans exception.
   static String empreinteDe(IaPronostic p) => empreinteV2De(p);
 
+  /// Champs de PRÉSENTATION exclus du canonique — décision architecturale
+  /// PRÉEXISTANTE, pas une facilité de mesure.
+  ///
+  /// `nomCourse` est un libellé d'affichage, jamais une donnée de contenu :
+  ///   • `completudeDe` ne le compte pas (voir sa définition) ;
+  ///   • `v48_a2_priorite_autorite_test.dart` (A2-T6) l'utilise explicitement
+  ///     comme « marqueur observable » pour savoir QUELLE fiche est retenue,
+  ///     en documentant : « `nomCourse` n'entre ni dans `empreinteDe` ni dans
+  ///     `completudeDe` ».
+  /// L'inclure dans V2 aurait inventé une différence de contenu là où il n'y
+  /// a qu'une différence de libellé, et cassé un contrat existant. Tous les
+  /// autres champs de `toJson()` restent couverts.
+  static const Set<String> kChampsNonSignificatifs = <String>{'nomCourse'};
+
   /// Empreinte V2 — SHA-256 du `toJson()` complet, sérialisé canoniquement.
-  static String empreinteV2De(IaPronostic p) => empreinteValeur(p.toJson());
+  ///
+  /// Seuls [kChampsNonSignificatifs] sont retirés. Ce sont des libellés
+  /// d'affichage, pas des données : le contenu historique reste intégralement
+  /// distingué par ailleurs.
+  static String empreinteV2De(IaPronostic p) {
+    final contenu = p.toJson()
+      ..removeWhere((cle, _) => kChampsNonSignificatifs.contains(cle));
+    return empreinteValeur(contenu);
+  }
 
   /// Empreinte V1 — FNV-1a 64 bits sur le canonique HISTORIQUE partiel.
   ///
