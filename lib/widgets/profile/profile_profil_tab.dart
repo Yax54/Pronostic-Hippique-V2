@@ -12,6 +12,7 @@ import '../../services/ia_memory_service.dart';
 import '../../services/ia_personality_service.dart'; // ★ v9.85
 import '../../services/ia_badges_service.dart';       // ★ v9.85
 import '../../services/ia_user_prefs_service.dart';   // ★ v9.85
+import '../../services/reprise_restauration_service.dart';
 import '../../utils/format_euros.dart';
 import '../../utils/type_pari_utils.dart'; // ★ A-0 — reconnaissance Gagnant+Placé
 import '../../screens/widget_setup_screen.dart';
@@ -1336,11 +1337,23 @@ class OperationsSauvegarde {
   /// Reproduit `BackupService.importerDepuisFichier()` (l.1151).
   final Future<ImportResult> Function() importerFichier;
 
+  /// ★ ENSEMBLE 4 — EXPORT au conteneur vérifiable `.ptg`.
+  ///
+  /// Distinct de [partagerAvecResultat] et de [telecharger], qui produisent
+  /// le format JSON historique. Ce conteneur couvre TOUS les supports dans un
+  /// seul fichier manifesté (SharedPreferences intégral, SQLite par
+  /// `VACUUM INTO`, archives et config), avec empreintes de blocs.
+  ///
+  /// `null` ⇒ l'opération n'est pas exposée sur ce chemin (les tests qui ne
+  /// l'injectent pas gardent exactement le comportement d'avant).
+  final Future<ExportResult> Function()? exporterPtg;
+
   const OperationsSauvegarde({
     required this.partagerAvecResultat,
     required this.telecharger,
     required this.sauvegarderDrive,
     required this.importerFichier,
+    this.exporterPtg,
   });
 
   /// ★ SEUL endroit de ce fichier où les méthodes du service sont référencées
@@ -1352,6 +1365,7 @@ class OperationsSauvegarde {
         telecharger: () => BackupService.instance.telechargerSurTelephone(),
         sauvegarderDrive: () => BackupService.instance.sauvegarderSurDrive(),
         importerFichier: () => BackupService.instance.importerDepuisFichier(),
+        exporterPtg: () => BackupService.instance.exporterDonneesStructurees(),
       );
 }
 
@@ -1375,6 +1389,10 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
   BackupInfo? _info;
   String?     _gmail;
 
+  /// Message à afficher si une restauration interrompue a réellement nécessité
+  /// une intervention au démarrage. `null` ⇒ rien à signaler.
+  String? _messageReprise;
+
   /// A7 (3.3-C12) — résolu UNE SEULE FOIS au montage.
   late final OperationsSauvegarde _ops;
 
@@ -1383,6 +1401,11 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
     super.initState();
     _ops = widget.operations ?? OperationsSauvegarde.reelles();
     _chargerInfos();
+    // Le bilan de reprise est déjà calculé au démarrage (`main.dart` appelle
+    // `executerAuDemarrage` AVANT que l'interface n'existe). On ne fait donc
+    // que LIRE ce qui s'est passé : aucun travail n'est refait ici.
+    final reprise = RepriseRestaurationService.instance.dernier;
+    _messageReprise = reprise?.messageUtilisateur;
   }
 
   Future<void> _chargerInfos() async {
@@ -1455,6 +1478,48 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
     _snack(
       '📥 Sauvegardé dans Téléchargements : ${result.fileName}',
       const Color(0xFF42A5F5),
+    );
+  }
+
+  // ── Export au format `.ptg` (conteneur vérifiable multi-supports) ──────────
+  //
+  // ⚠️ CE QUE CE BOUTON NE PROMET PAS : ni un envoi, ni une réception. Il crée
+  //    un fichier et le propose au partage, comme les autres.
+  //
+  // ⚠️ CE QU'IL APPORTE : le fichier `.ptg` couvre TOUS les supports dans un
+  //    seul conteneur manifesté (SharedPreferences intégral, SQLite par
+  //    `VACUUM INTO`, archives et config) avec empreintes de blocs. C'est le
+  //    format qui rend une restauration VÉRIFIABLE, par opposition au JSON
+  //    historique qui ne porte aucune empreinte.
+  //
+  // ⚠️ POURQUOI LE MESSAGE DIT « EXCLUSIONS » ET NON RIEN : si le dépôt SQLite
+  //    n'est pas ouvert, le bloc correspondant est déclaré en exclusion
+  //    JUSTIFIÉE au manifeste au lieu d'être omis en silence. L'utilisateur
+  //    doit le savoir AVANT de compter sur ce fichier.
+  Future<void> _exporterPtg() async {
+    final operation = _ops.exporterPtg;
+    if (operation == null) {
+      _snack('❌ Export .ptg indisponible sur ce chemin', Colors.red);
+      return;
+    }
+    setState(() => _chargement = true);
+    final result = await operation();
+    setState(() => _chargement = false);
+    if (!mounted) return;
+
+    if (!result.succes) {
+      _snack('❌ Erreur export .ptg : ${result.erreur}', Colors.red);
+      return;
+    }
+
+    if (result.avertissements.isNotEmpty) {
+      await _showDialogAvertissements(result, copie: false);
+      return;
+    }
+
+    _snack(
+      '✅ Conteneur vérifiable créé : ${result.fileName}',
+      const Color(0xFF4CAF7D),
     );
   }
 
@@ -1908,11 +1973,79 @@ class ProfileBackupSectionState extends State<ProfileBackupSection> {
       // ── Bouton Importer ─────────────────────────────────────────────────────
       ProfileBoutonBackup(
         emoji: '📥', label: 'Importer une sauvegarde',
-        sousTitre: 'Sélectionne un fichier .json et restaure tout',
+        sousTitre: 'Accepte .json (historique) ET .ptg (vérifiable)',
         couleur: const Color(0xFFFFB74D),
         enCharge: _chargement, onTap: _importer,
       ),
+      const SizedBox(height: 10),
+
+      // ── Bouton Exporter au format vérifiable `.ptg` ─────────────────────────
+      //
+      //  ⚠️ Ajouté APRÈS le bouton d'import, sans rien remplacer. Le JSON
+      //     historique reste pleinement disponible : un ancien fichier
+      //     `.json` demeure listé et lisible (compatibilité conservée).
+      ProfileBoutonBackup(
+        emoji: '🗄️', label: 'Exporter le conteneur vérifiable (.ptg)',
+        sousTitre: 'Tous les supports dans un fichier manifesté, avec empreintes',
+        couleur: const Color(0xFF7E57C2),
+        enCharge: _chargement, onTap: _exporterPtg,
+      ),
       const SizedBox(height: 12),
+
+      // ── Bandeau : restauration interrompue ayant nécessité une intervention ─
+      //
+      //  ⚠️ POURQUOI CE BANDEAU EXISTE
+      //    Une restauration interrompue (coupure d'alimentation, arrêt du
+      //    processus) laisse un instantané dans `temp/`. Au démarrage suivant,
+      //    `RepriseRestaurationService` tranche : annuler et rétablir l'état
+      //    antérieur, rejouer les contrôles et conserver, ou constater une
+      //    incohérence. Ce travail était FAIT mais son résultat n'était affiché
+      //    NULLE PART : l'utilisateur devait ouvrir le journal pour l'apprendre.
+      //
+      //  ⚠️ CE QUE LE BANDEAU N'EST PAS
+      //    Ce n'est pas une alerte générique. Il n'apparaît QUE si une reprise a
+      //    réellement eu lieu et a réellement changé quelque chose. Aucune
+      //    reprise ⇒ aucun bandeau : signaler un incident qui n'a pas eu lieu
+      //    serait du bruit inquiétant.
+      if (_messageReprise != null) ...[
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFB74D).withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(10),
+            border:
+                Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.45)),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.restore_page_outlined,
+                color: Color(0xFFFFB74D), size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Restauration interrompue',
+                    style: TextStyle(
+                        color: Color(0xFFFFB74D),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _messageReprise!,
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.72),
+                        fontSize: 11.5,
+                        height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 12),
+      ],
 
       // ── Note explicative ────────────────────────────────────────────────────
       Container(
