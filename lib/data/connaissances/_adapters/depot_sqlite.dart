@@ -370,6 +370,129 @@ class DepotSqlite implements DepotConnaissances {
     );
   }
 
+  // ------------------------------------------------------ performances (§8/§9)
+
+  static Map<String, Object?> _lignePerformance(
+    PerformanceStockee p,
+    String maintenant,
+  ) =>
+      <String, Object?>{
+        'id': p.id,
+        'id_cheval': p.idCheval,
+        'nom_cheval_brut': p.nomChevalBrut,
+        'discipline': p.discipline,
+        'date_perf': p.datePerf,
+        'hippodrome': p.hippodrome,
+        'place': p.place,
+        'reduction_km': p.reductionKm,
+        'gains': p.gains,
+        'musique': p.musique,
+        'source': p.source,
+        'charge_brute': p.chargeBrute,
+        'cree_le': maintenant,
+      };
+
+  @override
+  Future<bool> insererPerformance(PerformanceStockee performance) async {
+    // `INSERT OR IGNORE` : la contrainte UNIQUE (id_cheval, date_perf,
+    // hippodrome, source) rend un rejeu inoffensif. C'est ce qui permet de
+    // repasser sur une même course sans dupliquer la connaissance (§14).
+    final id = await _executeur.insert(
+      'performances',
+      _lignePerformance(performance, DateTime.now().toUtc().toIso8601String()),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    return id > 0;
+  }
+
+  @override
+  Future<int> insererPerformancesEnLot(
+    List<PerformanceStockee> performances,
+  ) async {
+    if (performances.isEmpty) return 0;
+    final maintenant = DateTime.now().toUtc().toIso8601String();
+    var crees = 0;
+    // Batch plutôt que boucle d'insert : sur un lot de plusieurs centaines de
+    // lignes, la différence est mesurable (§19). Le tout reste dans une
+    // transaction, donc une interruption ne laisse rien à moitié écrit.
+    final batch = _base.batch();
+    for (final p in performances) {
+      batch.insert(
+        'performances',
+        _lignePerformance(p, maintenant),
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+    final resultats = await batch.commit(noResult: false);
+    for (final r in resultats) {
+      if (r is int && r > 0) crees++;
+    }
+    return crees;
+  }
+
+  static PerformanceStockee _performanceDepuisLigne(
+    Map<String, Object?> r,
+  ) =>
+      PerformanceStockee(
+        id: '${r['id']}',
+        idCheval: r['id_cheval'] as String?,
+        nomChevalBrut: '${r['nom_cheval_brut']}',
+        discipline: r['discipline'] as String?,
+        datePerf: r['date_perf'] as String?,
+        hippodrome: r['hippodrome'] as String?,
+        place: (r['place'] as num?)?.toInt(),
+        reductionKm: (r['reduction_km'] as num?)?.toDouble(),
+        gains: (r['gains'] as num?)?.toDouble(),
+        musique: r['musique'] as String?,
+        source: '${r['source']}',
+        chargeBrute: r['charge_brute'] as String?,
+      );
+
+  @override
+  Future<List<PerformanceStockee>> performancesDuCheval(
+    String idCheval, {
+    int limite = 20,
+  }) async {
+    final rows = await _executeur.query(
+      'performances',
+      where: 'id_cheval = ?',
+      whereArgs: <Object?>[idCheval],
+      // Tri décroissant sur la date : les critères exploitent les courses les
+      // plus récentes d'abord (§9). `date_perf` est ISO-8601, donc l'ordre
+      // lexicographique est l'ordre chronologique.
+      orderBy: 'date_perf DESC',
+      limit: limite,
+    );
+    return rows.map(_performanceDepuisLigne).toList(growable: false);
+  }
+
+  @override
+  Future<List<PerformanceStockee>> performancesParNom(
+    String nomBrut, {
+    int limite = 20,
+  }) async {
+    // ⚠️ §7 : le nom n'est PAS une preuve d'identité. On interroge sur le nom
+    // BRUT exact, pas sur `nom_normalise` : deux graphies différentes du même
+    // cheval ne sont pas fusionnées ici, et deux chevaux homonymes ne le sont
+    // pas davantage. Le regroupement relève de la consolidation, pas de cette
+    // lecture.
+    final rows = await _executeur.query(
+      'performances',
+      where: 'nom_cheval_brut = ?',
+      whereArgs: <Object?>[nomBrut],
+      orderBy: 'date_perf DESC',
+      limit: limite,
+    );
+    return rows.map(_performanceDepuisLigne).toList(growable: false);
+  }
+
+  @override
+  Future<int> compterPerformances() async {
+    final rows = await _executeur
+        .rawQuery('SELECT COUNT(*) AS n FROM performances');
+    return (rows.first['n'] as num).toInt();
+  }
+
   // ---------------------------------------------------------------- rapports
 
   @override

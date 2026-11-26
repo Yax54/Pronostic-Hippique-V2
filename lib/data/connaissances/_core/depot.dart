@@ -63,6 +63,78 @@ class LigneElo {
 }
 
 /// Rapport avec son contenu d'origine intégral (donc `fnum2` inclus).
+/// Une performance authentique, telle que le PMU l'a publiée.
+///
+/// §8 et §9 : c'est la connaissance de base qui alimente les critères. Elle est
+/// stockée **telle quelle**, sans interprétation : la place reste `null` quand
+/// le PMU ne l'a pas publiée, `reductionKm` reste `null` quand elle est absente.
+/// Confondre « absent » et « zéro » serait une faute de connaissance, pas un
+/// détail d'implémentation.
+///
+/// L'identité du cheval n'est **pas** prouvée par [nomChevalBrut] (§7) :
+/// [idCheval] peut être `null`, et c'est justement le cas des lignes dont
+/// l'identité n'est pas encore résolue — elles sont conservées (D-20), jamais
+/// supprimées ni fusionnées sur un nom.
+class PerformanceStockee {
+  const PerformanceStockee({
+    required this.id,
+    required this.nomChevalBrut,
+    required this.source,
+    this.idCheval,
+    this.discipline,
+    this.datePerf,
+    this.hippodrome,
+    this.place,
+    this.reductionKm,
+    this.gains,
+    this.musique,
+    this.chargeBrute,
+  });
+
+  /// Clé déterministe : `idCheval|date|hippodrome|source` (ou nom brut si
+  /// l'identité est inconnue). Un recalcul ne crée donc jamais de doublon.
+  final String id;
+
+  final String? idCheval;
+  final String nomChevalBrut;
+  final String? discipline;
+
+  /// Date de la performance, en ISO-8601 (heure locale, sans fuseau).
+  final String? datePerf;
+
+  final String? hippodrome;
+
+  /// Place réelle, `null` si le PMU ne l'a pas publiée. **Jamais 0 par
+  /// défaut** : 0 signifierait « dernière place », ce qui est une information
+  /// différente de « non classé / inconnu ».
+  final int? place;
+
+  final double? reductionKm;
+  final double? gains;
+  final String? musique;
+
+  /// Provenance : `pmu_performances_detaillees`, `pmu_participants`, etc.
+  /// Sans provenance, une donnée n'est pas vérifiable.
+  final String source;
+
+  /// Charge utile d'origine, conservée pour ne rien perdre d'utile.
+  final String? chargeBrute;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'id_cheval': idCheval,
+        'nom_cheval_brut': nomChevalBrut,
+        'discipline': discipline,
+        'date_perf': datePerf,
+        'hippodrome': hippodrome,
+        'place': place,
+        'reduction_km': reductionKm,
+        'gains': gains,
+        'musique': musique,
+        'source': source,
+      };
+}
+
 class RapportStocke {
   const RapportStocke({
     required this.empreinte,
@@ -255,6 +327,43 @@ abstract class DepotConnaissances {
   Future<Map<String, LigneElo>> lireEloEnLot(List<String> cles);
 
   Future<void> ecrireEtatElo(String cle, String valeur);
+
+  // ---------------------------------------------------- performances (§8/§9)
+  /// Enregistre une performance authentique. Idempotent : une même
+  /// performance (même cheval, même date, même hippodrome, même source) ne
+  /// crée pas de doublon.
+  ///
+  /// Retourne `true` si une ligne a réellement été créée.
+  Future<bool> insererPerformance(PerformanceStockee performance);
+
+  /// Écrit un lot de performances dans **une seule transaction**.
+  ///
+  /// §19 : évite N allers-retours pour N performances. Retourne le nombre de
+  /// lignes réellement créées (`ConflictAlgorithm.ignore` sur les doublons).
+  Future<int> insererPerformancesEnLot(List<PerformanceStockee> performances);
+
+  /// Performances d'un cheval, de la plus récente à la plus ancienne.
+  ///
+  /// [limite] borne la lecture aux N dernières, ce qui est l'usage des critères
+  /// (« les 5 dernières courses ») : lire 200 lignes pour n'en exploiter que 5
+  /// serait un gaspillage mesurable sur un corpus de plusieurs dizaines de
+  /// milliers de lignes.
+  Future<List<PerformanceStockee>> performancesDuCheval(
+    String idCheval, {
+    int limite = 20,
+  });
+
+  /// Performances par nom de cheval brut, quand l'identité n'est pas résolue.
+  ///
+  /// §7 : le nom normalisé n'est **pas** une preuve d'identité. Cette méthode
+  /// retourne donc des lignes susceptibles d'appartenir à plusieurs chevaux
+  /// distincts ; c'est à l'appelant de ne pas les fusionner.
+  Future<List<PerformanceStockee>> performancesParNom(
+    String nomBrut, {
+    int limite = 20,
+  });
+
+  Future<int> compterPerformances();
 
   // ------------------------------------------------------------ rapports
   Future<bool> insererRapport(RapportStocke rapport);
