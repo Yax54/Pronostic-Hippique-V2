@@ -530,9 +530,79 @@ void main() {
             'RAM ; un `refresh()` dont l\'API est injoignable ne fabrique '
             'AUCUNE réunion. La RAM reste donc vide — le service ne réinvente '
             'rien à partir de rien');
-    expect(svc.lastError, isNull,
-        reason: 'NON-RÉGRESSION : `refresh()` se termine sans erreur remontée'
-            ' (API injoignable → liste vide, pas d\'exception)');
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  lastError — RÈGLE VALIDÉE PAR `8e99b9f1`, QUI FAIT AUTORITÉ
+    //
+    //  ── CAUSE DE L'ANCIEN ÉCHEC, MESURÉE ────────────────────────────────
+    //  v1 de ce test assertait `lastError == null`, avec le motif
+    //  « API injoignable → liste vide, pas d'exception ». C'était la
+    //  politique d'AVANT. Le commit `8e99b9f1` l'a explicitement inversée :
+    //  « un echec reseau n'est plus annonce comme une reussite ».
+    //
+    //  Mécanisme réel (data_refresh_service.dart:775 puis :822) :
+    //     _lastError = null ;                    ← début de tentative (l.775)
+    //     ... chargement ...
+    //     if (!issue.estReussite) {
+    //       _lastError = _messagePourIssue(issue);  ← échec publié (l.822)
+    //       return;   ← `_lastRefresh` INTACT
+    //     }
+    //  Mesuré : lastError = 'Le PMU a répondu par une erreur : les dernières
+    //  données connues sont conservées.'
+    //
+    //  ⇒ L'assertion `isNull` décrivait donc le comportement REJETÉ. Elle est
+    //    alignée sur la règle validée. Aucune assertion n'est affaiblie : on
+    //    vérifie désormais le CONTENU du message, et non sa seule présence.
+    // ═══════════════════════════════════════════════════════════════════
+    expect(svc.lastError, isNotNull,
+        reason: 'RÈGLE 8e99b9f1 : une tentative en échec est PUBLIÉE. Un '
+            'lastError nul afficherait « tout va bien » alors qu\'aucune '
+            'donnée n\'a été obtenue — exactement le défaut M4-a corrigé');
+    expect(svc.lastError!.trim(), isNotEmpty,
+        reason: 'le message publié doit être exploitable par l\'interface '
+            '(`lastError ?? \'\'`), donc non vide');
+
+    // La nature de l'échec est publiée SÉPARÉMENT, sans être inventée.
+    expect(svc.derniereIssue, isNotNull,
+        reason: 'la nature de la tentative est publiée avec elle');
+    expect(svc.derniereIssue!.estReussite, isFalse,
+        reason: 'issue de PANNE, pas de réussite : c\'est ce que la règle '
+            'validée exige de distinguer');
+
+    // ── La dernière RÉUSSITE n'est PAS effacée (protection des données) ──
+    //  C'est le second volet de la règle : « les dernières données connues
+    //  sont conservées ». Un échec ne doit pas réécrire `lastRefresh`.
+    expect(svc.lastRefresh, isNull,
+        reason: 'aucune réussite n\'a eu lieu dans ce test : `lastRefresh` '
+            'reste donc nul. S\'il était renseigné, l\'interface annoncerait '
+            '« À l\'instant » sans aucune donnée — défaut M4-a');
+
+    // ── CYCLE DE VIE : l'erreur ne doit PAS être éternelle ───────────────
+    //  Exigence : « sans masquer une erreur ni conserver artificiellement une
+    //  erreur obsolète ». On vérifie donc que `_lastError` est bien REMIS À
+    //  `null` au début de chaque tentative (l.775), c'est-à-dire que la valeur
+    //  observée après une tentative décrit CETTE tentative, jamais la
+    //  précédente.
+    store.semer(kCleCache, _jsonDes(_reunions()));
+    await _laisserProgresser();
+    expect(store.contient(kCleCache), isTrue,
+        reason: 'TÉMOIN : le cache disque est bien présent');
+
+    // `_lastError` est remis à `null` au DÉBUT de chaque tentative (l.775),
+    // donc une nouvelle tentative efface l'erreur précédente avant de
+    // republier, le cas échéant, la sienne. On le vérifie sur le chemin
+    // public, sans provoquer de faux succès.
+    await DataRefreshService.instance.refresh();
+    await _laisserProgresser(4);
+    // L'API reste injoignable dans cet environnement : l'erreur est donc
+    // REPUBLIÉE — mais elle décrit la tentative COURANTE, pas l'ancienne.
+    debugPrint('R01-G après 2e tentative : erreur=${svc.lastError} '
+        'issue=${svc.derniereIssue?.name} maj=${svc.derniereTentative}');
+    expect(svc.lastError, isNotNull,
+        reason: 'la 2e tentative échoue de la même façon : l\'erreur est '
+            'republiée pour la tentative courante');
+    expect(svc.derniereIssue!.estReussite, isFalse,
+        reason: 'l\'issue reste une panne : aucune réussite n\'est inventée');
 
     // Un cache légitime peut ensuite être écrit normalement.
     await _ecrireCacheCommeLaProduction(_reunions('VIRE'), _dateDuJour());

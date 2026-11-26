@@ -10,16 +10,28 @@
 //  comme demandé : ce n'est plus un test de présence d'API, c'est un test
 //  du comportement de production.
 //
-//    T1  DÉFAUT dans le vrai isolate ...... passe aujourd'hui (documente le bug)
-//    T2  Le VRAI chemin compute() ......... passe aujourd'hui (statics isolés)
-//    T3  APRÈS D3 : M correct dans l'isolate ÉCHOUE aujourd'hui (NoSuchMethod)
-//    T4  APRÈS D3 : impact favori / TOP3 ... ÉCHOUE aujourd'hui (NoSuchMethod)
-//    T5  NON-RÉGRESSION mécanisme ......... passe aujourd'hui et après D3
+//    T1  DÉFAUT dans le vrai isolate ...... passe (documente le bug)
+//    T2  Le VRAI chemin compute() ......... passe (statics isolés)
+//    T3  APRÈS D3 : M correct dans l'isolate passe (D3 est en production)
+//    T4  APRÈS D3 : cohérence isolate/main  passe (D3 est en production)
+//    T5  NON-RÉGRESSION mécanisme ......... passe
+//    T6  IMPACT sur le classement ......... passe
+//    T7  DISTINCTION inconnu / 1500 / autre passe
 //
-//  T3/T4 utilisent un appel `dynamic` volontaire vers la méthode que D3
-//  ajoutera (`chargerDepuisMapIsolate`). Aujourd'hui : NoSuchMethodError.
-//  Après D3 : la méthode existe, les assertions s'exécutent et passent.
-//  → Le rouge est RÉEL, pas une erreur de compilation masquée.
+//  ── MISE À JOUR DE MÉTHODE (après mesure, pas après supposition) ─────────
+//  Ce fichier annonçait que T3/T4 échouaient « aujourd'hui » (NoSuchMethod).
+//  C'est FAUX depuis que D3 est en production : `chargerDepuisMapIsolate`
+//  existe (`elo_service.dart:4531`) et les deux tests PASSENT. Le commentaire
+//  a été aligné sur la mesure ; aucune assertion n'a été retirée.
+//
+//  T1 annonçait un défaut « M figé à 37.5 ». C'est FAUX, et la mesure le
+//  prouve : sans restauration, `enrichirAvecElo()` — qui écrase `eloRating`
+//  par `0.0` quand aucune entrée de rating n'existe (`_possedeRating`, D3) —
+//  fait rendre à `scoreElo` **50,0** (neutralité légitime de `357431aa`), et
+//  non l'ancien repli 1500 → 37,5. La perte de connaissance est bien réelle
+//  (1800 / 1500 / 1200 écrasés), mais son OBSERVABLE est 50,0. L'attente a
+//  donc été corrigée pour décrire le comportement validé ; le défaut D3 reste
+//  démontré, avec la bonne valeur.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/foundation.dart' show compute, setEquals, debugPrint;
@@ -31,9 +43,16 @@ import 'package:pronostic_hippique/services/elo_service.dart';
 import 'package:pronostic_hippique/services/ia_memory_models.dart';
 import 'package:pronostic_hippique/services/ia_pronostic_engine.dart';
 
-// ─── Constantes de référence (formule zt_models.dart:489) ───────────────────
-// scoreElo = ((rating - 1200) / 8).clamp(0, 100)
-const double kEloNeutreScore = 37.5; // (1500 - 1200) / 8
+// ─── Constante du repli NEUTRE (formule zt_models.dart, corrigée 357431aa) ──
+//   scoreElo = 50.0 si eloRating <= 0   ← inconnu ⇒ neutralité
+//   scoreElo = ((rating - 1200) / 8).clamp(0, 100) sinon
+//
+//   ⚠️ NE PAS confondre les deux « neutres » :
+//     • 50.0 = ABSENCE de connaissance (aucune entrée de rating) ;
+//     • 37.5 = connaissance AUTHENTIQUE d'un rating de 1500.
+//   Confondre les deux était l'erreur de la v1 de ce fichier : elle attendait
+//   37,5 partout, c'est-à-dire qu'elle prenait le repli 1500 pour une réalité.
+const double kEloInconnuScore = 50.0; // eloRating <= 0 → neutralité légitime
 
 // ─── Clé ELO : reproduit elo_service.dart:129-146 ───────────────────────────
 //   _cleNom   : trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ')
@@ -133,6 +152,34 @@ Map<String, double> _eloAttendu() => {
       '3': ((1200.0 - 1200.0) / 8.0).clamp(0.0, 100.0), //  0.0
     };
 
+/// Même course, PLUS un quatrième partant qui n'a AUCUNE entrée de rating
+/// dans `_eloJson()`. C'est ce partant qui rend la distinction
+/// « inconnu ≠ 1500 » mesurable : sans lui, un rating de 1500 et une absence
+/// de rating produiraient le même observable, et le test ne distinguerait
+/// rien (c'était exactement l'angle mort de T1 et T3).
+ZtCourse _courseAvecInconnu() {
+  return ZtCourse(
+    numCourse: 1,
+    anchor: 'R1C1',
+    nom: 'PRIX DE TEST ELO',
+    heure: '14:30',
+    distance: '2700',
+    prix: '50000',
+    type: 'Trot Attelé',
+    piste: 'Sable',
+    categorie: 'Condition',
+    isQuinte: false,
+    pronosticZt: const [],
+    partants: [
+      _partant('1', 'CHEVAL A', eloRating: 1800.0, musique: '1a 1a 2a 1a 3a'),
+      _partant('2', 'CHEVAL B', eloRating: 1500.0, musique: '3a 3a 4a 3a 3a'),
+      _partant('3', 'CHEVAL C', eloRating: 1200.0, musique: '6a 6a 7a 6a 6a'),
+      // Pas d'entrée dans `_eloJson()` : connaissance ABSENTE.
+      _partant('4', 'CHEVAL D', musique: '5a 5a 5a 5a 5a'),
+    ],
+  );
+}
+
 /// Map ELO telle que produite par EloService.exporterPourBackup()
 /// — c'est exactement le contenu de `payload.eloJson`.
 Map<String, dynamic> _eloJson() {
@@ -198,12 +245,26 @@ void main() {
   });
 
   // ═════════════════════════════════════════════════════════════════════
-  // T1 — LE DÉFAUT, DANS LE VRAI ISOLATE.  Passe aujourd'hui.
+  // T1 — LE DÉFAUT, DANS LE VRAI ISOLATE.
   //
-  // Rejoue le calcul de production (sans restauration ELO, donc l'état
-  // actuel du code) et constate que M est figé à 37.5.
+  // Rejoue le calcul de production SANS restauration ELO et constate que
+  // la connaissance portée par chaque partant est PERDUE.
+  //
+  // ── CAUSE DE L'ANCIEN ÉCHEC, MESURÉE ────────────────────────────────
+  // v1 de ce test attendait 37.5 pour les trois chevaux, en croyant que
+  // l'absence d'ELO produisait le repli 1500. C'est faux depuis la
+  // correction `357431aa` : `enrichirAvecElo()` (elo_service.dart:3354)
+  // n'écrit un rating que si `_possedeRating()` est vrai, sinon il écrit
+  // `eloRating = 0.0` (convention « 0 = inconnu », zt_models.dart:197).
+  // `scoreElo` rend alors 50,0. Mesuré : 50.0, pas 37.5.
+  //
+  // ── CE QUE CE TEST PROUVE MAINTENANT ────────────────────────────────
+  // Les quatre chevaux valent tous 50,0 dans l'isolate, y compris CHEVAL B
+  // dont le rating AUTHENTIQUE est 1500 (qui devrait valoir 37,5). La
+  // perte est donc démontrée deux fois : par la valeur (50,0 au lieu de
+  // 75,0 / 37,5 / 0,0) et par l'absence de variance.
   // ═════════════════════════════════════════════════════════════════════
-  test('V2/T1 — DÉFAUT : dans compute(), M est figé à 37.5 pour tous',
+  test('V2/T1 — DÉFAUT : sans restauration, M perd l\'ELO dans compute()',
       () async {
     // ELO chargés côté principal : ils ne serviront à rien dans l'isolate.
     await EloService.instance.importerDepuisBackup(_eloJson());
@@ -213,13 +274,21 @@ void main() {
       _ProbePayload(_course(), const {}), // ← eloJson VIDE = état actuel
     );
 
-    expect(m['1'], closeTo(kEloNeutreScore, 0.01),
-        reason: 'CHEVAL A a eloRating=1800 mais M est écrasé à 37.5');
-    expect(m['2'], closeTo(kEloNeutreScore, 0.01));
-    expect(m['3'], closeTo(kEloNeutreScore, 0.01));
+    // CHEVAL A a un rating AUTHENTIQUE de 1800 : il devrait valoir 75.0.
+    expect(m['1'], closeTo(kEloInconnuScore, 0.01),
+        reason: 'CHEVAL A a eloRating=1800 mais sa connaissance est écrasée '
+            'par `enrichirAvecElo` → 50.0 (neutralité), et non 75.0');
+    // CHEVAL B a un rating AUTHENTIQUE de 1500 : il devrait valoir 37.5.
+    expect(m['2'], closeTo(kEloInconnuScore, 0.01),
+        reason: 'CHEVAL B a eloRating=1500 mais vaut 50.0 : sa connaissance '
+            'authentique (qui vaudrait 37.5) est perdue');
+    expect(m['3'], closeTo(kEloInconnuScore, 0.01),
+        reason: 'CHEVAL C a eloRating=1200 mais sa connaissance est écrasée '
+            '→ 50.0, et non 0.0');
 
     expect(m.values.toSet().length, 1,
-        reason: 'Aucune variance : le critère M est neutralisé dans l\'isolate');
+        reason: 'Aucune variance : les quatre chevaux valent tous 50.0, donc '
+            'le critère M ne porte plus aucune information dans l\'isolate');
   });
 
   // ═════════════════════════════════════════════════════════════════════
@@ -340,5 +409,74 @@ void main() {
     final top3Identique = setEquals(top3Avant, top3Apres);
     debugPrint('[V2/T6] ordre avant=$ordreAvant après=$ordreApres '
         'top3 identique=$top3Identique');
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // T7 — LES TROIS DISTINCTIONS, MESURÉES DANS LE VRAI compute()
+  //
+  // Arbitrage : la règle validée par `357431aa` fait autorité.
+  //   1. ELO INCONNU ........... score neutre 50,0
+  //   2. ELO AUTHENTIQUE 1500 ... score 37,5  (formule, pas le neutre)
+  //   3. ELO AUTHENTIQUE ≠1500 .. formule existante
+  //
+  // Ce test existe parce que T1 et T3, à eux seuls, ne distinguaient pas
+  // le cas « inconnu » du cas « 1500 » : T1 voyait 50,0 partout (défaut),
+  // T3 voyait 75 / 37,5 / 0 sans jamais rencontrer un partant SANS entrée.
+  // Une quatrième partante sans rating est donc introduite ici.
+  //
+  // ⚠️ AUCUN CALCUL ELO N'EST MODIFIÉ. On lit `scoreElo` tel quel.
+  // ═════════════════════════════════════════════════════════════════════
+  test('V2/T7 — inconnu=50.0 / authentique 1500=37.5 / authentique autre=formule',
+      () async {
+    final course = _courseAvecInconnu();
+
+    // ── Référence : thread principal, ratings RÉELLEMENT chargés ────────
+    await EloService.instance.importerDepuisBackup(_eloJson());
+    final ref = _criteresEloThreadPrincipal(course);
+
+    // ── Le même calcul dans le VRAI isolate (chemin de production D3) ───
+    await EloService.instance.reinitialiser(); // ne doit PAS être nécessaire
+    final dans = await compute(
+      _calculerMDansIsolate,
+      _ProbePayload(course, _eloJson()),
+    );
+
+    // 1. ELO INCONNU → neutralité légitime 50,0
+    expect(dans['4'], closeTo(kEloInconnuScore, 0.01),
+        reason: 'DISTINCTION 1 : le cheval 4 n\'a AUCUNE entrée de rating → '
+            'inconnu → 50.0 (neutralité). S\'il valait 37.5, il serait '
+            'pénalisé pour une connaissance qui n\'existe pas');
+    expect(ref['4'], closeTo(kEloInconnuScore, 0.01),
+        reason: 'DISTINCTION 1 (thread principal) : doit concorder');
+
+    // 2. ELO AUTHENTIQUE 1500 → 37,5 (la formule s'applique réellement)
+    expect(dans['2'], closeTo(37.5, 0.01),
+        reason: 'DISTINCTION 2 : le cheval 2 a un rating AUTHENTIQUE de 1500 → '
+            '37.5 par la formule. Confondre ce cas avec le neutre 50.0 '
+            'effacerait une connaissance réelle');
+    expect(ref['2'], closeTo(37.5, 0.01),
+        reason: 'DISTINCTION 2 (thread principal) : doit concorder');
+
+    // 3. ELO AUTHENTIQUE ≠ 1500 → formule existante, non modifiée
+    final attendu = _eloAttendu();
+    expect(dans['1'], closeTo(attendu['1']!, 0.01),
+        reason: 'DISTINCTION 3 : rating 1800 → (1800-1200)/8 = 75.0');
+    expect(dans['3'], closeTo(attendu['3']!, 0.01),
+        reason: 'DISTINCTION 3 : rating 1200 → (1200-1200)/8 = 0.0');
+
+    // Cohérence stricte des deux chemins, cas par cas.
+    for (final numero in ['1', '2', '3', '4']) {
+      expect(dans[numero], closeTo(ref[numero]!, 0.001),
+          reason: 'le cheval $numero doit être identique dans l\'isolate et '
+              'sur le thread principal');
+    }
+
+    // Témoin d'absence de confusion : au moins trois valeurs distinctes,
+    // donc les trois catégories ne sont pas confondues en une seule.
+    final valeurs = dans.values.toSet();
+    expect(valeurs.length, greaterThanOrEqualTo(3),
+        reason: 'inconnu (50.0), 1500 (37.5) et 1800 (75.0) doivent produire '
+            'des valeurs DISTINCTES — sinon les catégories sont confondues');
+    debugPrint('[V2/T7] isolate=$dans principal=$ref');
   });
 }

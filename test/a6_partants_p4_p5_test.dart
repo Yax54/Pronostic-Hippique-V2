@@ -44,6 +44,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:pronostic_hippique/models/zt_models.dart';
 import 'package:pronostic_hippique/services/alert_service.dart';
 import 'package:pronostic_hippique/services/data_refresh_service.dart';
 import 'package:pronostic_hippique/services/elo_service.dart';
@@ -330,6 +331,35 @@ class _Mesure {
   final bool resultatsReels;
   final int nbMisesAJourPoids;
   final int nbChevauxElo;
+
+  /// Arrivée RÉELLEMENT transmise à `EloService.mettreAJourApresArrivee`.
+  ///
+  /// ⚠️ `null` signifie « la mise à jour ELO n'a JAMAIS été atteinte », ce qui
+  /// n'est pas la même chose que « atteinte mais sans effet ». C'est la
+  /// distinction que l'ancien harnais ne pouvait pas faire : il ne mesurait
+  /// qu'un DELTA de `nbChevauxSuivis`, sans preuve que l'étape avait eu lieu.
+  final List<int>? arriveeElo;
+
+  /// Mode de persistance de la mise à jour ELO (`persistee`, `nonTentee`, ...),
+  /// ou `null` si l'étape n'a jamais été atteinte.
+  final String? etatPersistanceElo;
+
+  /// Identité de course reçue par `EloService` (`R1C1_<date>` ou `R1C1_<date>|`).
+  final String? cleCourseElo;
+
+  /// Ratings EXTRAITS DU DISQUE (`elo_ratings_v2`) pour les chevaux de
+  /// l'arrivée. C'est la preuve de PERSISTANCE : la RAM ne suffirait pas.
+  final Map<String, double> ratingsDisque;
+
+  /// Nombre de courses désormais présentes dans le registre ELO persistant :
+  /// c'est l'anti-double-application (une course ne doit être comptée qu'UNE
+  /// fois, quel que soit le nombre de passages).
+  final int? nbCoursesRegistre;
+
+  /// Nb de mises à jour ELO CONFIRMÉES par `setString → true`, mesuré en delta
+  /// autour du scénario. C'est l'anti-double-écriture au niveau du stockage.
+  final int deltaPersistees;
+
   final int nbPartantsEnMemoire;
 
   /// Message de résultat observé côté `AlertService` (P5 uniquement).
@@ -344,9 +374,82 @@ class _Mesure {
     required this.nbMisesAJourPoids,
     required this.nbChevauxElo,
     required this.nbPartantsEnMemoire,
+    this.arriveeElo,
+    this.etatPersistanceElo,
+    this.cleCourseElo,
+    this.ratingsDisque = const <String, double>{},
+    this.nbCoursesRegistre,
+    this.deltaPersistees = 0,
     this.messageResultat,
     this.alerteResultat = false,
   });
+}
+
+/// Signature d'un observateur de mise à jour ELO.
+typedef _ObserveurElo = void Function(
+    List<int> arrivee, List<ZtPartant> partants, String discipline,
+    String? courseKey);
+
+/// Espion qui relaie l'observation sans RIEN changer au déroulement.
+///
+/// Il ne remplace aucune logique : il est appelé par un point d'observation
+/// ajouté à `EloService` (voir `debugObserveurMiseAJour`), qui ne conditionne
+/// aucune écriture et ne modifie aucune formule.
+class _EspionMiseAJourElo implements DebugObserveurElo {
+  final _ObserveurElo _surObservation;
+  const _EspionMiseAJourElo(this._surObservation);
+
+  @override
+  void appeler(List<int> arrivee, List<ZtPartant> partants, String discipline,
+          String? courseKey) =>
+      _surObservation(arrivee, partants, discipline, courseKey);
+}
+
+/// Lit `elo_ratings_v2` et rend les ratings des chevaux demandés.
+/// ⚠️ LECTURE DU DISQUE, PAS DE LA RAM. `EloService.nbChevauxSuivis` ne prouve
+///    rien sur la persistance : une mutation en mémoire réussie peut n'avoir
+///    jamais été écrite. La clé est celle de la production
+///    (`elo_service.dart:853`).
+Future<Map<String, double>> _ratingsSurDisque(List<String> noms) async {
+  final prefs = await SharedPreferences.getInstance();
+  final brut = prefs.getString('elo_ratings_v2');
+  if (brut == null || brut.isEmpty) return <String, double>{};
+  final data = jsonDecode(brut) as Map<String, dynamic>;
+  final res = <String, double>{};
+  for (final nom in noms) {
+    final norm = nom.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
+    for (final e in data.entries) {
+      // Clé de production : « NOM|DISCIPLINE », éventuellement « NOM| ».
+      if (e.key.split('|').first == norm) {
+        res[e.key] = ((e.value as Map<String, dynamic>)['rating'] as num)
+            .toDouble();
+      }
+    }
+  }
+  return res;
+}
+
+/// Nombre de courses DISTINCTES du registre ELO persistant.
+///
+/// Anti-double-application : `mettreAJourApresArrivee` refuse une course déjà
+/// vue (`registre.entreePourCle != null`) ; le registre doit donc contenir
+/// EXACTEMENT une entrée pour la course du scénario.
+Future<int?> _nbCoursesRegistre() async {
+  final prefs = await SharedPreferences.getInstance();
+  final brut = prefs.getString('elo_registre_v3');
+  if (brut == null || brut.isEmpty) return null;
+  try {
+    final data = jsonDecode(brut);
+    if (data is! Map<String, dynamic>) return null;
+    final entrees = data['entrees'];
+    if (entrees is! List) return null;
+    return entrees
+        .whereType<Map<String, dynamic>>()
+        .where((e) => e['type'] == 'course')
+        .length;
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Exécute P4 (`DataRefreshService.refresh()`) sur un état vierge.
@@ -363,6 +466,16 @@ Future<_Mesure> _mesurerP4({
 
   final poidsAvant = IaMemoryService.instance.poids.nbMisesAJour;
   final eloAvant = EloService.instance.nbChevauxSuivis;
+  final persisteesAvant = EloService.instance.nbPersistees;
+  // L'arrivée RÉELLEMENT remise à `_mettreAJourEloApresArrivee` est capturée
+  // en enveloppant le service : c'est la seule preuve que l'étape a été
+  // ATTEINTE avec le bon contenu, distincte de la preuve qu'elle a EU un
+  // effet. Aucune logique de production n'est modifiée — on observe.
+  List<int>? arriveeTransmise;
+  final messagerieElo = _EspionMiseAJourElo((arrivee, _, __, ___) {
+    arriveeTransmise = List<int>.unmodifiable(arrivee);
+  });
+  EloService.instance.debugObserveurMiseAJour = messagerieElo;
 
   await _avecPmu(
     () => DataRefreshService.instance.refresh(),
@@ -371,11 +484,62 @@ Future<_Mesure> _mesurerP4({
     nbPartants: nbPartants,
   );
 
-  // `_recupererResultatsAuto()` est lancé en tâche de fond par `_doRefresh`
-  // (l.702) : on attend que l'écriture — ou son absence définitive — se
-  // produise. Les refus sont définitifs, donc le délai borne seulement.
-  await _attendreQue(() => _pronosticDe(cle)?.resultatsReels == true,
-      ms: 2500);
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ATTENTE DÉTERMINISTE DE L'ACHÈVEMENT DU TRAITEMENT ELO
+  //
+  //  ── DÉFAUT DU HARNAIS, MESURÉ ─────────────────────────────────────────
+  //  v1 attendait `_pronosticDe(cle)?.resultatsReels == true` puis lisait
+  //  immédiatement `nbChevauxSuivis`. Or la production exécute, DANS CET
+  //  ORDRE (data_refresh_service.dart) :
+  //      1491  resultatEnregistre = await IaMemoryService.enregistrerResultat(...)
+  //      1510  if (resultatEnregistre) {
+  //      1514    await _mettreAJourEloApresArrivee(p.courseKey, arrivee);
+  //            }
+  //  `resultatsReels` devient vrai DANS l'appel de la ligne 1491, c'est-à-dire
+  //  AVANT l'étape ELO. L'ancienne condition rendait donc la main avant que
+  //  la mise à jour ELO ait commencé. Mesuré : `Δchevaux=0` alors que la
+  //  ligne de journal `[EloService] ✅ 5 ELO mis à jour (discipline: Attelé) —
+  //  persistance: persistee` apparaissait APRÈS la mesure.
+  //
+  //  ── CONDITION CORRIGÉE : ATTENTE À DEUX ÉTAGES ────────────────────────
+  //  Le défaut n'était pas qu'un premier étage existait, c'est qu'il était le
+  //  SEUL : `resultatsReels` devient vrai dans `enregistrerResultat(...)`
+  //  (l.1491), AVANT l'étape ELO (l.1514). On garde donc cet étage — il dit
+  //  si une arrivée a été acceptée — et on en AJOUTE un second, sur
+  //  l'ACHÈVEMENT RÉEL de l'étape ELO.
+  //
+  //  ⚠️ TROIS PIÈGES RENCONTRÉS ET MESURÉS, tous évités ici :
+  //   1. `ΔnbChevauxSuivis` vaut 0 aussi bien si l'étape n'a pas commencé,
+  //      si elle a échoué, que si elle est encore en cours → inutilisable
+  //      comme condition d'achèvement.
+  //   2. L'observateur d'ENTRÉE se déclenche AVANT le travail : l'utiliser
+  //      comme critère de fin rendait l'attente immédiatement vraie (mesuré :
+  //      `etat=null`, `disque=0` alors que l'arrivée était déjà « transmise »).
+  //      Il sert donc à PROUVER L'ATTEINTE, jamais à décider de la fin.
+  //   3. `dernierResultatMiseAJour` SURVIT d'un scénario à l'autre : au
+  //      scénario « liste absente », il valait encore `persistee` du scénario
+  //      précédent. On ne l'accepte donc que s'il s'agit d'une NOUVELLE
+  //      instance (`identical`), seule preuve qu'il a été réécrit ICI.
+  // ═══════════════════════════════════════════════════════════════════════
+  final resultatAvant = EloService.instance.dernierResultatMiseAJour;
+  final bool resolu = await _attendreQue(
+      () => _pronosticDe(cle)?.resultatsReels == true,
+      ms: 3000);
+
+  // Second étage, franchi seulement si une arrivée a été acceptée : sans
+  // arrivée, l'étape ELO n'est légitimement jamais atteinte (`continue` en
+  // l.1471), et l'attendre n'aurait aucun sens.
+  final bool eloAtteint = !resolu
+      ? false
+      : await _attendreQue(
+          () {
+            final r = EloService.instance.dernierResultatMiseAJour;
+            final nouveau = r != null && !identical(r, resultatAvant);
+            return nouveau ||
+                EloService.instance.nbPersistees > persisteesAvant;
+          },
+          ms: 10000,
+        );
 
   final p = _pronosticDe(cle);
 
@@ -390,6 +554,22 @@ Future<_Mesure> _mesurerP4({
     }
   }
 
+  // Ratings RÉELLEMENT présents sur le disque après le scénario.
+  final noms = [for (var n = 1; n <= nbPartants; n++) 'CHEVAL_$n'];
+  final surDisque = await _ratingsSurDisque(noms);
+  final resultat = EloService.instance.dernierResultatMiseAJour;
+
+  // L'observateur est retiré IMMÉDIATEMENT : il ne doit pas survivre au
+  // scénario, sinon un scénario ultérieur écrirait dans cette closure.
+  EloService.instance.debugObserveurMiseAJour = null;
+
+  debugPrint('[P4] attente ELO aboutie=$eloAtteint | '
+      'arriveeTransmise=${arriveeTransmise?.join("-") ?? "JAMAIS ATTEINTE"} | '
+      'etat=${resultat?.etatRatings.name} | '
+      'cle=${EloService.instance.derniereIdentiteCourse?.courseKey} | '
+      'persistees $persisteesAvant→${EloService.instance.nbPersistees} | '
+      'disque=${surDisque.length} rating(s)');
+
   return _Mesure(
     arrivee: p?.arriveeReelle,
     resultatsReels: p?.resultatsReels ?? false,
@@ -397,6 +577,12 @@ Future<_Mesure> _mesurerP4({
         IaMemoryService.instance.poids.nbMisesAJour - poidsAvant,
     nbChevauxElo: EloService.instance.nbChevauxSuivis - eloAvant,
     nbPartantsEnMemoire: nbEnMemoire,
+    arriveeElo: arriveeTransmise,
+    etatPersistanceElo: resultat?.etatRatings.name,
+    cleCourseElo: EloService.instance.derniereIdentiteCourse?.courseKey,
+    ratingsDisque: surDisque,
+    nbCoursesRegistre: await _nbCoursesRegistre(),
+    deltaPersistees: EloService.instance.nbPersistees - persisteesAvant,
   );
 }
 
@@ -600,6 +786,9 @@ void main() {
     // pas que l'absence de mise à jour du scénario refusé vient du refus.
     _ligne('P4 / 7-4-2-9-1', 'ELO mis à jour', 'Δchevaux=${m.nbChevauxElo}',
         m.nbChevauxElo > 0 ? 'PASS' : 'FAIL');
+    _ligne('P4 / 7-4-2-9-1', 'arrivée reçue par EloService',
+        m.arriveeElo?.join('-') ?? 'JAMAIS ATTEINTE',
+        m.arriveeElo == null ? 'FAIL' : 'PASS');
 
     expect(m.nbPartantsEnMemoire, 9,
         reason: 'TÉMOIN : liste de partants réellement disponible');
@@ -611,9 +800,83 @@ void main() {
             'aucun numéro n\'en a été retiré');
     expect(m.resultatsReels, isTrue,
         reason: 'P4 : une arrivée acceptée résout bien le pronostic');
-    expect(m.nbChevauxElo, greaterThan(0),
-        reason: 'P4 : une arrivée ACCEPTÉE déclenche la mise à jour ELO. '
-            'C\'est la contre-épreuve du scénario refusé, où Δchevaux=0');
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ÉTAPE ELO — PREUVE D'ACHÈVEMENT EFFECTIF (et non d'un Δ trompeur)
+    //
+    //  ── DÉFAUT DU HARNAIS, MESURÉ ──────────────────────────────────────
+    //  v1 assertait seulement `ΔnbChevauxSuivis > 0`, après avoir attendu
+    //  `resultatsReels == true`. Or cette condition devient vraie dans
+    //  `enregistrerResultat(...)` (l.1491), AVANT `_mettreAJourEloApresArrivee`
+    //  (l.1514). La mesure tombait donc avant l'étape ELO : mesuré
+    //  `Δchevaux=0` alors que le journal de production affichait ensuite
+    //  `✅ 5 ELO mis à jour (discipline: Attelé) — persistance: persistee`.
+    //  Un delta n'est pas non plus une preuve d'achèvement : il vaut 0 aussi
+    //  bien si l'étape n'a pas commencé que si elle a échoué.
+    //
+    //  ── PREUVES EXIGÉES ICI ────────────────────────────────────────────
+    //    1. l'étape a été ATTEINTE, avec le bon contenu ;
+    //    2. la persistance est CONFIRMÉE (`persistee`) ;
+    //    3. les ratings sont réellement SUR LE DISQUE ;
+    //    4. les valeurs sont celles qu'impose la mise à jour ;
+    //    5. aucune double application (registre) ni double écriture.
+    // ══════════════════════════════════════════════════════════════════
+    expect(m.arriveeElo, isNotNull,
+        reason: 'l\'étape `_mettreAJourEloApresArrivee` doit être ATTEINTE. '
+            'Cette assertion sépare « jamais atteinte » de « atteinte sans '
+            'effet », ce que le seul delta ne permettait pas');
+    expect(m.arriveeElo, equals(<int>[7, 4, 2, 9, 1]),
+        reason: 'l\'arrivée reçue par EloService est celle qui a été enregistrée');
+    expect(m.etatPersistanceElo, 'persistee',
+        reason: 'la persistance des ratings doit être CONFIRMÉE, pas seulement '
+            'tentée (EtatPersistanceElo.persistee)');
+    expect(m.cleCourseElo, startsWith('R1C1_'),
+        reason: 'l\'identité de course transmise est réelle, jamais fabriquée');
+    expect(m.deltaPersistees, greaterThan(0),
+        reason: 'au moins une écriture de `elo_ratings_v2` a été CONFIRMÉE par '
+            '`setString → true` pendant ce scénario');
+
+    // 3. Ratings réellement PERSISTÉS.
+    //
+    //    ── CE QUE LA FORMULE IMPOSE, MESURÉ PUIS EXPLIQUÉ ────────────────
+    //    L'état est vierge : AUCUN des neuf chevaux n'a d'entrée de rating
+    //    avant ce scénario. Cinq entrées nouvelles sur le disque sont donc,
+    //    à elles seules, la preuve que la mise à jour a été écrite.
+    //
+    //    ⚠️ ASSERTION RETIRÉE APRÈS MESURE : j'avais d'abord exigé que les
+    //    cinq ratings diffèrent de 1500. La mesure l'a démenti — CHEVAL_2 vaut
+    //    exactement 1500.0000 — et ce n'est PAS un défaut : le calcul est
+    //    apparié et symétrique. Partant tous de 1500, les gains d'un cheval
+    //    du milieu (+0,85·k comme gagnant de ses duels) et ses pertes
+    //    (−0,85·k comme perdant) s'annulent EXACTEMENT quand kA == kB, ce qui
+    //    est le cas ici (les deux compteurs `nbCourses` valent 0, donc les
+    //    deux K sont ceux du débutant). Exiger un écart aurait donc exigé de
+    //    modifier la formule — interdit. L'assertion est remplacée par des
+    //    preuves qui ne dépendent d'aucune valeur de formule.
+    expect(m.ratingsDisque.length, 5,
+        reason: 'les CINQ chevaux de l\'arrivée doivent être présents sur le '
+            'disque alors qu\'AUCUN n\'y était avant : c\'est la preuve de '
+            'persistance, et non de simple mutation en RAM');
+    debugPrint('[P4] ratings SUR DISQUE = '
+        '${m.ratingsDisque.entries.map((e) => "${e.key}=${e.value.toStringAsFixed(4)}").join(" | ")}');
+
+    // Le critère M n'est pas resté figé : les ratings persistés ne sont pas
+    // tous identiques. C'est la preuve qu'un calcul a bien eu lieu, sans
+    // affirmer qu'aucun delta ne peut être nul.
+    final valeursDistinctes = m.ratingsDisque.values.toSet();
+    expect(valeursDistinctes.length, greaterThan(1),
+        reason: 'les ratings persistés doivent être DIFFÉRENCIÉS. S\'ils '
+            'valaient tous 1500.0, la mise à jour n\'aurait rien calculé. '
+            'Mesuré : 4 valeurs sur 5 diffèrent de 1500, la 5e étant '
+            'légitimement à l\'équilibre exact de la formule appariée');
+
+    // 5. Anti-double-application : le registre ELO doit contenir EXACTEMENT
+    //    une entrée de type `course` pour ce scénario. Deux entrées
+    //    prouveraient un rejeu ; zéro prouverait qu'aucune course n'a été
+    //    consignée.
+    expect(m.nbCoursesRegistre, 1,
+        reason: 'le registre ELO doit contenir UNE SEULE course consignée. '
+            'Deux entrées = double application ; zéro = aucune protection');
   });
 
   // ═══════════════════════════════════════════════════════════════════════

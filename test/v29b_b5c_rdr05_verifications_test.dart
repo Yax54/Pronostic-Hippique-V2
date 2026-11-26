@@ -289,13 +289,19 @@ void main() {
   //      getString('elo_ratings_v1') → contenu  → import des entrées « NOM| »
   //      await prefs.remove('elo_ratings_v1')           (l.82)  ← ÉCRITURE 1
   //      _charge = true                                 (l.92)
-  //      purge des clés finissant par « | »             (l.100-103)
   //      await prefs.setBool('elo_orphelins_purges_v1')  (l.104) ← ÉCRITURE 2
-  //      await _sauvegarder()  si orphelins trouvés     (l.107) ← ÉCRITURE 3
+  //
+  //  ⚠️ MISE À JOUR D-20 — L'ÉCRITURE 3 N'EXISTE PLUS.
+  //  Le code décrivait une « écriture 3 » (`_sauvegarder()` si orphelins
+  //  trouvés). D-20 a délibérément supprimé cette persistance : les ratings
+  //  d'identité non résolue sont CONSERVÉS en mémoire et aucune réécriture
+  //  n'est faite. Le chemin réel ne comporte donc plus que les écritures 1 et
+  //  2, et ce test s'aligne sur ce chemin — il ne réintroduit pas la
+  //  sauvegarde supprimée.
   //
   //  On suspend le chargement SUR l'écriture 2 (clé effacée par le reset à
-  //  l'index 69), on laisse le reset finir, puis on libère : les écritures
-  //  2 et 3 se terminent APRÈS l'effacement.
+  //  l'index 69), on laisse le reset finir, puis on libère : l'écriture 2 se
+  //  termine APRÈS l'effacement.
   // ═══════════════════════════════════════════════════════════════════════
   test('V29-F — écritures de `_charger()` au PREMIER chargement pendant un reset',
       () async {
@@ -375,21 +381,50 @@ void main() {
             'supprimée par le reset. Effet NUISIBLE NUL : c\'est un booléen de '
             'contrôle, et sa réécriture rend la purge idempotente');
 
-    // ── FAIT 1b : `_sauvegarder()` (l.107) est ACCEPTÉE — et c'est logique ─
+    // ── FAIT 1b : sous D-20, AUCUNE écriture de ratings n'est tentée ──────
     //
-    // Elle passe bien par la barrière (D-M2), mais elle NAÎT APRÈS la fin
-    // complète du reset : au moment de la capture de génération, `_resetEnCours`
-    // est retombé à `false` et la génération courante est celle qu'elle
-    // capture. Les DEUX contrôles passent donc légitimement.
+    // ── CAUSE DE L'ANCIEN ÉCHEC, MESURÉE ────────────────────────────────
+    // v1 de ce test attendait `elo_v2 == true`, au motif que
+    // `_sauvegarder()` (ex-l.107) « naît APRÈS le reset et n'est donc pas
+    // refusée ». Cette lecture était exacte POUR LE CODE D'ALORS : la purge
+    // des orphelins retirait des entrées de `_ratings` puis persistait, et
+    // comme l'écriture naissait après la fin du reset, les deux contrôles
+    // passaient — d'où une clé `elo_ratings_v2` réécrite (avec une map vide).
     //
-    // ⇒ La barrière ne peut PAS refuser une écriture née après le reset. Ce
-    //   n'est pas un défaut du correctif : c'est la frontière du mécanisme,
-    //   déjà établie en R-DR-02 (le contrôle de génération est per-écriture,
-    //   pas par transaction). Ce qui compte ici est la CONSÉQUENCE.
-    expect(eloFinal, isTrue,
-        reason: 'COMPORTEMENT RÉSIDUEL DOCUMENTÉ : `_sauvegarder()` appelée '
-            'depuis `_charger()` naît APRÈS le reset et n\'est donc pas '
-            'refusée — les deux contrôles passent légitimement');
+    // La décision D-20 (elo_service.dart:2525-2570) a SUPPRIMÉ cette purge :
+    // « Conserver intégralement les ratings existants, y compris ceux dont
+    // l'identité n'est pas encore résolue » et « Persistance non requise ici :
+    // rien n'a changé dans `_ratings`. Écrire coûterait une réécriture
+    // complète du volume pour rien. » `_sauvegarder()` n'est donc PLUS appelée
+    // depuis `_charger()`.
+    //
+    // ⇒ Le comportement validé est STRICTEMENT PLUS PROTECTEUR que l'ancien :
+    //    avant, une écriture était tentée et produisait une clé vide ; plus
+    //    maintenant, AUCUNE écriture n'est tentée. L'assertion est alignée sur
+    //    cette règle, sans réintroduire la sauvegarde supprimée.
+    expect(eloFinal, isFalse,
+        reason: 'D-20 : `_sauvegarder()` n\'est plus appelée depuis '
+            '`_charger()`, donc `elo_ratings_v2` n\'est PAS recréée après le '
+            'reset. C\'est plus protecteur qu\'avant, où une clé vide était '
+            'réécrite');
+
+    // ── FAIT 1b-bis : la barrière d'écriture reste PROUVÉE, pas supposée ───
+    //
+    // On ne se contente pas de constater l'absence de la clé : on vérifie
+    // qu'aucune écriture ELO n'a même été TENTÉE depuis le reset. C'est la
+    // vérification de protection des données exigée, et elle ne dépend pas de
+    // l'implémentation de D-20.
+    final ecrituresEloApresReset = store.journal
+        .where((e) =>
+            e.startsWith('SET-OK flutter.$kEloKey') ||
+            e.startsWith('SET-ENTREE flutter.$kEloKey'))
+        .toList();
+    debugPrint('V29-F écritures ELO de toute la session = '
+        '$ecrituresEloApresReset');
+    expect(ecrituresEloApresReset, isEmpty,
+        reason: 'PROTECTION DES DONNÉES : aucune écriture de `elo_ratings_v2` '
+            'n\'a été tentée de toute la session — ni pendant le reset, ni '
+            'après. Le reset n\'est donc pas annulable par réécriture');
 
     // ── FAIT 1c : MAIS la map écrite est VIDE — aucun rating ne ressuscite ─
     expect(clesFinales, isEmpty,

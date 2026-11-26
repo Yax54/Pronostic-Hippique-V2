@@ -139,6 +139,16 @@ enum EtatPersistanceElo {
 //  ELO reste identique dans tous les cas : ce lot ne conditionne aucune
 //  écriture à la présence d'une identité.
 // ═══════════════════════════════════════════════════════════════════════════
+/// ★ OBSERVABILITÉ (additif) — contrat de l'observateur d'entrée ELO.
+///
+/// Ne transporte aucune décision : il relaie les arguments REÇUS par
+/// `mettreAJourApresArrivee`, tels quels, à qui veut les observer. Déclaré au
+/// niveau du fichier pour ne pas alourdir l'API du service.
+abstract class DebugObserveurElo {
+  void appeler(List<int> arrivee, List<ZtPartant> partants, String discipline,
+      String? courseKey);
+}
+
 class IdentiteCourseElo {
   const IdentiteCourseElo._({
     required this.courseKey,
@@ -1138,6 +1148,19 @@ class EloService {
   //     son terme », y compris un abandon par reset.
   // ══════════════════════════════════════════════════════════════════════════
   ResultatApplicationElo? _dernierResultatMiseAJour;
+
+  /// ★ OBSERVABILITÉ (additif) — observateur d'ENTRÉE de la mise à jour ELO.
+  ///
+  /// ⚠️ `null` PAR DÉFAUT EN PRODUCTION : aucun code de `lib/` ne l'affecte
+  ///    (mesuré). Il existe pour qu'un test puisse distinguer « l'étape ELO a
+  ///    été atteinte, avec ce contenu » de « elle n'a jamais été atteinte » —
+  ///    deux situations que `dernierResultatMiseAJour` ne sépare pas, puisque
+  ///    ce dernier vaut aussi `null` quand l'opération est abandonnée.
+  ///
+  /// ⚠️ NE CONDITIONNE RIEN : lu uniquement pour notifier, jamais pour
+  ///    décider. Une exception de l'observateur est absorbée. Aucune formule,
+  ///    aucun seuil, aucune écriture n'en dépend.
+  DebugObserveurElo? debugObserveurMiseAJour;
 
   /// Résultat complet de la DERNIÈRE application ELO après arrivée, ou `null`.
   ///
@@ -3001,6 +3024,28 @@ class EloService {
     String discipline = '',  // ★ v9.92 : type de course passé par l'appelant
     String? courseKey,       // ★ B2-b : identité de course, optionnelle
   }) {
+    // ★ OBSERVABILITÉ (additif, inerte) — point d'observation de l'ENTRÉE.
+    //
+    //   OBJET : rendre mesurable, par un test, le fait que l'étape ELO a été
+    //   ATTEINTE et avec QUEL contenu — sans quoi « aucun effet observé » ne
+    //   peut pas être distingué de « étape jamais atteinte ». C'est la limite
+    //   mesurée du harnais A6/P4.
+    //
+    //   ⚠️ STRICTEMENT INERTE. `debugObserveurMiseAJour` est `null` par défaut
+    //   et n'est affecté par AUCUN code de production (mesuré : seule
+    //   l'affectation de test existe). Il n'est jamais lu pour décider quoi
+    //   que ce soit, il ne peut ni refuser, ni retarder, ni modifier une
+    //   écriture : aucune formule, aucun K-factor, aucun seuil n'est touché.
+    //   La valeur de retour de cette méthode n'en dépend pas.
+    final observateur = debugObserveurMiseAJour;
+    if (observateur != null) {
+      try {
+        observateur.appeler(arrivee, partants, discipline, courseKey);
+      } catch (_) {
+        // Un observateur défaillant ne doit JAMAIS perturber la production.
+      }
+    }
+
     return _executerEnFile((int generation) => _mettreAJourApresArrivee(
           arrivee:    arrivee,
           partants:   partants,
