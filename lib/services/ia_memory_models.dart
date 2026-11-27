@@ -934,21 +934,38 @@ class IaPoidsAdaptatifs {
   /// valide le soit.
   static Map<String, double> projeter(Map<String, double> brut) {
     final bornes = bornesIndividuelles();
+    _compteurProjections++;
 
     // 1) Clip sur les bornes individuelles (C2, C3, C5, C6).
+    //    ★★ §3 : les valeurs écartées sont TRACÉES, jamais silencieuses.
     final w = <String, double>{};
+    final anomalies = <String>[];
     for (final k in kClesOrdonnees) {
       final b = bornes[k]!;
       final v = brut[k];
-      if (v == null || v.isNaN || v.isInfinite) {
+      if (v == null) {
+        // Clé absente : cas normal (map partielle ou ancien format), NON tracé.
         w[k] = b[0];
+      } else if (v.isNaN) {
+        w[k] = b[0];
+        anomalies.add('$k: NaN → plancher ${b[0]}');
+      } else if (v.isInfinite) {
+        w[k] = b[0];
+        anomalies.add('$k: infini ($v) → plancher ${b[0]}');
       } else if (v < b[0]) {
         w[k] = b[0];
+        // Une valeur NÉGATIVE est une anomalie ; un simple dépassement de
+        // plancher (v ≥ 0) est le fonctionnement normal de la contrainte.
+        if (v < 0) anomalies.add('$k: NÉGATIF ($v) → plancher ${b[0]}');
       } else if (v > b[1]) {
         w[k] = b[1];
       } else {
         w[k] = v;
       }
+    }
+    if (anomalies.isNotEmpty) {
+      dernieresAnomaliesProjection = anomalies;
+      dernierNumeroProjectionAvecAnomalie = _compteurProjections;
     }
 
     // 2) Budget des enrichis : part courante ramenée dans [0,18 ; 0,40] (C4).
@@ -1063,7 +1080,24 @@ class IaPoidsAdaptatifs {
     }
   }
 
-  /// Applique les contraintes à une table de discipline (19 clés garanties).
+  /// Trace des anomalies de la DERNIÈRE projection (NaN, infini, négatif).
+  ///
+  /// ★★ BL1-A24 (27/11/2026) — §3 : `projeter()` ramène à leur plancher les
+  /// valeurs `NaN`, infinies ou `null`. Ce comportement est NÉCESSAIRE (C5/C6 :
+  /// aucune valeur invalide ne doit entrer dans le calcul des scores), mais il
+  /// ne doit pas MASQUER une anomalie du mécanisme d'apprentissage. Sans cette
+  /// trace, un gradient devenu instable produirait des poids silencieusement
+  /// remplacés, et l'incident serait invisible.
+  /// Cette liste est donc alimentée à chaque fois qu'une valeur d'entrée est
+  /// écartée, et lisible par l'appelant. Elle ne modifie AUCUNE valeur.
+  static List<String> dernieresAnomaliesProjection = <String>[];
+
+  /// Numéro de la dernière projection ayant signalé au moins une anomalie.
+  /// Sert de sentinelle bon marché : `0` = aucune anomalie depuis le démarrage.
+  static int dernierNumeroProjectionAvecAnomalie = 0;
+  static int _compteurProjections = 0;
+
+  /// Applique la projection à une table de discipline (19 clés garanties).
   ///
   /// D-2 RÉSOLU ICI : cette méthode portait sa PROPRE copie des bornes, avec
   /// `divergence` plafonné à 0,10 au lieu de 0,08, puis divisait par le total

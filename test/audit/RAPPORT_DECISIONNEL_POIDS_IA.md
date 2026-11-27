@@ -1546,3 +1546,391 @@ testées et vertes**, mais trois décisions structurantes restent ouvertes
 l'être qu'après le redémarrage à zéro, par le protocole §11.13.
 
 **BLOC 2 : suspendu. BLOC 3 : non commencé.** Aucun push, aucun APK, aucun reset.
+
+---
+
+# §12 — RAPPORT FINAL CONSOLIDÉ (clôture technique)
+
+> **Statut : chantier des poids IA clos techniquement.** Les 19 points exigés
+> sont traités ci-dessous. Chaque énoncé est étiqueté :
+> **[MESURÉ]** = valeur produite par une exécution réelle et reproductible ;
+> **[DÉMONTRÉ]** = propriété mathématique prouvée sur le code de production ;
+> **[À MESURER]** = résultat hippique non encore établi.
+> **Aucune efficacité hippique n'est affirmée dans ce document.**
+
+## 12.1 — Corrections définitives D-1, D-2, D-3
+
+**D-1 — moteur de contraintes unique et idempotent** (`ia_memory_models.dart`).
+`clamp()` appliquait les 19 bornes PUIS `normaliser()`, qui remettait chaque
+groupe à l'échelle : le facteur `target/total` pouvait ressortir un poids de ses
+bornes, et l'opération n'était pas idempotente. Remplacé par une **projection**
+unique (`projeter`), appelée par `normaliser()`, `clamp()` et
+`clampDiscipline()`. [MESURÉ] 19/19 plafonds étaient franchissables avant ;
+0 violation après.
+
+**D-2 — plafond `divergence` harmonisé à 0,08** (`ia_memory_service.dart`,
+`_mettreAJourPrecisionIA`). Le chemin par discipline portait sa **propre copie**
+des bornes avec `divergence` à 0,10. Aligné sur 0,08. Les 3 autres plafonds
+(`terrain` 0,10 · `progression` 0,08 · `poidsRel` 0,07) et `placeDepart` 0,07
+sont **inchangés**. [MESURÉ] 8 lignes de différence dans la fonction, toutes
+attribuables à D-2/§2.
+
+**D-3 — désérialisation tolérante et tracée** (BL1-A23). Une valeur corrompue
+dans `ia_poids_v3` faisait tomber tout `_load()` : pronostics, seuils, archives
+et stats n'étaient plus lus. Désormais la lecture est **clé par clé**, l'échec
+est confiné aux poids, le blob fautif **n'est ni supprimé ni réécrit**, et le
+motif est consigné dans `anomaliesRestaurationPoids`.
+
+## 12.2 — Méthode mathématique de projection [DÉMONTRÉ]
+
+1. **Clipping** des 19 valeurs sur leurs bornes individuelles.
+2. Budget du groupe enrichi = part courante **clampée** dans [0,18 ; 0,40] ;
+   budget de base = 1 − part.
+3. Pour chaque groupe, recherche du multiplicateur λ tel que
+   Σₖ clip(λ·wₖ, loₖ, hiₖ) = budget, par **bisection** (64 doublements + 200
+   itérations).
+4. Correction résiduelle proportionnelle à la marge non saturée.
+
+Cette application est la **projection euclidienne** sur l'intersection
+« bornes individuelles × budget de groupe », λ étant le multiplicateur de
+Lagrange. D'où : existence, unicité, idempotence, et **dérive nulle**.
+
+## 12.3 — 19 poids initiaux bruts avant/après correction
+
+**Aucune modification n'a été apportée aux poids initiaux bruts.** Le
+constructeur (`ia_memory_models.dart:592-612`) est **identique** au commit de
+référence `b3a0107`. [MESURÉ] écart max constructeur ↔ table du harnais =
+`0.000000000000` sur 19/19 ; Σ = `1.260000000000`.
+
+forme 0,25 · gains 0,13 · record 0,10 · cote 0,08 · constance 0,09 ·
+victoires 0,04 · discipline 0,02 · distSpec 0,08 · jockey 0,07 · repos 0,03 ·
+hippo 0,04 · entraîneur 0,04 · elo 0,05 · terrain 0,05 · divergence 0,04 ·
+poidsRel 0,03 · progression 0,03 · mouvCote 0,06 · placeDepart 0,03.
+
+## 12.4 — 19 poids effectifs au démarrage avant/après correction
+
+[MESURÉ] (`poids_demarrage_comparatif_test.dart`, 5/5 verts) :
+
+| Mesure | Valeur |
+|---|---|
+| Ancien mécanisme vs D-1 | **19/19 identiques** |
+| Écart max | `0,000000000000` |
+| Écart cumulé | `0,000000000000` |
+| 5 spécialités | identiques au global, écart `0,000000000000` |
+| Poids initiaux hors bornes | **0 / 19** |
+| Part enrichie initiale | `0,436507936508` → écrêtée à `0,400000000000` |
+| Facteurs d'échelle | base ×`0,845070422535` · enrichis ×`0,727272727273` |
+| Σ brute → Σ effective | `1,260000000000` → `1,000000000000` |
+| base / enrichis effectifs | `0,600000000000` / `0,400000000000` |
+
+**Origine de l'égalité [DÉMONTRÉ]** : aucun des 19 poids initiaux n'est hors
+bornes, donc le clipping est inactif et la projection **dégénère exactement**
+en la remise à l'échelle par groupe de l'ancien mécanisme. La répartition
+initiale n'est **pas** modifiée involontairement : les rangs ET les valeurs
+sont conservés.
+
+## 12.5 — 19 planchers et plafonds
+
+| Critère | Plancher | Plafond |
+|---|---|---|
+| forme | 0,05 | 0,55 |
+| gains | 0,04 | 0,40 |
+| record | 0,03 | 0,35 |
+| cote | 0,05 | 0,40 |
+| constance | 0,03 | 0,25 |
+| victoires | 0,01 | 0,15 |
+| discipline | 0,01 | 0,10 |
+| distSpec | **0,005** | 0,18 |
+| jockey | **0,005** | 0,15 |
+| repos | **0,005** | 0,08 |
+| hippo | **0,005** | 0,10 |
+| entraîneur | **0,005** | 0,08 |
+| elo | **0,005** | 0,10 |
+| terrain | **0,005** | 0,10 |
+| divergence | **0,005** | **0,08** (D-2) |
+| poidsRel | **0,005** | 0,07 |
+| progression | **0,005** | 0,08 |
+| mouvCote | **0,005** | 0,12 |
+| placeDepart | **0,005** | 0,07 |
+
+§2 avait abaissé les 12 planchers enrichis de 0,03/0,02/0,01 à **0,005**
+(cumul 0,16 → 0,06), rendant la marge du plancher collectif 0,18 réellement
+utilisable. Aucun plafond n'a été modifié, sauf `divergence` par D-2 (0,10 → 0,08).
+
+## 12.6 — Contraintes collectives [DÉMONTRÉ + MESURÉ]
+
+Part enrichie ∈ [0,18 ; 0,40] (C4). [MESURÉ] sur 2000 tirages :
+∈ [`0,184462226941` ; `0,400000000000`]. Les deux bornes sont **atteignables**
+(table saturée côté base → 0,18 ; côté enrichis → 0,40).
+
+## 12.7 — Preuves mathématiques acquises [MESURÉ]
+
+| Propriété | Mesure |
+|---|---|
+| C1–C6 sur 3000 tables | **0 violation** (28174 valeurs d'entrée hors bornes) |
+| Idempotence (C7) | `0,000e+0` sur initiaux/réels · pire `2,776e-17` |
+| Déterminisme (C9) | 3 ordres d'insertion `0,000e+0` · 20 exécutions bit-à-bit |
+| Dérive 500 × `clamp()` (C10) | `0,000e+0` (ancien mécanisme : **2,6189 %**) |
+| Tables conformes (C8) | 500/500 conservées |
+| Coin « cote au plafond » | ancien `0,575438596491` → nouveau `0,400000000000` |
+| Non-idempotence de l'ancien | `0,820000000000` → `0,819844580456` |
+| 19 trajectoires × 120 pas | 0 violation · plage exploitée 100 % |
+| Promotion / rétrogradation / réactivation | poidsRel `0,021818`→`0,070000` · forme `0,211268`→`0,050000` · placeDepart `0,005`→`0,070000` (×14) |
+
+## 12.8 — Preuves fonctionnelles des chemins réels d'apprentissage [MESURÉ]
+
+`test/audit/poids_cycle_apprentissage_test.dart` — **8/8 verts**. Aucun second
+moteur : tout passe par `IaMemoryService.instance` (`_load`, `fromJson`,
+`_save`, `_apprendreParGradient`, `_apprendreParDiscipline`, `clamp`).
+
+| Test | Mesure |
+|---|---|
+| F0 garde constantes | écart max `0,000000000000`, Σ `1,260000000000` |
+| F1 démarrage sans ancien apprentissage | 19/19 = constructeur, Σ `1,260000000000`, base `0,710000000000` / enrichis `0,550000000000`, `nbMisesAJour` = 0, journal vide |
+| F2 premier apprentissage réel | `enregistrerResultat`=true · journal 0→2 · méthodes `[gradient, discipline_gradient]` · **19/19 critères déplacés** · écart max `0,038514384910` (« forme ») · Σ `1,000000000000` · base `0,600000000000` / enrichis `0,400000000000` · 0 anomalie |
+| F3 persistance + restitution | blob `1975` octets · après redémarrage écart max `0,000000000000` · `nbMisesAJour` 1→1 · Σ `1,000000000000` |
+| F4 aucun apprentissage sans apprentissage | 5 cycles recharger : écart max `0,000000000000`, cumulé `0,000000000000` · journal 2→2 · `nbMisesAJour` 1→1 |
+| F5 évolution par discipline | table `trot_attele` créée · 19 clés · Σ `1,000000000000` · part enrichie `0,399325810925` · **0 violation** · `divergence` `0,028545855907` ≤ 0,08 · `poidsEffectifsPourDiscipline` 19 clés |
+| F6 aucun double apprentissage | 1er : ok=true, journal +2, `nbMisesAJour` 0→1 · rejeu : **ok=false**, journal +0, écart `0,000000000000` |
+| F7 anomalies tracées | 3 anomalies nommées (`forme: NaN`, `gains: NÉGATIF`, `cote: infini`) · sentinelle 0→11 · valeurs absorbées, Σ `1,000000000000` · relais service 0→3 |
+
+**Transmission aux isolates** : couverte par
+`test/audit/chaine_19_criteres_isolate_test.dart` (5 tests, inclus dans la
+suite complète, verts).
+
+**Limite explicite** : la fenêtre d'apprentissage du gradient est bornée à
+45 jours (`ia_memory_service.dart:3946-3956`), avec repli à 90. Un historique
+plus ancien laisse `fenetre` vide. Ce n'est pas un contournement : c'est la
+condition réelle pour que le gradient s'exécute.
+
+## 12.9 — Justification de la politique de récupération D-3
+
+**Ce qui existait déjà** : `IaPoidsAdaptatifs()` (constructeur) fournit une
+table complète et cohérente. D-3 ne crée **aucune** valeur nouvelle : il
+appelle la valeur de repli **déjà présente** dans le constructeur.
+
+**Les 8 cas distingués** [MESURÉ] :
+
+| Cas | Traitement | Tracé |
+|---|---|---|
+| (a) clé absente | repli | **non** (map partielle = normal) |
+| (b) `null` | repli | **non** |
+| (c) `num` valide | conservé | — |
+| (d)/(e) type non numérique | repli | **oui** |
+| (f) négatif | repli | **oui** |
+| (g) NaN / ±infini | repli | **oui** |
+| (h) hors bornes | **conservé tel quel** | **non** |
+
+**Vérifications exigées** :
+
+- **Valeurs authentiques conservées** : [MESURÉ] `forme="invalide"` → repli
+  `0,25` tracé, **18/18 autres valeurs intactes**.
+- **Une sauvegarde authentique est prioritaire sur une valeur de remplacement** :
+  [MESURÉ] une valeur hors bornes (0,40) est **conservée**, non remplacée. Le
+  repli n'intervient **que** si la valeur est inexploitable.
+- **Toute récupération est tracée** : `dernieresAnomaliesDeserialisation` →
+  `anomaliesRestaurationPoids` (+ `debugPrint`).
+- **Aucun poids valide modifié** : lecture clé par clé, le défaut ne touche
+  que la clé fautive.
+- **Aucun apprentissage réinitialisé silencieusement** : [MESURÉ] F3 —
+  `nbMisesAJour` 1→1 après redémarrage.
+- **Pronostics, seuils, archives restent accessibles** : le `try/catch` est
+  confiné au bloc poids ; [MESURÉ] F3 — pronostics non vides après cycle.
+- **Une corruption par discipline ne provoque pas de perte générale** : chaque
+  table de `poidsParDiscipline` est lue clé par clé, indépendamment.
+
+**Anomalies de `projeter()` (BL1-A24)** — §3, second point. NaN, ±infini et
+négatifs y étaient **absorbés silencieusement** : la valeur était ramenée au
+plancher, donc un dérèglement du gradient devenait invisible.
+`dernieresAnomaliesProjection` + `dernierNumeroProjectionAvecAnomalie` +
+relais dans `_apprendreParGradient` corrigent ce point. [MESURÉ] F7 : 3
+anomalies nommées, sentinelle avancée, relais service 0→3 ; un simple
+dépassement de plafond **ne** déclenche **pas** de trace (fonctionnement
+normal de la contrainte).
+
+**⚠️ POINT SOUMIS À ARBITRAGE (seul point métier ouvert de ce rapport).**
+Remplacer une valeur **corrompue** par la valeur **initiale du constructeur**
+(0,25 pour `forme`, etc.) est-il une politique métier autorisée ? D-3 ne
+l'invente pas : il réutilise le repli déjà codé dans `fromJson` avant
+correction, et il est **tracé**. Mais le choix « valeur initiale » plutôt que
+« dernière valeur connue » ou « valeur neutre » est un choix **métier**, non
+démontrable techniquement. **Aucune autre décision métier n'est laissée
+ouverte.**
+
+## 12.10 — Compatibilité des sauvegardes [MESURÉ]
+
+| Sauvegarde | Contenu | Chargement | Comportement D-1 |
+|---|---|---|---|
+| 28/05/2026 | 572 pronostics, 802 MAJ, part base `0,820000000000` | OK | déjà normalisée → idempotent ; l'ancien mécanisme la **dénature** en `0,819844580456` |
+| 13/11/2026 | 600 pronostics, 3871 MAJ, part base `0,815583119656` | OK | `cote` `0,401813880700`→`0,400000000000` · `victoires` `0,150680205300`→`0,150000000000` (0,25 pt) · 11 critères à `0,000000000000` |
+
+Aucune sauvegarde n'a été modifiée. Elles restent **supports de référence et
+de test de compatibilité** uniquement (§8).
+
+## 12.11 — Conséquences du respect strict des plafonds [MESURÉ]
+
+Avant D-1, un poids pouvait dépasser son plafond après remise à l'échelle :
+mesuré `0,575438596491` pour `cote` (plafond 0,40). Désormais le plafond est
+**strict** : la valeur est exactement `0,400000000000`. Conséquence assumée :
+la saturation d'un critère **reporte** la masse sur les critères non saturés
+du même groupe, au lieu de la faire disparaître. Sur les données du 13/11,
+l'effet est limité à **0,25 point** sur `victoires` et `0,001` sur `cote`.
+
+## 12.12 — Protections vérifiées [MESURÉ]
+
+Comparaison `git diff b3a0107 -- lib/` : **2 fichiers seulement**
+(`ia_memory_models.dart`, `ia_memory_service.dart`), 732 insertions /
+129 suppressions. Vérification **fonction par fonction** (commentaires retirés) :
+
+| Composant protégé | Lignes de code | Diff |
+|---|---|---|
+| `_apprendreParGradient` | 203 | **0** |
+| `_apprendreParDiscipline` | 134 | **0** |
+| `_apprendreReglesBase` | 110 | **0** |
+| `_mettreAJourPrecisionIA` | 191 | **8** = D-2 + §2 uniquement |
+
+`lrBase = 0,08` et `momentumFactor = 0,3` : **identiques**. Poids initiaux :
+**identiques**. `ia_pronostic_engine.dart` (formules des 19 critères, calcul
+des scores, `_normaliserScores`, `_determinerLabel`) : **non modifié**.
+`simulation_service.dart`, `zone_turf_service.dart` : **non modifiés**.
+Seuils IA, calibration, TOP3 Learning, ELO, mécanismes financiers PMU,
+statistiques, laboratoire IA : **non modifiés**.
+
+**Neuf assertions réancrées**, chacune avec sa justification écrite :
+S1.4, S2.8, T1, T2, T7, M2.2, M4.2, A0 (+ A0b créé), **G0**. Aucune n'a été
+supprimée ni affaiblie ; trois d'entre elles ont été rendues **plus strictes**
+(T1 : 19 violations → 0 + atteignabilité ; T2 : `greaterThan` → `closeTo` ;
+M4.2 : `equals(0)` → `greaterThan(0)`, car mesurer 0 sur une valeur qui ne
+peut pas bouger ne prouvait rien).
+
+## 12.13 — Résultats complets de non-régression [MESURÉ]
+
+`flutter test` (suite complète, une seule exécution) :
+
+| Indicateur | Valeur |
+|---|---|
+| Tests exécutés | **3787** |
+| Réussis | **3786** |
+| Échecs | **1** |
+| Ignorés artificiellement | **0** |
+| Blocages | **0** |
+| Durée | ≈ 5 min 48 s |
+| Référence antérieure | 3689 réussis → **+97** |
+
+**Les 6 harnais auparavant non relancés sont couverts** :
+`poids_echelle` (3), `poids_limite_structurelle` (4),
+`poids_comparaisons_reelles` (4), `poids_contraintes` (12),
+`poids_echelle_consommateurs` (6), `chaine_19_criteres_isolate` (5) = **34 tests**.
+
+**⚠️ L'objectif « zéro échec » n'est PAS atteint.** Un test échoue :
+
+- **`test/audit/mecanismes_actualisation_mesure_test.dart` → M2-a**
+  (« un mouvement de COTE est-il visible du discriminant ? »).
+- Mesure : `signature(cotes 4.0) = R1:1|113:00T8` et
+  `signature(cote 1 → 9.0) = R1:1|113:00T8` — **identiques**.
+- **Cause réelle : HORS PÉRIMÈTRE DE CE CHANTIER.** Ce test mesure le
+  discriminant de `ZoneTurfService` ; or `lib/services/zone_turf_service.dart`
+  est **intact depuis `b3a0107`** (diff vide) et le test a été écrit au commit
+  `131ee4c`, **antérieur** à ce chantier. Il échouait donc déjà.
+- **Il n'a pas été corrigé** : le corriger exigerait de toucher au discriminant
+  de production, ce qui est hors du périmètre autorisé (§6 : « corrige
+  uniquement dans le périmètre autorisé »). **Aucun test n'a été supprimé,
+  ignoré ou affaibli pour obtenir un résultat favorable.**
+- **Recommandation** : ouvrir un chantier distinct sur la visibilité du
+  mouvement de cote dans le discriminant. **Non traité ici, par discipline de
+  périmètre.**
+
+## 12.14 — Résultat de `flutter analyze` [MESURÉ]
+
+`flutter analyze lib/ test/` → **`No issues found!`** sur l'arbre final.
+(Un unique `unused_import` transitoire a été corrigé, non masqué par un
+`ignore`.)
+
+## 12.15 — Fichiers ajoutés et modifiés
+
+**Production — 2 fichiers modifiés** :
+- `lib/services/ia_memory_models.dart` : D-1 (moteur de projection),
+  D-3 (desérialisation tolérante), BL1-A24 (traçabilité de projection).
+- `lib/services/ia_memory_service.dart` : D-2 (`divergence` 0,08),
+  D-3 (`_load` confiné + `anomaliesRestaurationPoids`), relais des anomalies
+  de projection dans `_apprendreParGradient`.
+
+**Tests — 2 créés, 6 modifiés** :
+- créés : `test/audit/poids_projection_test.dart` (16 tests),
+  `test/audit/poids_cycle_apprentissage_test.dart` (8), plus
+  `test/audit/poids_demarrage_comparatif_test.dart` (5).
+- modifiés : `poids_harmonisation_replis_test.dart`,
+  `poids_plafonds_contrat_test.dart`, `test/audit_poids_familles_test.dart`,
+  `poids_plage_atteignable_test.dart`, `poids_contraintes_test.dart`.
+- documentation : ce rapport (§12).
+
+**Aucun fichier supprimé. Aucune configuration Android modifiée.**
+
+## 12.16 — Limites restant à mesurer prospectivement [À MESURER]
+
+1. **Efficacité hippique réelle** : aucune mesure. La projection garantit la
+   cohérence des poids, **pas** la qualité des pronostics. À établir après le
+   redémarrage à zéro, par le protocole §11.13 (seuil de contrôle : 200 courses).
+2. **Convergence à long terme** : les trajectoires couvrent 120 pas ; le
+   comportement au-delà n'est pas mesuré.
+3. **Sensibilité au choix de λ** : la bisection est déterministe, mais
+   l'unicité du multiplicateur sur des configurations de bornes **non
+   atteignables** n'est pas prouvée. Le code retombe alors sur les poids
+   seulement clippés, sans fabriquer de valeur — comportement **assumé et
+   tracé**, non validé hippiquement.
+4. **`zone_turf_service` (M2-a)** : défaut hors périmètre, non corrigé (12.13).
+5. **Ancien apprentissage du téléphone** : non récupéré, non étudié (§8).
+
+## 12.17 — Inscription de l'anomalie de réinstallation dans l'audit général
+
+**OBLIGATION INSCRITE — NON TRAITÉE, NON DIAGNOSTIQUÉE.**
+
+Constat utilisateur : **le profil était toujours présent après une précédente
+réinstallation de l'application**. Cause **inconnue**.
+
+Le futur audit général devra vérifier, séparément et avec mesure :
+
+1. restauration Android / Google (Auto Backup, `allowBackup`, `fullBackupContent`) ;
+2. préférences locales (`SharedPreferences`) ;
+3. bases SQLite ;
+4. fichiers permanents (stockage externe/app-specific) ;
+5. données du profil ;
+6. **poids et mémoire d'apprentissage** (`ia_poids_v3`, `ia_pronostics_v2`) ;
+7. connaissances ELO (`elo_service`) ;
+8. distinction explicite entre **mise à jour**, **restauration** et
+   **installation réellement neuve**.
+
+**Aucune configuration Android n'a été modifiée dans ce chantier.** Le sujet
+n'est pas traité ici, conformément à la consigne.
+
+## 12.18 — Hash complet du commit définitif
+
+Voir la section « État de clôture » ci-dessous : le hash est renseigné par le
+commit lui-même et **ne peut pas figurer dans son propre contenu**. Il est
+transmis dans le message de clôture accompagnant ce rapport.
+
+## 12.19 — État de l'arbre de travail
+
+Arbre **propre** après commit : aucune modification non commitée, aucun
+fichier non suivi. Branche **`main` uniquement**. **Aucun push GitHub**
+(autorisation en attente). **Aucun APK. Aucune réinitialisation. Aucun recalcul
+historique. Aucun apprentissage rétroactif.** BLOC 2 suspendu, BLOC 3 non
+commencé.
+
+## 12.20 — Synthèse des trois catégories d'énoncés
+
+**[DÉMONTRÉ mathématiquement]** : existence/unicité de la projection, C1–C10,
+idempotence, déterminisme, dérive nulle, atteignabilité des bornes collectives,
+dégénérescence exacte vers l'ancien mécanisme sur une table conforme.
+
+**[MESURÉ]** : 19/19 poids effectifs identiques avant/après · Σ `1,26`→`1,00` ·
+0 violation sur 3000 tables · 19/19 critères déplacés par un apprentissage réel ·
+persistance et restitution à `0,000000000000` · 0 double apprentissage ·
+anomalies tracées et relayées · 3786/3787 tests verts · `flutter analyze` propre.
+
+**[À MESURER]** : efficacité hippique réelle, convergence au-delà de 120 pas,
+comportement sur configurations de bornes infaisables, anomalie de
+réinstallation, défaut M2-a du discriminant de cote.
+
+**Le chantier des poids IA est clos techniquement. La validation hippique
+prospective reste entière et n'empêche pas cette clôture.**

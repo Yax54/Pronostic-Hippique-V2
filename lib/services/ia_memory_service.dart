@@ -201,6 +201,17 @@ class IaMemoryService extends ChangeNotifier {
   /// Trace lisible de la dernière restauration des poids (diagnostic).
   List<String> get anomaliesRestaurationPoids =>
       List<String>.unmodifiable(_poidsDeserialisesAvecAnomalies);
+
+  /// ★★ BL1-A24 (27/11/2026) — §3 : anomalies de PROJECTION observées pendant
+  /// l'apprentissage (poids NaN / infinis / négatifs ramenés au plancher).
+  /// Bornée à 200 entrées. Ne modifie aucune décision : elle rend seulement
+  /// visible ce qui, sinon, serait un remplacement silencieux.
+  final List<String> _anomaliesProjection = <String>[];
+  int _dernierNumeroProjectionVu = 0;
+
+  /// Anomalies de projection accumulées depuis le démarrage (diagnostic).
+  List<String> get anomaliesProjection =>
+      List<String>.unmodifiable(_anomaliesProjection);
   bool _loaded = false;
   Completer<void>? _loadCompleter; // ★ v9.90 : évite le double chargement concurrent
 
@@ -4147,6 +4158,25 @@ class IaMemoryService extends ChangeNotifier {
     _poids.dernierGradient = momentum;
 
     _poids.clamp();
+    // ★★ BL1-A24 (27/11/2026) — §3 : une anomalie de projection n'est JAMAIS
+    //    muette. Si le gradient a produit un NaN, un infini ou un négatif, la
+    //    projection les a ramenés à leur plancher (ce qui est nécessaire pour
+    //    que les scores restent calculables) — mais on le TRACE, sinon un
+    //    dérèglement du mécanisme d'apprentissage passerait inaperçu.
+    if (IaPoidsAdaptatifs.dernierNumeroProjectionAvecAnomalie >
+        _dernierNumeroProjectionVu) {
+      _dernierNumeroProjectionVu =
+          IaPoidsAdaptatifs.dernierNumeroProjectionAvecAnomalie;
+      final anomalies =
+          List<String>.from(IaPoidsAdaptatifs.dernieresAnomaliesProjection);
+      _anomaliesProjection.addAll(anomalies);
+      if (_anomaliesProjection.length > 200) {
+        _anomaliesProjection.removeRange(0, _anomaliesProjection.length - 200);
+      }
+      debugPrint('[IaMemory] ⚠️ APPRENTISSAGE — ${anomalies.length} valeur(s) '
+          'de poids invalide(s) écartée(s) par la projection : '
+          '${anomalies.join(' | ')}');
+    }
     _poids.nbMisesAJour++;
 
     final scoreMoyFenetre = fenetre
