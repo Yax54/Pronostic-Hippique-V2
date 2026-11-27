@@ -29,7 +29,43 @@ import 'package:pronostic_hippique/services/alert_service.dart'
 //   que conservé « au cas où ».
 
 // ── Fixtures : base de clé RÉELLE, au format produit par `_courseKey` ──────
-const String kBaseKey = 'R2C3_25112026';
+//
+// ⚠️ CETTE DATE ÉTAIT FIGÉE AU 25/11/2026 — DÉFAUT DE HARNAIS MESURÉ.
+//
+// `AlertService._load()` purge les suivis dont `heureDepart` a plus de 24 h
+// (`alert_service.dart:704` : `now.difference(tc.heureDepart).inHours > 24`).
+// La fixture portait `DateTime(2026, 11, 25, 23, 0)` avec le commentaire
+// « Dans le futur : la purge au chargement ne doit pas l'emporter ». Tant que
+// le 25/11/2026 était futur, la purge ne s'appliquait pas. Le 27/11/2026, la
+// même date est devenue PASSÉE de plus de 24 h : la purge a supprimé les deux
+// suivis, et T3.1 est tombé de 2 à 0, T3.2 de true à false.
+//
+// Ce n'était donc PAS une régression de production : la règle de purge n'a pas
+// changé, c'est l'horloge qui a franchi la date figée. Le correctif rétablit
+// l'INTENTION du fixture (une échéance future, donc non purgée) sans toucher à
+// la production : la date est désormais calculée RELATIVE au jour d'exécution,
+// et le motif `R\d+C\d+_\d{8}` reste strictement conforme à `_courseKey`.
+//
+// `seconds: 30` place l'échéance franchement dans le futur, sans dépendre de
+// l'heure d'exécution, et reste très en deçà du seuil de purge (24 h).
+DateTime _demain() {
+  final now = DateTime.now().add(const Duration(days: 1));
+  return DateTime(now.year, now.month, now.day, 23, 0);
+}
+
+String _dateStr(DateTime d) => '${d.year}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
+String _cleCourse(int r, int c) {
+  final d = _demain();
+  return 'R${r}C${c}_'
+      '${d.day.toString().padLeft(2, '0')}'
+      '${d.month.toString().padLeft(2, '0')}'
+      '${d.year}';
+}
+
+final String kBaseKey = _cleCourse(2, 3);
 
 TrackedCourse _suivi({
   double? montantGainManuel,
@@ -42,7 +78,7 @@ TrackedCourse _suivi({
       nomCourse: 'PRIX DE LA UNICITE',
       hippodrome: 'CAEN',
       // Dans le futur : la purge au chargement ne doit pas l'emporter.
-      heureDepart: DateTime(2026, 11, 25, 23, 0),
+      heureDepart: _demain(),
       nomCheval: 'CHEVAL $numeroCheval',
       numeroCheval: numeroCheval,
       miseEngagee: 10.0,
@@ -59,7 +95,7 @@ UserPrediction _prediction({
 }) =>
     UserPrediction(
       id: id,
-      dateStr: '2026-11-25',
+      dateStr: _dateStr(_demain()),
       numReunion: 2,
       numCourse: 3,
       nomCourse: 'PRIX DE LA UNICITE',
@@ -68,7 +104,7 @@ UserPrediction _prediction({
       nomCheval: 'CHEVAL $numeroCheval',
       cote: 4.5,
       typePari: 'Simple Gagnant',
-      createdAt: DateTime(2026, 11, 25),
+      createdAt: _demain(),
       montantMise: 10.0,
       montantGainManuel: montantGainManuel,
       idTicketLie: idTicketLie,

@@ -32,7 +32,28 @@ import 'package:pronostic_hippique/services/enregistreur_verdict_gain_suivi.dart
 import 'package:pronostic_hippique/widgets/paris/gain_manuel_dialog.dart'
     show ResultatSaisieGain;
 
-const String kBaseKey = 'R3C7_25112026';
+// ⚠️ CETTE DATE ÉTAIT FIGÉE AU 25/11/2026 — MÊME DÉFAUT DE HARNAIS QUE
+//    `b1_t12_unicite_liaison_complement_test.dart`, et même cause MESURÉE :
+//    `AlertService._load()` purge les suivis dont `heureDepart` a plus de 24 h
+//    (`alert_service.dart:704`). Figée au 25/11/2026, la fixture est devenue
+//    PASSÉE le 27/11/2026 : S3.1 et S5.2 sont tombés. La règle de purge n'a
+//    pas changé — seul le franchissement de la date figée par l'horloge a
+//    produit l'échec. La date est donc calculée RELATIVE au jour d'exécution,
+//    ce qui rétablit l'intention d'origine (échéance future, non purgée).
+DateTime _demain() {
+  final now = DateTime.now().add(const Duration(days: 1));
+  return DateTime(now.year, now.month, now.day, 23, 0);
+}
+
+String _cleCourse(int r, int c) {
+  final d = _demain();
+  return 'R${r}C${c}_'
+      '${d.day.toString().padLeft(2, '0')}'
+      '${d.month.toString().padLeft(2, '0')}'
+      '${d.year}';
+}
+
+final String kBaseKey = _cleCourse(3, 7);
 
 TrackedCourse _ticket({
   int numeroCheval = 5,
@@ -45,7 +66,7 @@ TrackedCourse _ticket({
       numCourse: 7,
       nomCourse: 'PRIX DU GAIN MANUEL',
       hippodrome: 'VINCENNES',
-      heureDepart: DateTime(2026, 11, 25, 23, 0),
+      heureDepart: _demain(),
       nomCheval: 'CHEVAL $numeroCheval',
       numeroCheval: numeroCheval,
       miseEngagee: miseEngagee,
