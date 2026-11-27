@@ -153,7 +153,40 @@ void main() {
       }
       // ignore: avoid_print
       print('→ écart max = ${_fmt(maxEcart)} sur "$pire"');
-      expect(maxEcart, lessThan(0.06));
+      // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+      //   JUSTIFICATION ÉCRITE. L'assertion `lessThan(0.06)` était un SEUIL
+      //   EMPIRIQUE constaté sous l'ancien mécanisme, qui ne valait que parce
+      //   que `clampDiscipline()` COMPLÉTAIT une map vide avec 19 constantes
+      //   codées en dur (voir M4.2), et non avec les poids du modèle. D-1
+      //   supprime ce complément arbitraire : une clé absente vaut désormais 0,
+      //   donc remonte à son PLANCHER par la projection — ce qui n'est plus du
+      //   tout la même table que #1.
+      //   Conséquence mesurée : l'écart passe à 0,11507936507936511.
+      //   Ce n'est pas une régression, c'est la DISPARITION d'un comportement
+      //   arbitraire. L'assertion est donc remplacée par ce qu'il faut
+      //   réellement garantir : que les deux tables restent CONFORMES au
+      //   contrat, ce qui est vérifiable et non arbitraire — plus une borne
+      //   explicite sur l'écart, pour que le test reste un test.
+      for (final k in kCles) {
+        // Les bornes sont lues sur la SOURCE UNIQUE de production (§6 : pas de
+        // seconde copie qui pourrait diverger). C'est exactement la propriété
+        // que M4.2 doit vérifier ici.
+        final bornes = IaPoidsAdaptatifs.bornesIndividuelles()[k]!;
+        expect(f4[k], greaterThanOrEqualTo(bornes[0] - 1e-12),
+            reason: 'D-1 : $k doit au moins atteindre son plancher');
+        expect(f4[k], lessThanOrEqualTo(bornes[1] + 1e-12),
+            reason: 'D-1 : $k ne doit pas dépasser son plafond');
+      }
+      expect(_somme(f4.values), closeTo(1.0, 1e-9),
+          reason: 'D-1 : une table vide doit ressortir à Σ = 1');
+      expect(maxEcart, lessThan(0.20),
+          reason: 'les deux replis doivent rester dans le même ordre de '
+              'grandeur (mesuré ${_fmt(maxEcart)})');
+      // ignore: avoid_print
+      print('    ANCIEN : écart ≤ 0,06 parce que clampDiscipline() COMPLÉTAIT '
+          'la map avec 19 constantes codées en dur. D-1 : plus de complément '
+          'arbitraire, la map vide part des PLANCHERS ⇒ écart '
+          '${_fmt(maxEcart)}, et Σ = ${_fmt(_somme(f4.values))}.');
     });
   });
 
@@ -312,12 +345,16 @@ void main() {
       //     modifierait les poids, interdit §36) ; c'est un comportement
       //     CARACTÉRISÉ, et un point soumis à votre validation.
       // ────────────────────────────────────────────────────────────────────
-      expect(maxD, equals(0.0),
-          reason: 'CARACTÉRISATION MESURÉE : `clampDiscipline()` COMPLÈTE les '
-              'clés absentes avec des constantes codées en dur '
-              '(progression=0.03, mouvCote=0.06, placeDepart=0.03), donc les '
-              'deux maps deviennent identiques APRÈS l\'appel. Écart nul par '
-              'construction, et non « faible écart ».');
+      expect(maxD, greaterThan(0.0),
+          reason: 'D-1 : SENSIBILITÉ RESTAURÉE. Une map à 16 clés et une map '
+              'à 19 clés ne doivent plus produire la même table après '
+              'contraintes. Écart mesuré ${_fmt(maxD)}.');
+      // ignore: avoid_print
+      print('    ANCIEN : écart EXACTEMENT 0,0 (clampDiscipline() complétait '
+          'les 3 clés absentes avec les constantes codées en dur 0.03 / 0.06 / '
+          '0.03, identiques à celles de la map b). D-1 : ce complément '
+          'arbitraire a disparu ; une clé absente vaut 0 puis remonte à son '
+          'PLANCHER, ce qui est le comportement correct ⇒ écart ${_fmt(maxD)}.');
       expect(a.keys.toSet().containsAll(kCles), isTrue,
           reason: 'CARACTÉRISATION : les 19 clés sont garanties après appel.');
       expect(b.keys.toSet().containsAll(kCles), isTrue,
@@ -327,9 +364,28 @@ void main() {
       expect(_somme(b.values), closeTo(1.0, 1e-9),
           reason: 'CARACTÉRISATION : sortie de clampDiscipline normalisée.');
       // Témoin du COMPLÉTAGE : les 3 clés ont bien été créées dans `a`.
-      expect(a['progression'], closeTo(0.03 / 1.26, 1e-9),
-          reason: 'TÉMOIN DE COMPLÉTAGE : la clé absente a reçu la constante '
-              'codée en dur 0.03, puis a été normalisée (0.03/1.26).');
+      //
+      // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+      //   JUSTIFICATION ÉCRITE. L'assertion attendait `0.03 / 1.26`, c'est-à-
+      //   dire la trace EXACTE du complément arbitraire : la clé absente
+      //   recevait la constante codée en dur 0.03, puis était normalisée.
+      //   D-1 supprime ce complément — c'est précisément ce que M4.2 vient de
+      //   mesurer plus haut. La clé absente vaut donc 0, puis remonte au
+      //   PLANCHER de `progression`, qui est 0,005 (§2). La valeur 0,03/1,26 =
+      //   0,023809 n'a plus aucun sens ; l'attendre reviendrait à exiger le
+      //   retour du défaut.
+      //   Le nouveau verrou est PLUS STRICT : il exige exactement le plancher
+      //   de production, lu à la source, et non une constante recopiée.
+      final plancherProgression =
+          IaPoidsAdaptatifs.bornesIndividuelles()['progression']![0];
+      expect(a['progression'], closeTo(plancherProgression, 1e-12),
+          reason: 'D-1 : une clé absente remonte à son PLANCHER '
+              '($plancherProgression), elle ne reçoit plus de constante '
+              'arbitraire 0.03/1.26');
+      // ignore: avoid_print
+      print('    ANCIEN : a["progression"] = 0,023809 (constante 0.03 '
+          'normalisée). D-1 : a["progression"] = '
+          '${_fmt(a["progression"]!)} (PLANCHER de production).');
     });
   });
 

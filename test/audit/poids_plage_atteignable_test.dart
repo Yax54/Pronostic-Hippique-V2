@@ -62,9 +62,15 @@ final List<String> kEnrichis =
 const Map<String, double> kBas = <String, double>{
   'forme': 0.05, 'gains': 0.04, 'record': 0.03, 'cote': 0.05,
   'constance': 0.03, 'victoires': 0.01, 'discipline': 0.01,
-  'distSpec': 0.03, 'jockey': 0.02, 'repos': 0.01, 'hippo': 0.01,
-  'entraineur': 0.01, 'elo': 0.01, 'terrain': 0.01, 'divergence': 0.01,
-  'poidsRel': 0.01, 'progression': 0.01, 'mouvCote': 0.02, 'placeDepart': 0.01,
+  // ★★ 27/11/2026 — §2 DU CHANTIER : les 12 planchers ENRICHIS valent 0,005.
+  //   Ce fichier avait été écrit AVANT cette correction et portait encore
+  //   0,03 / 0,02 / 0,01. C'est A0 qui l'a révélé (écart 0,025 sur distSpec),
+  //   exactement le rôle de cette garde. Valeurs alignées sur
+  //   `bornesIndividuelles()` — vérifié à nouveau par A0.
+  'distSpec': 0.005, 'jockey': 0.005, 'repos': 0.005, 'hippo': 0.005,
+  'entraineur': 0.005, 'elo': 0.005, 'terrain': 0.005, 'divergence': 0.005,
+  'poidsRel': 0.005, 'progression': 0.005, 'mouvCote': 0.005,
+  'placeDepart': 0.005,
 };
 
 const Map<String, double> kHaut = <String, double>{
@@ -92,10 +98,17 @@ Map<String, double> _prod(Map<String, double> v) {
   return {for (final k in kCles) k: p.getPoids(k)};
 }
 
-/// Réplique EXACTE de l'arithmétique de `clamp()` + `normaliser()`
-/// (ia_memory_models.dart:730-756 puis 685-728). Sert à calculer la plage
-/// exacte sans dérouler de trajectoire. Validée contre `_prod` par A0.
-Map<String, double> _formule(Map<String, double> entree) {
+/// Réplique de l'ANCIENNE arithmétique de `clamp()` + `normaliser()`
+/// (bornes puis mise à l'échelle des 2 groupes), REMPLACÉE EN PRODUCTION par
+/// la projection D-1 le 27/11/2026.
+///
+/// ⚠️ CE N'EST PLUS UNE RÉPLIQUE DE LA PRODUCTION — c'est une RÉFÉRENCE
+///    HISTORIQUE. Elle ne sert qu'à mesurer ce que D-1 change (test A0b).
+///    Aucun test ne la compare plus à `clamp()` : ce serait maintenir une
+///    seconde implémentation divergente, ce que la consigne §6 interdit.
+///    La fidélité À LA PRODUCTION est vérifiée par A0, contre
+///    `bornesIndividuelles()`.
+Map<String, double> _formuleAncienne(Map<String, double> entree) {
   final w = <String, double>{
     for (final k in kCles) k: entree[k]!.clamp(kBas[k]!, kHaut[k]!),
   };
@@ -138,27 +151,104 @@ Map<String, double> _configMin(String c) =>
 
 void main() {
   // ── A0 — GARDE : la réplique est-elle fidèle à la production ? ────────────
-  test('A0 — GARDE : la formule de réplique reproduit EXACTEMENT clamp()', () {
+  //
+  // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+  //   JUSTIFICATION ÉCRITE — C'EST LA PLUS IMPORTANTE DES NEUF.
+  //   Cette garde comparait la RÉPLIQUE `_formule()` (recopie de l'ancien
+  //   `clamp()` : bornes puis mise à l'échelle des 2 groupes) à la production.
+  //   D-1 remplace le mécanisme par une PROJECTION sur l'intersection
+  //   {bornes} ∩ {somme de groupe = budget}. La réplique ne décrit donc plus la
+  //   production : écart mesuré 0,030587214493138493 vs 0,030570185157855364.
+  //   ⚠️ On ne se contente pas de tolérer cet écart : cela reviendrait à
+  //      laisser une seconde implémentation divergente vivre dans les tests,
+  //      c'est-à-dire exactement le défaut que la consigne §6 interdit
+  //      (« Évite la coexistence de plusieurs implémentations incohérentes des
+  //      mêmes contraintes »). La réplique est donc CONSERVÉE sous le nom
+  //      `_formuleAncienne` et n'est plus comparée à la production : elle sert
+  //      désormais de RÉFÉRENCE HISTORIQUE pour mesurer ce que D-1 change
+  //      (test A0b). A0 garde son rôle de garde, mais contre la NOUVELLE
+  //      source unique : `bornesIndividuelles()` et `projeter()`.
+  test('A0 — GARDE : les bornes recopiées == bornesIndividuelles()', () {
+    final prod = IaPoidsAdaptatifs.bornesIndividuelles();
+    expect(prod.length, 19);
+    for (final k in kCles) {
+      expect(prod[k]![0], closeTo(kBas[k]!, 1e-15),
+          reason: 'plancher recopié $k ≠ production');
+      expect(prod[k]![1], closeTo(kHaut[k]!, 1e-15),
+          reason: 'plafond recopié $k ≠ production');
+    }
+    // ignore: avoid_print
+    print('[A0] GARDE OK — les 19 paires de bornes recopiées sont IDENTIQUES '
+        'à `bornesIndividuelles()` de production.');
+  });
+
+  // ── A0b — CE QUE D-1 CHANGE, mesuré contre l'ancienne formule ─────────────
+  test('A0b — D-1 : mesure de l\'écart avec l\'ANCIENNE formule', () {
     final alea = math.Random(20261127);
-    var verifies = 0;
+    var ecartMax = 0.0;
+    var pire = '';
+    var anciensDepassements = 0;
+    var nouveauxDepassements = 0;
+
     for (var i = 0; i < 400; i++) {
-      // Vecteur aléatoire DANS la boîte admissible (et parfois hors bornes,
-      // pour vérifier que le clamp interne de la réplique agit aussi).
       final v = <String, double>{
         for (final k in kCles)
           k: kBas[k]! + alea.nextDouble() * (kHaut[k]! - kBas[k]!) * 1.4,
       };
-      final parProduction = _prod(v);
-      final parFormule = _formule(v);
+      final nouveau = _prod(v);
+      final ancien = _formuleAncienne(v);
       for (final k in kCles) {
-        expect(parFormule[k], closeTo(parProduction[k]!, 1e-12),
-            reason: 'réplique ≠ production sur $k (tirage $i)');
+        final d = (ancien[k]! - nouveau[k]!).abs();
+        if (d > ecartMax) {
+          ecartMax = d;
+          pire = k;
+        }
+        if (ancien[k]! > kHaut[k]! + 1e-9) anciensDepassements++;
+        if (nouveau[k]! > kHaut[k]! + 1e-9) nouveauxDepassements++;
       }
-      verifies++;
     }
     // ignore: avoid_print
-    print('[A0] GARDE OK — réplique identique à clamp() sur $verifies '
-        'vecteurs aléatoires × 19 critères = ${verifies * 19} comparaisons');
+    print('[A0b] 400 vecteurs × 19 critères : écart max ANCIEN vs NOUVEAU = '
+        '${_f(ecartMax)} sur "$pire"');
+    // ignore: avoid_print
+    print('[A0b] dépassements de plafond — ANCIEN mécanisme : '
+        '$anciensDepassements / 7600 valeurs · D-1 : $nouveauxDepassements / 7600');
+    expect(nouveauxDepassements, 0,
+        reason: 'D-1 ne doit produire AUCUN dépassement de plafond');
+    // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+    //   JUSTIFICATION ÉCRITE — J'AI ÉCRIT CI-DESSUS UNE CHOSE FAUSSE.
+    //   J'avais postulé « l'ancienne formule doit bien reproduire les
+    //   dépassements, sinon la comparaison ne prouve rien ». LA MESURE LE
+    //   RÉFUTE : sur 400 tirages ALÉATOIRES, l'ancien mécanisme produit
+    //   EXACTEMENT 0 dépassement. Ce n'est pas une erreur de mesure : le
+    //   dépassement de l'ancien mécanisme n'est PAS systématique, il n'apparaît
+    //   que dans un COIN de l'espace — quand un critère est proposé très au-
+    //   dessus des autres (mesuré ailleurs : cote=0,40 avec tous les autres au
+    //   plancher ⇒ 0,575438596491). Un tirage uniforme ne visite presque jamais
+    //   ce coin.
+    //   ⇒ L'assertion est donc remplacée par la mesure du COIN, qui est le seul
+    //     endroit où la différence se manifeste, et qui est déterministe.
+    if (anciensDepassements == 0) {
+      // ignore: avoid_print
+      print('[A0b] CONSTAT HONNÊTE : sur des tirages UNIFORMES, l\'ancienne '
+          'formule ne dépasse JAMAIS. Le dépassement est un phénomène de COIN, '
+          'mesuré ci-dessous de façon déterministe.');
+    }
+    // Le coin : un critère au plafond, tous les autres au plancher.
+    var coinAncien = 0;
+    var coinNouveau = 0;
+    for (final k in kCles) {
+      final coin = <String, double>{...kBas, k: kHaut[k]!};
+      if (_formuleAncienne(coin)[k]! > kHaut[k]! + 1e-9) coinAncien++;
+      if (_prod(coin)[k]! > kHaut[k]! + 1e-9) coinNouveau++;
+    }
+    // ignore: avoid_print
+    print('[A0b] COIN (critère au plafond, tous les autres au plancher) : '
+        'ANCIEN dépasse $coinAncien / 19 · D-1 dépasse $coinNouveau / 19');
+    expect(coinAncien, greaterThan(0),
+        reason: 'la référence historique doit bien reproduire le défaut dans '
+            'le coin, sinon la comparaison ne prouve rien');
+    expect(coinNouveau, 0, reason: 'D-1 ne doit pas dépasser dans le coin');
   });
 
   // ── A1 — Poids DÉFAUT réellement appliqué au démarrage ───────────────────
@@ -204,8 +294,8 @@ void main() {
     var depassements = 0;
 
     for (final k in kCles) {
-      final maxi = _formule(_configMax(k))[k]!;
-      final mini = _formule(_configMin(k))[k]!;
+      final maxi = _prod(_configMax(k))[k]!;
+      final mini = _prod(_configMin(k))[k]!;
       maxAtteint[k] = maxi;
       minAtteint[k] = mini;
       final depasse = maxi > kHaut[k]! + 1e-9;
@@ -246,7 +336,7 @@ void main() {
           for (final c in kCles)
             c: kBas[c]! + alea.nextDouble() * (kHaut[c]! - kBas[c]!),
         };
-        final val = _formule(v)[k]!;
+        final val = _prod(v)[k]!;
         if (val > maxAtteint[k]! + 1e-9 || val < minAtteint[k]! - 1e-9) {
           violations++;
         }
@@ -261,8 +351,8 @@ void main() {
 
   // ── A3 — MATRICE D'INVERSIONS : qui peut dépasser qui ? ──────────────────
   test('A3 — MATRICE D\'INVERSIONS : hiérarchies verrouillées', () {
-    final maxDe = {for (final k in kCles) k: _formule(_configMax(k))[k]!};
-    final minDe = {for (final k in kCles) k: _formule(_configMin(k))[k]!};
+    final maxDe = {for (final k in kCles) k: _prod(_configMax(k))[k]!};
+    final minDe = {for (final k in kCles) k: _prod(_configMin(k))[k]!};
 
     var verrouillees = 0;
     final details = <String>[];
@@ -306,7 +396,7 @@ void main() {
     // 19 critères STRICTEMENT ÉGAUX en entrée : on isole l'effet de
     // `normaliser()` seule, telle qu'elle est écrite en production.
     final egaux = <String, double>{for (final k in kCles) k: 0.10};
-    final v = _formule(egaux);
+    final v = _prod(egaux);
     final partEnrichie = _somme(kEnrichis.map((k) => v[k]!));
     // ignore: avoid_print
     print('[A4] 19 critères ÉGAUX à 0.10 en entrée → part enrichie réelle = '
@@ -506,7 +596,7 @@ void main() {
       print('[A8] critère      | init     | MAX math | 99 % MAX | cycles'
           ' | part finale % | facteur');
       for (final cible in kCles) {
-        final maxi = _formule(_configMax(cible))[cible]!;
+        final maxi = _prod(_configMax(cible))[cible]!;
         final p = IaPoidsAdaptatifs();
         final mo = <String, double>{};
         final d = {for (final k in kCles) k: 0.0, cible: 0.50};
@@ -536,7 +626,7 @@ void main() {
       // l'importance ». On donne à forme une discrimination NÉGATIVE — ce qui
       // correspond à un critère réellement contre-productif — et on regarde si
       // elle descend vers son MIN mathématique.
-      final mini = _formule(_configMin('forme'))['forme']!;
+      final mini = _prod(_configMin('forme'))['forme']!;
       final p = IaPoidsAdaptatifs();
       final mo = <String, double>{};
       final d = {for (final k in kCles) k: 0.0, 'forme': -0.50};
@@ -608,7 +698,7 @@ void main() {
         final surBorne = (val - kHaut[k]!).abs() < 1e-9;
         if (surBorne) aLaBorne++;
         // ignore: avoid_print
-        print('[A11] ${k.padRight(12)} | ${_f(_formule(_configMin(k))[k]!)} '
+        print('[A11] ${k.padRight(12)} | ${_f(_prod(_configMin(k))[k]!)} '
             '| ${_f(val)} | ${_f(kHaut[k]!)} | $surBorne');
       }
       // ignore: avoid_print
@@ -686,7 +776,7 @@ void main() {
       print('[A12] critère      | facteur | cycles→50 % plage | plage');
       final parFacteur = <double, List<int>>{};
       for (final cible in kCles) {
-        final maxi = _formule(_configMax(cible))[cible]!;
+        final maxi = _prod(_configMax(cible))[cible]!;
         final p = IaPoidsAdaptatifs();
         final mo = <String, double>{};
         final d = {for (final k in kCles) k: 0.0, cible: 0.50};

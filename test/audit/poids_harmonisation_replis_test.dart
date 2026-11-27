@@ -230,21 +230,46 @@ void main() {
           '${_f(_somme(p))}  [attendu ${_f(attendu)}]');
     });
 
-    test('S1.4 — clé présente mais NON numérique : exception, pas de repli', () {
-      // ★ CORRECTION D'UNE AFFIRMATION FAUSSE QUE J'AVAIS ÉCRITE.
-      //   J'avais annoncé que le repli s'appliquait « aussi sur une valeur non
-      //   numérique ». MESURE : c'est FAUX. `(j['forme'] as num?)` ne renvoie
-      //   null que si la valeur est absente ou `null` ; sur une `String` le
-      //   cast LÈVE un TypeError et `fromJson` échoue entièrement.
-      //   Ce test verrouille le comportement RÉEL pour qu'aucun futur lecteur
-      //   ne puisse croire à une tolérance qui n'existe pas.
-      expect(
-        () => IaPoidsAdaptatifs.fromJson(<String, dynamic>{'forme': 'invalide'}),
-        throwsA(isA<TypeError>()),
-        reason: 'une valeur texte doit échouer, PAS être remplacée par 0,25',
-      );
+    test('S1.4 — valeur texte : TOLÉRÉE et TRACÉE depuis D-3 (27/11/2026)', () {
+      // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE — JUSTIFICATION ÉCRITE.
+      //
+      //   HISTORIQUE DE CETTE ASSERTION :
+      //     • Au tour précédent, elle verrouillait un fait MESURÉ :
+      //       `(j['forme'] as num?)` LÈVE un `TypeError` sur une `String`, donc
+      //       `fromJson` échouait entièrement. C'était une CARACTÉRISATION d'un
+      //       défaut, pas une exigence fonctionnelle.
+      //     • La consigne §8 (D-3) demande explicitement de CORRIGER ce défaut :
+      //       « Une valeur corrompue ne doit pas provoquer une perte silencieuse
+      //       de toutes les pondérations valides. »
+      //
+      //   POURQUOI L'ANCIENNE ASSERTION NE PEUT QUE DISPARAÎTRE : elle exige
+      //   `throwsA(isA<TypeError>())`. Conserver D-3 ET cette assertion est
+      //   logiquement impossible. On ne l'a donc pas « affaiblie » : on l'a
+      //   REMPLACÉE par le verrou du comportement corrigé, qui est PLUS
+      //   exigeant (il vérifie aussi la préservation des 18 autres valeurs et
+      //   la traçabilité, ce que l'ancienne ne testait pas).
+      //
+      //   CE QUI EST DÉSORMAIS EXIGÉ, ET MESURÉ PLUS BAS :
+      //     – aucun TypeError ;
+      //     – repli 0,25 sur le SEUL champ fautif ;
+      //     – les 18 autres valeurs restituées à l'identique ;
+      //     – l'anomalie est TRACÉE (pas de perte silencieuse).
+      final pTexte = IaPoidsAdaptatifs.fromJson(<String, dynamic>{
+        for (final k in kCles) k: kDefaut[k],
+        'forme': 'invalide',
+      });
+      expect(pTexte.forme, closeTo(0.25, _eps),
+          reason: 'D-3 : valeur texte → repli 0,25 sur ce seul champ');
+      for (final k in kCles) {
+        if (k == 'forme') continue;
+        expect(pTexte.getPoids(k), closeTo(kDefaut[k]!, _eps),
+            reason: 'D-3 : $k devait SURVIVRE à la corruption de forme');
+      }
+      final trace = IaPoidsAdaptatifs.dernieresAnomaliesDeserialisation;
+      expect(trace, isNotEmpty,
+          reason: 'D-3 : une perte partielle doit être TRACÉE, jamais muette');
 
-      // Le cas `null` explicite, lui, déclenche bien le repli.
+      // Le cas `null` explicite, lui, déclenche bien le repli (inchangé).
       final pNull = IaPoidsAdaptatifs.fromJson(<String, dynamic>{'gains': null});
       expect(pNull.gains, closeTo(0.13, _eps), reason: 'gains null → repli 0,13');
 
@@ -253,8 +278,9 @@ void main() {
       expect(pNum.record, closeTo(0.12, _eps), reason: 'record numérique → 0.12');
 
       // ignore: avoid_print
-      print('S1.4  valeur texte → TypeError (repli NON appliqué) · null → repli '
-          '0,13 · numérique 0,12 préservé');
+      print('S1.4  valeur texte → repli 0,25 TRAÇÉ (était : TypeError) · '
+          '18 autres valeurs intactes · null → repli 0,13 · numérique 0,12 '
+          'préservé · trace = ${trace.first}');
     });
 
     test('S1.5 — ALLER-RETOUR toJson/fromJson : aucune perte', () {
@@ -565,15 +591,61 @@ void main() {
             reason: 'poids initial $k modifié');
       }
       // Le plancher/plafond collectifs : mesurés dans le code source.
+      //
+      // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+      //   JUSTIFICATION ÉCRITE — l'ancienne assertion cherchait la CHAÎNE
+      //   `fractionEnrichi.clamp(0.18, 0.40)`, c'est-à-dire le NOM de la
+      //   variable interne de l'ancien `normaliser()`. Or D-1 réécrit ce corps
+      //   et renomme la notion : la contrainte est désormais portée par
+      //   `kPartEnrichieMin = 0.18` / `kPartEnrichieMax = 0.40`, puis appliquée
+      //   par `projeter()` sous la forme `part < kPartEnrichieMin` etc.
+      //   L'ancienne assertion testait donc l'ORTHOGRAPHE d'une variable, pas
+      //   la VALEUR de la contrainte : elle serait devenue rouge alors que la
+      //   contrainte est intacte. Ce n'est PAS un affaiblissement — on vérifie
+      //   maintenant la valeur, et de DEUX façons qui se contrôlent l'une
+      //   l'autre : les deux constantes, ET leur effet mesuré sur une table
+      //   réelle poussée hors de l'intervalle.
+      // Le plancher/plafond collectifs : mesurés dans le code source.
       final src = File('lib/services/ia_memory_models.dart').readAsStringSync();
-      expect(src.contains('fractionEnrichi.clamp(0.18, 0.40)'), isTrue,
-          reason: 'contraintes collectives 0,18/0,40 doivent être intactes');
+      expect(src.contains('kPartEnrichieMin = 0.18'), isTrue,
+          reason: 'plancher collectif enrichi 0,18 introuvable');      expect(src.contains('kPartEnrichieMax = 0.40'), isTrue,
+          reason: 'plafond collectif enrichi 0,40 introuvable');
+      expect(IaPoidsAdaptatifs.kPartEnrichieMin, 0.18);
+      expect(IaPoidsAdaptatifs.kPartEnrichieMax, 0.40);
+      // Contrôle par l'EFFET : une table qui pousse la base au maximum doit
+      // ramener la part enrichie à exactement 0,18 (plancher collectif actif).
+      final pBas = IaPoidsAdaptatifs(
+        forme: 0.55, gains: 0.40, record: 0.35, cote: 0.40,
+        constance: 0.25, victoires: 0.15, discipline: 0.10,
+        distSpec: 0.005, jockey: 0.005, repos: 0.005, hippo: 0.005,
+        entraineur: 0.005, elo: 0.005, terrain: 0.005, divergence: 0.005,
+        poidsRel: 0.005, progression: 0.005, mouvCote: 0.005,
+        placeDepart: 0.005,
+      )..normaliser();
+      final partBas = kEnrichis.fold(
+          0.0, (a, k) => a + pBas.getPoids(k));
+      expect(partBas, closeTo(0.18, 1e-9),
+          reason: 'plancher collectif 0,18 INOPÉRANT : part mesurée $partBas');
+      // Et une table qui pousse les enrichis au maximum doit donner 0,40.
+      final pHaut = IaPoidsAdaptatifs(
+        forme: 0.05, gains: 0.04, record: 0.03, cote: 0.05,
+        constance: 0.03, victoires: 0.01, discipline: 0.01,
+        distSpec: 0.18, jockey: 0.15, repos: 0.08, hippo: 0.10,
+        entraineur: 0.08, elo: 0.10, terrain: 0.10, divergence: 0.08,
+        poidsRel: 0.07, progression: 0.08, mouvCote: 0.12,
+        placeDepart: 0.07,
+      )..normaliser();
+      final partHaut = kEnrichis.fold(
+          0.0, (a, k) => a + pHaut.getPoids(k));
+      expect(partHaut, closeTo(0.40, 1e-9),
+          reason: 'plafond collectif 0,40 INOPÉRANT : part mesurée $partHaut');
       // Le gradient : lrBase 0,08 non modifié.
       final svc = File('lib/services/ia_memory_service.dart').readAsStringSync();
       expect(svc.contains('lrBase'), isTrue);
       // ignore: avoid_print
       print('S2.8  19/19 poids initiaux inchangés · collectif 0,18/0,40 intact '
-          '· gradient (lrBase) intact');
+          '(constantes + effet mesuré : $partBas / $partHaut) · '
+          'gradient (lrBase) intact');
     });
 
     test('S2.9 — cohérence globale ET par discipline avec les nouveaux planchers', () {

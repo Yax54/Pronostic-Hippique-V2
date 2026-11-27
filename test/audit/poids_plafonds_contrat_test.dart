@@ -274,14 +274,53 @@ void main() {
     // Résultat MESURÉ, à ne pas maquiller : le plafond « accessible » DOIT
     // être comparé au plafond nominal. Si accessible > plafond, la borne
     // individuelle est VIOLÉE par normaliser().
+    //
+    // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+    //   JUSTIFICATION ÉCRITE. L'assertion d'origine exigeait `violations == 19`
+    //   et son `reason` citait A2 : « 19/19 MAX dépasse la borne haute ». Elle
+    //   verrouillait donc un DÉFAUT MESURÉ de l'ancien mécanisme — c'est-à-dire
+    //   précisément ce que la consigne §5 demande de CORRIGER (C3 : « Respect
+    //   des 19 plafonds individuels »). Conserver `== 19` reviendrait à exiger
+    //   que D-1 échoue. On ne l'a pas « affaiblie » : on inverse la preuve, ce
+    //   qui est PLUS exigeant, car on vérifie désormais deux choses au lieu
+    //   d'une — (a) aucun dépassement, (b) chaque plafond reste ATTEIGNABLE
+    //   (une projection qui briderait tout à 0,005 satisferait (a) en violant
+    //   l'esprit de §3).
     var violations = 0;
     for (final k in kCles) {
       if (accessibles[k]! > kPlafond[k]! + 1e-9) violations++;
     }
     // ignore: avoid_print
-    print('T1  plafonds ACCESSIBLES > plafond nominal : $violations / 19');
-    expect(violations, 19,
-        reason: 'A2 l\'avait mesuré : 19/19 MAX dépasse la borne haute');
+    print('T1  plafonds ACCESSIBLES > plafond nominal : $violations / 19 '
+        '(l\'ANCIEN clamp() donnait 19/19 — DÉFAUT CORRIGÉ par D-1)');
+    expect(violations, 0,
+        reason: 'C3 : la projection ne doit JAMAIS laisser un poids dépasser '
+            'son plafond individuel');
+
+    // (b) Les plafonds restent ATTEIGNABLES, traité par traité.
+    var atteignables = 0;
+    final bride = <String>[];
+    for (final k in kCles) {
+      final ratio = accessibles[k]! / kPlafond[k]!;
+      if (ratio > 0.95) {
+        atteignables++;
+      } else {
+        bride.add('$k (${(ratio * 100).toStringAsFixed(1)} %)');
+      }
+    }
+    // ignore: avoid_print
+    print('T1  plafonds ATTEIGNABLES à >95 % par la projection : '
+        '$atteignables / 19');
+    if (bride.isNotEmpty) {
+      // ignore: avoid_print
+      print('T1  plafonds non atteignables à >95 % : ${bride.join(', ')} '
+          '(bridés par la contrainte COLLECTIVE, pas par un défaut)');
+    }
+    // La contrainte collective ne peut pas, à elle seule, étouffer les critères
+    // de base : `forme` a le plus gros plafond (0,55) et doit rester exploitable.
+    expect(accessibles['forme']! / kPlafond['forme']!, greaterThan(0.95),
+        reason: 'le critère le plus lourdement plafonné doit rester '
+            'effectivement accessible');
   });
 
   test('T1b — plafond accessible quand TOUS les enrichis montent ensemble', () {
@@ -366,9 +405,23 @@ void main() {
     pCoin.clamp();
     // ignore: avoid_print
     print('T2a COIN (cote au plafond, TOUS les autres au plancher) : '
-        'cote 0,40 → ${_f(pCoin.cote)} ⇒ dépassement CONFIRMÉ');
-    expect(pCoin.cote, greaterThan(kPlafond['cote']!),
-        reason: 'dans ce coin, normaliser() sort cote de son plafond');
+        'cote 0,40 → ${_f(pCoin.cote)}');
+    // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+    //   JUSTIFICATION ÉCRITE. L'assertion d'origine était
+    //   `expect(pCoin.cote, greaterThan(kPlafond['cote']!))` avec le motif
+    //   « dans ce coin, normaliser() sort cote de son plafond ». Elle
+    //   verrouillait donc le DÉFAUT que la consigne §5 demande de corriger
+    //   (C3). La conserver aurait signifié exiger l'échec de D-1.
+    //   On ne l'a pas supprimée ni affaiblie : on vérifie désormais
+    //   l'inverse, et de façon PLUS STRICTE — la valeur doit être exactement
+    //   au plafond (0,40), et non simplement « pas au-dessus ». La mesure
+    //   ci-dessous est donc : 0,575438596491 (ancien) → 0,400000000000 (D-1).
+    expect(pCoin.cote, closeTo(kPlafond['cote']!, 1e-9),
+        reason: 'D-1 : dans ce coin, cote doit être EXACTEMENT à son plafond '
+            '0,40, l\'ancien mécanisme le poussait à 0,575438596491');
+    // ignore: avoid_print
+    print('T2a ANCIEN 0,575438596491 (dépassement) → NOUVEAU '
+        '${_f(pCoin.cote)} (plafond RESPECTÉ, et ATTEINT exactement)');
 
     // (c) La PREUVE EN PRODUCTION : la sauvegarde réelle du 13/11 contient
     //     DÉJÀ les deux violations, sans aucune intervention de ma part.
@@ -387,28 +440,63 @@ void main() {
 
     // (d) Dérive par appels successifs SANS aucun apprentissage.
     final etat = IaPoidsAdaptatifs.fromJson(Map<String, dynamic>.from(kPoidsNov));
-    final parts = <double>[];
-    for (var i = 0; i < 12; i++) {
-      parts.add(_somme(_depuis(etat), kEnrichis));
+    final partSauvee = _somme(_depuis(etat), kEnrichis);
+    // ★★ MESURE CORRIGÉE (D-1, 27/11/2026) — J'AI COMPARÉ DEUX CHOSES DIFFÉRENTES.
+    //   Ma première version prenait `parts.first` AVANT tout appel, donc la part
+    //   SAUVEGARDÉE (0,184840837400), et la comparait au point fixe (0,180000000000).
+    //   L'écart de 0,004840837400 qu'elle mesurait n'était PAS une dérive : c'était
+    //   la CORRECTION LÉGITIME appliquée une seule fois à la table sauvegardée pour
+    //   la ramener dans le domaine. La dérive, elle, se mesure entre DEUX APPELS
+    //   SUCCESSIFS sans apprentissage — c'est-à-dire entre l'état APRÈS 1 appel et
+    //   l'état APRÈS N appels. C'est ce que fait le test ci-dessous.
+    etat.clamp();
+    final parts = <double>[_somme(_depuis(etat), kEnrichis)];
+    for (var i = 0; i < 11; i++) {
       etat.clamp();
+      parts.add(_somme(_depuis(etat), kEnrichis));
     }
-    // Converge-t-il ? On pousse à 500 pour trouver le point fixe.
+    // On pousse à 500 pour chercher le point fixe.
     for (var i = 0; i < 500; i++) {
       etat.clamp();
     }
     final fixe = _somme(_depuis(etat), kEnrichis);
     // ignore: avoid_print
-    print('T2c part enrichie : sauvée ${_f(parts.first)} → 1 passe '
-        '${_f(parts[1])} → 10 passes ${_f(parts[10])} → point fixe 500 '
+    print('T2c part enrichie : SAUVEGARDÉE ${_f(partSauvee)} → après 1 passe '
+        '${_f(parts.first)} → 11 passes ${_f(parts.last)} → point fixe 500 '
         '${_f(fixe)}');
+    final amplitude = (fixe - parts.first).abs();
     // ignore: avoid_print
-    print('    amplitude de dérive = ${_f((fixe - parts.first).abs())} '
-        '(${((fixe - parts.first).abs() / parts.first * 100).toStringAsFixed(4)} %)');
-    expect((fixe - parts.first).abs(), greaterThan(1e-4),
-        reason: 'la dérive doit être RÉELLE et non nulle');
-    // Point fixe : la part enrichie vaut EXACTEMENT 0,18 (plancher collectif).
+    print('    amplitude de dérive ENTRE APPELS = ${_f(amplitude)} '
+        '(${(amplitude / parts.first * 100).toStringAsFixed(6)} %)');
+    // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+    //   JUSTIFICATION ÉCRITE. L'assertion d'origine exigeait que la dérive soit
+    //   RÉELLE et non nulle (`greaterThan(1e-4)`), avec le motif « la dérive
+    //   doit être RÉELLE et non nulle ». C'était une CARACTÉRISATION du défaut
+    //   (C7/C10 violés), et la consigne §5 exige précisément « Idempotence à
+    //   1e-12 » et « Absence de dérive sans nouvel apprentissage ». Les deux
+    //   exigences sont incompatibles : on ne peut pas verrouiller la dérive ET
+    //   l'idempotence.
+    //   Le nouveau verrou est PLUS FORT : il exige zéro (à 1e-12), au lieu de
+    //   constater un déplacement quelconque. La valeur historiquement mesurée
+    //   est CONSERVÉE ci-dessous, à l'écran, pour que la comparaison reste
+    //   possible.
+    expect(amplitude, lessThanOrEqualTo(1e-12),
+        reason: 'C10 : les appels successifs de clamp() sans apprentissage ne '
+            'doivent produire AUCUNE dérive (l\'ancien mécanisme dérivait de '
+            '2,6189 % entre la 1re passe et le point fixe)');
+    // ignore: avoid_print
+    print('    ANCIEN mécanisme : dérive 2,6189 % (part 0,184840837400 → '
+        '0,180000000000), cote saturée 0,400000000000, victoires 0,150000000000. '
+        'D-1 : ${(amplitude / parts.first * 100).toStringAsFixed(6)} %.');
+
+    // Le point fixe reste le plancher collectif 0,18 : la table réelle du 13/11
+    // est ramenée à 0,18 en UNE seule passe, puis n'en bouge plus.
     expect(fixe, closeTo(kPlancherCollectif, 1e-9),
         reason: 'mesuré ${_f(fixe)}');
+    // Et la projection tient le contrat complet sur le point fixe.
+    final violFixe = _verifierContrat(_depuis(etat), tol: 1e-9);
+    expect(violFixe, isEmpty,
+        reason: 'le point fixe doit satisfaire C1→C6 : $violFixe');
 
     // ★ CONSÉQUENCE MESURÉE DE LA CORRECTION §2 — À DOCUMENTER, PAS À CACHER.
     //   Point fixe AVANT §2 (planchers enrichis Σ 0,16) : part enrichie
@@ -658,8 +746,20 @@ void main() {
     expect(svc.contains('lrBase = 0.08'), isTrue,
         reason: 'lrBase 0,08 doit être intact');
     expect(svc.contains('momentumFactor'), isTrue);
+    // ★★ ASSERTION VOLONTAIREMENT RÉANCRÉE (D-1, 27/11/2026).
+    //   JUSTIFICATION ÉCRITE. L'assertion cherchait la chaîne
+    //   `fractionEnrichi.clamp(0.18, 0.40)` : le NOM d'une variable interne de
+    //   l'ancien `normaliser()`, que D-1 remplace. La contrainte, elle, est
+    //   intacte et vaut toujours 0,18 / 0,40 — ce sont les constantes
+    //   `kPartEnrichieMin` / `kPartEnrichieMax`. Vérifier un nom de variable
+    //   n'était pas vérifier la contrainte ; on vérifie maintenant la valeur.
     final modele = File('lib/services/ia_memory_models.dart').readAsStringSync();
-    expect(modele.contains('fractionEnrichi.clamp(0.18, 0.40)'), isTrue);
+    expect(modele.contains('kPartEnrichieMin = 0.18'), isTrue,
+        reason: 'plancher collectif enrichi 0,18 absent du modèle');
+    expect(modele.contains('kPartEnrichieMax = 0.40'), isTrue,
+        reason: 'plafond collectif enrichi 0,40 absent du modèle');
+    expect(IaPoidsAdaptatifs.kPartEnrichieMin, 0.18);
+    expect(IaPoidsAdaptatifs.kPartEnrichieMax, 0.40);
     // ignore: avoid_print
     print('T7d protections : lrBase 0,08 intact · momentum intact · '
         'collectif 0,18/0,40 intact');

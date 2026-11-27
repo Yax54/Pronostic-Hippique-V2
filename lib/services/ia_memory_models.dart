@@ -682,100 +682,360 @@ class IaPoidsAdaptatifs {
     return 'global';
   }
 
-  void normaliser() {
-    // ★ v7.1 : 7 poids de base (75–82%) + 6 critères enrichis (18–25%) — v8.0
-    // La répartition cible est flexible : [0.75, 0.82] pour la base
-    // Cela permet à l'IA d'apprendre que certains critères enrichis
-    // (ex. jockey ou distSpec) sont plus importants que prévu.
-    final totalBase = forme + gains + record + cote + constance + victoires + discipline;
-    final totalEnrichi = distSpec + jockey + repos + hippo + entraineur + elo
-                       + terrain + divergence + poidsRel + progression
-                       + mouvCote + placeDepart; // ★ v9.93 : 19 critères complets
-    final totalAll = totalBase + totalEnrichi;
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  ★★ BL1-A22 (27/11/2026) — D-1 : MOTEUR DE CONTRAINTES UNIQUE ET IDEMPOTENT
+  //
+  //  CE QUI ÉTAIT FAUX AVANT (mesuré, voir test/audit/poids_plafonds_contrat_test.dart) :
+  //    • `clamp()` appliquait les 19 bornes individuelles PUIS `normaliser()`,
+  //      qui remettait à l'échelle chaque groupe. Le facteur d'échelle
+  //      (target/total) pouvait donc SORTIR un poids de ses bornes : mesuré
+  //      19/19 plafonds franchissables, et la sauvegarde réelle du 13/11/2026
+  //      portait cote = 0,401813880733 > 0,40 et victoires = 0,150680205275
+  //      > 0,15.
+  //    • `clamp()` n'était pas idempotent : deux appels successifs SANS aucun
+  //      apprentissage déplaçaient les poids (dérive mesurée 2,6189 % de la
+  //      part enrichie avant convergence).
+  //    • `clampDiscipline()` réappliquait des bornes DIFFÉRENTES de `clamp()`
+  //      (son plafond `divergence` valait 0,10 au lieu de 0,08) puis divisait
+  //      par le total, ce qui écrasait à nouveau les bornes : D-2.
+  //
+  //  CE QUI EST GARANTI MAINTENANT, quand les contraintes sont compatibles :
+  //    C1  Σ des 19 poids = 1, à 1e-9 près.
+  //    C2  19 planchers individuels respectés.
+  //    C3  19 plafonds individuels respectés.
+  //    C4  part enrichie dans [0,18 ; 0,40].
+  //    C5  aucune valeur négative.
+  //    C6  aucun NaN, aucune valeur infinie.
+  //    C7  idempotence à 1e-12 (deux appels = un appel).
+  //    C8  conservation d'une table déjà conforme, à 1e-12.
+  //    C9  déterminisme (aucun aléatoire, aucun ordre d'itération dépendant).
+  //    C10 aucune dérive sans nouvel apprentissage (= conséquence de C7).
+  //
+  //  MÉTHODE : « projection à budgets de groupe + remplissage par écumoire ».
+  //  Justification du choix, et pourquoi pas un simple « clip puis renormalise
+  //  en boucle » (qui ne converge pas toujours et dépend de l'ordre) :
+  //   1. On CLIPPE d'abord (C2, C3, C5, C6) : opération locale, sans effet de
+  //      bord, qui ne touche que les poids réellement hors bornes.
+  //   2. On fixe le budget de chaque groupe (C4) : budget des enrichis = part
+  //      courante ramenée dans [0,18 ; 0,40], budget de la base = 1 − part.
+  //      Leur somme vaut 1 PAR CONSTRUCTION, donc C1 est structurel, pas
+  //      numérique : il n'y a pas d'arrondi cumulé à corriger.
+  //   3. Sur chaque groupe, on cherche λ tel que
+  //         Σ_k clip(λ · w_k, plancher_k, plafond_k) = budget
+  //      La fonction λ ↦ Σ est continue et CROISSANTE (somme de fonctions
+  //      croissantes), donc STRICTEMENT monotone dès qu'un poids n'est pas
+  //      saturé : la solution est UNIQUE. Existence garantie dès que
+  //         Σ planchers du groupe ≤ budget ≤ Σ plafonds du groupe
+  //      ce qui est vrai par construction des budgets. Recherche par
+  //      dichotomie : convergence linéaire, 200 itérations suffisent très
+  //      largement pour atteindre la précision machine.
+  //   4. Ce remplissage est la projection euclidienne du vecteur sur
+  //      l'intersection {bornes} ∩ {somme du groupe = budget} lorsque λ est
+  //      le multiplicateur de Lagrange : il MINIMISE Σ (w_k − w_k_brut)²
+  //      sous les contraintes. C'est ce qui donne la meilleure conservation
+  //      possible des évolutions proposées par le gradient, à contraintes
+  //      égales. C'est la métrique de conservation retenue : distance
+  //      euclidienne, et non un ratio arbitraire.
+  //   5. Un critère DÉJÀ à sa borne ne bouge pas, et ne peut pas « voler » de
+  //      poids à ses voisins : il reste saturé, et le remplissage ne
+  //      redistribue qu'entre les critères encore libres.
+  //
+  //  AUCUN BIAIS D'ORDRE : `normaliser()`, `clamp()` et `clampDiscipline()`
+  //  n'utilisent plus de Map itérée pour décider quoi que ce soit. Les bornes
+  //  sont lues via `bornesIndividuelles()`, qui retourne une Map littérale
+  //  d'ordre fixe, et les sommes passent par `kClesOrdonnees` (liste figée).
+  //  Deux exécutions donnent donc exactement le même résultat.
+  //
+  //  ⚠️ CE QUI N'EST PAS TOUCHÉ ICI : les 19 poids initiaux, les 19 planchers,
+  //     les 19 plafonds, les contraintes collectives 0,18/0,40, le gradient
+  //     descent, ses coefficients, son momentum, les formules de score,
+  //     `_normaliserScores`, les seuils, la calibration, le TOP3 Learning,
+  //     les calculs ELO et les mécanismes PMU. Cette réécriture ne concerne
+  //     QUE l'application des contraintes aux pondérations.
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    if (totalAll > 0) {
-      // Calcul de la fraction enrichie apprise (clampée à [0.18, 0.40])
-      final fractionEnrichi = totalEnrichi / totalAll;
-      final targetEnrichi = fractionEnrichi.clamp(0.18, 0.40); // ★ v9.90 : plafond relevé 0.25→0.40
-      final targetBase = 1.0 - targetEnrichi;
+  /// Les 19 clés, dans un ordre FIXE. Toute somme de poids passe par cette
+  /// liste, jamais par une itération de Map (dont l'ordre n'est pas garanti).
+  static const List<String> kClesOrdonnees = <String>[
+    'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+    'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+    'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote',
+    'placeDepart',
+  ];
 
-      if (totalBase > 0) {
-        final facteurBase = targetBase / totalBase;
-        forme      *= facteurBase;
-        gains      *= facteurBase;
-        record     *= facteurBase;
-        cote       *= facteurBase;
-        constance  *= facteurBase;
-        victoires  *= facteurBase;
-        discipline *= facteurBase;
+  /// Les 7 critères de BASE.
+  static const List<String> kClesBase = <String>[
+    'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  ];
+
+  /// Les 12 critères ENRICHIS.
+  static const List<String> kClesEnrichies = <String>[
+    'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+    'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote',
+    'placeDepart',
+  ];
+
+  /// Plancher collectif enrichi.
+  static const double kPartEnrichieMin = 0.18;
+
+  /// Plafond collectif enrichi.
+  static const double kPartEnrichieMax = 0.40;
+
+  /// Somme des poids après contrainte. Tolérance documentée du contrat C1.
+  static const double kToleranceSomme = 1e-9;
+
+  /// Tolérance d'idempotence / de conservation (C7, C8).
+  static const double kToleranceIdempotence = 1e-12;
+
+  /// Bornes individuelles des 19 critères — SOURCE UNIQUE.
+  ///
+  /// ⚠️ C'ÉTAIT LE CŒUR DE D-2 : `clamp()` et `clampDiscipline()` portaient
+  ///    deux copies de ces bornes, et elles avaient DIVERGÉ (`divergence`
+  ///    plafonné à 0,08 d'un côté et 0,10 de l'autre). Il n'y a plus qu'une
+  ///    seule définition, ci-dessous, utilisée par les deux.
+  ///
+  /// Les 12 planchers enrichis valent 0,005 (correction §2 du 27/11/2026) ;
+  /// les 7 planchers de base et les 19 plafonds sont ceux du commit de
+  /// référence b3a0107 et ne sont PAS modifiés.
+  static Map<String, List<double>> bornesIndividuelles() =>
+      const <String, List<double>>{
+        'forme':      <double>[0.05,  0.55],
+        'gains':      <double>[0.04,  0.40],
+        'record':     <double>[0.03,  0.35],
+        'cote':       <double>[0.05,  0.40],
+        'constance':  <double>[0.03,  0.25],
+        'victoires':  <double>[0.01,  0.15],
+        'discipline': <double>[0.01,  0.10],
+        'distSpec':   <double>[0.005, 0.18],
+        'jockey':     <double>[0.005, 0.15],
+        'repos':      <double>[0.005, 0.08],
+        'hippo':      <double>[0.005, 0.10],
+        'entraineur': <double>[0.005, 0.08],
+        'elo':        <double>[0.005, 0.10],
+        'terrain':    <double>[0.005, 0.10],
+        'divergence': <double>[0.005, 0.08],
+        'poidsRel':   <double>[0.005, 0.07],
+        'progression':<double>[0.005, 0.08],
+        'mouvCote':   <double>[0.005, 0.12],
+        'placeDepart':<double>[0.005, 0.07],
+      };
+
+  /// Remplissage par écumoire : trouve λ tel que
+  /// `Σ_k clip(λ · w_k, lo_k, hi_k) = budget`, puis renvoie les w_k projetés.
+  ///
+  /// Renvoie `null` si le budget est hors du domaine réalisable du groupe
+  /// (cas qui ne peut survenir que si l'appelant passe un budget incohérent).
+  static Map<String, double>? _remplirGroupe(
+    Map<String, double> brut,
+    List<String> cles,
+    Map<String, List<double>> bornes,
+    double budget,
+  ) {
+    var sommePlanchers = 0.0;
+    var sommePlafonds = 0.0;
+    for (final k in cles) {
+      sommePlanchers += bornes[k]![0];
+      sommePlafonds += bornes[k]![1];
+    }
+    if (budget < sommePlanchers - 1e-12 || budget > sommePlafonds + 1e-12) {
+      return null; // groupe infaisable : l'appelant garde l'ancienne table
+    }
+
+    double sommePour(double lambda) {
+      var s = 0.0;
+      for (final k in cles) {
+        final v = lambda * (brut[k] ?? 0.0);
+        s += v < bornes[k]![0]
+            ? bornes[k]![0]
+            : (v > bornes[k]![1] ? bornes[k]![1] : v);
       }
-      if (totalEnrichi > 0) {
-        final facteurE = targetEnrichi / totalEnrichi;
-        distSpec   *= facteurE;
-        jockey     *= facteurE;
-        repos      *= facteurE;
-        hippo      *= facteurE;
-        entraineur *= facteurE; // ★ v8.0 — manquait dans v7.1
-        elo        *= facteurE; // ★ v8.0 — manquait dans v7.1
-        terrain    *= facteurE; // ★ v9.0
-        divergence *= facteurE; // ★ v9.0
-        poidsRel   *= facteurE; // ★ v9.0
-        progression*= facteurE; // ★ v9.0
-        mouvCote   *= facteurE; // ★ v9.93 — manquait
-        placeDepart*= facteurE; // ★ v9.93 — manquait
+      return s;
+    }
+
+    // Encadrement de λ. `sommePour` est croissante et continue.
+    var bas = 0.0;
+    var haut = 1.0;
+    var garde = 0;
+    while (sommePour(haut) < budget && garde < 64) {
+      haut *= 2.0;
+      garde++;
+    }
+    for (var i = 0; i < 200; i++) {
+      final milieu = (bas + haut) / 2.0;
+      if (sommePour(milieu) < budget) {
+        bas = milieu;
+      } else {
+        haut = milieu;
       }
     }
+    final lambda = (bas + haut) / 2.0;
+
+    final out = <String, double>{};
+    for (final k in cles) {
+      final v = lambda * (brut[k] ?? 0.0);
+      out[k] = v < bornes[k]![0]
+          ? bornes[k]![0]
+          : (v > bornes[k]![1] ? bornes[k]![1] : v);
+    }
+
+    // Correction résiduelle EXACTE. Après dichotomie il peut subsister un
+    // écart de quelques ulp. On le répartit UNIQUEMENT sur les critères qui
+    // ne sont pas saturés — ceux-là seuls peuvent encore bouger sans violer
+    // une borne. Proportionnellement à leur marge, pour ne pas créer de biais.
+    final ecart = budget - _sommeListe(out, cles);
+    if (ecart != 0.0) {
+      final libres = <String>[];
+      var margeTotale = 0.0;
+      for (final k in cles) {
+        final lo = bornes[k]![0];
+        final hi = bornes[k]![1];
+        final v = out[k]!;
+        final marge = (v > lo && v < hi)
+            ? (ecart > 0 ? hi - v : v - lo)
+            : 0.0;
+        if (marge > 0) {
+          libres.add(k);
+          margeTotale += marge;
+        }
+      }
+      if (libres.isNotEmpty && margeTotale > 0) {
+        final reste = ecart.abs() < margeTotale ? ecart : (ecart > 0 ? margeTotale : -margeTotale);
+        for (final k in libres) {
+          final lo = bornes[k]![0];
+          final hi = bornes[k]![1];
+          final v = out[k]!;
+          final marge = (ecart > 0 ? hi - v : v - lo);
+          final part = reste * (marge / margeTotale);
+          final nv = v + part;
+          out[k] = nv < lo ? lo : (nv > hi ? hi : nv);
+        }
+      }
+    }
+    return out;
   }
 
+  static double _sommeListe(Map<String, double> m, List<String> cles) {
+    var s = 0.0;
+    for (final k in cles) {
+      s += m[k] ?? 0.0;
+    }
+    return s;
+  }
+
+  /// Projection complète sur le domaine réalisable — CŒUR UNIQUE du contrat.
+  ///
+  /// C'est LA seule fonction qui applique les contraintes. `normaliser()`,
+  /// `clamp()` et `clampDiscipline()` l'appellent toutes les trois : il n'y a
+  /// donc plus deux mécanismes concurrents pouvant diverger (D-2).
+  ///
+  /// `brut` doit contenir les 19 clés. Les valeurs `null`, `NaN`, infinies ou
+  /// négatives sont ramenées à leur plancher (C5, C6) — c'est le seul cas où
+  /// une valeur d'entrée est remplacée, et il est impossible qu'une valeur
+  /// valide le soit.
+  static Map<String, double> projeter(Map<String, double> brut) {
+    final bornes = bornesIndividuelles();
+
+    // 1) Clip sur les bornes individuelles (C2, C3, C5, C6).
+    final w = <String, double>{};
+    for (final k in kClesOrdonnees) {
+      final b = bornes[k]!;
+      final v = brut[k];
+      if (v == null || v.isNaN || v.isInfinite) {
+        w[k] = b[0];
+      } else if (v < b[0]) {
+        w[k] = b[0];
+      } else if (v > b[1]) {
+        w[k] = b[1];
+      } else {
+        w[k] = v;
+      }
+    }
+
+    // 2) Budget des enrichis : part courante ramenée dans [0,18 ; 0,40] (C4).
+    final sommeEnrichie = _sommeListe(w, kClesEnrichies);
+    final sommeBase = _sommeListe(w, kClesBase);
+    final total = sommeEnrichie + sommeBase;
+    double part;
+    if (total <= 0) {
+      part = kPartEnrichieMin; // table dégénérée : on retombe sur le plancher
+    } else {
+      part = sommeEnrichie / total;
+      if (part < kPartEnrichieMin) part = kPartEnrichieMin;
+      if (part > kPartEnrichieMax) part = kPartEnrichieMax;
+    }
+
+    // 3) Remplissage de chaque groupe sur son budget (C1 par construction).
+    final enrichis = _remplirGroupe(w, kClesEnrichies, bornes, part);
+    final base = _remplirGroupe(w, kClesBase, bornes, 1.0 - part);
+
+    if (enrichis == null || base == null) {
+      // Domaine infaisable : on rend les poids seulement clippés. Cela ne peut
+      // arriver que si planchers et plafonds sont incohérents entre eux — état
+      // qui n'existe pas dans la configuration de référence ci-dessus. On ne
+      // fabrique pas de valeur arbitraire.
+      return w;
+    }
+
+    final out = <String, double>{};
+    for (final k in kClesOrdonnees) {
+      out[k] = kClesBase.contains(k) ? base[k]! : enrichis[k]!;
+    }
+    return out;
+  }
+
+  /// Applique la projection à l'instance (C1 → C10).
+  ///
+  /// Remplace l'ancien couple « bornes puis échelle », qui ne garantissait
+  /// ni C3 ni C7.
+  void normaliser() {
+    final brut = <String, double>{
+      for (final k in kClesOrdonnees) k: getPoids(k),
+    };
+    final projetes = projeter(brut);
+    _ecrireDepuisMap(projetes);
+  }
+
+  /// Applique les contraintes aux 19 poids GLOBAUX puis à chaque discipline.
+  ///
+  /// C7 (idempotence) est vérifiée par `test/audit/poids_projection_test.dart` :
+  /// `clamp()` appelé deux fois de suite sans apprentissage ne change plus rien.
   void clamp() {
-    forme      = forme.clamp(0.05, 0.55);
-    gains      = gains.clamp(0.04, 0.40);
-    record     = record.clamp(0.03, 0.35);
-    cote       = cote.clamp(0.05, 0.40);
-    constance  = constance.clamp(0.03, 0.25);
-    victoires  = victoires.clamp(0.01, 0.15);
-    discipline = discipline.clamp(0.01, 0.10);
-    // ★★ BL1-A21 (27/11/2026) — PLANCHERS INDIVIDUELS ENRICHIS ABAISSÉS À 0,005.
-    //   AUTORISÉ PAR L'UTILISATEUR (§2), SOUS CONDITIONS. DÉFINITION #1 sur 2.
-    //   ⚠️ SEULS LES PLANCHERS CHANGENT. Les 12 PLAFONDS sont INCHANGÉS.
-    //
-    //   MESURE AVANT (valeurs exactes, elles n'étaient PAS toutes égales à 0,01) :
-    //     distSpec 0,03 · jockey 0,02 · repos 0,01 · hippo 0,01 · entraineur 0,01
-    //     elo 0,01 · terrain 0,01 · divergence 0,01 · poidsRel 0,01
-    //     progression 0,01 · mouvCote 0,02 · placeDepart 0,01
-    //     → Σ = 0,160 (et non 0,12 : trois planchers étaient plus hauts que 0,01)
-    //   MESURE APRÈS : 12 × 0,005 = Σ 0,060.
-    //   EFFET ATTORNEYÉ SUR LA MARGE : plancher collectif enrichi = 0,18
-    //     AVANT : 0,18 − 0,160 = marge 0,020 (2,0 points de liberté de répartition)
-    //     APRÈS : 0,18 − 0,060 = marge 0,120 (12,0 points) → ×6
-    //   ⚠️ CE N'EST PAS UNE AMÉLIORATION DE PRÉCISION HIPPIQUE PROUVÉE. C'est une
-    //      augmentation de la LIBERTÉ MATHÉMATIQUE laissée au gradient. Le bénéfice
-    //      réel devra être mesuré par le protocole prospectif (§8), pas déduit.
-    //   ⚠️ AUCUN CRITÈRE N'EST DÉSACTIVÉ : 0,005 > 0. Un critère neutralisé
-    //      (gradient ≈ 0 prolongé) descend jusqu'à 0,005, y reste, et peut
-    //      REMONTER dès que le gradient redevient discriminant — vérifié par
-    //      `G3.1`/`G2.3` de `test/audit/poids_contraintes_test.dart`.
-    //   ⚠️ AUCUN EFFET RÉTROACTIF : `clamp()` n'est appliqué QU'EN SORTIE de
-    //      gradient descent (`ia_memory_service.dart:4093`), jamais par `fromJson`.
-    //      Une pondération historique sauvegardée est donc restituée intacte.
-    distSpec   = distSpec.clamp(0.005, 0.18);
-    jockey     = jockey.clamp(0.005, 0.15);
-    repos      = repos.clamp(0.005, 0.08);
-    hippo        = hippo.clamp(0.005, 0.10);
-    entraineur   = entraineur.clamp(0.005, 0.08);  // ★ v8.0
-    elo          = elo.clamp(0.005, 0.10);         // ★ v8.0
-    terrain      = terrain.clamp(0.005, 0.10);     // ★ v9.0
-    divergence   = divergence.clamp(0.005, 0.08);  // ★ v9.0
-    poidsRel     = poidsRel.clamp(0.005, 0.07);    // ★ v9.0
-    progression  = progression.clamp(0.005, 0.08); // ★ v9.0
-    mouvCote     = mouvCote.clamp(0.005, 0.12);    // ★ v9.93
-    placeDepart  = placeDepart.clamp(0.005, 0.07); // ★ v9.93
     normaliser();
-    // Normaliser aussi les poids par discipline
-    for (final key in poidsParDiscipline.keys) {
+    // Les tables par discipline passent par la MÊME projection : plus aucune
+    // divergence de bornes possible entre le global et le par-discipline.
+    for (final key in poidsParDiscipline.keys.toList()) {
       clampDiscipline(poidsParDiscipline[key]!);
     }
   }
+
+  /// Écrit les 19 champs depuis une Map de 19 poids.
+  void _ecrireDepuisMap(Map<String, double> m) {
+    forme      = m['forme']!;
+    gains      = m['gains']!;
+    record     = m['record']!;
+    cote       = m['cote']!;
+    constance  = m['constance']!;
+    victoires  = m['victoires']!;
+    discipline = m['discipline']!;
+    distSpec   = m['distSpec']!;
+    jockey     = m['jockey']!;
+    repos      = m['repos']!;
+    hippo      = m['hippo']!;
+    entraineur = m['entraineur']!;
+    elo        = m['elo']!;
+    terrain    = m['terrain']!;
+    divergence = m['divergence']!;
+    poidsRel   = m['poidsRel']!;
+    progression= m['progression']!;
+    mouvCote   = m['mouvCote']!;
+    placeDepart= m['placeDepart']!;
+  }
+
+  /// Lit les 19 champs dans une Map (les clés absentes valent 0, donc leur
+  /// plancher après projection).
+  Map<String, double> versMap() => <String, double>{
+    for (final k in kClesOrdonnees) k: getPoids(k),
+  };
 
   /// ★ v90 : retourne le poids global d'un critère par clé (pour diagnostic)
   double getPoids(String key) {
@@ -803,40 +1063,19 @@ class IaPoidsAdaptatifs {
     }
   }
 
+  /// Applique les contraintes à une table de discipline (19 clés garanties).
+  ///
+  /// D-2 RÉSOLU ICI : cette méthode portait sa PROPRE copie des bornes, avec
+  /// `divergence` plafonné à 0,10 au lieu de 0,08, puis divisait par le total
+  /// (ce qui écrasait les bornes). Elle appelle désormais la même projection
+  /// que `clamp()`. Les valeurs d'amorçage `?? …` qui figuraient ici ont
+  /// disparu : `poidsEffectifsPourDiscipline()` garantit déjà les 19 clés, et
+  /// une clé absente vaut 0, donc remonte à son plancher par la projection.
   static void clampDiscipline(Map<String, double> poids) {
-    poids['forme']      = (poids['forme']     ?? 0.38).clamp(0.05, 0.55);
-    poids['gains']      = (poids['gains']     ?? 0.18).clamp(0.04, 0.40);
-    poids['record']     = (poids['record']    ?? 0.14).clamp(0.03, 0.35);
-    poids['cote']       = (poids['cote']      ?? 0.13).clamp(0.05, 0.40);
-    poids['constance']  = (poids['constance'] ?? 0.09).clamp(0.03, 0.25);
-    poids['victoires']  = (poids['victoires'] ?? 0.05).clamp(0.01, 0.15);
-    poids['discipline'] = (poids['discipline']?? 0.03).clamp(0.01, 0.10);
-    // ★ v5.0 : critères enrichis inclus dans le clamp discipline
-    // *** BL1-A21 — DÉFINITION #2 SUR 2 (duplicata de `clamp()`) ***
-    //   Planchers enrichis abaissés à 0,005, plafonds INCHANGÉS. Voir le
-    //   commentaire de `clamp()` pour la justification et les réserves.
-    //   ⚠️ Une 3e occurrence de ces planchers existe dans `ia_memory_service.dart`
-    //      (:6008-6011, piste « stats par label ») : elle n'est PAS modifiée ici
-    //      et est soumise à arbitrage — voir §4 du rapport consolidé.
-    poids['distSpec']   = (poids['distSpec']  ?? 0.08).clamp(0.005, 0.18);
-    poids['jockey']     = (poids['jockey']    ?? 0.07).clamp(0.005, 0.15);
-    poids['repos']      = (poids['repos']     ?? 0.03).clamp(0.005, 0.08);
-    poids['hippo']      = (poids['hippo']     ?? 0.04).clamp(0.005, 0.10); // ★ v7.0
-    poids['entraineur'] = (poids['entraineur']?? 0.04).clamp(0.005, 0.08); // ★ v8.0
-    poids['elo']        = (poids['elo']       ?? 0.05).clamp(0.005, 0.10); // ★ v8.0
-    poids['terrain']    = (poids['terrain']   ?? 0.05).clamp(0.005, 0.10); // ★ v9.0
-    poids['divergence'] = (poids['divergence']?? 0.04).clamp(0.005, 0.08); // ★ v9.0
-    poids['poidsRel']   = (poids['poidsRel']  ?? 0.03).clamp(0.005, 0.07); // ★ v9.0
-    poids['progression']= (poids['progression']??0.03).clamp(0.005, 0.08); // ★ v9.0
-    poids['mouvCote']   = (poids['mouvCote']   ??0.06).clamp(0.005, 0.12); // ★ v9.93
-    poids['placeDepart']= (poids['placeDepart']??0.03).clamp(0.005, 0.07); // ★ v9.93
-    // Normaliser sur les 19 critères
-    final total = poids.values.fold(0.0, (a, b) => a + b);
-    if (total > 0) {
-      for (final k in poids.keys) {
-        poids[k] = poids[k]! / total;
-      }
-    }
+    final projetes = projeter(poids);
+    poids
+      ..clear()
+      ..addAll(projetes);
   }
 
   Map<String, dynamic> toJson() => {
@@ -861,73 +1100,239 @@ class IaPoidsAdaptatifs {
     'correlations': correlations,  // ★ v9.92
   };
 
-  factory IaPoidsAdaptatifs.fromJson(Map<String, dynamic> j) {
-    final ppd = <String, Map<String, double>>{};
-    final rawPpd = j['poidsParDiscipline'] as Map<String, dynamic>? ?? {};
-    for (final entry in rawPpd.entries) {
-      try {
-        final inner = entry.value as Map<String, dynamic>;
-        ppd[entry.key] = inner.map((k, v) => MapEntry(k, (v as num).toDouble()));
-      } catch (_) {}
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ★★ BL1-A23 (27/11/2026) — D-3 : DÉSÉRIALISATION TOLÉRANTE ET TRAÇABLE
+  //
+  //  DÉFAUT MESURÉ AVANT : `fromJson` faisait `(j['forme'] as num?)`. Sur une
+  //  valeur TEXTE, ce cast LÈVE `TypeError` (mesuré : test S1.4), et l'appelant
+  //  `_load()` (`ia_memory_service.dart:2311`) n'avait AUCUN try/catch : un seul
+  //  champ corrompu faisait échouer TOUT le chargement (poids, pronostics,
+  //  seuils, archives…). Perte silencieuse de données parfaitement valides.
+  //
+  //  CE QUE FAIT LE LECTEUR CI-DESSOUS — les 8 cas sont DISTINGUÉS :
+  //    (a) clé ABSENTE           → repli documenté (0,25 / 0,13 / 0,10 / …)
+  //    (b) valeur `null`         → repli documenté (identique à (a))
+  //    (c) `num` fini et ≥ 0     → valeur REPRISE TELLE QUELLE, sans arrondi
+  //    (d) valeur TEXTE          → écartée + TRACÉE, repli pour ce SEUL champ
+  //    (e) type incompatible     → écartée + TRACÉE, repli pour ce SEUL champ
+  //    (f) valeur NÉGATIVE       → écartée + TRACÉE, repli pour ce SEUL champ
+  //    (g) valeur NON FINIE      → écartée + TRACÉE, repli pour ce SEUL champ
+  //    (h) numérique HORS BORNES (ex. poids appris 0,401813880733, ou 0,55)
+  //        → ACCEPTÉE SANS DISCUSSION. Ce n'est PAS une corruption : `fromJson`
+  //        ne contraint rien et ne doit rien contraindre, sinon il réécrirait
+  //        l'histoire de l'apprentissage. La projection D-1 ne s'applique
+  //        qu'aux moments légitimes, JAMAIS au chargement.
+  //
+  //  GARANTIES :
+  //    • Aucune valeur valide perdue : chaque champ est lu ISOLÉMENT, l'échec
+  //      d'un champ n'affecte jamais les 18 autres.
+  //    • Aucune conversion arbitraire : une chaîne n'est pas « interprétée »,
+  //      un négatif n'est pas « remis en positif ».
+  //    • Aucun remplacement silencieux de la table entière par les poids initiaux.
+  //    • Toute perte partielle est TRACÉE dans `dernieresAnomaliesDeserialisation`
+  //      (lisible par l'appelant) ; rien n'est muet.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// Trace des anomalies de la DERNIÈRE désérialisation (vide si aucune).
+  /// Alimentée uniquement par `fromJson` ; jamais écrite ailleurs, jamais
+  /// utilisée pour décider d'une valeur.
+  static List<String> dernieresAnomaliesDeserialisation = <String>[];
+
+  /// Lit un POIDS de façon tolérante. Rend la valeur authentique si elle est
+  /// exploitable, sinon `repli`, en traçant le motif exact.
+  static double _lirePoids(
+    Map<String, dynamic> j,
+    String cle,
+    double repli,
+    List<String> anomalies,
+  ) {
+    if (!j.containsKey(cle)) return repli;         // (a) clé absente
+    final Object? v = j[cle];
+    if (v == null) return repli;                   // (b) null
+    if (v is num) {
+      final double d = v.toDouble();
+      if (d.isNaN || d.isInfinite) {               // (g) non fini
+        anomalies.add('$cle: valeur non finie ($d) → repli $repli');
+        return repli;
+      }
+      if (d < 0) {                                 // (f) négatif
+        anomalies.add('$cle: valeur négative ($d) → repli $repli');
+        return repli;
+      }
+      return d;                                    // (c) valide
+                                                   // (h) hors bornes : assumé
     }
-    // ★ BL1-A20 (27/11/2026) — HARMONISATION DES TROIS REPLIS, AUTORISÉE.
-    //   MESURE AVANT : les replis de `fromJson` valaient forme 0,32 / gains 0,15 /
-    //   record 0,12 alors que le constructeur (`:592-594`) et `.defauts` (`:943-951`)
-    //   valent forme 0,25 / gains 0,13 / record 0,10. Trois divergences :
-    //   +0,07 +0,02 +0,02 = 0,11 EXACTEMENT (1,37 - 1,26 = 0,11).
-    //   CONSÉQUENCE MESURÉE AVANT CORRECTION : un JSON partiel ou absent produisait
-    //   une table de somme 1,370000000000 au lieu de 1,260000000000, soit +8,7 % sur
-    //   TOUS les scores pondérés (le score est une somme pondérée non divisée).
+    // (d) texte  /  (e) type incompatible
+    anomalies.add(
+        '$cle: type ${v.runtimeType} non numérique (« $v ») → repli $repli');
+    return repli;
+  }
+
+  /// Lit un NOMBRE flottant non pondéral (calibration). Même tolérance,
+  /// mais une valeur négative est acceptée : ce n'est pas un poids.
+  static double _lireDoubleBrut(
+    Map<String, dynamic> j,
+    String cle,
+    double repli,
+    List<String> anomalies,
+  ) {
+    if (!j.containsKey(cle)) return repli;
+    final Object? v = j[cle];
+    if (v == null) return repli;
+    if (v is num) {
+      final double d = v.toDouble();
+      if (d.isNaN || d.isInfinite) {
+        anomalies.add('$cle: valeur non finie ($d) → repli $repli');
+        return repli;
+      }
+      return d;
+    }
+    anomalies.add(
+        '$cle: type ${v.runtimeType} non numérique (« $v ») → repli $repli');
+    return repli;
+  }
+
+  /// Lit un ENTIER (compteur). Tolérant, tracé.
+  static int _lireEntier(
+    Map<String, dynamic> j,
+    String cle,
+    List<String> anomalies,
+  ) {
+    if (!j.containsKey(cle)) return 0;
+    final Object? v = j[cle];
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is num) {
+      if (v is double && !v.isFinite) {
+        anomalies.add('$cle: valeur non finie ($v) → 0');
+        return 0;
+      }
+      final int i = v.toInt();
+      anomalies.add('$cle: $v non entier → $i');
+      return i;
+    }
+    anomalies.add('$cle: type ${v.runtimeType} non numérique (« $v ») → 0');
+    return 0;
+  }
+
+  /// Lit une `Map<String, double>` (gradient, corrélations), clé par clé.
+  /// Une clé illisible est écartée SEULE et tracée ; les autres survivent.
+  static Map<String, double> _lireMapDoubles(
+    Map<String, dynamic> j,
+    String cle,
+    List<String> anomalies,
+  ) {
+    final out = <String, double>{};
+    final Object? raw = j[cle];
+    if (raw == null) return out;
+    if (raw is! Map) {
+      anomalies.add('$cle: type ${raw.runtimeType} ignoré');
+      return out;
+    }
+    for (final e in raw.entries) {
+      final String k = e.key.toString();
+      final Object? v = e.value;
+      if (v is num) {
+        final double d = v.toDouble();
+        if (!d.isNaN && !d.isInfinite) {
+          out[k] = d;
+          continue;
+        }
+      }
+      anomalies.add('$cle[$k]: valeur « $v » ignorée');
+    }
+    return out;
+  }
+
+  factory IaPoidsAdaptatifs.fromJson(Map<String, dynamic> j) {
+    final anomalies = <String>[];
+
+    // ── Poids PAR DISCIPLINE : lecture tolérante, clé par clé ───────────────
+    //   AVANT : une seule valeur illisible faisait tomber toute l'entrée de
+    //   discipline (le `catch (_) {}` entourait la boucle entière). Désormais
+    //   seule la valeur fautive est écartée ; la discipline survit.
+    final ppd = <String, Map<String, double>>{};
+    final Object? rawPpd = j['poidsParDiscipline'];
+    if (rawPpd is Map) {
+      for (final entry in rawPpd.entries) {
+        final String disc = entry.key.toString();
+        final Object? val = entry.value;
+        if (val is! Map) {
+          anomalies.add(
+              'poidsParDiscipline[$disc]: type ${val.runtimeType} ignoré');
+          continue;
+        }
+        final table = <String, double>{};
+        for (final e in val.entries) {
+          final String k = e.key.toString();
+          final Object? v = e.value;
+          if (v is num) {
+            final double d = v.toDouble();
+            if (!d.isNaN && !d.isInfinite && d >= 0) {
+              table[k] = d;
+              continue;
+            }
+          }
+          anomalies.add('poidsParDiscipline[$disc][$k]: valeur « $v » ignorée');
+        }
+        if (table.isNotEmpty) ppd[disc] = table;
+      }
+    } else if (rawPpd != null) {
+      anomalies.add('poidsParDiscipline: type ${rawPpd.runtimeType} ignoré');
+    }
+
+    // ── PoidsIndices : isolé, ne doit jamais faire tomber le reste ─────────
+    PoidsIndices? indices;
+    final Object? rawIndices = j['poidsIndices'];
+    if (rawIndices is Map<String, dynamic>) {
+      try {
+        indices = PoidsIndices.fromJson(rawIndices);
+      } catch (e) {
+        anomalies.add('poidsIndices: illisible ($e) → ignoré');
+      }
+    } else if (rawIndices != null) {
+      anomalies.add('poidsIndices: type ${rawIndices.runtimeType} ignoré');
+    }
+
+    dernieresAnomaliesDeserialisation = anomalies;
+
+    // ★ BL1-A20 (27/11/2026) — HARMONISATION DES TROIS REPLIS, CONSERVÉE.
+    //   MESURE AVANT : les replis valaient forme 0,32 / gains 0,15 / record 0,12
+    //   alors que le constructeur et `.defauts` valent 0,25 / 0,13 / 0,10.
+    //   Trois divergences : +0,07 +0,02 +0,02 = 0,11 EXACTEMENT (1,37 - 1,26).
     //   MESURE APRÈS : `fromJson({})` = 1,260000000000, identique au constructeur.
-    //   ⚠️ PORTÉE STRICTE : ces constantes ne s'appliquent QUE si la clé est
-    //      réellement ABSENTE (ou explicitement `null`) dans le JSON. Toute
-    //      valeur numérique présente est reprise telle quelle, sans arrondi ni
-    //      normalisation : aucune pondération authentique, aucune pondération
-    //      historique apprise n'est touchée. Vérifié par
-    //      `test/audit/poids_harmonisation_replis_test.dart` (JSON complet,
-    //      ancienne sauvegarde 28/05, sauvegarde apprise 13/11, aller-retour).
-    //   ⚠️ CORRECTION D'UNE AFFIRMATION FAUSSE QUE J'AVAIS ÉCRITE ICI : j'avais
-    //      annoncé que le repli s'appliquait aussi « si la valeur est non
-    //      numérique ». C'EST FAUX, ET C'EST MESURÉ : `(j['forme'] as num?)`
-    //      ne renvoie null que si la valeur est absente ou `null`. Sur une
-    //      `String`, le cast LÈVE `TypeError: type 'String' is not a subtype of
-    //      type 'num?'` et `fromJson` échoue entièrement. Test S1.4.
-    //      ⇒ Un JSON corrompu (valeur texte) n'est PAS toléré, ni avant ni
-    //        après cette correction. C'est un comportement PRÉEXISTANT,
-    //        inchangé ici, et signalé pour arbitrage (§4 du rapport) plutôt
-    //        que corrigé sans autorisation.
-    //   ⚠️ `fromJson` n'appelle PAS `clamp()` — c'est volontaire et inchangé :
-    //      une table sauvegardée doit être restituée à l'identique.
+    //   Ces constantes ne s'appliquent QUE si la clé est ABSENTE, `null`, ou si
+    //   la valeur est inexploitable (texte, type incompatible, négatif, non fini)
+    //   — cas désormais TRACÉS, voir BL1-A23 ci-dessus. Toute valeur numérique
+    //   présente est reprise TELLE QUELLE, hors bornes comprises.
+    //   ⚠️ `fromJson` n'appelle PAS `clamp()` — volontaire et inchangé : une
+    //      table sauvegardée doit être restituée à l'identique.
     return IaPoidsAdaptatifs(
-      forme:        (j['forme']       as num?)?.toDouble() ?? 0.25,
-      gains:        (j['gains']       as num?)?.toDouble() ?? 0.13,
-      record:       (j['record']      as num?)?.toDouble() ?? 0.10,
-      cote:         (j['cote']        as num?)?.toDouble() ?? 0.08,
-      constance:    (j['constance']   as num?)?.toDouble() ?? 0.09,
-      victoires:    (j['victoires']   as num?)?.toDouble() ?? 0.04,
-      discipline:   (j['discipline']  as num?)?.toDouble() ?? 0.02,
-      distSpec:     (j['distSpec']    as num?)?.toDouble() ?? 0.08,
-      jockey:       (j['jockey']      as num?)?.toDouble() ?? 0.07,
-      repos:        (j['repos']       as num?)?.toDouble() ?? 0.03,
-      hippo:        (j['hippo']       as num?)?.toDouble() ?? 0.04,
-      entraineur:   (j['entraineur']   as num?)?.toDouble() ?? 0.04, // ★ v8.0
-      elo:          (j['elo']          as num?)?.toDouble() ?? 0.05, // ★ v8.0
-      terrain:      (j['terrain']      as num?)?.toDouble() ?? 0.05, // ★ v9.0
-      divergence:   (j['divergence']   as num?)?.toDouble() ?? 0.04, // ★ v9.0
-      poidsRel:     (j['poidsRel']     as num?)?.toDouble() ?? 0.03, // ★ v9.0
-      progression:  (j['progression']  as num?)?.toDouble() ?? 0.03, // ★ v9.0
-      mouvCote:     (j['mouvCote']     as num?)?.toDouble() ?? 0.06, // ★ v9.92
-      placeDepart:  (j['placeDepart']  as num?)?.toDouble() ?? 0.03, // ★ v9.93
-      nbMisesAJour: (j['nbMisesAJour'] as int?) ?? 0,
-      calibrationScore: (j['calibrationScore'] as num?)?.toDouble() ?? 50.0,
+      forme:        _lirePoids(j, 'forme',        0.25, anomalies),
+      gains:        _lirePoids(j, 'gains',        0.13, anomalies),
+      record:       _lirePoids(j, 'record',       0.10, anomalies),
+      cote:         _lirePoids(j, 'cote',         0.08, anomalies),
+      constance:    _lirePoids(j, 'constance',    0.09, anomalies),
+      victoires:    _lirePoids(j, 'victoires',    0.04, anomalies),
+      discipline:   _lirePoids(j, 'discipline',   0.02, anomalies),
+      distSpec:     _lirePoids(j, 'distSpec',     0.08, anomalies),
+      jockey:       _lirePoids(j, 'jockey',       0.07, anomalies),
+      repos:        _lirePoids(j, 'repos',        0.03, anomalies),
+      hippo:        _lirePoids(j, 'hippo',        0.04, anomalies),
+      entraineur:   _lirePoids(j, 'entraineur',   0.04, anomalies), // ★ v8.0
+      elo:          _lirePoids(j, 'elo',          0.05, anomalies), // ★ v8.0
+      terrain:      _lirePoids(j, 'terrain',      0.05, anomalies), // ★ v9.0
+      divergence:   _lirePoids(j, 'divergence',   0.04, anomalies), // ★ v9.0
+      poidsRel:     _lirePoids(j, 'poidsRel',     0.03, anomalies), // ★ v9.0
+      progression:  _lirePoids(j, 'progression',  0.03, anomalies), // ★ v9.0
+      mouvCote:     _lirePoids(j, 'mouvCote',     0.06, anomalies), // ★ v9.92
+      placeDepart:  _lirePoids(j, 'placeDepart',  0.03, anomalies), // ★ v9.93
+      nbMisesAJour: _lireEntier(j, 'nbMisesAJour', anomalies),
+      calibrationScore: _lireDoubleBrut(j, 'calibrationScore', 50.0, anomalies),
       poidsParDiscipline: ppd,
-      dernierGradient: (j['dernierGradient'] as Map<String, dynamic>? ?? {})
-          .map((k, v) => MapEntry(k, (v as num?)?.toDouble() ?? 0.0)),
-      poidsIndices: j['poidsIndices'] != null
-          ? PoidsIndices.fromJson(j['poidsIndices'] as Map<String, dynamic>)
-          : null,
-      correlations: (j['correlations'] as Map<String, dynamic>? ?? {}) // ★ v9.92
-          .map((k, v) => MapEntry(k, (v as num?)?.toDouble() ?? 0.0)),
+      dernierGradient: _lireMapDoubles(j, 'dernierGradient', anomalies),
+      poidsIndices: indices,
+      correlations: _lireMapDoubles(j, 'correlations', anomalies), // ★ v9.92
     );
   }
 

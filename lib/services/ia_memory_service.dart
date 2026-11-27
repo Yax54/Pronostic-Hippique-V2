@@ -192,6 +192,15 @@ class IaMemoryService extends ChangeNotifier {
   // ★ Seuils de confiance adaptatifs (l'IA les ajuste elle-même après chaque analyse)
   SeuilsConfianceAdaptatifs _seuils = SeuilsConfianceAdaptatifs();
   IaPoidsAdaptatifs _poids = IaPoidsAdaptatifs.defaut();
+  // ★★ BL1-A23 (27/11/2026) — D-3 : trace des anomalies rencontrées lors de la
+  //    restauration des poids. Vide si aucune. N'influence AUCUNE décision :
+  //    elle sert uniquement à rendre une récupération partielle observable
+  //    (jamais muette), conformément à l'exigence de traçabilité.
+  List<String> _poidsDeserialisesAvecAnomalies = <String>[];
+
+  /// Trace lisible de la dernière restauration des poids (diagnostic).
+  List<String> get anomaliesRestaurationPoids =>
+      List<String>.unmodifiable(_poidsDeserialisesAvecAnomalies);
   bool _loaded = false;
   Completer<void>? _loadCompleter; // ★ v9.90 : évite le double chargement concurrent
 
@@ -2310,8 +2319,55 @@ class IaMemoryService extends ChangeNotifier {
 
       final poidsStr = prefs.getString(_poidsKey);
       if (poidsStr != null) {
-        _poids = IaPoidsAdaptatifs.fromJson(
-            json.decode(poidsStr) as Map<String, dynamic>);
+        // ★★ BL1-A23 (27/11/2026) — D-3 : UN BLOB DE POIDS ILLISIBLE NE DOIT
+        //   PLUS FAIRE TOMBER TOUT LE CHARGEMENT.
+        //   MESURE AVANT : cet appel était nu. `json.decode` sur un texte
+        //   tronqué, ou un `TypeError` dans `fromJson`, remontait jusqu'au
+        //   `catch` global de `_load()` — et TOUT ce qui suit dans ce bloc
+        //   (pronostics compressés, seuils, archives, stats labels, ELO…)
+        //   n'était jamais lu. Une seule valeur corrompue effaçait donc
+        //   silencieusement des données valides.
+        //   DÉSORMAIS : l'échec est CONFINÉ aux poids. Le service garde la table
+        //   construite par défaut (`IaPoidsAdaptatifs()`), donc l'application
+        //   démarre ; le motif est TRACÉ, et rien n'est réécrit sur disque ici
+        //   (aucun `_save()` n'est déclenché, aucune valeur n'est fabriquée).
+        //   ⚠️ Le blob fautif n'est PAS supprimé : il reste récupérable pour
+        //      analyse. Aucun remplacement silencieux de la table entière.
+        try {
+          final decoded = json.decode(poidsStr);
+          if (decoded is Map<String, dynamic>) {
+            _poids = IaPoidsAdaptatifs.fromJson(decoded);
+            final anomalies =
+                IaPoidsAdaptatifs.dernieresAnomaliesDeserialisation;
+            if (anomalies.isNotEmpty) {
+              _poidsDeserialisesAvecAnomalies = List<String>.from(anomalies);
+              if (kDebugMode) {
+                debugPrint('[IaMemory] ⚠️ Poids restaurés avec '
+                    '${anomalies.length} anomalie(s) — les valeurs valides '
+                    'ont été conservées :');
+                for (final a in anomalies) {
+                  debugPrint('[IaMemory]    • $a');
+                }
+              }
+            }
+          } else {
+            _poidsDeserialisesAvecAnomalies = <String>[
+              'blob de poids: type ${decoded.runtimeType} au lieu de Map '
+                  '→ table par défaut conservée'
+            ];
+            if (kDebugMode) {
+              debugPrint('[IaMemory] ⚠️ ${_poidsDeserialisesAvecAnomalies.last}');
+            }
+          }
+        } catch (e) {
+          _poidsDeserialisesAvecAnomalies = <String>[
+            'blob de poids illisible ($e) → table par défaut conservée, '
+                'blob laissé intact sur disque'
+          ];
+          if (kDebugMode) {
+            debugPrint('[IaMemory] ⚠️ ${_poidsDeserialisesAvecAnomalies.last}');
+          }
+        }
       }
 
       // ★ Lot 4 : Tenter de charger la version compressée en premier
@@ -6014,12 +6070,20 @@ class IaMemoryService extends ChangeNotifier {
         //   bloc s'exécute dès qu'un label a des stats fiables.
         //   ⚠️ SEULES LES BORNES BASSES CHANGENT (0,01 → 0,005). Les bornes
         //      HAUTES sont INCHANGÉES : aucun plafond n'est modifié (§3).
-        //   ⚠️ INCOHÉRENCE PRÉEXISTANTE SIGNALÉE, NON CORRIGÉE : pour
-        //      `divergence`, cette piste autorise 0,10 en HAUT alors que
-        //      `clamp()` plafonne à 0,08. Ce n'est pas un plancher ; ce n'est
-        //      donc pas couvert par l'autorisation §2. → ARBITRAGE REQUIS.
+        //   ★★ BL1-A22 (27/11/2026) — D-2 RÉSOLU ICI : PLAFOND `divergence`
+        //      0,10 → 0,08. C'était la TROISIÈME définition du même plafond,
+        //      et c'est bien le MÊME critère et la MÊME contrainte métier que
+        //      dans `clamp()` : les trois sites bornent la même pondération
+        //      `divergence` du même modèle `IaPoidsAdaptatifs`, entre le même
+        //      plancher 0,005 et un plafond. Vérifié dans le code : ce n'est
+        //      ni une piste distincte, ni un besoin fonctionnel différent —
+        //      c'était une copie divergente. La valeur de référence retenue
+        //      par l'utilisateur est 0,08. Les TROIS autres plafonds de ce
+        //      bloc (terrain 0,10 · progression 0,08 · poidsRel 0,07) sont
+        //      INCHANGÉS et déjà identiques à `bornesIndividuelles()`.
+        //   ⚠️ `placeDepart` reste à 0,07 : le passage à 0,30 est REFUSÉ (§7).
         switch (critere) {
-          case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.005, 0.10); break;
+          case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.005, 0.08); break;
           case 'terrain':     _poids.terrain     = (_poids.terrain     + delta).clamp(0.005, 0.10); break;
           case 'progression': _poids.progression = (_poids.progression + delta).clamp(0.005, 0.08); break;
           case 'poidsRel':    _poids.poidsRel    = (_poids.poidsRel    + delta).clamp(0.005, 0.07); break;
