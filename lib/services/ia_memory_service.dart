@@ -6001,14 +6001,28 @@ class IaMemoryService extends ChangeNotifier {
         if (!stats.estFiable) continue;
         final critere = StatsParLabel.criterePourLabel(stats.label);
         if (critere == null) continue;
-        // Gradient doux : si performance du label > 40% → légère augmentation du poids
+        // Perf du label > 40% → légère augmentation du poids
         final perf = stats.scorePerformanceLabel;
         final delta = (perf - 40.0) / 1000.0; // très doux, max ±0.05
+        //
+        // ★★ BL1-A21 (27/11/2026) — DÉFINITION #3 SUR 3 : PLANCHERS ABAISSÉS À 0,005.
+        //   AUTORISÉ PAR L'UTILISATEUR (§2), « y compris leurs éventuelles
+        //   définitions dupliquées ». Ce site est la TROISIÈME définition des
+        //   mêmes planchers, et il est RÉELLEMENT ATTEINT EN PRODUCTION :
+        //   `_mettreAJourPrecisionIA` est appelée SANS `apprendre: false`
+        //   (`ia_memory_service.dart:5240`, valeur par défaut `true`), donc ce
+        //   bloc s'exécute dès qu'un label a des stats fiables.
+        //   ⚠️ SEULES LES BORNES BASSES CHANGENT (0,01 → 0,005). Les bornes
+        //      HAUTES sont INCHANGÉES : aucun plafond n'est modifié (§3).
+        //   ⚠️ INCOHÉRENCE PRÉEXISTANTE SIGNALÉE, NON CORRIGÉE : pour
+        //      `divergence`, cette piste autorise 0,10 en HAUT alors que
+        //      `clamp()` plafonne à 0,08. Ce n'est pas un plancher ; ce n'est
+        //      donc pas couvert par l'autorisation §2. → ARBITRAGE REQUIS.
         switch (critere) {
-          case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.01, 0.10); break;
-          case 'terrain':     _poids.terrain     = (_poids.terrain     + delta).clamp(0.01, 0.10); break;
-          case 'progression': _poids.progression = (_poids.progression + delta).clamp(0.01, 0.08); break;
-          case 'poidsRel':    _poids.poidsRel    = (_poids.poidsRel    + delta).clamp(0.01, 0.07); break;
+          case 'divergence':  _poids.divergence  = (_poids.divergence  + delta).clamp(0.005, 0.10); break;
+          case 'terrain':     _poids.terrain     = (_poids.terrain     + delta).clamp(0.005, 0.10); break;
+          case 'progression': _poids.progression = (_poids.progression + delta).clamp(0.005, 0.08); break;
+          case 'poidsRel':    _poids.poidsRel    = (_poids.poidsRel    + delta).clamp(0.005, 0.07); break;
         }
       }
       if (_statsLabels.values.any((s) => s.estFiable && StatsParLabel.criterePourLabel(s.label) != null)) {

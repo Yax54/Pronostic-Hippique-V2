@@ -73,7 +73,13 @@ void main() {
       }
       // ignore: avoid_print
       print('  SOMME = ${_fmt(_somme(v.values))}');
-      expect(_somme(v.values), closeTo(1.37, 1e-12));
+      // ★ MISE À JOUR 27/11/2026 — CORRECTION §1 APPLIQUÉE.
+      //   MESURE AVANT correction : 1.370000000000 (replis 0,32 / 0,15 / 0,12).
+      //   MESURE APRÈS correction : 1.260000000000 (replis 0,25 / 0,13 / 0,10),
+      //   soit exactement la somme du constructeur et de `.defauts`.
+      //   L'assertion qui verrouillait 1,37 était le CONSTAT d'un défaut ;
+      //   le défaut est corrigé, donc l'assertion suit la mesure.
+      expect(_somme(v.values), closeTo(1.26, 1e-12));
     });
 
     test('M1.4 — Famille #4 : repli clampDiscipline sur map VIDE', () {
@@ -152,7 +158,9 @@ void main() {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  group('M3 — Atteignabilité du repli fromJson (0.32 / 0.15 / 0.12)', () {
+  // ★ 27/11/2026 — les replis étaient 0,32 / 0,15 / 0,12 ; ils valent désormais
+  //   0,25 / 0,13 / 0,10 (correction §1) et sont IDENTIQUES au constructeur.
+  group('M3 — Atteignabilité du repli fromJson (0.25 / 0.13 / 0.10)', () {
     test('M3.1 — Un JSON COMPLET issu de toJson() ne déclenche AUCUN repli', () {
       final source = IaPoidsAdaptatifs();
       final json = source.toJson();
@@ -182,16 +190,18 @@ void main() {
       // ignore: avoid_print
       print('── JSON amputé de forme/gains/record ──');
       // ignore: avoid_print
-      print('  forme  = ${_fmt(v["forme"]!)}  (repli 0.32 ?)');
+      print('  forme  = ${_fmt(v["forme"]!)}  (repli 0.25 — était 0.32)');
       // ignore: avoid_print
-      print('  gains  = ${_fmt(v["gains"]!)}  (repli 0.15 ?)');
+      print('  gains  = ${_fmt(v["gains"]!)}  (repli 0.13 — était 0.15)');
       // ignore: avoid_print
-      print('  record = ${_fmt(v["record"]!)}  (repli 0.12 ?)');
+      print('  record = ${_fmt(v["record"]!)}  (repli 0.10 — était 0.12)');
       // ignore: avoid_print
       print('  SOMME  = ${_fmt(_somme(v.values))}');
-      expect(v['forme'], closeTo(0.32, 1e-12));
-      expect(v['gains'], closeTo(0.15, 1e-12));
-      expect(v['record'], closeTo(0.12, 1e-12));
+      // ★ CORRECTION §1 : replis harmonisés sur le constructeur.
+      //   Les valeurs ne divergent plus ; le test mesure l'ABSENCE de divergence.
+      expect(v['forme'], closeTo(0.25, 1e-12));
+      expect(v['gains'], closeTo(0.13, 1e-12));
+      expect(v['record'], closeTo(0.10, 1e-12));
     });
 
     test('M3.3 — Effet réel d\'un repli sur les poids EFFECTIFS du moteur', () {
@@ -220,8 +230,15 @@ void main() {
       // ignore: avoid_print
       print('→ somme normale = ${_fmt(_somme(normal.values))} / '
           'somme repliee = ${_fmt(_somme(replie.values))}');
-      expect(deltaForme, greaterThan(0.0),
-          reason: 'le repli doit réellement changer le poids de forme');
+      // ★ CORRECTION §1 — CE QUE CE TEST PROUVE DÉSORMAIS.
+      //   AVANT : Δ forme = +0,07 (0,32 au lieu de 0,25), donc le repli
+      //   changeait réellement le poids, et gonflait aussi la SOMME de +0,11.
+      //   APRÈS : Δ forme = 0,000000000000. Le repli ne diverge plus du
+      //   constructeur, ce qui est l'objectif même de la correction §1.
+      //   On inverse donc l'assertion : elle vérifie l'ABSENCE d'écart.
+      expect(deltaForme.abs(), lessThan(1e-12),
+          reason: 'après harmonisation, le repli ne doit PLUS dévier du '
+              'constructeur (avant correction, Δ valait +0,07)');
     });
   });
 
@@ -436,11 +453,14 @@ void main() {
       const bornes = <String, List<double>>{
         'forme': [0.05, 0.55], 'gains': [0.04, 0.40], 'record': [0.03, 0.35],
         'cote': [0.05, 0.40], 'constance': [0.03, 0.25], 'victoires': [0.01, 0.15],
-        'discipline': [0.01, 0.10], 'distSpec': [0.03, 0.18], 'jockey': [0.02, 0.15],
-        'repos': [0.01, 0.08], 'hippo': [0.01, 0.10], 'entraineur': [0.01, 0.08],
-        'elo': [0.01, 0.10], 'terrain': [0.01, 0.10], 'divergence': [0.01, 0.08],
-        'poidsRel': [0.01, 0.07], 'progression': [0.01, 0.08],
-        'mouvCote': [0.02, 0.12], 'placeDepart': [0.01, 0.07],
+        // ★ 27/11/2026 — CORRECTION §2 : planchers enrichis abaissés à 0,005.
+        //   AVANT : distSpec 0,03 / jockey 0,02 / mouvCote 0,02 / 9 × 0,01.
+        //   PLAFONDS INCHANGÉS (la modification de plafond a été refusée).
+        'discipline': [0.01, 0.10], 'distSpec': [0.005, 0.18], 'jockey': [0.005, 0.15],
+        'repos': [0.005, 0.08], 'hippo': [0.005, 0.10], 'entraineur': [0.005, 0.08],
+        'elo': [0.005, 0.10], 'terrain': [0.005, 0.10], 'divergence': [0.005, 0.08],
+        'poidsRel': [0.005, 0.07], 'progression': [0.005, 0.08],
+        'mouvCote': [0.005, 0.12], 'placeDepart': [0.005, 0.07],
       };
       // ignore: avoid_print
       print('critère        | départ | min  | max  | marge basse | marge haute | ratio');

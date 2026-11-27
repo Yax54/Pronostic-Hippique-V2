@@ -735,19 +735,41 @@ class IaPoidsAdaptatifs {
     constance  = constance.clamp(0.03, 0.25);
     victoires  = victoires.clamp(0.01, 0.15);
     discipline = discipline.clamp(0.01, 0.10);
-    // Critères enrichis avec limites plus resserrées
-    distSpec   = distSpec.clamp(0.03, 0.18);
-    jockey     = jockey.clamp(0.02, 0.15);
-    repos      = repos.clamp(0.01, 0.08);
-    hippo        = hippo.clamp(0.01, 0.10);
-    entraineur   = entraineur.clamp(0.01, 0.08); // ★ v8.0
-    elo          = elo.clamp(0.01, 0.10);         // ★ v8.0
-    terrain      = terrain.clamp(0.01, 0.10);     // ★ v9.0
-    divergence   = divergence.clamp(0.01, 0.08);  // ★ v9.0
-    poidsRel     = poidsRel.clamp(0.01, 0.07);    // ★ v9.0
-    progression  = progression.clamp(0.01, 0.08); // ★ v9.0
-    mouvCote     = mouvCote.clamp(0.02, 0.12);    // ★ v9.93
-    placeDepart  = placeDepart.clamp(0.01, 0.07); // ★ v9.93
+    // ★★ BL1-A21 (27/11/2026) — PLANCHERS INDIVIDUELS ENRICHIS ABAISSÉS À 0,005.
+    //   AUTORISÉ PAR L'UTILISATEUR (§2), SOUS CONDITIONS. DÉFINITION #1 sur 2.
+    //   ⚠️ SEULS LES PLANCHERS CHANGENT. Les 12 PLAFONDS sont INCHANGÉS.
+    //
+    //   MESURE AVANT (valeurs exactes, elles n'étaient PAS toutes égales à 0,01) :
+    //     distSpec 0,03 · jockey 0,02 · repos 0,01 · hippo 0,01 · entraineur 0,01
+    //     elo 0,01 · terrain 0,01 · divergence 0,01 · poidsRel 0,01
+    //     progression 0,01 · mouvCote 0,02 · placeDepart 0,01
+    //     → Σ = 0,160 (et non 0,12 : trois planchers étaient plus hauts que 0,01)
+    //   MESURE APRÈS : 12 × 0,005 = Σ 0,060.
+    //   EFFET ATTORNEYÉ SUR LA MARGE : plancher collectif enrichi = 0,18
+    //     AVANT : 0,18 − 0,160 = marge 0,020 (2,0 points de liberté de répartition)
+    //     APRÈS : 0,18 − 0,060 = marge 0,120 (12,0 points) → ×6
+    //   ⚠️ CE N'EST PAS UNE AMÉLIORATION DE PRÉCISION HIPPIQUE PROUVÉE. C'est une
+    //      augmentation de la LIBERTÉ MATHÉMATIQUE laissée au gradient. Le bénéfice
+    //      réel devra être mesuré par le protocole prospectif (§8), pas déduit.
+    //   ⚠️ AUCUN CRITÈRE N'EST DÉSACTIVÉ : 0,005 > 0. Un critère neutralisé
+    //      (gradient ≈ 0 prolongé) descend jusqu'à 0,005, y reste, et peut
+    //      REMONTER dès que le gradient redevient discriminant — vérifié par
+    //      `G3.1`/`G2.3` de `test/audit/poids_contraintes_test.dart`.
+    //   ⚠️ AUCUN EFFET RÉTROACTIF : `clamp()` n'est appliqué QU'EN SORTIE de
+    //      gradient descent (`ia_memory_service.dart:4093`), jamais par `fromJson`.
+    //      Une pondération historique sauvegardée est donc restituée intacte.
+    distSpec   = distSpec.clamp(0.005, 0.18);
+    jockey     = jockey.clamp(0.005, 0.15);
+    repos      = repos.clamp(0.005, 0.08);
+    hippo        = hippo.clamp(0.005, 0.10);
+    entraineur   = entraineur.clamp(0.005, 0.08);  // ★ v8.0
+    elo          = elo.clamp(0.005, 0.10);         // ★ v8.0
+    terrain      = terrain.clamp(0.005, 0.10);     // ★ v9.0
+    divergence   = divergence.clamp(0.005, 0.08);  // ★ v9.0
+    poidsRel     = poidsRel.clamp(0.005, 0.07);    // ★ v9.0
+    progression  = progression.clamp(0.005, 0.08); // ★ v9.0
+    mouvCote     = mouvCote.clamp(0.005, 0.12);    // ★ v9.93
+    placeDepart  = placeDepart.clamp(0.005, 0.07); // ★ v9.93
     normaliser();
     // Normaliser aussi les poids par discipline
     for (final key in poidsParDiscipline.keys) {
@@ -790,18 +812,24 @@ class IaPoidsAdaptatifs {
     poids['victoires']  = (poids['victoires'] ?? 0.05).clamp(0.01, 0.15);
     poids['discipline'] = (poids['discipline']?? 0.03).clamp(0.01, 0.10);
     // ★ v5.0 : critères enrichis inclus dans le clamp discipline
-    poids['distSpec']   = (poids['distSpec']  ?? 0.08).clamp(0.03, 0.18);
-    poids['jockey']     = (poids['jockey']    ?? 0.07).clamp(0.02, 0.15);
-    poids['repos']      = (poids['repos']     ?? 0.03).clamp(0.01, 0.08);
-    poids['hippo']      = (poids['hippo']     ?? 0.04).clamp(0.01, 0.10); // ★ v7.0
-    poids['entraineur'] = (poids['entraineur']?? 0.04).clamp(0.01, 0.08); // ★ v8.0
-    poids['elo']        = (poids['elo']       ?? 0.05).clamp(0.01, 0.10); // ★ v8.0
-    poids['terrain']    = (poids['terrain']   ?? 0.05).clamp(0.01, 0.10); // ★ v9.0
-    poids['divergence'] = (poids['divergence']?? 0.04).clamp(0.01, 0.08); // ★ v9.0
-    poids['poidsRel']   = (poids['poidsRel']  ?? 0.03).clamp(0.01, 0.07); // ★ v9.0
-    poids['progression']= (poids['progression']??0.03).clamp(0.01, 0.08); // ★ v9.0
-    poids['mouvCote']   = (poids['mouvCote']   ??0.06).clamp(0.02, 0.12); // ★ v9.93
-    poids['placeDepart']= (poids['placeDepart']??0.03).clamp(0.01, 0.07); // ★ v9.93
+    // *** BL1-A21 — DÉFINITION #2 SUR 2 (duplicata de `clamp()`) ***
+    //   Planchers enrichis abaissés à 0,005, plafonds INCHANGÉS. Voir le
+    //   commentaire de `clamp()` pour la justification et les réserves.
+    //   ⚠️ Une 3e occurrence de ces planchers existe dans `ia_memory_service.dart`
+    //      (:6008-6011, piste « stats par label ») : elle n'est PAS modifiée ici
+    //      et est soumise à arbitrage — voir §4 du rapport consolidé.
+    poids['distSpec']   = (poids['distSpec']  ?? 0.08).clamp(0.005, 0.18);
+    poids['jockey']     = (poids['jockey']    ?? 0.07).clamp(0.005, 0.15);
+    poids['repos']      = (poids['repos']     ?? 0.03).clamp(0.005, 0.08);
+    poids['hippo']      = (poids['hippo']     ?? 0.04).clamp(0.005, 0.10); // ★ v7.0
+    poids['entraineur'] = (poids['entraineur']?? 0.04).clamp(0.005, 0.08); // ★ v8.0
+    poids['elo']        = (poids['elo']       ?? 0.05).clamp(0.005, 0.10); // ★ v8.0
+    poids['terrain']    = (poids['terrain']   ?? 0.05).clamp(0.005, 0.10); // ★ v9.0
+    poids['divergence'] = (poids['divergence']?? 0.04).clamp(0.005, 0.08); // ★ v9.0
+    poids['poidsRel']   = (poids['poidsRel']  ?? 0.03).clamp(0.005, 0.07); // ★ v9.0
+    poids['progression']= (poids['progression']??0.03).clamp(0.005, 0.08); // ★ v9.0
+    poids['mouvCote']   = (poids['mouvCote']   ??0.06).clamp(0.005, 0.12); // ★ v9.93
+    poids['placeDepart']= (poids['placeDepart']??0.03).clamp(0.005, 0.07); // ★ v9.93
     // Normaliser sur les 19 critères
     final total = poids.values.fold(0.0, (a, b) => a + b);
     if (total > 0) {
@@ -842,10 +870,38 @@ class IaPoidsAdaptatifs {
         ppd[entry.key] = inner.map((k, v) => MapEntry(k, (v as num).toDouble()));
       } catch (_) {}
     }
+    // ★ BL1-A20 (27/11/2026) — HARMONISATION DES TROIS REPLIS, AUTORISÉE.
+    //   MESURE AVANT : les replis de `fromJson` valaient forme 0,32 / gains 0,15 /
+    //   record 0,12 alors que le constructeur (`:592-594`) et `.defauts` (`:943-951`)
+    //   valent forme 0,25 / gains 0,13 / record 0,10. Trois divergences :
+    //   +0,07 +0,02 +0,02 = 0,11 EXACTEMENT (1,37 - 1,26 = 0,11).
+    //   CONSÉQUENCE MESURÉE AVANT CORRECTION : un JSON partiel ou absent produisait
+    //   une table de somme 1,370000000000 au lieu de 1,260000000000, soit +8,7 % sur
+    //   TOUS les scores pondérés (le score est une somme pondérée non divisée).
+    //   MESURE APRÈS : `fromJson({})` = 1,260000000000, identique au constructeur.
+    //   ⚠️ PORTÉE STRICTE : ces constantes ne s'appliquent QUE si la clé est
+    //      réellement ABSENTE (ou explicitement `null`) dans le JSON. Toute
+    //      valeur numérique présente est reprise telle quelle, sans arrondi ni
+    //      normalisation : aucune pondération authentique, aucune pondération
+    //      historique apprise n'est touchée. Vérifié par
+    //      `test/audit/poids_harmonisation_replis_test.dart` (JSON complet,
+    //      ancienne sauvegarde 28/05, sauvegarde apprise 13/11, aller-retour).
+    //   ⚠️ CORRECTION D'UNE AFFIRMATION FAUSSE QUE J'AVAIS ÉCRITE ICI : j'avais
+    //      annoncé que le repli s'appliquait aussi « si la valeur est non
+    //      numérique ». C'EST FAUX, ET C'EST MESURÉ : `(j['forme'] as num?)`
+    //      ne renvoie null que si la valeur est absente ou `null`. Sur une
+    //      `String`, le cast LÈVE `TypeError: type 'String' is not a subtype of
+    //      type 'num?'` et `fromJson` échoue entièrement. Test S1.4.
+    //      ⇒ Un JSON corrompu (valeur texte) n'est PAS toléré, ni avant ni
+    //        après cette correction. C'est un comportement PRÉEXISTANT,
+    //        inchangé ici, et signalé pour arbitrage (§4 du rapport) plutôt
+    //        que corrigé sans autorisation.
+    //   ⚠️ `fromJson` n'appelle PAS `clamp()` — c'est volontaire et inchangé :
+    //      une table sauvegardée doit être restituée à l'identique.
     return IaPoidsAdaptatifs(
-      forme:        (j['forme']       as num?)?.toDouble() ?? 0.32,
-      gains:        (j['gains']       as num?)?.toDouble() ?? 0.15,
-      record:       (j['record']      as num?)?.toDouble() ?? 0.12,
+      forme:        (j['forme']       as num?)?.toDouble() ?? 0.25,
+      gains:        (j['gains']       as num?)?.toDouble() ?? 0.13,
+      record:       (j['record']      as num?)?.toDouble() ?? 0.10,
       cote:         (j['cote']        as num?)?.toDouble() ?? 0.08,
       constance:    (j['constance']   as num?)?.toDouble() ?? 0.09,
       victoires:    (j['victoires']   as num?)?.toDouble() ?? 0.04,

@@ -2,9 +2,36 @@
 
 **Projet** : Pronostic-Hippique-V2 / « Race Predictor »
 **Portée** : arbitrage final sur les pondérations des 19 critères.
-**Aucune modification de production.**
+
+> ## ⚠️ CE RAPPORT A ÉTÉ RÉVISÉ LE 27/11/2026 — LIRE CETTE SECTION D'ABORD
+>
+> La version initiale de ce document affirmait « **Aucune modification de
+> production** ». **CETTE PHRASE N'EST PLUS VRAIE** depuis l'arbitrage du
+> 27/11/2026, qui a **autorisé deux corrections** (§1 harmonisation de trois
+> replis, §2 abaissement de douze planchers).
+>
+> **État exact au 27/11/2026** :
+> - `lib/services/ia_memory_models.dart` — **MODIFIÉ** (corrections §1 et §2)
+> - `lib/services/ia_memory_service.dart` — **MODIFIÉ** (§2, 3ᵉ définition
+>   dupliquée des planchers, réellement atteinte en production)
+> - Les sections **§0 à §10 ci-dessous** sont l'**état des mesures AVANT**
+>   corrections. Elles restent exactes comme *constat*, et sont conservées
+>   telles quelles pour la traçabilité. **Ne pas les lire comme l'état actuel.**
+> - L'**état APRÈS corrections** est décrit dans la section
+>   **« §11 — CORRECTIONS APPLIQUÉES »**, ajoutée en fin de document. C'est
+>   elle qui fait foi pour l'état du code aujourd'hui.
+>
+> **Ce qui n'a PAS changé** : poids initiaux, gradient descent (lrBase 0,08,
+> momentum 0,3, facteurs par critère), contraintes collectives 0,18 / 0,40,
+> tous les **plafonds** individuels (la proposition `placeDepart` 0,07 → 0,30
+> a été **REFUSÉE**), seuils, calibration, TOP3 Learning, ELO, mécanismes
+> financiers PMU, `_normaliserScores`, `_determinerLabel`.
+>
+> **Ce chantier n'est PAS clos** : trois décisions restent ouvertes (§11.6).
+
 **Branche** : `main`. Commit de base `b3a0107`, mesures `cd788bc`, rapport
-précédent `7186445`.
+précédent `7186445`, arbitrage final `d8e638b`, **corrections appliquées =
+commit indiqué au §11.9**.
 **Aucun push GitHub. Aucun APK. Aucun reset. Aucun recalcul historique.**
 
 ---
@@ -1030,3 +1057,492 @@ historique. Aucun reset. Aucune sauvegarde modifiée. Aucune donnée fabriquée.
    ne rend rien **efficace**.
 8. **Aucune valeur proposée n'est optimale.** 0,005 est une valeur **graduée et
    prudente**, justifiée comme amélioration mesurée, pas comme optimum.
+
+---
+
+# §11 — CORRECTIONS APPLIQUÉES (27/11/2026)
+
+Cette section est le **rapport consolidé unique** demandé au §9 de l'arbitrage.
+Elle décrit l'état du code **après** corrections. Les §0 à §10 décrivent l'état
+**avant** et sont conservés comme constat historique.
+
+## 11.1 — Modifications exactes effectuées
+
+### A. §1 — Harmonisation des trois replis `fromJson`
+
+**Fichier** : `lib/services/ia_memory_models.dart`, factory `fromJson`.
+
+| Clé | Avant | Après | Écart supprimé |
+|---|---|---|---|
+| `forme` | `?? 0.32` | `?? 0.25` | −0,07 |
+| `gains` | `?? 0.15` | `?? 0.13` | −0,02 |
+| `record` | `?? 0.12` | `?? 0.10` | −0,02 |
+| **Total** | **1,37** | **1,26** | **−0,11** |
+
+Les **16 autres replis sont inchangés** (vérifié par `S1.9`).
+
+**Portée stricte du changement** — elle a été mesurée, pas supposée :
+
+| Cas | Comportement |
+|---|---|
+| Clé absente du JSON | repli appliqué (0,25 / 0,13 / 0,10) |
+| Clé présente à `null` | repli appliqué |
+| Clé présente numérique | **valeur reprise telle quelle**, aucun arrondi |
+| Clé présente non numérique (`String`) | **`TypeError`** — le repli n'est PAS appliqué |
+
+> ⚠️ **Correction d'une affirmation que j'avais écrite dans le code.**
+> J'avais commenté que le repli jouait « aussi si la valeur est non numérique ».
+> **C'est faux, et c'est mesuré** (`S1.4`) : `(j['forme'] as num?)` ne renvoie
+> `null` que sur absence ou `null` explicite ; sur une `String`, le cast lève
+> `type 'String' is not a subtype of type 'num?'` et `fromJson` échoue
+> **entièrement**. Un JSON corrompu n'est donc **pas** toléré — ni avant, ni
+> après cette correction. Comportement **préexistant, laissé inchangé**, et
+> signalé pour arbitrage (§11.6, décision D-3) plutôt que corrigé sans
+> autorisation.
+
+### B. §2 — Abaissement des douze planchers individuels enrichis
+
+Les **douze** planchers passent à **0,005**. Les valeurs de départ n'étaient
+**pas** toutes égales à 0,01 — c'était le point d'attention de l'utilisateur, et
+il était fondé :
+
+| Critère | Plancher avant | Plancher après | Plafond (inchangé) |
+|---|---|---|---|
+| `distSpec` | **0,03** | 0,005 | 0,18 |
+| `jockey` | **0,02** | 0,005 | 0,15 |
+| `mouvCote` | **0,02** | 0,005 | 0,12 |
+| `repos` | 0,01 | 0,005 | 0,08 |
+| `hippo` | 0,01 | 0,005 | 0,10 |
+| `entraineur` | 0,01 | 0,005 | 0,08 |
+| `elo` | 0,01 | 0,005 | 0,10 |
+| `terrain` | 0,01 | 0,005 | 0,10 |
+| `divergence` | 0,01 | 0,005 | 0,08 |
+| `poidsRel` | 0,01 | 0,005 | 0,07 |
+| `progression` | 0,01 | 0,005 | 0,08 |
+| `placeDepart` | 0,01 | 0,005 | 0,07 |
+| **Σ** | **0,160** | **0,060** | 1,210 |
+
+**Trois définitions dupliquées** — et il y en avait **trois**, pas deux :
+
+| # | Emplacement | Rôle | Traitement |
+|---|---|---|---|
+| 1 | `ia_memory_models.dart` `clamp()` | sortie standard du gradient | **modifiée** |
+| 2 | `ia_memory_models.dart` `clampDiscipline()` | sortie par discipline | **modifiée** |
+| 3 | `ia_memory_service.dart` `_mettreAJourPrecisionIA()` | piste « stats par label », 4 critères (`divergence`, `terrain`, `progression`, `poidsRel`) | **modifiée** |
+
+La définition #3 est **réellement atteinte en production** : `_mettreAJourPrecisionIA`
+est appelée sans `apprendre: false` en `ia_memory_service.dart:5240`, donc avec
+la valeur par défaut `true`. La laisser à 0,01 aurait rendu la correction **non
+uniforme** — exactement ce que l'utilisateur voulait éviter en parlant de
+« définitions dupliquées ».
+
+**Effet sur la marge de répartition** :
+
+| Grandeur | Avant | Après |
+|---|---|---|
+| Σ planchers enrichis | 0,160 | **0,060** |
+| Plancher collectif enrichi | 0,18 | 0,18 |
+| **Marge de liberté** | **0,020** | **0,120** (×6) |
+
+> **Ce que cela NE prouve PAS** : aucune amélioration de la précision hippique.
+> C'est une augmentation de liberté mathématique laissée au gradient. Le §8 du
+> protocole prospectif reste la seule voie de mesure du bénéfice réel.
+
+### C. Ce qui n'a PAS été modifié
+
+- Poids initiaux : 19/19 identiques (vérifié `S2.8`).
+- Plafonds individuels : 19/19 identiques (vérifié `S2.4`). **La proposition
+  `placeDepart` 0,07 → 0,30 a été refusée et n'a pas été appliquée.**
+- Contraintes collectives `clamp(0.18, 0.40)` : intactes (vérifié `S2.8`, `T7d`).
+- Gradient descent : `lrBase 0.08`, `momentumFactor 0.3`, tous les facteurs par
+  critère — intacts (vérifié `T7d`).
+- Seuils, calibration, TOP3 Learning, ELO, mécanismes PMU : intacts.
+- `_normaliserScores`, `_determinerLabel` : intacts.
+- Sauvegardes originales : non touchées (lecture seule).
+
+## 11.2 — Résultats des tests
+
+**110 tests verts, 0 échec.** `flutter analyze lib/ test/` → `No issues found!`
+
+| Harnais | Tests | État |
+|---|---|---|
+| `audit_poids_familles_test.dart` | 20 | ✅ (3 assertions mises à jour, voir 11.3) |
+| `audit_poids_mecanique_test.dart` | 7 | ✅ |
+| `audit_poids_disciplines_test.dart` | 6 | ✅ |
+| `audit_poids_comparaison_test.dart` | 4 | ✅ |
+| `poids_plage_atteignable_test.dart` | 12 | ✅ |
+| `poids_echelle_test.dart` | 3 | ✅ |
+| `poids_limite_structurelle_test.dart` | 4 | ✅ |
+| `poids_comparaisons_reelles_test.dart` | 4 | ✅ |
+| `poids_contraintes_test.dart` | 12 | ✅ |
+| `poids_echelle_consommateurs_test.dart` | 6 | ✅ (1 assertion mise à jour) |
+| `chaine_19_criteres_isolate_test.dart` | 5 | ✅ |
+| **`poids_harmonisation_replis_test.dart`** | **18** | ✅ **neuf** |
+| **`poids_plafonds_contrat_test.dart`** | **9** | ✅ **neuf** |
+| **TOTAL** | **110** | **✅** |
+
+> La suite complète des 3689 tests **n'a pas été relancée** : l'utilisateur l'a
+> explicitement réservée à la clôture définitive (§7).
+
+## 11.3 — Assertions mises à jour, et pourquoi ce n'est pas un contournement
+
+Trois assertions **verrouillaient les anciennes valeurs**. Elles ont été mises à
+jour en **conservant la trace de l'état antérieur**, avec la raison écrite dans
+le test. Il faut le dire clairement pour que personne ne puisse croire à un
+affaiblissement de test :
+
+| Test | Avant | Après | Raison |
+|---|---|---|---|
+| `M1.3` (familles) | `Σ fromJson({}) == 1.37` | `== 1.26` | le test **constatait un défaut** ; le défaut est corrigé |
+| `M3.2` (familles) | `forme == 0.32`, `gains == 0.15`, `record == 0.12` | `0.25 / 0.13 / 0.10` | idem |
+| `M3.3` (familles) | `Δ forme > 0` | `|Δ forme| < 1e-12` | **inversion** : le repli ne doit plus dévier |
+| `H6` (échelle) | `Σ == 1.37` | `== 1.26` | idem |
+| `M6.1` (familles) | bornes enrichies 0,03/0,02/0,01 | 0,005 | reflet de §2 |
+
+**Aucune règle de lint n'a été désactivée. Aucun `ignore` ajouté pour masquer un
+diagnostic. Aucun fichier exclu de l'analyse. Aucun test supprimé.** Les deux
+nouveaux harnais **renforcent** la couverture : ils testent des cas que rien ne
+couvrait (JSON partiel par clé, ancienne sauvegarde, sauvegarde apprise,
+aller-retour, réactivation après neutralité, contrat mathématique).
+
+## 11.4 — Tableau des 19 critères (§3)
+
+Plafond **accessible** = valeur obtenue après `clamp()` quand ce critère seul est
+poussé à son plafond et **tous les autres à leur plancher** (mesure `T1`).
+
+| Critère | Groupe | Plancher av. | Plancher ap. | Plafond | Plafond ACCESSIBLE | Bridé par |
+|---|---|---|---|---|---|---|
+| `forme` | base | 0,05 | 0,05 | 0,55 | **0,626389** | collectif base |
+| `gains` | base | 0,04 | 0,04 | 0,40 | **0,565517** | collectif base |
+| `record` | base | 0,03 | 0,03 | 0,35 | **0,531481** | collectif base |
+| `cote` | base | 0,05 | 0,05 | 0,40 | **0,575439** | collectif base |
+| `constance` | base | 0,03 | 0,03 | 0,25 | **0,465909** | collectif base |
+| `victoires` | base | 0,01 | 0,01 | 0,15 | **0,341667** | collectif base |
+| `discipline` | base | 0,01 | 0,01 | 0,10 | **0,264516** | collectif base |
+| `distSpec` | enrichi | 0,03 | **0,005** | 0,18 | **0,306383** | collectif enrichis |
+| `jockey` | enrichi | 0,02 | **0,005** | 0,15 | **0,292683** | collectif enrichis |
+| `repos` | enrichi | 0,01 | **0,005** | 0,08 | **0,225352** | collectif enrichis |
+| `hippo` | enrichi | 0,01 | **0,005** | 0,10 | **0,258065** | collectif enrichis |
+| `entraineur` | enrichi | 0,01 | **0,005** | 0,08 | **0,225352** | collectif enrichis |
+| `elo` | enrichi | 0,01 | **0,005** | 0,10 | **0,258065** | collectif enrichis |
+| `terrain` | enrichi | 0,01 | **0,005** | 0,10 | **0,258065** | collectif enrichis |
+| `divergence` | enrichi | 0,01 | **0,005** | 0,08 | **0,225352** | collectif enrichis |
+| `poidsRel` | enrichi | 0,01 | **0,005** | 0,07 | **0,202899** | collectif enrichis |
+| `progression` | enrichi | 0,01 | **0,005** | 0,08 | **0,225352** | collectif enrichis |
+| `mouvCote` | enrichi | 0,02 | **0,005** | 0,12 | **0,274286** | collectif enrichis |
+| `placeDepart` | enrichi | 0,01 | **0,005** | 0,07 | **0,202899** | collectif enrichis |
+
+### Les trois constats que ce tableau impose
+
+**1. Plafond nominal ≠ plafond accessible : 19/19 dépassés.**
+Chaque critère peut effectivement dépasser son plafond nominal **dans le coin**
+où tous les autres sont à leur plancher. Mais le coefficient multiplicateur est
+modeste (×1,14 pour `forme`, ×2,90 pour `poidsRel`), et il décroît quand les
+autres critères remontent. **Ce n'est donc pas une « domination sans limite »** :
+c'est la conséquence arithmétique de la renormalisation à somme 1 quand le
+dénominateur est minimal.
+
+**2. Le vrai brideur n'est pas le plafond individuel, c'est le plafond collectif.**
+Un critère seul ne peut pas dépasser ~0,20–0,63 selon son groupe. C'est la
+contrainte `0,18 / 0,40` qui détermine la part maximale du groupe, pas la borne
+individuelle.
+
+**3. Une proposition de relèvement de plafond n'est PAS justifiée par ces mesures.**
+`placeDepart` à 0,07 est bridé, mais **`poidsRel` l'est davantage** (0,2029
+accessible), et **tous** les enrichis sont bridés de la même façon. Relever un
+seul plafond traiterait un symptôme, pas la cause — la cause étant la contrainte
+collective de 0,40 sur les douze enrichis. **Je ne propose donc aucun relèvement
+de plafond** ; la décision de refus de l'utilisateur est cohérente avec la mesure.
+
+## 11.5 — Défaut de cohérence de `clamp()` (§4)
+
+### Ordre réel des opérations — mesuré, pas déduit
+
+`clamp()` (`ia_memory_models.dart:752-778`) :
+
+1. **19 planchers individuels** puis **19 plafonds individuels** (`clamp` Dart).
+2. **`normaliser()`** — qui applique, dans cet ordre :
+   a. calcul de `fractionEnrichi = totalEnrichi / totalAll` ;
+   b. **contrainte collective** `fractionEnrichi.clamp(0.18, 0.40)` ;
+   c. **mise à l'échelle des deux groupes** par `target / total`.
+3. **`clampDiscipline()`** pour chaque discipline :
+   a. 19 bornes individuelles ;
+   b. **division par le total des 19**.
+
+**Le point décisif : l'étape 2 vient APRÈS l'étape 1.** Les bornes individuelles
+sont appliquées **avant** la contrainte collective, jamais après. Elles sont donc
+systématiquement susceptibles d'être écrasées.
+
+### Le dépassement n'est pas systématique — deux mesures opposées
+
+J'avais d'abord écrit « un critère au plafond ressort au-dessus de son plafond ».
+**Mesure contredisante (`T2a`)** : avec tous les autres critères à leurs valeurs
+d'usine, `cote = 0,40` ressort à **0,236686390533**, donc **très en dessous**.
+
+Le dépassement existe, mais seulement dans un **coin** de l'espace (`T2a`) :
+`cote` au plafond avec **tous les autres au plancher** ressort à
+**0,575438596491** > 0,40. C'est ce coin que `T1` explore pour les 19 critères.
+
+### Preuve en production
+
+La sauvegarde réelle du **13/11/2026** contient **déjà** les deux violations,
+sans aucune intervention de ma part (`T2b`) :
+
+```
+cote      = 0.401813880733  > plafond 0,40
+victoires = 0.150680205275  > plafond 0,15
+```
+
+### Dérive sans apprentissage — et son ampleur réelle après §2
+
+En partant de cette sauvegarde et en appelant `clamp()` **sans aucun gradient** :
+
+| Passes | Part enrichie |
+|---|---|
+| 0 (sauvegardée) | 0,184840837400 |
+| 1 | 0,180000000000 |
+| 10 | 0,180000000000 |
+| 500 (point fixe) | 0,180000000000 |
+
+**Amplitude de dérive : 0,004840837400, soit 2,6189 % de la part enrichie.**
+Elle est **réelle** et **converge** (pas d'oscillation).
+
+> **★ Effet structurel de §2, mesuré et à ne pas cacher.** Le point fixe a
+> **changé** avec l'abaissement des planchers :
+>
+> | | Avant §2 | Après §2 |
+> |---|---|---|
+> | Part enrichie au point fixe | 0,185444691312 | **0,180000000000** |
+> | `cote` au point fixe | 0,400000000000 (**saturée**) | 0,342084344963 (sous le plafond) |
+> | `victoires` au point fixe | 0,150000000000 (**saturée**) | 0,128281629361 (résorbé) |
+>
+> Autrement dit : **la réduction des planchers fait mordre le plancher collectif
+> de 0,18, qui ne mordait pas avant.** C'est un effet réel et vérifiable, pas
+> cosmétique. Il n'est **pas** une amélioration prouvée de précision hippique.
+
+### Chemins de production réellement concernés
+
+| Ligne | Appel | Sortie de | Gradient ? |
+|---|---|---|---|
+| `ia_memory_service.dart:4093` | `_poids.clamp()` | `_apprendreParGradient` | oui |
+| `ia_memory_service.dart:4288` | `clampDiscipline()` | `_apprendreParDiscipline` | oui |
+| `ia_memory_service.dart:4507` | `_poids.clamp()` | `_apprendreReglesBase` | oui |
+| `ia_memory_service.dart:6015` | `_poids.normaliser()` | `_mettreAJourPrecisionIA` | oui (`apprendre: true`) |
+| `ia_memory_service.dart:6008-6011` | 4 × `.clamp(0.005, …)` | idem | oui |
+
+**La dérive ne peut donc se produire que dans un cycle d'apprentissage**, jamais
+à la lecture.
+
+### Distinction poids sauvegardés / poids nouveaux — vérifiée par lecture de source
+
+`fromJson` ne contient **aucun** `clamp()` et **aucune** normalisation (vérifié
+`T6`, commentaires filtrés). Conséquence :
+
+- **Poids sauvegardés** → restitués **à l'identique**, y compris s'ils violent
+  leurs bornes. C'est ce que `S1.7` et `S2.7` prouvent sur les deux sauvegardes
+  réelles : 19/19 valeurs intactes, et les violations de `cote`/`victoires` du
+  13/11 sont **préservées**, pas « réparées en douce ».
+- **Poids nouveaux** → passent par l'une des cinq sorties ci-dessus, donc sont
+  projetés.
+
+### Contrat mathématique attendu
+
+Lorsque les contraintes sont compatibles (`Σ planchers ≤ budget ≤ Σ plafonds`),
+un `clamp()` devrait garantir :
+
+| # | Clause | Exigence |
+|---|---|---|
+| C1 | Somme | `Σ = 1` à `1e-9` près (tolérance documentée) |
+| C2 | Bornes individuelles | `plancher_k ≤ w_k ≤ plafond_k` pour les 19 |
+| C3 | Contraintes collectives | `0,18 ≤ part enrichie ≤ 0,40` |
+| C4 | Valeurs finies | aucun `NaN`, `±∞`, ni valeur négative |
+| C5 | Idempotence | `clamp(clamp(x)) = clamp(x)` à `1e-12` |
+| C6 | Conservation | si `x` satisfait déjà C1–C3, `clamp(x) = x` à `1e-12` |
+
+### Solution candidate — isolée, NON appliquée, soumise à arbitrage
+
+**Principe** : « projection à budgets de groupe et remplissage par écumoire »
+(*group-budget projection + water-filling*). Écrite dans le **test uniquement**,
+sous le nom `_Projection`, **jamais dans `lib/`** (vérifié par `T3a` : 0
+occurrence dans les 158 fichiers `.dart` de `lib/`).
+
+Algorithme en 4 étapes :
+
+1. **Bornes individuelles** sur les 19 (avec repli au plancher si `NaN`/`∞`).
+2. **Part collective visée** = part courante, ramenée dans `[0,18 ; 0,40]`.
+3. **Budgets de groupe** : `budgetEnrichi = part`, `budgetBase = 1 − part` — leur
+   somme vaut 1 **par construction**.
+4. **Remplissage par écumoire sur chaque groupe** : trouver `λ` tel que
+   `Σ_k clip(λ·w_k, plancher_k, plafond_k) = budget`. La fonction `λ ↦ Σ` est
+   croissante et continue ⇒ solution **unique** dès que
+   `Σ planchers ≤ budget ≤ Σ plafonds`. Recherche par dichotomie (400 itérations,
+   précision `~1e-120`), puis correction résiduelle exacte répartie sur les seuls
+   critères **non saturés**.
+
+**Faisabilité démontrée** (`T3`, `T4`, `T5`) :
+
+| Preuve | Résultat |
+|---|---|
+| Contrat sur l'état réel du 13/11 (qui viole ses bornes) | **0 violation** — Σ = 1,000000000000, part = 0,180000000000 |
+| Contrat sur 400 tables aléatoires | **400 / 400** respectent C1–C4 |
+| Idempotence, 1 → 2 passes | écart max **0,000000000000** |
+| Idempotence, 1 → 10 passes | écart max **0,000000000000** |
+| Idempotence sur 400 tables × 2 passages | écart max **0,000000000000** |
+| Conservation d'une table déjà conforme | écart max **0,000000000000** |
+| Isolement | **0** occurrence dans `lib/` |
+
+**Ce qu'elle coûterait** : un critère **exactement au plafond** resterait au
+plafond (point fixe en bord) au lieu d'être dilué par la renormalisation. Elle
+change donc la répartition effective à la marge, ce qui **n'est pas neutre** pour
+les scores. **Elle n'est PAS autorisée en production** et requiert un arbitrage
+explicite (§11.6, décision D-1).
+
+## 11.6 — Décisions restant à arbitrer
+
+| # | Décision | Pourquoi elle n'est pas prise d'office |
+|---|---|---|
+| **D-1** | Adopter la projection de `clamp()` (§11.5) | Dépasse la simple harmonisation de constantes autorisée en §1/§2. L'utilisateur a exigé une soumission à arbitrage. |
+| **D-2** | Uniformiser les **plafonds** de la 3ᵉ définition (`ia_memory_service.dart:6008-6011`) | Pour `divergence`, cette piste autorise **0,10** alors que `clamp()` plafonne à **0,08** (et `terrain` : 0,10 vs 0,10 ; `progression` 0,08/0,08 ; `poidsRel` 0,07/0,07). **Seul `divergence` diverge.** Ce sont des **plafonds**, donc hors du champ de l'autorisation §2, et §3 interdit toute modification de plafond. |
+| **D-3** | Tolérer un JSON de poids corrompu (valeur texte) | `fromJson` lève un `TypeError` et échoue entièrement. Comportement préexistant, non couvert par §1 (qui ne concerne que les replis sur valeurs **absentes**). |
+
+## 11.7 — Conséquences sur les données existantes
+
+| Donnée | Conséquence |
+|---|---|
+| Sauvegarde 28/05/2026 (802 maj, base 0,820000000000 / enr. 0,180000000000) | **Restituée à l'identique**, 19/19 (`S1.6`) |
+| Sauvegarde 13/11/2026 (3871 maj, base 0,815583119656 / enr. 0,184416880344) | **Restituée à l'identique**, 19/19 (`S1.7`) |
+| Poids historiques sous le nouveau plancher | **Aucune remontée rétroactive** : `fromJson` ne clampe pas (`S2.7`) |
+| Pronostics archivés | **Aucune lecture, aucune écriture** |
+| Prochain cycle d'apprentissage | Appliquera les **nouveaux** planchers — c'est l'effet voulu |
+| Recalcul historique | **Aucun** |
+| Reset | **Aucun** |
+
+**Point d'honnêteté** : la correction **changera** les poids que produira le
+prochain apprentissage, par rapport à ce qu'aurait produit l'ancienne
+configuration. Ce n'est **pas** une modification rétroactive — les poids déjà
+enregistrés sont intacts — mais c'est une **rupture de continuité** sur les
+prochains poids produits. Elle doit être connue avant le redémarrage à zéro.
+
+## 11.8 — Protections vérifiées
+
+| Protection | Vérification | Résultat |
+|---|---|---|
+| Poids initiaux (19) | `S2.8` | 19/19 identiques |
+| Plafonds individuels (19) | `S2.4`, `T1` | 19/19 identiques |
+| Contraintes collectives 0,18/0,40 | `S2.8`, `T7d` | intactes |
+| Gradient descent (lrBase 0,08, momentum 0,3, facteurs) | `T7d` | intacts |
+| `_normaliserScores` | aucun diff | intact |
+| Seuils / calibration / TOP3 / ELO / PMU | aucun diff | intacts |
+| Sauvegardes originales | lecture seule | non modifiées |
+| `ignore` / lint désactivé / fichier exclu | `flutter analyze` | **0 issue**, aucun `ignore` ajouté pour masquer |
+| Aucun test supprimé | inventaire | 110 tests, tous verts |
+| Branche | `git status` | `main` uniquement |
+| Push GitHub / APK / reset | non exécutés | aucun |
+
+## 11.9 — Fichiers modifiés et commit
+
+| Fichier | Nature |
+|---|---|
+| `lib/services/ia_memory_models.dart` | **production** — §1 (3 replis) + §2 (2 définitions de planchers) |
+| `lib/services/ia_memory_service.dart` | **production** — §2 (3ᵉ définition de planchers, 4 critères) |
+| `test/audit/poids_harmonisation_replis_test.dart` | **neuf** — 18 tests (§1 et §2) |
+| `test/audit/poids_plafonds_contrat_test.dart` | **neuf** — 9 tests (§3, §4, §6, §7) |
+| `test/audit_poids_familles_test.dart` | 5 assertions mises à jour |
+| `test/audit/poids_echelle_consommateurs_test.dart` | 1 assertion mise à jour (H6) |
+| `test/audit/RAPPORT_DECISIONNEL_POIDS_IA.md` | ce rapport |
+
+**Commit local** : voir le hash rapporté en fin de conversation (branche `main`,
+aucun push).
+
+## 11.10 — Ce que ces corrections ne prouvent PAS
+
+1. **Aucune amélioration de précision hippique** n'est démontrée. Réduire un
+   plancher augmente la liberté du gradient ; cela ne dit rien du résultat.
+2. **La part enrichie ne montera pas par décret.** Elle vaut 0,180000000000 au
+   point fixe — c'est-à-dire **exactement le plancher collectif**. La marge
+   libérée (0,120) est une **possibilité**, pas un mouvement observé. Le groupe
+   enrichi manquait de **signal**, pas de permission — constat inchangé du §4.
+3. **La dérive de `clamp()` subsiste** (2,6189 %) tant que D-1 n'est pas tranchée.
+4. **La dilatation d'échelle 1,26 → 1,00 subsiste** : elle est **expliquée**
+   (§11.11) mais **non corrigée**, et le §6 interdisait de la corriger.
+5. **Aucune mesure sur corpus réel** n'a été refaite ici : n=47 (mai) et n=4
+   (novembre) restent trop petits pour conclure quoi que ce soit.
+6. **Le chantier n'est pas clos** : D-1, D-2, D-3 sont ouvertes.
+
+## 11.11 — §6 : cohérence d'échelle après harmonisation (mesurée)
+
+Six chemins de production, mesurés (`T8`) :
+
+| Chemin | Σ |
+|---|---|
+| A — constructeur brut | 1,260000000000 |
+| B — `fromJson({})` | 1,260000000000 |
+| C — aller-retour | 1,260000000000 |
+| D — après `clamp()` | 1,000000000000 |
+| E — `poidsEffectifsPourDiscipline` (19 clés) | 1,260000000000 |
+| F — `clampDiscipline()` | 1,000000000000 |
+
+**Les 4 chemins « bruts » sont cohérents entre eux (1,26). Les 2 chemins
+« normalisés » sont cohérents entre eux (1,00).** Il n'existe **aucun** troisième
+niveau d'échelle.
+
+**L'écart 1,26 → 1,00 est entièrement expliqué, et il est plus petit qu'annoncé :**
+
+> ⚠️ **Seconde correction d'une affirmation fausse.** J'avais écrit que passer de
+> 1,26 à 1,00 **dilatait** la base d'un facteur 1,183333. **Mesure exacte** :
+> ```
+> base     0,710000000000 → 0,600000000000 = ×0,845070422535
+> enrichis 0,550000000000 → 0,400000000000 = ×0,727272727273
+> ```
+> **Les deux facteurs sont INFÉRIEURS à 1.** `normaliser()` ne dilate rien : la
+> table 1,26 a une fraction enrichie de `0,550/1,26 = 0,436507937`, **écrêtée à
+> 0,40** ; la base est donc **contractée** à 0,60 et les enrichis à 0,40. C'est
+> une **contraction inégale** (écart entre les deux facteurs : 0,117797695), et
+> c'est précisément la raison mesurée pour laquelle le rapport de score entre
+> deux partants **varie** au lieu de valoir 1,26.
+
+**Conclusion §6** : après l'harmonisation §1, il ne subsiste **aucune incohérence
+d'échelle non expliquée**. L'écart 1,26 / 1,00 est documenté, chiffré, et sa
+cause est nommée. Le §6 interdisait de le corriger — il n'a pas été corrigé.
+La dilatation maximale possible est passée de **37 % à 26 %** simplement par la
+correction §1, sans toucher à la formule.
+
+## 11.12 — §5 : veille « alimentation des critères » (aucune action)
+
+Conservé tel quel, sans réouverture du chantier, conformément à l'arbitrage :
+
+- données réellement absentes ;
+- critères non applicables par spécialité ;
+- disponibilité des connaissances ELO après accumulation ;
+- snapshots nécessaires au mouvement de cote ;
+- comportement du critère `discipline`, **toujours indéterminé** ;
+- consultation effective des archives ;
+- disponibilité réelle des données PMU.
+
+**Aucune donnée artificielle. Aucune formule modifiée pour rendre un critère
+artificiellement discriminant.**
+
+## 11.13 — §8 : protocole prospectif préservé (aucun reset)
+
+Protocole **inchangé**, à appliquer **après** le futur redémarrage à zéro :
+
+- pronostics enregistrés **avant** les résultats ;
+- échantillons **chronologiques indépendants** ;
+- comparaison à la **cote PMU seule** ;
+- comparaison à la **configuration de référence** ;
+- mesures **globales et par discipline** ;
+- évolution des **19 poids** ;
+- **saturation aux bornes** (désormais 0,005 en bas) ;
+- **TOP1 / TOP3 / TOP5**, calibration, rentabilité officielle lorsque mesurable.
+
+**Le seuil de 200 courses est un premier point de contrôle, pas une garantie de
+puissance statistique.** Aucun reset effectué.
+
+## 11.14 — État de clôture
+
+**Le chantier n'est PAS clos.** Les corrections §1 et §2 sont **appliquées,
+testées et vertes**, mais trois décisions structurantes restent ouvertes
+(D-1, D-2, D-3), et le bénéfice hippique réel n'est **pas** mesuré — il ne peut
+l'être qu'après le redémarrage à zéro, par le protocole §11.13.
+
+**BLOC 2 : suspendu. BLOC 3 : non commencé.** Aucun push, aucun APK, aucun reset.

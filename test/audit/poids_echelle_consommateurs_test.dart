@@ -444,8 +444,14 @@ void main() {
 
   // ───────────────────────────────────────────────────────────────────────
   //  H6 — LE REPLI `fromJson` PRODUIT-IL VRAIMENT 1.37 ?
+  //       ★ MISE À JOUR 27/11/2026 : NON, PLUS. La correction §1 a harmonisé
+  //         les 3 replis sur le constructeur. Ce test mesurait un DÉFAUT ;
+  //         il mesure désormais son ABSENCE. La valeur de référence passe de
+  //         1,37 à 1,26. Toutes les autres conclusions de H6 tiennent : ce
+  //         qui change, c'est l'AMPLEUR de la dilatation (26 % au lieu de
+  //         37 %), pas son existence — `fromJson` ne clampe toujours pas.
   // ───────────────────────────────────────────────────────────────────────
-  test('H6 — restauration partielle : la table fromJson vaut 1.37', () {
+  test('H6 — restauration partielle : la table fromJson vaut 1.26 (était 1.37)', () {
     final vide = IaPoidsAdaptatifs.fromJson(<String, dynamic>{});
     final sommeVide = kCles.fold(0.0, (a, k) => a + vide.getPoids(k));
     // ignore: avoid_print
@@ -453,8 +459,9 @@ void main() {
         '${sommeVide.toStringAsFixed(12)}');
     // ignore: avoid_print
     print('[H6]   forme=${vide.forme} gains=${vide.gains} record=${vide.record} '
-        '— les 3 divergences vs constructeur');
-    expect(sommeVide, closeTo(1.37, 1e-12));
+        '— IDENTIQUES au constructeur (étaient 0.32/0.15/0.12)');
+    // ★ AVANT correction §1 : 1.370000000000. APRÈS : 1.260000000000.
+    expect(sommeVide, closeTo(1.26, 1e-12));
 
     // CAS RÉEL : JSON partiel — 16 clés présentes, 3 absentes.
     final partiel = <String, dynamic>{
@@ -471,11 +478,15 @@ void main() {
     print('[H6] fromJson(JSON partiel sans forme/gains/record) : somme = '
         '${somme.toStringAsFixed(12)}');
     // ignore: avoid_print
-    print('[H6] ⇒ les 3 replis (0.32/0.15/0.12) SONT UTILISÉS : la somme '
-        '1.37 se matérialise bien en production.');
-    expect(somme, closeTo(1.37, 1e-12),
+    print('[H6] ⇒ les 3 replis (0.25/0.13/0.10) SONT UTILISÉS : la somme '
+        '1.26 se matérialise bien en production (elle valait 1.37).');
+    // ★ AVANT correction §1 : 1.370000000000, soit +8,73 % sur tous les
+    //   scores par rapport à 1,26. APRÈS : 1.260000000000, identique au
+    //   constructeur. La dilatation résiduelle de 26 % SUBSISTE — elle vient
+    //   du fait que `fromJson` ne clampe pas, pas des trois replis.
+    expect(somme, closeTo(1.26, 1e-12),
         reason: 'fromJson ne clampe pas : une restauration partielle livre '
-            'une table de somme 1.37 au moteur de score');
+            'une table de somme 1.26 au moteur de score (1.37 avant §1)');
 
     // Et `clamp()` corrigerait-il ? OUI — mais il n'est pas appelé.
     p.clamp();
