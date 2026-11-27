@@ -2201,8 +2201,23 @@ prochain lecteur. Toutes sont réfutées **chiffres en main** dans le harnais.
 | Durée | **10 min 56 s** |
 
 `flutter analyze lib/ test/` → **`No issues found!`**
-Aucun `ignore`, aucun `ignore_for_file` ajouté, aucun lint désactivé, aucun
-fichier exclu de l'analyse, `analysis_options.yaml` inchangé.
+`flutter analyze --no-pub` sur la racine entière (158 fichiers `lib/`,
+242 fichiers `test/`, 400 au total) → **`No issues found!`**
+
+**Sur les `ignore`, formulation exacte plutôt qu'absolue.** Le chantier n'a
+**ajouté aucun `ignore` dans `lib/`** : `git diff b3a0107..HEAD -- lib/` filtré
+sur `ignore` ne renvoie **rien**. Aucun lint n'a été désactivé et
+`analysis_options.yaml` est **inchangé** (`git diff` vide). Aucun fichier n'est
+exclu de l'analyse.
+
+En revanche, les deux harnais **créés** par ce tour contiennent
+`// ignore: avoid_print` (20 occurrences dans
+`poids_recuperation_load_test.dart`, 25 dans `poids_nature_projection_test.dart`),
+**tous du même type**. Ce n'est pas un contournement de diagnostic : ces
+`print` sont la **sortie de mesure** du harnais, et la convention est celle,
+préexistante, de `test/` — **1789** occurrences d'`avoid_print` y figuraient
+déjà avant ce chantier. Un rapport qui écrirait « aucun `ignore` ajouté » sans
+cette précision serait faux.
 
 **Un échec transitoire rencontré puis résolu, et sa raison :**
 `poids_projection_test.dart` / **P14** échouait sur
@@ -2226,7 +2241,7 @@ arbitrée **interdit**. Elle a été mise en conformité : la clé doit être
 
 ### 13.6 bis — Corrections apportées à CE rapport, après contrôle chiffre par chiffre
 
-Le §13 a été relu en confrontant chaque valeur au journal d'exécution. Trois
+Le §13 a été relu en confrontant chaque valeur au journal d'exécution. Quatre
 inexactitudes ont été trouvées **dans le rapport lui-même** et corrigées. Elles
 sont consignées ici parce qu'un rapport qui se corrige sans le dire vaut moins
 que le rapport corrigé.
@@ -2236,6 +2251,7 @@ que le rapport corrigé.
 | Durée de la suite complète | « 11 min 02 s » | **10 min 56 s** (journal : `10:56 +3800: All tests passed!`) |
 | Nombre d'hypothèses réfutées | titre « **Trois** hypothèses » | le tableau en liste **quatre** |
 | Violations de bornes du proportionnel | « **12** bornes » sans préciser le vecteur | **12** sur le proportionnel calculé sur le **brut** (P-4) ; **10** sur le proportionnel calculé sur la table **clippée** (P-5). Deux vecteurs distincts, aucun désaccord |
+| Politique d'`ignore` | « Aucun `ignore` ajouté » (absolu) | **aucun ajout dans `lib/`** (vérifié par `git diff`) ; les 2 harnais créés portent 45 `// ignore: avoid_print`, seule sortie de mesure, convention préexistante de `test/` (1789 occurrences avant le chantier). Reformulation au §13.5 |
 
 Aucune valeur de **mesure** n'a été modifiée : seules des erreurs de
 **transcription** et un intitulé ont été rectifiés. Les chiffres du code et des
