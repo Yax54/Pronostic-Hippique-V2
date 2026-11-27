@@ -1,0 +1,210 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE V1 — VALIDATION DU HARNAIS v3 DANS LES FENÊTRES RÉELLES DU MOTEUR
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  RECTIFICATION DEMANDÉE (mot pour mot) :
+//   « Le harnais v3 constitue une amélioration. Vérifie également ses
+//     propriétés dans les fenêtres réellement utilisées par le moteur, et pas
+//     uniquement sur l'ensemble du corpus synthétique. »
+//
+//  CE QUE V0ter A MESURÉ, ET CE QU'IL N'A PAS MESURÉ
+//  ────────────────────────────────────────────────
+//  V0ter a mesuré l'indépendance et la neutralité sur **240 courses × 5
+//  chevaux**, soit 1 200 points par critère. Mais le moteur ne voit JAMAIS les
+//  240 courses d'un coup :
+//
+//   • `_detecterCorrelationsCriteres` (ia_memory_service:4477) fait
+//     `pronostics.where(scoresCriteres.isNotEmpty).take(80)` — donc au plus
+//     **80 courses**, et la corrélation est le Pearson sur TOUS les partants
+//     de ces 80 courses (80 × 5 = 400 points, ou moins).
+//   • `_apprendreParGradient` (l.3972) fait `fenetreBrute.take(50)` — donc au
+//     plus **50 courses** dans la fenêtre de gradient.
+//   • La condition d'accessibilité du gel exige `nb >= 50`, et `nb` est la
+//     taille de CETTE fenêtre de 50.
+//
+//  Une corrélation calculée sur 1 200 points peut être faible alors qu'elle est
+//  forte sur les 400 points que le moteur regarde réellement. Vérifier
+//  l'indépendance sur le corpus entier ne prouve donc RIEN sur ce que voit le
+//  moteur. Ce fichier mesure les propriétés du harnais v3 sur :
+//     (a) la fenêtre de CORRÉLATION : 80 courses × 5 = 400 points ;
+//     (b) la fenêtre de GRADIENT : 50 courses × 5 = 250 points ;
+//     (c) la PLUS PETITE fenêtre admissible : 50 courses (condition du gel).
+//  Et il le fait pour PLUSIEURS tranches disjointes, parce qu'une fenêtre
+//  glissante ne sélectionne pas toujours les mêmes 50 courses : mesurer une
+//  seule tranche serait un échantillon de commodité.
+//
+//  ⚠️ CE FICHIER NE MODIFIE AUCUN MÉCANISME. Il ne mesure que des données.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'harnais_v3.dart';
+
+const List<String> _noms = <String>[
+  'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+  'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart',
+];
+
+double _pearson(List<double> x, List<double> y) {
+  final n = math.min(x.length, y.length);
+  if (n < 10) return 0.0;
+  final mx = x.take(n).reduce((a, b) => a + b) / n;
+  final my = y.take(n).reduce((a, b) => a + b) / n;
+  double num = 0, dx = 0, dy = 0;
+  for (var i = 0; i < n; i++) {
+    final ex = x[i] - mx, ey = y[i] - my;
+    num += ex * ey;
+    dx += ex * ex;
+    dy += ey * ey;
+  }
+  final denom = math.sqrt(dx * dy);
+  return denom > 0 ? num / denom : 0.0;
+}
+
+double _disc(List<double> parNumero) =>
+    ((parNumero[0] + parNumero[1]) / 2 - (parNumero[3] + parNumero[4]) / 2) /
+    100.0;
+
+/// Vecteurs des 19 critères sur une tranche de courses [de, de+nb).
+List<List<double>> _vecteurs(int de, int nb) {
+  final out = <List<double>>[];
+  for (var k = 0; k < 19; k++) {
+    final v = <double>[];
+    for (var c = de; c < de + nb; c++) {
+      for (var n = 1; n <= 5; n++) {
+        v.add(notesDistinctes(n, c).valeurPourCritere(_noms[k]));
+      }
+    }
+    out.add(v);
+  }
+  return out;
+}
+
+({double maxAbs, int ge30, int ge65, int ge85, String pire}) _statsCorr(
+    List<List<double>> v) {
+  var maxAbs = -1.0;
+  var ge30 = 0, ge65 = 0, ge85 = 0;
+  var pire = '';
+  for (var i = 0; i < 19; i++) {
+    for (var j = i + 1; j < 19; j++) {
+      final r = _pearson(v[i], v[j]).abs();
+      if (r >= 0.30) ge30++;
+      if (r >= 0.65) ge65++;
+      if (r >= 0.85) ge85++;
+      if (r > maxAbs) {
+        maxAbs = r;
+        pire = '${_noms[i]}/${_noms[j]}';
+      }
+    }
+  }
+  return (maxAbs: maxAbs, ge30: ge30, ge65: ge65, ge85: ge85, pire: pire);
+}
+
+void main() {
+  test('V1 — harnais v3 dans les fenêtres 80 / 50 courses et par tranches', () {
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[V1] ═══ HARNAIS v3 DANS LES FENÊTRES RÉELLES DU MOTEUR ═══');
+    // ignore: avoid_print
+    print('[V1] fenêtre de corrélation = take(80) ⇒ 400 points (80×5)');
+    // ignore: avoid_print
+    print('[V1] fenêtre de gradient    = take(50) ⇒ 250 points (50×5)');
+    // ignore: avoid_print
+    print('[V1] critère d admission : |r| max < 0,65 (seuil de CALIBRATION) '
+        'et surtout < 0,85 (seuil de GEL)');
+
+    var pireGlobal = 0.0;
+    var pireFenetre = '';
+    var toutesOk = true;
+
+    // Tranches disjointes : une fenêtre glissante ne voit pas toujours les
+    // mêmes courses, donc on échantillonne plusieurs positions.
+    const tranches = <int>[0, 137, 311, 500, 733, 901, 1100];
+    for (final de in tranches) {
+      for (final nb in <int>[80, 50]) {
+        final v = _vecteurs(de, nb);
+        final s = _statsCorr(v);
+        if (s.ge65 > 0) toutesOk = false;
+        if (s.maxAbs > pireGlobal) {
+          pireGlobal = s.maxAbs;
+          pireFenetre = 'tranche $de · $nb courses · ${s.pire}';
+        }
+        // ignore: avoid_print
+        print('[V1] tranche ${de.toString().padLeft(4)} · '
+            '${nb.toString().padLeft(2)} courses (${nb * 5} pts) : '
+            '|r|max=${s.maxAbs.toStringAsFixed(6)} (${s.pire}) '
+            '>=0.30:${s.ge30}/171 >=0.65:${s.ge65}/171 >=0.85:${s.ge85}/171');
+      }
+    }
+
+    // ── Neutralité dans la fenêtre de gradient (50 courses) ────────────────
+    var pireDisc = 0.0;
+    for (final de in tranches) {
+      for (var k = 0; k < 19; k++) {
+        var s = 0.0;
+        for (var c = de; c < de + 50; c++) {
+          s += _disc(<double>[
+            for (var n = 1; n <= 5; n++)
+              notesDistinctes(n, c).valeurPourCritere(_noms[k]),
+          ]);
+        }
+        final d = (s / 50).abs();
+        if (d > pireDisc) pireDisc = d;
+      }
+    }
+    // ignore: avoid_print
+    print('[V1] neutralité sur 7 tranches × 19 critères × 50 courses : '
+        '|discrimination| max = ${pireDisc.toStringAsFixed(9)}');
+
+    // ── Le critère piloté : sa discrimination est-elle stable en fenêtre ? ──
+    for (final pente in <double>[-12.0, 12.0]) {
+      var mini = double.infinity, maxi = -double.infinity;
+      for (final de in tranches) {
+        var s = 0.0;
+        for (var c = de; c < de + 50; c++) {
+          s += _disc(<double>[
+            for (var n = 1; n <= 5; n++)
+              notesPilotees(n, c, pilote: 'distSpec', pente: pente).distSpec,
+          ]);
+        }
+        final d = s / 50;
+        if (d < mini) mini = d;
+        if (d > maxi) maxi = d;
+      }
+      // ignore: avoid_print
+      print('[V1] piloté pente=${pente.toStringAsFixed(0).padLeft(3)} : '
+          'discrimination en fenêtre de 50 courses ∈ '
+          '[${mini.toStringAsFixed(9)} ; ${maxi.toStringAsFixed(9)}]');
+    }
+
+    // ignore: avoid_print
+    print('[V1] ⇒ |r| max sur TOUTES les fenêtres testées = '
+        '${pireGlobal.toStringAsFixed(6)} ($pireFenetre)');
+
+    // GARDE : aucune fenêtre ne doit franchir le seuil de calibration 0,65.
+    // Si c'était le cas, les corrélations mémorisées par le moteur ne seraient
+    // pas un artefact mesurable et toute campagne de gel serait contaminée.
+    expect(toutesOk, isTrue,
+        reason: 'Aucune fenêtre de 80 ou 50 courses ne doit produire une paire '
+            '>= 0,65. |r| max mesuré : $pireGlobal ($pireFenetre).');
+
+    // GARDE : aucune fenêtre ne doit franchir le seuil de GEL 0,85 — sans quoi
+    // des gels parasites apparaîtraient dans toutes les campagnes.
+    expect(pireGlobal < 0.85, isTrue,
+        reason: 'Aucune paire ne doit approcher 0,85 dans une fenêtre réelle.');
+  });
+}

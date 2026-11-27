@@ -1,0 +1,239 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE V0 — VALIDATION STATISTIQUE DES GÉNÉRATEURS DE BRUIT DU HARNAIS
+//  ESPACE ISOLÉ /home/user/exp — préalable OBLIGATOIRE à toute campagne
+//
+//  POURQUOI CE FICHIER EXISTE
+//  ──────────────────────────
+//  DÉFAUT DE HARNAIS N°15, MESURÉ ET BLOQUANT.
+//
+//  La campagne D5 (19 critères × plancher/plafond, 240 cycles) a produit
+//  **17 435 messages de gel** du type « X gelé (corrélé avec Y à r=0.98) ».
+//  Un tel volume n'est pas un comportement du moteur : c'est le signe que les
+//  données d'entrée étaient corrélées alors que le commentaire du harnais
+//  affirmait « bruit INDÉPENDANT par critère : aucun clone, aucune corrélation
+//  artificielle ». Cette affirmation était FAUSSE.
+//
+//  CAUSE. Le générateur utilisé était :
+//      x = (numero * 7919 + cycle * 104729 + critere * 1299709) * 0.6180339887
+//      bruit = (frac(x) - 0.5) * 2 * amp
+//  C'est une projection linéaire modulo 1 : pour deux critères, l'écart est
+//  une CONSTANTE (critere * 1299709 * 0.6180339887 mod 1). Le « bruit » d'un
+//  critère est donc, à une translation près, EXACTEMENT le même que celui d'un
+//  autre. La corrélation croisée mesurée monte à |r| = 0,9405.
+//
+//  MESURES (reproduites ici, en Dart, avec le Pearson de production) :
+//   • générateur « 0.618 »         : |r| max 0,9405 · 131/171 paires ≥ 0,30
+//   • générateur modulaire 1000003 : |r| max 0,8438 · 137/171 paires ≥ 0,30
+//   • générateur mélangeur 32 bits : |r| max 0,0897 ·   0/171 paires ≥ 0,30
+//
+//  CONSÉQUENCE SUR LES CAMPAGNES ANTÉRIEURES : toute campagne dont le harnais
+//  utilisait l'un des deux premiers générateurs voit ses corrélations — et donc
+//  ses gels — mesurées sur des données FAUSSES. Les conclusions « gel observé »
+//  de ces campagnes ne sont pas exploitables. Ce fichier établit la liste des
+//  générateurs admissibles ; l'audit des campagnes est consigné au registre.
+//
+//  CE FICHIER NE TOUCHE À AUCUN MÉCANISME. Il ne mesure que des générateurs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+// ── Générateur A : celui de `harnais_v2` (projection modulo 1 de 0,618…) ────
+double genA(int numero, int cycle, int critere) {
+  final x = (numero * 7919 + cycle * 104729 + critere * 1299709) * 0.6180339887;
+  return (x - x.floorToDouble()) - 0.5;
+}
+
+// ── Générateur B : celui de campagne_b / b3 / g3 (modulo 1000003) ───────────
+double genB(int numero, int cycle, int critere) {
+  final x = (cycle * 7919 + numero * 104729 + critere * 15485863) % 1000003;
+  return (x / 1000003.0) * 2.0 - 1.0;
+}
+
+// ── Générateur C : mélangeur entier 32 bits (lowbias32), proposé ────────────
+const int _m32 = 0xFFFFFFFF;
+
+int _mix32(int h) {
+  h &= _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = h ^ (h >> 16);
+  return h & _m32;
+}
+
+double genC(int numero, int cycle, int critere) {
+  final x = (numero * 0x9E3779B1) ^
+      (cycle * 0x85EBCA77) ^
+      (critere * 0xC2B2AE3D);
+  return _mix32(x) / 4294967296.0 - 0.5;
+}
+
+// ── Générateur D : `math.Random(seed)` — celui de campagne_d1v2 ─────────────
+//
+// Utilisé par `campagne_d1v2_plancher_independant_test.dart` :
+//   `final g = math.Random(numero*7919 + cycle*104729 + critere*1299709);`
+//   `return (g.nextDouble() - 0.5) * 60.0;`
+// On le mesure ici parce que les seeds sont en PROGRESSION ARITHMÉTIQUE
+// (écart constant de 1 299 709) : c'est précisément la configuration où un
+// générateur à congruence linéaire peut produire des flux corrélés. On ne le
+// suppose pas, on le mesure.
+double genD(int numero, int cycle, int critere) {
+  final g = math.Random(numero * 7919 + cycle * 104729 + critere * 1299709);
+  return g.nextDouble() - 0.5;
+}
+
+/// Pearson — copie EXACTE de la forme utilisée par la production
+/// (`_detecterCorrelationsCriteres`, ia_memory_service:4486-4499) : moyenne sur
+/// les n premiers, somme des écarts, `denom > 0 ? num/denom : 0`.
+double pearson(List<double> x, List<double> y) {
+  final n = math.min(x.length, y.length);
+  if (n < 10) return 0.0;
+  final mx = x.take(n).reduce((a, b) => a + b) / n;
+  final my = y.take(n).reduce((a, b) => a + b) / n;
+  double num = 0, dx = 0, dy = 0;
+  for (var i = 0; i < n; i++) {
+    final ex = x[i] - mx, ey = y[i] - my;
+    num += ex * ey;
+    dx += ex * ex;
+    dy += ey * ey;
+  }
+  final denom = math.sqrt(dx * dy);
+  return denom > 0 ? num / denom : 0.0;
+}
+
+/// Vecteur d'un critère tel que le harnais le produit : [cycles] courses ×
+/// 5 chevaux. C'est exactement la structure aplatie que voit le moteur.
+List<double> _vecteur(double Function(int, int, int) g, int critere,
+    {int cycles = 240}) {
+  final v = <double>[];
+  for (var c = 0; c < cycles; c++) {
+    for (var n = 1; n <= 5; n++) {
+      v.add(g(n, c, critere));
+    }
+  }
+  return v;
+}
+
+({double mini, double mediane, double maxi, int ge30, int ge65, int pireI, int pireJ})
+    _mesurer(double Function(int, int, int) g) {
+  final vecteurs = <List<double>>[
+    for (var k = 0; k < 19; k++) _vecteur(g, k),
+  ];
+  final rs = <double>[];
+  var maxi = -1.0;
+  var pireI = 0, pireJ = 0;
+  var ge30 = 0, ge65 = 0;
+  for (var i = 0; i < 19; i++) {
+    for (var j = i + 1; j < 19; j++) {
+      final r = pearson(vecteurs[i], vecteurs[j]).abs();
+      rs.add(r);
+      if (r >= 0.30) ge30++;
+      if (r >= 0.65) ge65++;
+      if (r > maxi) {
+        maxi = r;
+        pireI = i;
+        pireJ = j;
+      }
+    }
+  }
+  rs.sort();
+  return (
+    mini: rs.first,
+    mediane: rs[rs.length ~/ 2],
+    maxi: maxi,
+    ge30: ge30,
+    ge65: ge65,
+    pireI: pireI,
+    pireJ: pireJ,
+  );
+}
+
+const List<String> _noms = <String>[
+  'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+  'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart',
+];
+
+void main() {
+  test('V0 — les générateurs de bruit du harnais sont-ils décorrélés ?', () {
+    final a = _mesurer(genA);
+    final b = _mesurer(genB);
+    final c = _mesurer(genC);
+    final d = _mesurer(genD);
+
+    String ligne(String nom, ({double mini, double mediane, double maxi, int ge30, int ge65, int pireI, int pireJ}) m) =>
+        '[V0] $nom  |r| min=${m.mini.toStringAsFixed(6)} '
+        'med=${m.mediane.toStringAsFixed(6)} max=${m.maxi.toStringAsFixed(6)} '
+        '(pire ${_noms[m.pireI]}/${_noms[m.pireJ]}) '
+        '>=0.30:${m.ge30}/171 >=0.65:${m.ge65}/171';
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[V0] ═══ CORRÉLATION CROISÉE DES GÉNÉRATEURS · 19 critères · 240×5 ═══');
+    // ignore: avoid_print
+    print(ligne('A 0.618 mod 1     ', a));
+    // ignore: avoid_print
+    print(ligne('B modulo 1000003  ', b));
+    // ignore: avoid_print
+    print(ligne('C lowbias32       ', c));
+    // ignore: avoid_print
+    print(ligne('D Random(seed)    ', d));
+    // ignore: avoid_print
+    print('[V0] ⇒ A et B sont DÉGÉNÉRÉS : leurs « bruits » sont, à une '
+        'translation près, identiques entre critères.');
+    // ignore: avoid_print
+    print('[V0] ⇒ C est le seul admissible : aucune paire au-dessus de 0,30.');
+    // ignore: avoid_print
+    print('[V0] ⇒ CRITÈRE D\'ADMISSIBILITÉ : 0/171 paire ≥ 0,30.');
+
+    // Le générateur C doit être le seul à passer ce seuil.
+    expect(c.ge30, 0,
+        reason: 'Le générateur retenu doit ne produire AUCUNE corrélation '
+            'croisée parasite ≥ 0,30. Obtenu : ${c.ge30}/171, max ${c.maxi}.');
+    expect(c.maxi < 0.30, isTrue,
+        reason: 'Le |r| maximal du générateur retenu doit rester sous 0,30.');
+
+    // Les deux anciens DOIVENT échouer : c'est la preuve du défaut n°15.
+    expect(a.ge30 > 100, isTrue,
+        reason: 'Le générateur A doit exhiber son défaut : '
+            '${a.ge30}/171 paires ≥ 0,30 mesurées.');
+    expect(b.ge30 > 100, isTrue,
+        reason: 'Le générateur B doit exhiber son défaut : '
+            '${b.ge30}/171 paires ≥ 0,30 mesurées.');
+
+    // Le générateur D (Random de dart:math, utilisé par D1v2) : on rapporte
+    // sa mesure SANS l'inclure dans les gardes, parce que ce n'est pas le
+    // générateur retenu. S'il est admissible, les résultats de D1v2 reposent
+    // sur un bruit correct ; s'il ne l'est pas, D1v2 doit être réexécuté.
+    // ignore: avoid_print
+    print('[V0] ⇒ générateur D (Random de dart:math, D1v2) : '
+        '${d.ge30 == 0 ? "ADMISSIBLE (aucune paire >= 0,30)" : "DÉGÉNÉRÉ : ${d.ge30}/171 paires >= 0,30"}');
+    // ignore: avoid_print
+    print('[V0]   mesure détaillée : ${ligne("D Random(seed)    ", d)}');
+
+    // Contrôle de qualité statistique du générateur C : moyenne ≈ 0,
+    // écart-type ≈ 1/√12 · 2 (uniforme sur [−0,5 ; +0,5] ⇒ σ = 0,2887).
+    final s = _vecteur(genC, 0);
+    final m = s.reduce((x, y) => x + y) / s.length;
+    final v = s.map((x) => (x - m) * (x - m)).reduce((x, y) => x + y) / s.length;
+    final sigma = math.sqrt(v);
+    // ignore: avoid_print
+    print('[V0] ⇒ C : moyenne=${m.toStringAsFixed(6)} '
+        'écart-type=${sigma.toStringAsFixed(6)} (théorique 0,288675)');
+    expect(m.abs() < 0.02, isTrue, reason: 'Moyenne du générateur C ≈ 0');
+    expect((sigma - 0.288675).abs() < 0.02, isTrue,
+        reason: 'Écart-type du générateur C ≈ 1/(2√3)');
+  });
+}

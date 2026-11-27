@@ -1,0 +1,391 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G4 — GEL SUR UNE PAIRE UNIQUE, TRACÉ À CHAQUE PHASE
+//  ESPACE ISOLÉ /home/user/exp — rectification §2 « Gel », 2e version
+//
+//  RECTIFICATIONS QUI ONT IMPOSÉ CETTE RÉÉCRITURE (mot pour mot)
+//  ────────────────────────────────────────────────────────────
+//   • « Le scénario doit vérifier le comportement du critère néfaste pendant
+//     qu'il est effectivement gelé, et pas uniquement après disparition de la
+//     corrélation. »
+//   • « Vérifie la paire ciblée, le critère sélectionné, son gradient et son
+//     état de gel à chaque phase. »
+//   • « Ne conclus pas à partir du seul maximum de corrélation observé. »
+//   • « Termine les investigations prévues, notamment sur les corrélations
+//     positives et négatives, la sélection par le poids et les conséquences
+//     sur l'adaptation. »
+//
+//  CE QUE LA 1re VERSION DE G4 FAISAIT MAL
+//  ──────────────────────────────────────
+//  1. Elle tolérait que le critère néfaste devienne nuisible SEULEMENT en
+//     phase 2, donc APRÈS la disparition de la corrélation : elle ne mesurait
+//     jamais un critère à la fois NÉFASTE et GELÉ. C'était exactement le trou
+//     signalé.
+//  2. Elle ne concluait que sur `r max` par phase, c'est-à-dire sur un seul
+//     scalaire, sans vérifier que le critère RÉELLEMENT sélectionné par le
+//     moteur (`p1 <= p2 ? c1 : c2`) était bien celui attendu.
+//
+//  NOUVEAU PROTOCOLE — quatre phases, 200 cycles chacune (800)
+//  ──────────────────────────────────────────────────────────
+//   La paire est (distSpec, jockey), fabriquée par CLONE.
+//   Poids initiaux : distSpec = 0,08 > jockey = 0,07 ⇒ la règle de sélection
+//   (`aGeler = p1 <= p2 ? c1 : c2`) doit désigner JOCKEY. On le VÉRIFIE à
+//   chaque cycle au lieu de le déduire.
+//
+//   Phase 1 (0-199)     NÉFASTE GELÉ. distSpec (porteur) est UTILE (+0,36),
+//                       jockey en est le CLONE, donc lui aussi « utile » par
+//                       la donnée — MAIS le scénario qui nous intéresse est
+//                       celui où le critère gelé est NÉFASTE. On construit
+//                       donc la paire de sorte que les DEUX soient NÉFASTES :
+//                       pente −12 pour distSpec, clone ⇒ jockey identique.
+//                       ⇒ jockey est néfaste ET gelé. On mesure s'il reste
+//                         bloqué à son plancher pendant que distSpec, libre,
+//                         peut évoluer.
+//   Phase 2 (200-399)   DÉGEL. On DÉTRUIT le clone : jockey reçoit une
+//                       permutation PROPRE et reste NÉFASTE. La corrélation
+//                       tombe. On mesure si le gel se lève, si le gradient de
+//                       jockey est RÉACTIVÉ (variation non nulle) et si son
+//                       poids RÉCUPÈRE — c'est-à-dire s'il peut enfin
+//                       descendre puisqu'il est nuisible.
+//   Phase 3 (400-599)   REPRISE DU GEL. Le clone est rétabli, les deux
+//                       restent NÉFASTES. Le gel doit reprendre.
+//   Phase 4 (600-799)   RÉVERSIBILITÉ. Les deux deviennent UTILES (+0,36).
+//                       Si jockey est toujours gelé il reste bloqué ; s'il est
+//                       libre il monte. Mesure de la conséquence du gel sur
+//                       l'ADAPTATION.
+//
+//  CE QUI EST MESURÉ À CHAQUE CYCLE (et pas seulement en fin de phase)
+//  ───────────────────────────────────────────────────────────────────
+//   • r de la paire tel que mémorisé par le moteur ;
+//   • si `jockey` ∈ `derniersGeles` et si `distSpec` ∈ `derniersGeles` ;
+//   • le critère EFFECTIVEMENT sélectionné par la règle de poids ;
+//   • `dernierGradient` de chaque critère (le momentum publié) ;
+//   • les 19 poids effectifs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kPhase = 200;
+const int kTotal = 4 * kPhase;
+
+/// Notes compilées : distSpec et jockey partagent la permutation de distSpec
+/// (clone) ou non, et portent la pente du scénario.
+///
+/// [copie] : true ⇒ jockey est un CLONE de distSpec ; false ⇒ jockey garde sa
+/// permutation propre (les deux critères deviennent indépendants).
+ScoresCriteres notesG4(
+  int numero,
+  int cycle, {
+  required double pente,
+  required bool copie,
+}) {
+  final dist = (55.0 + pente * (3.0 - numero)).clamp(0.0, 100.0);
+  final base = notesDistinctes(
+    numero,
+    cycle,
+    pilote: 'distSpec',
+    valeurPilote: dist,
+    clones: copie ? const <String, int>{'jockey': 7} : const <String, int>{},
+  );
+  if (copie) return base;
+  // Non clone : jockey reçoit sa PROPRE permutation, avec la même pente.
+  final jak = (55.0 + pente * (3.0 - numero) +
+          bruit3(numero, cycle, 8, amp: 6.0, sel: 5))
+      .clamp(0.0, 100.0);
+  return ScoresCriteres(
+    forme: base.forme, gains: base.gains, record: base.record,
+    cote: base.cote, constance: base.constance, victoires: base.victoires,
+    discipline: base.discipline, distSpec: dist,
+    jockey: jak,
+    repos: base.repos, hippo: base.hippo, entraineur: base.entraineur,
+    elo: base.elo, terrain: base.terrain, divergence: base.divergence,
+    poidsRel: base.poidsRel, progression: base.progression,
+    mouvCote: base.mouvCote, placeDepart: base.placeDepart,
+  );
+}
+
+/// Paramètres d'une phase.
+({double pente, bool copie, String nom}) phaseDe(int cycle) {
+  if (cycle < kPhase) {
+    return (pente: -12.0, copie: true, nom: 'P1 néfaste+clone');
+  }
+  if (cycle < 2 * kPhase) {
+    return (pente: -12.0, copie: false, nom: 'P2 néfaste+dégelé');
+  }
+  if (cycle < 3 * kPhase) {
+    return (pente: -12.0, copie: true, nom: 'P3 néfaste+clone');
+  }
+  return (pente: 12.0, copie: true, nom: 'P4 UTILE+clone');
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('G4v2 — paire unique : traçage par phase du critère gelé', () async {
+    IaExperimentation.reinitialiser();
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kTotal; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle3(i, nbCycles: kTotal),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesG4(
+                n,
+                i,
+                pente: phaseDe(i).pente,
+                copie: phaseDe(i).copie,
+              ),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce3(j, kTotal),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesG4(n, j, pente: -12.0, copie: true),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    // ── Trace complète ────────────────────────────────────────────────────
+    final trace = <({
+      int cycle,
+      double dist,
+      double jockey,
+      double r,
+      bool geleJockey,
+      bool geleDist,
+      String selection,
+      double gJockey,
+      double gDist,
+      double dJockey,
+      double dDist,
+    })>[];
+
+    for (var i = 0; i < kTotal; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final p = poidsEffectifs();
+      final corr = correlationsMemorisees();
+      final r = corr['distSpec|jockey'] ?? 0.0;
+      // Critère EFFECTIVEMENT sélectionné par la règle de production.
+      final pD = p['distSpec']!, pJ = p['jockey']!;
+      final selection = pD <= pJ ? 'distSpec' : 'jockey';
+      final mg = IaMemoryServiceG.momentum();
+      trace.add((
+        cycle: i,
+        dist: pD,
+        jockey: pJ,
+        r: r,
+        geleJockey: IaExperimentation.derniersGeles.contains('jockey'),
+        geleDist: IaExperimentation.derniersGeles.contains('distSpec'),
+        selection: selection,
+        gJockey: mg['jockey'] ?? 0.0,
+        gDist: mg['distSpec'] ?? 0.0,
+        dJockey: IaExperimentation.dernieresDiscriminations['jockey'] ?? 0.0,
+        dDist: IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0.0,
+      ));
+    }
+
+    // ── Synthèse par phase ────────────────────────────────────────────────
+    void bilan(int idx) {
+      final de = idx * kPhase, a = de + kPhase;
+      final sl = trace.sublist(de, a);
+      final ph = phaseDe(de);
+      final gJ = sl.where((t) => t.geleJockey).length;
+      final gD = sl.where((t) => t.geleDist).length;
+      final selJ = sl.where((t) => t.selection == 'jockey').length;
+      final selD = sl.where((t) => t.selection == 'distSpec').length;
+      final rMoy = sl.map((t) => t.r).reduce((x, y) => x + y) / sl.length;
+      final rMax = sl.map((t) => t.r).reduce((x, y) => x > y ? x : y);
+      final rMin = sl.map((t) => t.r).reduce((x, y) => x < y ? x : y);
+      // Gradient : moyenne des |momentum| de chaque critère.
+      final gJMoy = sl.map((t) => t.gJockey.abs()).reduce((x, y) => x + y) / sl.length;
+      final gDMoy = sl.map((t) => t.gDist.abs()).reduce((x, y) => x + y) / sl.length;
+      final jDeb = sl.first.jockey, jFin = sl.last.jockey;
+      final dDeb = sl.first.dist, dFin = sl.last.dist;
+      final dJMoy = sl.map((t) => t.dJockey).reduce((x, y) => x + y) / sl.length;
+      // ignore: avoid_print
+      print('[G4v2] ── ${ph.nom} ──');
+      // ignore: avoid_print
+      print('[G4v2]   gel jockey=${gJ.toString().padLeft(3)}/$kPhase · '
+          'gel distSpec=${gD.toString().padLeft(3)}/$kPhase');
+      // ignore: avoid_print
+      print('[G4v2]   sélection par le poids : jockey $selJ fois · '
+          'distSpec $selD fois (attendu : jockey, poids 0,07 < 0,08)');
+      // ignore: avoid_print
+      print('[G4v2]   r paire : moy=${rMoy.toStringAsFixed(4)} '
+          'min=${rMin.toStringAsFixed(4)} max=${rMax.toStringAsFixed(4)}');
+      // ignore: avoid_print
+      print('[G4v2]   |momentum| moyen : jockey=${gJMoy.toStringAsExponential(3)} '
+          'distSpec=${gDMoy.toStringAsExponential(3)}');
+      // ignore: avoid_print
+      print('[G4v2]   discrimination jockey (moy) = ${dJMoy.toStringAsFixed(9)}');
+      // ignore: avoid_print
+      print('[G4v2]   poids jockey  ${d9(jDeb)} → ${d9(jFin)} · '
+          'poids distSpec ${d9(dDeb)} → ${d9(dFin)}');
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G4v2] ═══ PAIRE UNIQUE (distSpec, jockey) · $kTotal CYCLES · '
+        '$kPhase PAR PHASE ═══');
+    // ignore: avoid_print
+    print('[G4v2] poids initiaux : distSpec 0,08 > jockey 0,07 ⇒ sélection '
+        'attendue = JOCKEY');
+    for (var i = 0; i < 4; i++) {
+      bilan(i);
+    }
+
+    // ── Transitions : 6 cycles autour de chaque bascule ───────────────────
+    // ignore: avoid_print
+    print('[G4v2] ─── transitions ───');
+    for (final c in <int>[
+      kPhase - 1, kPhase, kPhase + 1,
+      2 * kPhase - 1, 2 * kPhase, 2 * kPhase + 1,
+      3 * kPhase - 1, 3 * kPhase, 3 * kPhase + 1,
+    ]) {
+      final t = trace[c];
+      // ignore: avoid_print
+      print('[G4v2] c=${t.cycle.toString().padLeft(3)} '
+          'r=${t.r.toStringAsFixed(4)} '
+          'gJ=${t.geleJockey ? "GELÉ" : "libre"} '
+          'gD=${t.geleDist ? "GELÉ" : "libre"} '
+          'sel=${t.selection.padRight(9)} '
+          'pJ=${d9(t.jockey)} pD=${d9(t.dist)} '
+          'gJ=${t.gJockey.toStringAsExponential(2)}');
+    }
+
+    // ── Mesures de synthèse et gardes ─────────────────────────────────────
+    final p1 = trace.sublist(0, kPhase);
+    final p2 = trace.sublist(kPhase, 2 * kPhase);
+    final p3 = trace.sublist(2 * kPhase, 3 * kPhase);
+    final p4 = trace.sublist(3 * kPhase, kTotal);
+
+    final gelP1 = p1.where((t) => t.geleJockey).length;
+    final gelP2 = p2.where((t) => t.geleJockey).length;
+    final gelP3 = p3.where((t) => t.geleJockey).length;
+    final gelP4 = p4.where((t) => t.geleJockey).length;
+
+    // Le critère sélectionné doit être jockey dans TOUTES les phases.
+    final selJockeyTotal = trace.where((t) => t.selection == 'jockey').length;
+
+    // Pendant qu'il est gelé, le momentum de jockey doit être EXACTEMENT 0
+    // (le code fait `momentum[c] = 0.0; continue;`). C'est la preuve directe
+    // que le gradient n'atteint pas le critère.
+    final geleEtMomentumNul = trace
+        .where((t) => t.geleJockey && t.gJockey == 0.0)
+        .length;
+    final geleEtMomentumNonNul = trace
+        .where((t) => t.geleJockey && t.gJockey != 0.0)
+        .length;
+
+    // Pendant qu'il est gelé ET néfaste, son poids doit rester immobile.
+    final blobNefasteGele = <double>[
+      for (final t in trace)
+        if (t.geleJockey && t.cycle < 3 * kPhase) t.jockey,
+    ];
+    final amplitudeGele = blobNefasteGele.isEmpty
+        ? 0.0
+        : blobNefasteGele.reduce((a, b) => a > b ? a : b) -
+            blobNefasteGele.reduce((a, b) => a < b ? a : b);
+
+    // ignore: avoid_print
+    print('[G4v2] ─── MESURES ───');
+    // ignore: avoid_print
+    print('[G4v2] (a) GEL par phase : P1=$gelP1/$kPhase · P2=$gelP2/$kPhase · '
+        'P3=$gelP3/$kPhase · P4=$gelP4/$kPhase');
+    // ignore: avoid_print
+    print('[G4v2] (b) SÉLECTION : jockey désigné $selJockeyTotal/$kTotal fois '
+        '⇒ ${selJockeyTotal == kTotal ? "règle p1<=p2 CONFIRMÉE" : "écart : la sélection change, à instruire"}');
+    // ignore: avoid_print
+    print('[G4v2] (c) GEL ⇒ GRADIENT COUPÉ : cycles gelés avec momentum '
+        'exactement 0 = $geleEtMomentumNul · avec momentum non nul = '
+        '$geleEtMomentumNonNul');
+    // ignore: avoid_print
+    print('[G4v2] (d) NÉFASTE+GELÉ : amplitude du poids de jockey pendant les '
+        'cycles où il est gelé et néfaste = ${d9(amplitudeGele)}');
+    // ignore: avoid_print
+    print('[G4v2] (e) DÉGEL : $gelP1 gelés en P1 puis $gelP2 en P2 ⇒ '
+        '${gelP1 > 0 && gelP2 < gelP1 ? "DÉGEL OBSERVÉ" : "dégel NON observé"}');
+    final demiP2 = p2.sublist(kPhase ~/ 2);
+    final dJ2 = demiP2.last.jockey - demiP2.first.jockey;
+    // ignore: avoid_print
+    print('[G4v2] (f) RÉCUPÉRATION après dégel : variation de jockey sur la 2e '
+        'moitié de P2 = ${d9(dJ2)} ⇒ '
+        '${dJ2.abs() > 1e-6 ? "POIDS RÉACTIVÉ" : "poids inerte"}');
+    // ignore: avoid_print
+    print('[G4v2] (g) REPRISE : r max en P3 = '
+        '${p3.map((t) => t.r).reduce((x, y) => x > y ? x : y).toStringAsFixed(4)} '
+        '· gel P3=$gelP3/$kPhase ⇒ ${gelP3 > 0 ? "GEL REPRIS" : "gel NON repris"}');
+    final dJ4 = p4.last.jockey - p4.first.jockey;
+    final dD4 = p4.last.dist - p4.first.dist;
+    // ignore: avoid_print
+    print('[G4v2] (h) ADAPTATION (P4, les deux UTILES) : jockey ${d9(dJ4)} · '
+        'distSpec ${d9(dD4)} ⇒ '
+        '${dJ4.abs() > 1e-4 ? "jockey s adapte" : "jockey RESTE BLOQUÉ"}');
+
+    // GARDE 1 : la paire doit avoir réellement franchi le seuil en P1.
+    final rP1Max = p1.map((t) => t.r).reduce((x, y) => x > y ? x : y);
+    expect(rP1Max >= IaExperimentation.seuilGel, isTrue,
+        reason: 'Le scénario doit porter la paire au-dessus du seuil de gel en '
+            'P1, sinon il ne teste rien. r max = $rP1Max');
+
+    // GARDE 2 : le critère gelé doit être celui que la règle désigne.
+    expect(selJockeyTotal, kTotal,
+        reason: 'La règle `p1 <= p2 ? c1 : c2` doit désigner jockey '
+            '(0,07 < 0,08) à chaque cycle.');
+
+    // GARDE 3 : un critère gelé ne doit recevoir AUCUN gradient.
+    expect(geleEtMomentumNonNul, 0,
+        reason: 'Le code fait `momentum[c] = 0.0; continue;` : un critère gelé '
+            'ne peut pas porter un momentum non nul.');
+  }, timeout: const Timeout(Duration(minutes: 300)));
+}
+
+/// Accès au momentum publié par le moteur — `poids.dernierGradient`
+/// (`ia_memory_service:4174` écrit `momentum[c] = gradAvecMomentum`).
+///
+/// ⚠️ C'est la SEULE fenêtre sur le gradient : `discriminations[c]` est une
+/// variable locale du moteur, jamais publiée. Un momentum exactement nul sur un
+/// critère gelé est donc la preuve directe que le `continue` du gel a coupé
+/// l'alimentation — c'est ce que la garde 3 vérifie.
+class IaMemoryServiceG {
+  static Map<String, double> momentum() => <String, double>{
+        for (final k in kCles)
+          k: IaMemoryService.instance.poids.dernierGradient[k] ?? 0.0,
+      };
+}

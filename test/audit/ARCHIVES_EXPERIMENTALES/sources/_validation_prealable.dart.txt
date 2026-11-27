@@ -1,0 +1,519 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  VALIDATION PRÉALABLE DES CONFIGURATIONS EXPÉRIMENTALES — HARNAIS v4
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  EXIGENCE (mot pour mot)
+//  ───────────────────────
+//   « La validation générale du générateur ne suffit pas. Chaque configuration
+//     expérimentale doit être validée individuellement avant son exécution
+//     longue. »
+//   « Si les préconditions ne sont pas satisfaites, la campagne longue ne doit
+//     pas démarrer. »
+//   « Intègre ces contrôles sous forme de gardes exécutables dans les harnais,
+//     et non de simples commentaires. »
+//
+//  CE QUE CE FICHIER CONTIENT
+//  ──────────────────────────
+//  Un objet `Spec` décrit une configuration (profils par critère, départ,
+//  régime de varianceScores) et un ensemble de PRÉCONDITIONS chiffrées. La
+//  fonction `valider` les vérifie toutes SUR LE VÉRITABLE MOTEUR pendant une
+//  exécution pilote COURTE (par défaut 45 cycles), puis rend un verdict. Une
+//  campagne longue appelle `valider` d'abord et refuse de démarrer si le
+//  verdict est négatif.
+//
+//  LES ONZE CONTRÔLES DEMANDÉS
+//  ───────────────────────────
+//    1. DISCRIMINATIONS réellement obtenues (lues dans
+//       `IaExperimentation.dernieresDiscriminations`, l.4079) ;
+//    2. CORRÉLATIONS réellement obtenues (lues dans
+//       `IaMemoryService.poids.correlations`, l.4527) ;
+//    3. CORRÉLATIONS PARASITES (paires non voulues franchissant un plancher) ;
+//    4. FENÊTRES GLISSANTES de 50 et 80 courses (les deux que le moteur
+//       utilise : `.take(50)` l.3972 pour le gradient, `.take(80)` l.4477
+//       pour les corrélations) ;
+//    5. ORDRE CHRONOLOGIQUE (invariant `insert(0, …)` : le plus récent en
+//       index 0 ; déjà gardé par `semer`, re-vérifié ici) ;
+//    6. DISPONIBILITÉ DES DONNÉES (≥ 10 courses avec résultat pour que le
+//       gradient s'exécute — garde l.3947 ; ≥ 20 avec scores pour que les
+//       corrélations soient calculées — l.4478) ;
+//    7. VARIATION DE varianceScores (sans elle, `hautConfiance` est vide et
+//       la calibration sort l.4443 avant toute détection de corrélation) ;
+//    8. ACTIVATION EFFECTIVE DES MÉCANISMES ÉTUDIÉS (le gel s'est-il
+//       réellement déclenché ? le momentum est-il non nul ?) ;
+//    9. SÉLECTION EFFECTIVE DU CRITÈRE GELÉ (la règle `p1 <= p2 ? c1 : c2`
+//       désigne-t-elle bien le critère attendu ?) ;
+//   10. RÉCEPTION DU SIGNAL PAR LE GRADIENT (le critère étudié voit-il un
+//       `dernierGradient` non nul ? Sans cela toutes les mesures aval sont
+//       des faux négatifs silencieux) ;
+//   11. Le tout à l'intérieur des FENÊTRES RÉELLES, pas sur le corpus entier.
+//
+//  ⚠️ CE FICHIER NE MODIFIE PAS LE MOTEUR. Il ne fait que LIRE ses
+//  publications et REFUSER une configuration mal formée.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+
+/// Précondition chiffrée sur une paire de critères.
+class AttentePaire {
+  final String c1;
+  final String c2;
+
+  /// Corrélation MÉMORISÉE attendue au signe près ? Non : le moteur stocke
+  /// |r|. On attend donc une valeur de |r| dans [minAbs, maxAbs].
+  final double minAbs;
+  final double maxAbs;
+  const AttentePaire(this.c1, this.c2, {this.minAbs = 0.0, this.maxAbs = 1.0});
+
+  String get cle => '$c1|$c2';
+  String get cleInverse => '$c2|$c1';
+}
+
+/// Précondition chiffrée sur la discrimination d'un critère.
+class AttenteDiscrimination {
+  final String critere;
+
+  /// Signe attendu : +1 utile, −1 néfaste, 0 indifférent.
+  final int signe;
+
+  /// |discrimination| minimale exigée. 0 ⇒ aucune exigence.
+  final double minAbs;
+  const AttenteDiscrimination(this.critere,
+      {this.signe = 0, this.minAbs = 0.0});
+}
+
+/// Spécification complète d'une configuration expérimentale.
+class Spec {
+  final String nom;
+  final Map<String, Profil> profils;
+  final Map<String, double> depart;
+  final bool varianceVarie;
+  final List<AttentePaire> attentesPaires;
+  final List<AttenteDiscrimination> attentesDiscriminations;
+
+  /// Critère dont on EXIGE que le gel se déclenche au moins une fois.
+  /// null ⇒ aucune exigence.
+  final String? gelAttendu;
+
+  /// Critère dont on EXIGE que le gradient soit non nul au moins une fois,
+  /// c'est-à-dire que le signal ait effectivement atteint le gradient.
+  final List<String> gradientAttendu;
+
+  /// Plancher de |r| au-dessus duquel une paire NON ATTENDUE est comptée
+  /// comme corrélation parasite.
+  final double parasiteSeuil;
+
+  const Spec({
+    required this.nom,
+    required this.profils,
+    this.depart = kInitial,
+    this.varianceVarie = true,
+    this.attentesPaires = const <AttentePaire>[],
+    this.attentesDiscriminations = const <AttenteDiscrimination>[],
+    this.gelAttendu,
+    this.gradientAttendu = const <String>[],
+    this.parasiteSeuil = 0.65,
+  });
+}
+
+/// Résultat d'une validation préalable.
+class Verdict {
+  final String nom;
+  final bool ok;
+  final List<String> echecs;
+  final List<String> constats;
+  final Map<String, double> discriminations;
+  final Map<String, double> correlations;
+  final Set<String> pairesAttendues;
+  final Map<String, double> rObserve;
+  final double partEnrichieObservee;
+  const Verdict({
+    required this.nom,
+    required this.ok,
+    required this.echecs,
+    required this.constats,
+    required this.discriminations,
+    required this.correlations,
+    required this.pairesAttendues,
+    required this.rObserve,
+    required this.partEnrichieObservee,
+  });
+
+  void imprimer(String prefixe) {
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[$prefixe] ═══ VALIDATION PRÉALABLE « $nom » ═══');
+    // ignore: avoid_print
+    print('[$prefixe] VERDICT : ${ok ? "PRÉCONDITIONS SATISFAITES" : "REFUSÉ"}');
+    for (final c in constats) {
+      // ignore: avoid_print
+      print('[$prefixe]   · $c');
+    }
+    for (final e in echecs) {
+      // ignore: avoid_print
+      print('[$prefixe]   ✗ $e');
+    }
+  }
+}
+
+/// Corrélation de Pearson — RÉIMPLÉMENTATION INTERDITE pour la mesure :
+/// cette fonction sert UNIQUEMENT à calculer la corrélation DANS LES FENÊTRES
+/// DE 50 ET 80 COURSES, ce que le moteur ne publie pas. Elle est identique à
+/// celle du moteur (l.4484-4499) et sert de CONTRÔLE CROISÉ, jamais de
+/// substitut : la valeur de référence reste celle publiée par le moteur.
+double pearsonControle(List<double> x, List<double> y) {
+  final n = math.min(x.length, y.length);
+  if (n < 10) return 0.0;
+  final mx = x.take(n).reduce((a, b) => a + b) / n;
+  final my = y.take(n).reduce((a, b) => a + b) / n;
+  double num = 0, dx = 0, dy = 0;
+  for (var i = 0; i < n; i++) {
+    final ex = x[i] - mx, ey = y[i] - my;
+    num += ex * ey;
+    dx += ex * ex;
+    dy += ey * ey;
+  }
+  final den = math.sqrt(dx * dy);
+  return den > 0 ? num / den : 0.0;
+}
+
+/// Construit les vecteurs aplatís d'une liste de pronostics, dans l'ordre où
+/// le moteur les consomme (`p.scoresCriteres.forEach` puis `criteres`).
+Map<String, List<double>> vecteursAplatis(List<IaPronostic> src) {
+  final v = <String, List<double>>{for (final c in kCles) c: <double>[]};
+  for (final p in src) {
+    p.scoresCriteres.forEach((_, sc) {
+      for (final c in kCles) {
+        v[c]!.add(sc.valeurPourCritere(c));
+      }
+    });
+  }
+  return v;
+}
+
+/// VALIDE UNE CONFIGURATION SUR LE VÉRITABLE MOTEUR, EN [cycles] CYCLES.
+///
+/// Renvoie un `Verdict`; lève une exception si les préconditions échouent et
+/// que [leverSiEchec] est vrai — c'est le comportement qu'une campagne longue
+/// doit adopter pour ne PAS démarrer.
+Future<Verdict> valider(
+  Spec spec, {
+  int cycles = 45,
+  int historique = 60,
+  bool leverSiEchec = true,
+}) async {
+  IaExperimentation.reinitialiser();
+
+  final echecs = <String>[];
+  final constats = <String>[];
+
+  final gelVu = <String>{};
+  final gradientVu = <String>{};
+  var rMaxVu = 0.0;
+  Map<String, double> corrDernieres = <String, double>{};
+  Map<String, double> discDernieres = <String, double>{};
+  var discMin = 1.0, discMax = -1.0;
+
+  // ⚠️ DÉFAUT N°21, MESURÉ PUIS CORRIGÉ EN TROIS TEMPS.
+  //
+  //    Essai 1 — règle appliquée aux poids APRÈS le cycle (poidsEffectifs()).
+  //      Concordance mesurée : 6,8 %.
+  //    Essai 2 — règle appliquée aux poids `avant` du cycle PRÉCÉDENT.
+  //      Concordance mesurée : 9,1 %.
+  //    Essai 3 — DIAGNOSTIC DIRECT (`diag_gel_instant_test.dart`) imprimant
+  //      les deux instants à chaque cycle. Les traces ÉTABLISSENT que la règle
+  //      utilise `c.avant` du cycle COURANT et les corrélations du cycle
+  //      PRÉCÉDENT. Preuve au cycle i=4 :
+  //          aJ = 0,051490 · aD = 0,047843 (poids AVANT, cycle courant)
+  //          distSpec est le plus léger ⇒ le moteur gèle distSpec — observé.
+  //          Avec les poids du cycle 3 (aJ = 0,050851 < aD = 0,051064) on
+  //          aurait prédit jockey : c'est CE décalage qui faisait échouer
+  //          l'essai 2.
+  //      Et au cycle i=0 : `geles = []` alors que `r_now = 0,988` ⇒ le gradient
+  //      du cycle 0 ne voit AUCUNE corrélation ; celui du cycle 1 la voit.
+  //    CORRECTION DÉFINITIVE : règle appliquée à `c.avant` (cycle courant) et
+  //    à `corrPrecedentes` (corrélations d'avant le cycle).
+  //
+  //    ⚠️ FAIT DE COMPORTEMENT ÉTABLI PAR LE MÊME DIAGNOSTIC, À CONSIGNER :
+  //    quand les DEUX critères de la paire sont également nuisibles, le critère
+  //    gelé ALTERNE à chaque cycle (i=1 jockey, i=4 distSpec, i=6 jockey,
+  //    i=7 distSpec, …). Le gel ne protège donc durablement AUCUN des deux.
+  //    Ce n'est pas un défaut du contrôle : c'est le comportement réel du
+  //    mécanisme, et il conditionne l'interprétation de G4.
+  var cyclesAvecGel = 0;
+  var cyclesGelCoherent = 0;
+  var dernierGelObserve = <String>{};
+  var dernierGelPredit = <String>{};
+  Map<String, double> corrPrecedentes = <String, double>{};
+
+  final trace = await deroulerV4(
+    cycles: cycles,
+    profils: spec.profils,
+    depart: spec.depart,
+    historique: historique,
+    varianceVarie: spec.varianceVarie,
+    apresCycle: (i, c) {
+      // ── 8/9. GEL : atteint ? cohérent avec la règle de sélection ? ──────
+      final geles = Set<String>.from(IaExperimentation.derniersGeles);
+      for (final g in geles) {
+        gelVu.add(g);
+      }
+      // Reconstitution de la DÉCISION du cycle : règle appliquée aux poids
+      // PRÉ-projection du cycle et aux corrélations du cycle précédent.
+      final predit = <String>{};
+      for (final e in corrPrecedentes.entries) {
+        if (e.value < IaExperimentation.seuilGel) continue;
+        final parts = e.key.split('|');
+        if (parts.length < 2) continue;
+        final p1 = c.avant[parts[0]] ?? 0.0;
+        final p2 = c.avant[parts[1]] ?? 0.0;
+        predit.add(p1 <= p2 ? parts[0] : parts[1]);
+      }
+      if (geles.isNotEmpty) {
+        cyclesAvecGel++;
+        if (predit.containsAll(geles)) cyclesGelCoherent++;
+        dernierGelObserve = geles;
+        dernierGelPredit = predit;
+      }
+      corrPrecedentes = correlationsMoteur();
+
+      // ── 10. RÉCEPTION DU SIGNAL PAR LE GRADIENT ─────────────────────────
+      final mg = IaMemoryService.instance.poids.dernierGradient;
+      for (final k in kCles) {
+        if ((mg[k] ?? 0.0).abs() > 0.0) gradientVu.add(k);
+      }
+      // ── 1. DISCRIMINATIONS publiées par le moteur ───────────────────────
+      final d = discriminationsMoteur();
+      if (d.isNotEmpty) {
+        discDernieres = d;
+        for (final v in d.values) {
+          if (v < discMin) discMin = v;
+          if (v > discMax) discMax = v;
+        }
+      }
+      // ── 2. CORRÉLATIONS publiées par le moteur ──────────────────────────
+      final c2 = correlationsMoteur();
+      if (c2.isNotEmpty) {
+        corrDernieres = c2;
+        for (final v in c2.values) {
+          if (v > rMaxVu) rMaxVu = v;
+        }
+      }
+    },
+  );
+
+  // ── 5. ORDRE CHRONOLOGIQUE ET 6. DISPONIBILITÉ ──────────────────────────
+  final mem = IaMemoryService.instance;
+  final avecResultat = mem.pronosticsAvecResultat;
+  if (avecResultat.length < 10) {
+    echecs.add('DISPONIBILITÉ : ${avecResultat.length} courses avec résultat '
+        '— le gradient exige ≥ 10 (l.3947)');
+  } else {
+    constats.add('disponibilité : ${avecResultat.length} courses avec '
+        'résultat ≥ 10');
+  }
+  if (mem.pronostics.length >= 2) {
+    for (var i = 1; i < mem.pronostics.length; i++) {
+      if (mem.pronostics[i - 1]
+          .datePronostic
+          .isBefore(mem.pronostics[i].datePronostic)) {
+        echecs.add('ORDRE : index ${i - 1} plus ANCIEN que index $i '
+            '(la fenêtre take(50) serait fausse)');
+        break;
+      }
+    }
+  }
+
+  // ── 4. FENÊTRES RÉELLES : 80 courses (corrélations) et 50 (gradient) ────
+  final fen80 = avecResultat.take(80).toList();
+  final fen50 = avecResultat.take(50).toList();
+  if (fen80.length < 20) {
+    echecs.add('FENÊTRE 80 : ${fen80.length} courses — les corrélations '
+        'exigent ≥ 20 (l.4478)');
+  }
+  constats.add('fenêtres réelles : ${fen50.length} courses (gradient) / '
+      '${fen80.length} courses (corrélations)');
+
+  // Corrélations RECALCULÉES dans les fenêtres réelles — contrôle croisé.
+  final v80 = vecteursAplatis(fen80);
+  final v50 = vecteursAplatis(fen50);
+
+  // ── 7. VARIATION DE varianceScores ───────────────────────────────────────
+  final vars = <double>{
+    for (final p in avecResultat)
+      if (p.varianceScores != null) p.varianceScores!,
+  };
+  if (vars.length < 2) {
+    echecs.add('varianceScores : ${vars.length} valeur(s) distincte(s) — sans '
+        'variation, hautConfiance est vide et la calibration sort l.4443 '
+        'AVANT toute détection de corrélation');
+  } else {
+    constats.add('varianceScores : ${vars.length} valeurs distinctes');
+  }
+
+  // ── 2bis. CONTRÔLE CROISÉ DES CORRÉLATIONS DANS LES DEUX FENÊTRES ───────
+  final rObserve = <String, double>{};
+  final pairesAttendues = <String>{
+    for (final a in spec.attentesPaires) a.cle,
+  };
+  final parasites = <String, double>{};
+
+  for (final a in spec.attentesPaires) {
+    final r80 = pearsonControle(v80[a.c1]!, v80[a.c2]!).abs();
+    final r50 = pearsonControle(v50[a.c1]!, v50[a.c2]!).abs();
+    final rMem = corrDernieres[a.cle] ?? corrDernieres[a.cleInverse] ?? -1.0;
+    rObserve[a.cle] = r80;
+    constats.add('paire ${a.c1}/${a.c2} : |r| fenêtre80 = '
+        '${d9v4(r80)} · fenêtre50 = ${d9v4(r50)} · '
+        'mémorisé = ${rMem < 0 ? "absente" : d9v4(rMem)}');
+    if (a.minAbs > 0 && r80 < a.minAbs) {
+      echecs.add('paire ${a.cle} : |r|80 = ${d9v4(r80)} < exigé '
+          '${d9v4(a.minAbs)}');
+    }
+    if (a.minAbs > 0 && r50 < a.minAbs - 0.10) {
+      echecs.add('paire ${a.cle} : |r|50 = ${d9v4(r50)} s effondre de plus de '
+          '0,10 sous l exigence ${d9v4(a.minAbs)} — configuration instable '
+          'dans la fenêtre RÉELLE de 50 courses');
+    }
+    if (a.maxAbs < 1.0 && r80 > a.maxAbs) {
+      echecs.add('paire ${a.cle} : |r|80 = ${d9v4(r80)} > plafond '
+          '${d9v4(a.maxAbs)}');
+    }
+  }
+
+  // ── 3. CORRÉLATIONS PARASITES ───────────────────────────────────────────
+  for (var i = 0; i < kCles.length; i++) {
+    for (var j = i + 1; j < kCles.length; j++) {
+      final ci = kCles[i], cj = kCles[j];
+      final cle = '$ci|$cj';
+      if (pairesAttendues.contains(cle) || pairesAttendues.contains('$cj|$ci')) {
+        continue;
+      }
+      final r = pearsonControle(v80[ci]!, v80[cj]!).abs();
+      if (r >= spec.parasiteSeuil) parasites[cle] = r;
+    }
+  }
+  if (parasites.isNotEmpty) {
+    final liste = parasites.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    echecs.add('CORRÉLATIONS PARASITES : ${parasites.length} paire(s) non '
+        'voulue(s) ≥ ${d9v4(spec.parasiteSeuil)} — pire : '
+        '${liste.first.key} = ${d9v4(liste.first.value)}');
+  } else {
+    constats.add('corrélations parasites ≥ ${d9v4(spec.parasiteSeuil)} : '
+        'AUCUNE (sur les 171 paires)');
+  }
+
+  // ── 1bis. DISCRIMINATIONS EXIGÉES ───────────────────────────────────────
+  for (final a in spec.attentesDiscriminations) {
+    final d = discDernieres[a.critere];
+    if (d == null) {
+      echecs.add('discrimination ${a.critere} : non publiée par le moteur');
+      continue;
+    }
+    constats.add('discrimination ${a.critere} = ${d9v4(d)} '
+        '(fenêtre 50, pondérée par le moteur)');
+    if (a.minAbs > 0 && d.abs() < a.minAbs) {
+      echecs.add('discrimination ${a.critere} : |${d9v4(d)}| < exigé '
+          '${d9v4(a.minAbs)}');
+    }
+    if (a.signe != 0 && d.sign != a.signe && d.abs() >= a.minAbs) {
+      echecs.add('discrimination ${a.critere} : signe ${d.sign} au lieu de '
+          '${a.signe}');
+    }
+  }
+
+  // ── 8. GEL EFFECTIVEMENT ATTEINT ────────────────────────────────────────
+  if (spec.gelAttendu != null) {
+    if (gelVu.contains(spec.gelAttendu)) {
+      constats.add('gel : « ${spec.gelAttendu} » effectivement gelé au moins '
+          'une fois (critères observés : ${gelVu.join(", ")})');
+    } else {
+      echecs.add('GEL NON ATTEINT : « ${spec.gelAttendu} » n a jamais été gelé '
+          'en $cycles cycles (r max mémorisé = ${d9v4(rMaxVu)}) — toute '
+          'conclusion sur le gel serait un faux négatif');
+    }
+  } else {
+    constats.add('gel : critères observés = '
+        '${gelVu.isEmpty ? "aucun" : gelVu.join(", ")} · '
+        'r max mémorisé = ${d9v4(rMaxVu)}');
+  }
+
+  // ── 9. SÉLECTION EFFECTIVE DU CRITÈRE GELÉ ──────────────────────────────
+  // Le contrôle porte sur TOUS les cycles où un gel a eu lieu, pas sur le
+  // dernier seulement (défaut n°21).
+  if (spec.gelAttendu != null && gelVu.isNotEmpty) {
+    if (cyclesAvecGel == 0) {
+      echecs.add('SÉLECTION : aucun cycle avec gel, la concordance ne peut '
+          'pas être évaluée');
+    } else {
+      final taux = cyclesGelCoherent / cyclesAvecGel;
+      constats.add('sélection : concordance règle de production / gel observé '
+          'sur $cyclesGelCoherent/$cyclesAvecGel cycles gelés '
+          '(${(taux * 100).toStringAsFixed(1)} %)');
+      if (taux < 0.90) {
+        echecs.add('SÉLECTION : concordance ${(taux * 100).toStringAsFixed(1)} '
+            '% < 90 % — observé ${dernierGelObserve.join(", ")} / prédit '
+            '${dernierGelPredit.join(", ")}');
+      }
+      if (!gelVu.contains(spec.gelAttendu)) {
+        echecs.add('SÉLECTION : « ${spec.gelAttendu} » n a jamais été gelé, '
+            'seuls ${gelVu.join(", ")} l ont été');
+      }
+    }
+  }
+
+  // ── 10. SIGNAL EFFECTIVEMENT REÇU PAR LE GRADIENT ───────────────────────
+  for (final c in spec.gradientAttendu) {
+    if (gradientVu.contains(c)) {
+      constats.add('gradient : « $c » a reçu un signal non nul');
+    } else {
+      echecs.add('GRADIENT MUET : « $c » n a JAMAIS reçu de gradient non nul '
+          'en $cycles cycles — la mesure aval serait un faux négatif');
+    }
+  }
+
+  final part = partEnrichie4(trace.last);
+  constats.add('part enrichie finale = ${d9v4(part)} '
+      '(bornes de projection [0,18 ; 0,40])');
+  if (part < 0.18 - 1e-9 || part > 0.40 + 1e-9) {
+    echecs.add('part enrichie ${d9v4(part)} hors des bornes de projection');
+  }
+
+  final verdict = Verdict(
+    nom: spec.nom,
+    ok: echecs.isEmpty,
+    echecs: echecs,
+    constats: constats,
+    discriminations: discDernieres,
+    correlations: corrDernieres,
+    pairesAttendues: pairesAttendues,
+    rObserve: rObserve,
+    partEnrichieObservee: part,
+  );
+
+  if (leverSiEchec && !verdict.ok) {
+    fail('CONFIGURATION REFUSÉE « ${spec.nom} » :\n'
+        '${echecs.map((e) => "  ✗ $e").join("\n")}');
+  }
+  return verdict;
+}

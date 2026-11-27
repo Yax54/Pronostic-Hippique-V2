@@ -1,0 +1,227 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SONDE DE CALIBRAGE G5 — CE N'EST PAS UNE CAMPAGNE
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  POURQUOI
+//  ────────
+//  La phase B de G4v5 (jockey NÉFASTE γ=−8, distSpec UTILE γ=+8, β=20 des deux
+//  côtés) a été REFUSÉE par la validation préalable :
+//      |r|80 = 0,026814738  < 0,80 exigé
+//      |r|50 = 0,028555176  s'effondre de plus de 0,10
+//  Ce refus est CORRECT et il instruit : dans la famille v4,
+//      valeur = 50 + β·L + γ·motif(n) + σ·E
+//  et `motif(n) = 3 − n` est PARTAGÉ entre tous les critères. La covariance
+//  vaut donc  β₁β₂·Var(L) + γ₁γ₂·Var(motif). Inverser γ sur UN SEUL critère
+//  SOUMET la corrélation au lieu de la conserver :
+//      γ₁γ₂ = (+8)(−8) = −64   contre  4β₁β₂ = 400
+//  ⇒ r passe de +0,95 à ≈ 0. Le scénario « devient néfaste sans perdre la
+//  corrélation » est donc IMPOSSIBLE à écrire dans cette famille en inversant γ.
+//
+//  CE QUE CETTE SONDE MESURE (sur le VÉRITABLE MOTEUR, pas sur le générateur)
+//  ─────────────────────────────────────────────────────────────────────────
+//   S1  combien de courses la fenêtre de corrélation contient réellement
+//       (le log annonce « Mise à jour sur 20 courses » alors que la spec en
+//       sème 45 + 60 = 105 : l'écart doit être expliqué, pas supposé) ;
+//   S2  l'effet de la LONGUEUR d'historique sur |r| mesuré ;
+//   S3  l'effet du SIGMA sur |r| pour une configuration SHOULD=0 (δ théorique
+//       nul) — si δ disparaît avec σ, alors β peut porter la corrélation seul
+//       et l'on obtient enfin le scénario du POINT 4.
+//
+//  Toute valeur affichée ici est MESURÉE. Aucune n'est déduite du générateur.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+String d9(double v) => v.toStringAsFixed(9);
+
+/// Profils de la configuration « SHOULD = 0 » : les deux UTILES, corrélés.
+Map<String, Profil> profilsSh0(double beta, double gamma, double sigma) {
+  final p = profilsNeutres(sigma: sigma);
+  p['distSpec'] = Profil(beta: beta, gamma: gamma, sigma: sigma);
+  p['jockey'] = Profil(beta: beta, gamma: gamma, sigma: sigma);
+  return p;
+}
+
+void main() {
+  test('SONDE G5 — structure réelle du générateur et calibrage du scénario',
+      () async {
+    final out = <String>[];
+    void w(String s) => out.add(s);
+
+    w('');
+    w('[SONDE] ═══ MESURES SUR LE MOTEUR — AUCUNE DÉDUCTION ═══');
+    w('');
+
+    // ── S1 : combien de courses dans la fenêtre ? ──────────────────────────
+    // On sème 45 cycles + 120 amorçage et on lit ce que le moteur publie.
+    w('[SONDE] ─── S1 : TAILLE RÉELLE DE LA FENÊTRE ───');
+    final spec1 = Spec(
+      nom: 'sonde S1 (β=20 γ=+8 σ=6)',
+      profils: profilsSh0(20, 8, 6),
+      depart: projeterTable(kInitial),
+      attentesPaires: <AttentePaire>[
+        const AttentePaire('distSpec', 'jockey', minAbs: 0.0),
+      ],
+      attentesDiscriminations: <AttenteDiscrimination>[
+        const AttenteDiscrimination('jockey', signe: 1, minAbs: 0.0),
+        const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.0),
+      ],
+      gradientAttendu: <String>['distSpec', 'jockey'],
+    );
+    final v1 = await valider(spec1, cycles: 45, historique: 190);
+    for (final c in v1.constats) {
+      if (c.contains('fenêtres réelles') ||
+          c.contains('fenêtre80') ||
+          c.contains('part enrichie') ||
+          c.contains('varianceScores')) {
+        w('[SONDE]   · $c');
+      }
+    }
+    w('[SONDE]   verdict S1 = ${v1.ok ? "OK" : "REFUSÉ"}');
+    for (final e in v1.echecs) {
+      w('[SONDE]     ✗ $e');
+    }
+    w('');
+
+    // ── S2 : la longueur d'historique change-t-elle |r| ? ──────────────────
+    w('[SONDE] ─── S2 : EFFET DE L HISTORIQUE SUR |r| ───');
+    for (final hist in <int>[60, 120, 200]) {
+      final sp = Spec(
+        nom: 'sonde S2 h=$hist',
+        profils: profilsSh0(20, 8, 6),
+        depart: projeterTable(kInitial),
+        attentesPaires: <AttentePaire>[
+          const AttentePaire('distSpec', 'jockey', minAbs: 0.0),
+        ],
+        attentesDiscriminations: <AttenteDiscrimination>[
+          const AttenteDiscrimination('jockey', signe: 1, minAbs: 0.0),
+          const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.0),
+        ],
+      );
+      final v = await valider(sp, cycles: 30, historique: hist);
+      var ligne = '[SONDE]   h=$hist : r80=';
+      var trouve = false;
+      for (final c in v.constats) {
+        if (c.contains('paire distSpec/jockey')) {
+          ligne += c;
+          trouve = true;
+        }
+      }
+      if (!trouve) ligne += 'NON PUBLIÉ';
+      w(ligne);
+      for (final e in v.echecs) {
+        if (e.contains('paire')) w('[SONDE]     ✗ $e');
+      }
+    }
+    w('');
+
+    // ── S3 : le sigma porte-t-il la perte de corrélation ? ─────────────────
+    w('[SONDE] ─── S3 : EFFET DU SIGMA SUR UNE CONFIGURATION SHOULD=0 ───');
+    w('[SONDE]   (δ théorique nul ⇒ aucune pollution de la corrélation par γ)');
+    for (final cfg in <List<double>>[
+      <double>[60, 8, 1], // σ=1
+      <double>[60, 8, 3], // σ=3
+      <double>[60, 8, 6], // σ=6
+      <double>[80, 8, 3], // β plus fort, σ modéré
+    ]) {
+      final b = cfg[0];
+      final g = cfg[1];
+      final s = cfg[2];
+      final sp = Spec(
+        nom: 'sonde S3 b=$b g=$g s=$s',
+        profils: profilsSh0(b, g, s),
+        depart: projeterTable(kInitial),
+        attentesPaires: <AttentePaire>[
+          const AttentePaire('distSpec', 'jockey', minAbs: 0.0),
+        ],
+        attentesDiscriminations: <AttenteDiscrimination>[
+          const AttenteDiscrimination('jockey', signe: 1, minAbs: 0.0),
+          const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.0),
+        ],
+      );
+      final v = await valider(sp, cycles: 30, historique: 120);
+      var r = 'NON PUBLIÉ';
+      for (final c in v.constats) {
+        if (c.contains('paire distSpec/jockey')) r = c;
+      }
+      var dj = 'NON PUBLIÉ', dd = 'NON PUBLIÉ';
+      for (final c in v.constats) {
+        if (c.contains('discrimination jockey')) dj = c;
+        if (c.contains('discrimination distSpec')) dd = c;
+      }
+      w('[SONDE]   β=$b γ=$g σ=$s');
+      w('[SONDE]     $r');
+      w('[SONDE]     $dj');
+      w('[SONDE]     $dd');
+    }
+    w('');
+
+    // ── S4 : le cas du POINT 4 est-il atteignable ? ────────────────────────
+    // On cherche (β, σ) tel que la paire reste |r| ≥ 0,80 ALORS QUE l'un des
+    // deux critères porte δ fortement positif et l'autre fortement négatif.
+    // δ₁ = γ + Σ_autres 4·γ_autres·Var(motif)/(50·n)
+    // δ₂ = −γ + Σ_autres 4·γ_autres·Var(motif)/(50·n)
+    // donc  δ₂ − δ₁ = −2γ   (4·Var(motif)=8, divisé par 50 ⇒ 0,16 par σ²)
+    w('[SONDE] ─── S4 : δ NÉGATIF ATTEIGNABLE EN CONSERVANT |r| ≥ 0,80 ? ───');
+    w('[SONDE]   On teste si le MOTEUR produit réellement un δ de signe opposé');
+    w('[SONDE]   entre deux critères corrélés (ce que le générateur permet par');
+    w('[SONDE]   construction, mais qu il faut MESURER).');
+    for (final cfg in <List<double>>[
+      <double>[100, 8, 2],
+      <double>[150, 8, 2],
+      <double>[200, 8, 2],
+    ]) {
+      final b = cfg[0];
+      final g = cfg[1];
+      final s = cfg[2];
+      // Un seul des deux porte γ : δ₁ = γ + C, δ₂ = C  ⇒ écart 2γ
+      final p = profilsNeutres(sigma: s);
+      p['distSpec'] = Profil(beta: b, gamma: g, sigma: s);
+      p['jockey'] = Profil(beta: b, gamma: 0, sigma: s);
+      final sp = Spec(
+        nom: 'sonde S4 b=$b s=$s',
+        profils: p,
+        depart: projeterTable(kInitial),
+        attentesPaires: <AttentePaire>[
+          const AttentePaire('distSpec', 'jockey', minAbs: 0.0),
+        ],
+      );
+      final v = await valider(sp, cycles: 30, historique: 120);
+      var r = 'NON PUBLIÉ';
+      for (final c in v.constats) {
+        if (c.contains('paire distSpec/jockey')) r = c;
+      }
+      w('[SONDE]   β=$b γ_distSpec=$g γ_jockey=0 σ=$s');
+      w('[SONDE]     $r');
+      w('[SONDE]     δ distSpec = ${d9(v.discriminations['distSpec'] ?? 0)} · '
+          'δ jockey = ${d9(v.discriminations['jockey'] ?? 0)} · '
+          'ÉCART = ${d9((v.discriminations['distSpec'] ?? 0) - (v.discriminations['jockey'] ?? 0))}');
+      for (final e in v.echecs) {
+        if (e.contains('paire')) w('[SONDE]     ✗ $e');
+      }
+    }
+    w('');
+
+    for (final l in out) {
+      // ignore: avoid_print
+      print(l);
+    }
+    IaPoidsAdaptatifs.bornesIndividuelles();
+  }, timeout: const Timeout(Duration(minutes: 30)));
+}

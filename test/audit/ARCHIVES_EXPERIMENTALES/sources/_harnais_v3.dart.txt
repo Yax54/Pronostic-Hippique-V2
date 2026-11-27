@@ -1,0 +1,250 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HARNAIS v3 — JEU DE DONNÉES À CRITÈRES RÉELLEMENT DISTINCTS
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  POURQUOI v3 APRÈS v2 — DÉFAUTS N°15 ET N°16, TOUS DEUX MESURÉS
+//  ─────────────────────────────────────────────────────────────
+//  N°15 (corrigé dans v2) : générateur de bruit en projection modulo 1 ⇒ deux
+//  critères recevaient, à une translation près, le MÊME bruit. Mesuré en Dart,
+//  Pearson de production : |r| max 0,940533, 49/171 paires ≥ 0,65.
+//
+//  N°16 (corrigé ICI) : même avec un bruit parfaitement décorrélé, les NOTES
+//  restaient corrélées parce que tous les critères partageaient la MÊME pente
+//  `78 − 5 × rang`. Campagne V0bis, mesures :
+//    • corrélation croisée des notes réelles : min 0,450113 · méd 0,505258 ·
+//      max 0,564472 → 171/171 paires ≥ 0,30 (toutes !), 0/171 ≥ 0,65 ;
+//    • discrimination des 19 critères dits « témoins » : min 0,139266354 ·
+//      méd 0,148363092 · max 0,156962550 → 19/19 au-dessus de 0,05.
+//  Autrement dit les « témoins neutres » étaient en réalité DISCRIMINANTS à
+//  0,15 : ils concouraient pour le budget de poids exactement comme le critère
+//  piloté (dont la discrimination vaut −0,36 ou +0,48). Une campagne bâtie là
+//  dessus ne mesure pas « un critère contre des témoins », elle mesure
+//  « un critère contre dix-huit autres critères eux aussi informatifs ».
+//
+//  PRINCIPE DE v3 — ORDRE PROPRE PAR CRITÈRE
+//  ─────────────────────────────────────────
+//  Pour chaque critère et chaque course, les 5 chevaux reçoivent les notes
+//  20, 35, 50, 65, 80 dans un ORDRE tiré par un mélangeur 32 bits dépendant de
+//  (course, critère). Conséquences mesurables :
+//    • deux critères différents ont deux permutations indépendantes ⇒ leur
+//      corrélation croisée est nulle en espérance, et mesurablement faible ;
+//    • un critère NEUTRE a une discrimination nulle en espérance, parce que
+//      l'ordre est tiré sans référence à l'arrivée. Ce n'est plus une
+//      affirmation : `campagne_v0ter_validation_harnais_v3` le mesure ;
+//    • un CLONE se fabrique en donnant à deux critères la MÊME permutation et
+//      le MÊME bruit ⇒ r ≈ 1, ce qui rend la paire corrélée crédible ;
+//    • une ANTI-CORRÉLATION se fabrique en inversant la permutation ⇒ r ≈ −1.
+//
+//  ⚠️ CE FICHIER NE RÉIMPLÉMENTE AUCUN MÉCANISME. Il ne construit que la
+//  DONNÉE D'ENTRÉE (des notes 0-100) et des utilitaires de protocole.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+// ─────────────────────────── Mélangeur déterministe ────────────────────────
+
+const int _m32 = 0xFFFFFFFF;
+
+int melange32(int h) {
+  h &= _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = h ^ (h >> 16);
+  return h & _m32;
+}
+
+/// Uniforme [0,1) déterministe, dépendant de trois indices et d'un sel.
+double uniforme(int a, int b, int c, {int sel = 0}) {
+  final x = (a * 0x9E3779B1) ^ (b * 0x85EBCA77) ^ (c * 0xC2B2AE3D) ^ (sel * 0x27D4EB2F);
+  return melange32(x) / 4294967296.0;
+}
+
+/// Bruit centré dans [−amp, +amp], décorrélé entre indices.
+double bruit3(int a, int b, int c, {double amp = 6.0, int sel = 0}) =>
+    (uniforme(a, b, c, sel: sel) - 0.5) * 2 * amp;
+
+/// Permutation des 5 chevaux propre à (course, critère).
+///
+/// Fisher-Yates piloté par `uniforme`, donc reproductible et sans `Random`.
+/// [graine] permet de forcer la MÊME permutation pour deux critères, ce qui
+/// fabrique un clone (r ≈ 1) au lieu d'une paire indépendante.
+List<int> permutation(int cycle, int critere, {int? graine}) {
+  final p = <int>[0, 1, 2, 3, 4];
+  final g = graine ?? critere;
+  for (var i = 4; i > 0; i--) {
+    final u = uniforme(cycle, i, g, sel: 7);
+    final j = (u * (i + 1)).floor();
+    final t = p[i];
+    p[i] = p[j];
+    p[j] = t;
+  }
+  return p;
+}
+
+/// Notes d'une course, à critères DISTINCTS.
+///
+/// [pilote] désigne le critère piloté : il reçoit [valeurPilote] pour chaque
+/// numéro, ce qui permet d'imposer un pouvoir discriminant arbitraire sans
+/// toucher au moteur.
+/// [clones] associe un critère à sa graine de permutation : deux critères de
+/// même graine ont des notes identiques à bruit près (r ≈ 1).
+/// [inverses] liste les critères dont la permutation est renversée, ce qui
+/// produit une corrélation NÉGATIVE forte avec le critère de référence.
+ScoresCriteres notesDistinctes(
+  int numero,
+  int cycle, {
+  String? pilote,
+  double? valeurPilote,
+  Map<String, int> clones = const <String, int>{},
+  double amp = 6.0,
+}) {
+  // Position du cheval [numero] (1..5) dans l'ordre de chaque critère.
+  int posDe(String critere, int idx) {
+    final graine = clones[critere] ?? idx;
+    final p = permutation(cycle, idx, graine: graine);
+    // p[k] = rang de note attribué au cheval k+1 : 0 = note la plus basse.
+    return p[numero - 1];
+  }
+
+  double v(int idx, String nom) {
+    if (nom == pilote && valeurPilote != null) {
+      return valeurPilote.clamp(0.0, 100.0);
+    }
+    final pos = posDe(nom, idx);
+    final base = 20.0 + 15.0 * pos; // 20 / 35 / 50 / 65 / 80
+    return (base + bruit3(numero, cycle, idx, amp: amp, sel: 11))
+        .clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+/// Notes où le critère [pilote] est STRICTEMENT ordonné selon le rang
+/// d'arrivée, les 18 autres étant distincts et de discrimination nulle en
+/// espérance.
+///
+/// [pente] > 0 ⇒ les bons chevaux ont les meilleures notes (critère utile).
+/// [pente] < 0 ⇒ les bons chevaux ont les plus mauvaises notes (critère
+/// nuisible).
+/// [niveau] décale l'ensemble sans changer l'ordre.
+ScoresCriteres notesPilotees(
+  int numero,
+  int cycle, {
+  required String pilote,
+  required double pente,
+  double niveau = 55.0,
+  Map<String, int> clones = const <String, int>{},
+  double amp = 6.0,
+}) {
+  // Note croissante avec le numéro : le cheval 1 est le mieux classé.
+  final valeur = (niveau + pente * (3.0 - numero)).clamp(0.0, 100.0);
+  return notesDistinctes(
+    numero,
+    cycle,
+    pilote: pilote,
+    valeurPilote: valeur,
+    clones: clones,
+    amp: amp,
+  );
+}
+
+// ───────────────────────────── Protocole de semis ──────────────────────────
+
+/// Date du cycle [i] : STRICTEMENT CROISSANTE avec l'ordre d'apprentissage
+/// (voir défaut n°14 : une première version décroissante figeait la fenêtre).
+DateTime dateCycle3(int i, {int nbCycles = 400}) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles - i)));
+
+DateTime dateAmorce3(int j, int nbCycles) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles + j + 1)));
+
+/// Sème [cycles] courses non résolues plus [historique] courses d'amorçage
+/// déjà résolues, puis exécute les cycles dans l'ordre chronologique.
+///
+/// Renvoie la trace des 19 poids effectifs après chaque cycle.
+Future<List<Map<String, double>>> deroulerV3({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  Map<String, double>? depart,
+  int historique = 60,
+  List<int> arrivee = const <int>[1, 2, 3, 4, 5],
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle3(i, nbCycles: cycles),
+        resolu: false,
+        // varianceScores DOIT varier, sinon `_mettreAJourCalibration` sort
+        // tôt (l.4443) et `_poids.correlations` reste vide : le gel devient
+        // inatteignable et toute mesure de gel serait un faux négatif.
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+        arrivee: arrivee,
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce3(j, cycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+        arrivee: arrivee,
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: arrivee,
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+double partEnrichie3(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  final t = b + e;
+  return t == 0 ? 0 : e / t;
+}
+
+String d9(double v) => v.toStringAsFixed(9);

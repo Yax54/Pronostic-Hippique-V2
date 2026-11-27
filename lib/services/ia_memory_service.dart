@@ -4110,8 +4110,32 @@ class IaMemoryService extends ChangeNotifier {
     // Si deux critères corrèlent r > 0.85 avec >= 50 courses dans la fenêtre,
     // le critère avec le POIDS LE PLUS FAIBLE est temporairement gelé.
     // Il ne reçoit pas de mise à jour gradient — seul l'autre apprend.
-    // Le gel se lève automatiquement quand r passe sous 0.70.
     // GARDE-FOU : seulement si fenêtre >= 50 courses (signal fiable).
+    //
+    // ★ CORRECTION DOCUMENTAIRE (27/11/2026) — le commentaire précédent
+    // annonçait « le gel se lève automatiquement quand r passe sous 0.70 ».
+    // AUCUN seuil 0,70 n'existe dans ce fichier : il n'apparaissait que dans
+    // ce commentaire. Le comportement RÉEL est le suivant, et il n'y a
+    // AUCUNE hystérésis :
+    //   • `criteresGeles` est une variable LOCALE reconstruite à chaque appel
+    //     (juste en dessous) : aucun gel n'est jamais « retenu » d'un cycle
+    //     sur l'autre ;
+    //   • le gel est donc RÉÉVALUÉ à chaque cycle contre les corrélations
+    //     mémorisées par le cycle PRÉCÉDENT (`_poids.correlations`, écrite
+    //     par `_detecterCorrelationsCriteres`, appelée elle aussi après
+    //     `_apprendreParGradient`) ;
+    //   • un critère est gelé si et seulement si, À CE cycle, il appartient à
+    //     une paire mémorisée avec r >= 0.85 ET qu'il est le plus léger de la
+    //     paire. Dès qu'une de ces deux conditions cesse, il n'est plus gelé :
+    //     le « dégel » est donc simplement l'absence de re-sélection, et il
+    //     se produit au premier cycle où r < 0.85 ou où il cesse d'être le
+    //     plus léger. Un seuil de dégel distinct n'a jamais été implémenté.
+    //   • Le seul seuil est donc 0,85, et il gouverne sélection ET dégel.
+    //
+    // Aucune logique n'a été modifiée : ce commentaire décrit le code tel
+    // qu'il est. Le gel n'est par ailleurs PAS journalisé de façon durable
+    // (seul un `debugPrint` en mode debug, l.4130) : l'historique des gels
+    // d'une installation n'est pas reconstituable depuis une sauvegarde.
     final criteresGeles = <String>{};
     if (nb >= 50 && _poids.correlations.isNotEmpty) {
       for (final entry in _poids.correlations.entries) {

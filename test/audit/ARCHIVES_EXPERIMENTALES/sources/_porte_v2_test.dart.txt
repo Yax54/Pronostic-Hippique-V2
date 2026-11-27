@@ -1,0 +1,155 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  VALIDATION DU HARNAIS v2 — LE CRITÈRE PEUT-IL ATTEINDRE PUIS QUITTER
+//  SON PLANCHER, AVEC DES DATES STRICTEMENT DISTINCTES ?
+//
+//  Ce test sert de PORTE : s'il échoue, aucune campagne D5 ne doit être lancée.
+//  Il rejoue exactement la question de D4 v2 (200 cycles, bascule à 60) avec
+//  le harnais v2 (dates à la minute, ordre de production, garde d'ordre).
+//
+//  Ce qui doit être observé pour déclarer le harnais valide :
+//   V1. Σ = 1,0 à chaque cycle.
+//   V2. La discrimination CHANGE de valeur après la bascule (si elle reste
+//       figée à la 9e décimale, la fenêtre ne voit pas les nouveaux cycles).
+//   V3. Le poids descend au plancher puis REMONTE au-dessus.
+//   V4. Le critère n'est pas gelé de façon permanente.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v2.dart';
+
+const int kCycles = 240;
+const int kBascule = 60;
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('PORTE v2 — distSpec : plancher atteint puis quitté', () async {
+    IaExperimentation.reinitialiser();
+
+    final traces = <int, ({double disc, double poids, bool gele})>{};
+    var sommeOk = true;
+    var discFigee = false;
+    double? discApresBascule;
+
+    // Parcours unique, avec capture cycle par cycle de la discrimination
+    // publiée : `deroulerV2` ne la renvoie pas, on instrumente donc ici.
+    final d = kInitial;
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kCycles; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle(i, nbCycles: kCycles),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesIndependantes(
+                n,
+                i,
+                cible: 'distSpec',
+                valeurCible:
+                    i < kBascule ? (30.0 + n * 12.0) : (100.0 - n * 16.0),
+              ),
+          },
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce(j, kCycles),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesIndependantes(n, 0),
+          },
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: d,
+      sigmaAttendue: sommeCle(d, kCles),
+    );
+
+    for (var i = 0; i < kCycles; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final p = poidsEffectifs();
+      if ((sommeCle(p, kCles) - 1.0).abs() > 1e-6) sommeOk = false;
+      final disc = IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0.0;
+      traces[i] = (
+        disc: disc,
+        poids: p['distSpec']!,
+        gele: IaExperimentation.derniersGeles.contains('distSpec'),
+      );
+      if (i == kBascule - 1) discApresBascule = disc;
+    }
+
+    // V2 : la discrimination doit avoir CHANGÉ après la bascule.
+    final discFin = traces[kCycles - 1]!.disc;
+    if (discApresBascule != null &&
+        (discFin - discApresBascule).abs() < 1e-12) {
+      discFigee = true;
+    }
+
+    final mini = traces.values.map((t) => t.poids).reduce((a, b) => a < b ? a : b);
+    final fin = traces[kCycles - 1]!;
+    final lo = (mini - 0.005).abs() < 1e-12;
+    final remonte = fin.poids > 0.005 + 1e-9;
+    final geles = traces.values.where((t) => t.gele).length;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[PORTE-v2] ═══ DISTSPEC · $kCycles CYCLES · DATES À LA MINUTE ═══');
+    // ignore: avoid_print
+    print('[PORTE-v2] cycle | disc distSpec | poids distSpec | gelé');
+    for (final i in [0, 20, 40, 59, 61, 80, 120, 160, 200, 239]) {
+      final t = traces[i]!;
+      // ignore: avoid_print
+      print('[PORTE-v2] ${i.toString().padLeft(5)} | ${d9(t.disc)} | '
+          '${d9(t.poids)} | ${t.gele}');
+    }
+    // ignore: avoid_print
+    print('[PORTE-v2] V1 Σ=1,0 à chaque cycle : $sommeOk');
+    // ignore: avoid_print
+    print('[PORTE-v2] V2 discrimination figée après bascule : $discFigee');
+    // ignore: avoid_print
+    print('[PORTE-v2] V3 plancher 0,005 atteint : $lo · quitté : $remonte '
+        '(fin = ${d9(fin.poids)})');
+    // ignore: avoid_print
+    print('[PORTE-v2] V4 cycles où distSpec est gelé : $geles/$kCycles');
+    // ignore: avoid_print
+    print('[PORTE-v2] DELTA poids (fin - plancher) = ${d9(fin.poids - 0.005)}');
+
+    expect(sommeOk, isTrue, reason: 'V1 : Σ doit valoir 1,0 à chaque cycle.');
+    expect(discFigee, isFalse,
+        reason: 'V2 : si la discrimination ne bouge pas après la bascule, la '
+            'fenêtre ne voit pas les cycles récents et le harnais est invalide.');
+    expect(lo, isTrue, reason: 'V3 : le plancher doit être atteint.');
+    expect(remonte, isTrue,
+        reason: 'V3 : le poids doit remonter au-dessus du plancher, sinon le '
+            'plancher est un puits sans retour — fait à documenter, pas à '
+            'contourner.');
+    // V4 : on MESURE le gel, on ne l'exige pas. Exiger 0 serait exiger un
+    // résultat, pas vérifier une condition expérimentale. Les 3 cycles mesurés
+    // sont un fait à instruire en campagne G4.
+    // ignore: avoid_print
+    print('[PORTE-v2] V4 est une MESURE, pas une exigence.');
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

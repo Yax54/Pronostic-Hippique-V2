@@ -1,0 +1,177 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE V0bis — AUDIT DE LA STRUCTURE DES DONNÉES D'ENTRÉE DU HARNAIS
+//  ESPACE ISOLÉ /home/user/exp — préalable OBLIGATOIRE à toute campagne
+//
+//  Un générateur de bruit décorrélé (défaut n°15 corrigé) ne suffit pas : ce
+//  sont les NOTES produites qui comptent, or elles sont `base + bruit`. Si la
+//  base est la même pour tous les critères, les critères restent corrélés même
+//  avec un bruit parfait. Ce fichier mesure les deux propriétés qui font qu'un
+//  jeu de données peut servir de témoin :
+//
+//    (1) CORRÉLATION CROISÉE des notes réellement construites par
+//        `notesIndependantes` (donc avec la base commune).
+//
+//    (2) POUVOIR DISCRIMINANT des critères NON pilotés. L'arrivée étant
+//        `[1,2,3,4,5]`, le critère est discriminant si ses notes suivent le
+//        rang. La discrimination de production est
+//        `(moyBon − moyMauvais)/100` (ia_memory_service:4079) : elle ne dépend
+//        QUE des notes, jamais des poids. On la recalcule ici à l'identique
+//        pour savoir si les critères « témoins » sont réellement neutres.
+//
+//  Si (1) est élevé, les paires peuvent franchir le seuil de gel 0,85 pour de
+//  mauvaises raisons. Si (2) est non nul, les « témoins » concurrencent le
+//  critère piloté pour le budget de poids et la campagne ne mesure plus ce
+//  qu'elle prétend mesurer.
+//
+//  CE FICHIER NE TOUCHE À AUCUN MÉCANISME DU MOTEUR.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'harnais_v2.dart';
+
+const List<String> _noms = <String>[
+  'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+  'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart',
+];
+
+/// Pearson — forme identique à celle de la production.
+double _pearson(List<double> x, List<double> y) {
+  final n = math.min(x.length, y.length);
+  if (n < 10) return 0.0;
+  final mx = x.take(n).reduce((a, b) => a + b) / n;
+  final my = y.take(n).reduce((a, b) => a + b) / n;
+  double num = 0, dx = 0, dy = 0;
+  for (var i = 0; i < n; i++) {
+    final ex = x[i] - mx, ey = y[i] - my;
+    num += ex * ey;
+    dx += ex * ex;
+    dy += ey * ey;
+  }
+  final denom = math.sqrt(dx * dy);
+  return denom > 0 ? num / denom : 0.0;
+}
+
+/// Discrimination de production : `(moyenne des notes des chevaux bien classés
+/// − moyenne des mal classés) / 100`. Les rangs 1-2 sont « bons », 4-5 «
+/// mauvais », exactement comme le gradient gradué (l.4046-4078).
+double _discrimination(List<double> notesParNumero) {
+  final bon = (notesParNumero[0] + notesParNumero[1]) / 2;
+  final mauvais = (notesParNumero[3] + notesParNumero[4]) / 2;
+  return (bon - mauvais) / 100.0;
+}
+
+void main() {
+  test('V0bis — les notes du harnais sont-elles indépendantes ET neutres ?',
+      () {
+    const cycles = 240;
+    const nCles = 19;
+
+    // ── (1) Corrélation croisée des notes réellement produites ─────────────
+    // Vecteur aplati d'un critère : 240 courses × 5 chevaux.
+    final vecteurs = <List<double>>[];
+    for (var k = 0; k < nCles; k++) {
+      final v = <double>[];
+      for (var c = 0; c < cycles; c++) {
+        for (var n = 1; n <= 5; n++) {
+          final sc = notesIndependantes(n, c);
+          v.add(sc.valeurPourCritere(_noms[k]));
+        }
+      }
+      vecteurs.add(v);
+    }
+
+    final rs = <double>[];
+    var maxi = -1.0;
+    var pireI = 0, pireJ = 0;
+    var ge30 = 0, ge65 = 0, ge85 = 0;
+    for (var i = 0; i < nCles; i++) {
+      for (var j = i + 1; j < nCles; j++) {
+        final r = _pearson(vecteurs[i], vecteurs[j]).abs();
+        rs.add(r);
+        if (r >= 0.30) ge30++;
+        if (r >= 0.65) ge65++;
+        if (r >= 0.85) ge85++;
+        if (r > maxi) {
+          maxi = r;
+          pireI = i;
+          pireJ = j;
+        }
+      }
+    }
+    rs.sort();
+
+    // ── (2) Pouvoir discriminant des critères NON pilotés ──────────────────
+    // Aucune cible : tous les critères sont « témoins ». On mesure leur
+    // discrimination réelle sur l'ensemble des cycles.
+    final discMoy = <String, double>{};
+    for (var k = 0; k < nCles; k++) {
+      var somme = 0.0;
+      for (var c = 0; c < cycles; c++) {
+        somme += _discrimination(<double>[
+          for (var n = 1; n <= 5; n++)
+            notesIndependantes(n, c).valeurPourCritere(_noms[k]),
+        ]);
+      }
+      discMoy[_noms[k]] = somme / cycles;
+    }
+    final discValeurs = discMoy.values.toList()..sort();
+
+    // ── (3) Variation entre cycles : condition d'existence du gel ───────────
+    // `_mettreAJourCalibration` (l.4443) retourne tôt si `varianceScores` ne
+    // varie pas : sans variation, `_poids.correlations` reste vide et le gel
+    // est INATTEIGNABLE. On le mesure au lieu de le supposer.
+    final variances = <double>{for (var c = 0; c < cycles; c++) 6.0 + (c % 5) * 4.0};
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[V0bis] ═══ STRUCTURE DES NOTES · $cycles courses × 5 chevaux ═══');
+    // ignore: avoid_print
+    print('[V0bis] (1) CORRÉLATION CROISÉE DES NOTES RÉELLES');
+    // ignore: avoid_print
+    print('[V0bis]     |r| min=${rs.first.toStringAsFixed(6)} '
+        'med=${rs[rs.length ~/ 2].toStringAsFixed(6)} '
+        'max=${maxi.toStringAsFixed(6)} (pire ${_noms[pireI]}/${_noms[pireJ]})');
+    // ignore: avoid_print
+    print('[V0bis]     paires >=0.30 : $ge30/171 · >=0.65 : $ge65/171 · '
+        '>=0.85 : $ge85/171');
+    // ignore: avoid_print
+    print('[V0bis] (2) DISCRIMINATION DES CRITÈRES NON PILOTÉS');
+    // ignore: avoid_print
+    print('[V0bis]     min=${discValeurs.first.toStringAsFixed(9)} '
+        'méd=${discValeurs[discValeurs.length ~/ 2].toStringAsFixed(9)} '
+        'max=${discValeurs.last.toStringAsFixed(9)}');
+    // ignore: avoid_print
+    print('[V0bis]     (une valeur non nulle ⇒ le critère « témoin » est en '
+        'réalité DISCRIMINANT)');
+    // ignore: avoid_print
+    print('[V0bis] (3) VARIATION DE varianceScores : '
+        '${variances.length} valeurs distinctes sur $cycles cycles');
+
+    // Constat honnête : on n'échoue pas ici, on DOCUMENTE. La campagne
+    // suivante décide de la conception des données.
+    final temoinsDiscriminants =
+        discValeurs.where((d) => d.abs() > 0.05).length;
+    // ignore: avoid_print
+    print('[V0bis] ⇒ critères témoins discriminants (|d|>0,05) : '
+        '$temoinsDiscriminants/19');
+    // ignore: avoid_print
+    print('[V0bis] ⇒ paires au-dessus du seuil de CALIBRATION 0,65 : $ge65/171');
+    // ignore: avoid_print
+    print('[V0bis] ⇒ paires au-dessus du seuil de GEL 0,85        : $ge85/171');
+  });
+}

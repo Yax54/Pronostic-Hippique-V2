@@ -1,0 +1,114 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  INSTRUMENTATION EXPÉRIMENTALE — ESPACE ISOLÉ /home/user/exp
+//
+//  ⚠️ CE FICHIER N'EXISTE PAS DANS LA PRODUCTION. Il n'est présent que dans la
+//     copie temporaire autorisée par la Phase 5-C du cadrage directeur.
+//
+//  RÔLE — rendre les paramètres du MOTEUR RÉEL réglables, sans réécrire une
+//  seule formule. Les valeurs par défaut de cette classe sont EXACTEMENT les
+//  constantes de production ; tant qu'aucun test ne les change, la copie doit
+//  reproduire le moteur de référence au bit près (garde de fidélité).
+//
+//  Chaque paramètre correspond à une ligne précise de
+//  `lib/services/ia_memory_service.dart` et `ia_memory_models.dart`, marquée
+//  par un commentaire `// [EXP]` dans cette copie.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Paramètres modifiables du moteur. Valeurs par défaut = production.
+class IaExperimentation {
+  IaExperimentation._();
+
+  // ─── 1. Taux d'apprentissage (production : l.4101, `final lrBase = 0.08;`)
+  static double lrBase = 0.08;
+
+  // ─── 2. Momentum (production : l.4104, `const momentumFactor = 0.3;`)
+  static double momentumFactor = 0.3;
+
+  // ─── 3. Gel par corrélation (production : l.4116 et l.4119)
+  /// Activation globale du gel. `true` = comportement de production.
+  static bool gelActif = true;
+  /// Seuil de DÉCLENCHEMENT du gel (production : 0.85).
+  static double seuilGel = 0.85;
+  /// Seuil de population des corrélations (production : 0.65, l.4521).
+  static double seuilCorrelation = 0.65;
+  /// Nombre minimal de courses dans la fenêtre (production : 50, l.4116).
+  static int fenetreMinGel = 50;
+
+  // ─── 4. Coefficients par critère (production : switch l.4148-4172)
+  /// Coefficients de PRODUCTION, sans altération.
+  static const Map<String, double> coefficientsProduction = <String, double>{
+    'forme': 1.0, 'gains': 1.0, 'record': 1.0, 'cote': 1.0, 'constance': 1.0,
+    'victoires': 1.0, 'discipline': 1.0,
+    'distSpec': 0.5, 'jockey': 0.5, 'elo': 0.5, 'terrain': 0.5, 'mouvCote': 0.5,
+    'hippo': 0.4, 'entraineur': 0.4, 'divergence': 0.4, 'progression': 0.4,
+    'repos': 0.3, 'poidsRel': 0.3, 'placeDepart': 0.3,
+  };
+
+  static Map<String, double> _coefficients =
+      Map<String, double>.from(coefficientsProduction);
+
+  /// Coefficient effectif du critère `c`.
+  static double coeff(String c) => _coefficients[c] ?? 1.0;
+
+  /// Remplace tous les coefficients par [f] (ex. 1.0 ⇒ 19 × 1,0).
+  static void coefficientsUniformes(double f) {
+    _coefficients = <String, double>{for (final k in coefficientsProduction.keys) k: f};
+  }
+
+  /// Restaure les coefficients de production.
+  static void coefficientsDefaut() {
+    _coefficients = Map<String, double>.from(coefficientsProduction);
+  }
+
+  // ─── 5. Bornes individuelles (production : bornesIndividuelles(), l.874)
+  static Map<String, List<double>>? _bornesOverride;
+
+  /// Remplace la table de bornes. `null` = table de production.
+  static void bornesOverride(Map<String, List<double>>? b) => _bornesOverride = b;
+
+  static Map<String, List<double>>? get bornesOverride_ => _bornesOverride;
+
+  // ─── 6. Budget collectif enrichi (production : kPartEnrichieMin/Max)
+  static double partEnrichieMin = 0.18;
+  static double partEnrichieMax = 0.40;
+
+  // ─── 7. Publication : ce que le moteur ne publie pas nativement
+  /// `discriminations[c]` du dernier passage (variable locale en production,
+  /// l.4079). Publiée ici pour permettre la mesure des §4.2 et §4.8.
+  static Map<String, double> dernieresDiscriminations = <String, double>{};
+
+  /// `lr` effectif du dernier passage (l.4103).
+  static double dernierLr = 0.0;
+
+  /// Ensemble `criteresGeles` du dernier passage (l.4115-4142).
+  static Set<String> derniersGeles = <String>{};
+
+  /// Nombre de courses de la fenêtre au dernier passage.
+  static int derniereFenetre = 0;
+
+  /// Nombre de courses résolues au dernier passage (garde l.3947).
+  static int dernierNbAvecResultat = 0;
+
+  /// Nombre d'appels au gradient depuis le début de la campagne.
+  static int compteurGradient = 0;
+
+  /// Remet tous les paramètres à leurs valeurs de production.
+  static void reinitialiser() {
+    lrBase = 0.08;
+    momentumFactor = 0.3;
+    gelActif = true;
+    seuilGel = 0.85;
+    seuilCorrelation = 0.65;
+    fenetreMinGel = 50;
+    coefficientsDefaut();
+    _bornesOverride = null;
+    partEnrichieMin = 0.18;
+    partEnrichieMax = 0.40;
+    dernieresDiscriminations = <String, double>{};
+    dernierLr = 0.0;
+    derniersGeles = <String>{};
+    derniereFenetre = 0;
+    dernierNbAvecResultat = 0;
+    compteurGradient = 0;
+  }
+}

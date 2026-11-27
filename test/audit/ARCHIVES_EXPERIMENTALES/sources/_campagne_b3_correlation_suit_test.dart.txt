@@ -1,0 +1,209 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE B v3 — LA TABLE DE CORRÉLATIONS SUIT-ELLE VRAIMENT LES DONNÉES ?
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  LA MESURE GÊNANTE À EXPLIQUER
+//  ────────────────────────────
+//  Avec 7 paliers de corrélation demandée (0,95 → 0,30) sur la paire
+//  `forme|gains`, la campagne B v2 a mesuré un `r` mémorisé CONSTANT à
+//  0,819000, à chaque palier, sans jamais bouger. Trois explications possibles,
+//  à distinguer par la mesure et non par le raisonnement :
+//    (i)   la table est écrasée mais la mesure relit toujours le dernier état,
+//          pas l'état du palier → défaut de harnais ;
+//    (ii)  la fenêtre `.take(80)` est saturée par un stock historique ancien,
+//          si bien que les nouvelles courses ne pèsent presque rien
+//          → propriété du moteur (adaptation retardée / masquée) ;
+//    (iii) le calcul n'est pas rappelé du tout (gardes de `_mettreAJourCalibration`)
+//          → propriété du moteur (défaut structurel).
+//
+//  PROTOCOLE DISCRIMINANT — aucun historique : on ne sème QUE des courses
+//  résolues au fil des cycles, avec une corrélation qui varie par paliers.
+//  Si `r` suit les paliers, (ii)/(iii) sont écartés. S'il ne suit pas, la cause
+//  est dans le moteur et non dans le harnais.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+double bruit(int i, int n, int sel) {
+  final x = (i * 7919 + n * 104729 + sel * 15485863) % 1000003;
+  return (x / 1000003.0) * 2.0 - 1.0;
+}
+
+/// Deux critères seulement sont dans le jeu : `forme` et `gains`, corrélés à
+/// [r] par la donnée. Les 17 autres sont NEUTRES et IDENTIQUES (50.0), donc de
+/// variance nulle : ils ne peuvent produire aucune corrélation parasite.
+ScoresCriteres notesNeutres(int numero, int cycle, double r) {
+  final base = 80.0 - numero * 7.0;
+  const amp = 14.0;
+  final g = 50.0 +
+      r * (base - 50.0) +
+      math.sqrt(1 - r * r) * bruit(numero, cycle, 2) * amp;
+  return ScoresCriteres(
+    forme: base, gains: g.clamp(0.0, 100.0),
+    record: 50.0, cote: 50.0, constance: 50.0, victoires: 50.0,
+    discipline: 50.0, distSpec: 50.0, jockey: 50.0, repos: 50.0,
+    hippo: 50.0, entraineur: 50.0, elo: 50.0, terrain: 50.0,
+    divergence: 50.0, poidsRel: 50.0, progression: 50.0, mouvCote: 50.0,
+    placeDepart: 50.0,
+  );
+}
+
+String _e(double v) => v.toStringAsFixed(6);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B8 — SANS HISTORIQUE : r suit-il les paliers ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B8 — r mémorisé contre r demandé, sans dilution historique', () async {
+    const paliers = <double>[0.95, 0.80, 0.65, 0.50, 0.35, 0.20];
+    const parPalier = 12;
+
+    // AUCUN historique : toutes les courses sont des cibles, résolues une à une.
+    final courses = <IaPronostic>[
+      for (var i = 0; i < paliers.length * parPalier; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesNeutres(n, i, paliers[i ~/ parPalier]),
+          },
+        ),
+    ];
+    await semer(pronostics: courses, verifierNombre: false);
+
+    IaExperimentation.reinitialiser();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B8] cycle | résolues | fenêtre | r demandé | r mémorisé | paires | gelés');
+    for (var i = 0; i < courses.length; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final res = IaMemoryService.instance.pronosticsAvecResultat.length;
+      final corr = IaMemoryService.instance.poids.correlations;
+      final r = corr['forme|gains'] ?? corr['gains|forme'];
+      final demande = paliers[i ~/ parPalier];
+      final afficher = (i + 1) % 4 == 0 || i == courses.length - 1;
+      if (afficher) {
+        // ignore: avoid_print
+        print('[B8] ${(i + 1).toString().padLeft(5)} | '
+            '${res.toString().padLeft(8)} | '
+            '${IaExperimentation.derniereFenetre.toString().padLeft(7)} | '
+            '${demande.toStringAsFixed(2)}      | '
+            '${(r == null ? "absente" : _e(r)).padLeft(10)} | '
+            '${corr.length.toString().padLeft(6)} | '
+            '${IaExperimentation.derniersGeles.isEmpty ? "aucun" : IaExperimentation.derniersGeles.join(",")}');
+      }
+    }
+
+    // Le fait à trancher : le r mémorisé a-t-il varié entre le 1er et le
+    // dernier palier, et est-il descendu sous 0,85 quand les données l'ont fait ?
+    final corrFin = IaMemoryService.instance.poids.correlations;
+    final rFinal = corrFin['forme|gains'] ?? corrFin['gains|forme'];
+    // ignore: avoid_print
+    print('[B8] r final mémorisé = ${rFinal == null ? "paire absente" : _e(rFinal)} '
+        '(données du dernier palier : 0,20)');
+    // ignore: avoid_print
+    print('[B8] ⇒ VERDICT : si la paire est ABSENTE, la table a bien été '
+        'recalculée et la paire est sortie du seuil de population 0,65. '
+        'Si elle est PRÉSENTE avec une valeur ≈ 0,95, la table ne suit pas '
+        'les données : défaut structurel à instruire.');
+
+    expect(IaMemoryService.instance.pronosticsAvecResultat.length,
+        courses.length);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B9 — AVEC un stock historique CORRÉLÉ : effet de dilution mesuré
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B9 — dilution : 60 courses historiques à r=0,95 puis 40 à r=0,20',
+      () async {
+    final courses = <IaPronostic>[
+      // 40 cibles à r = 0,20 (les NOUVELLES données)
+      for (var i = 0; i < 40; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesNeutres(n, i, 0.20),
+          },
+        ),
+      // 60 courses historiques à r = 0,95 (le stock ANCIEN)
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesNeutres(n, j, 0.95),
+          },
+        ),
+    ];
+    await semer(pronostics: courses, verifierNombre: false);
+    IaExperimentation.reinitialiser();
+
+    double? rAvant;
+    for (var i = 0; i < 40; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      if (i == 0) {
+        final c = IaMemoryService.instance.poids.correlations;
+        rAvant = c['forme|gains'] ?? c['gains|forme'];
+      }
+    }
+    final cFin = IaMemoryService.instance.poids.correlations;
+    final rApres = cFin['forme|gains'] ?? cFin['gains|forme'];
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B9] ═══ DILUTION PAR LE STOCK HISTORIQUE ═══');
+    // ignore: avoid_print
+    print('[B9] 60 historiques à r=0,95 + 40 nouvelles à r=0,20');
+    // ignore: avoid_print
+    print('[B9] r après le 1er cycle  = ${rAvant == null ? "absente" : _e(rAvant)}');
+    // ignore: avoid_print
+    print('[B9] r après 40 cycles      = ${rApres == null ? "absente" : _e(rApres)}');
+    // ignore: avoid_print
+    print('[B9] ⇒ si r RESTE ≈ 0,95 malgré 40 courses nouvelles à 0,20, '
+        'alors la fenêtre de 80 courses est saturée par le stock ancien : '
+        'les nouvelles données ne peuvent PAS faire baisser la corrélation '
+        'assez vite. C est le mécanisme de « adaptation retardée ».');
+    // ignore: avoid_print
+    print('[B9] nombre de pronostics résolus = '
+        '${IaMemoryService.instance.pronosticsAvecResultat.length} '
+        '(fenêtre .take(80))');
+
+    expect(IaMemoryService.instance.pronosticsAvecResultat.length, 100);
+  });
+}

@@ -1,0 +1,259 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE B — GEL PAR CORRÉLATION : COÛT RÉEL, DÉGEL, SÉLECTION
+//  ESPACE ISOLÉ /home/user/exp — moteur de production instrumenté
+//
+//  ⚠️ DEUX DÉFAUTS DE PROTOCOLE ONT ÉTÉ MESURÉS PUIS CORRIGÉS ICI, ET ILS
+//     SONT CONSIGNÉS PARCE QU'ILS SONT INSTRUCTIFS SUR LE MOTEUR LUI-MÊME :
+//
+//  1) LE GEL EXIGE UNE FENÊTRE ≥ 50 COURSES (l.4121). Ma première version
+//     semait 12 amorces résolues + 80 cibles : la fenêtre ne contenait que
+//     13 courses et le gel ne pouvait JAMAIS se déclencher — mesure « 0/80 »,
+//     conclusion « le gel ne fait rien » : FAUX POSITIF TOTAL. Il faut donc
+//     semer ≥ 50 courses DÉJÀ RÉSOLUES au départ.
+//  2) LES CORRÉLATIONS NE SONT CALCULÉES QUE SI `varianceScores` VARIE
+//     (l.4448-4454 : `hautConfiance` vide sinon, retour anticipé). Avec une
+//     variance constante, `_poids.correlations` reste VIDE pour toujours, donc
+//     `nb >= 50 && _poids.correlations.isNotEmpty` est faux et le gel est
+//     structurellement inatteignable. La variance est donc VARIÉE par la
+//     donnée (c'est un champ du pronostic, pas une formule).
+//
+//  Ces deux conditions sont des FAITS sur le moteur, pas des commodités de
+//  harnais : ils délimitent les conditions d'accessibilité du gel.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+/// Bruit déterministe — aucune graine aléatoire, tout est reproductible.
+double bruit(int i, int n, int sel) {
+  final x = (i * 7919 + n * 104729 + sel * 15485863) % 1000003;
+  return (x / 1000003.0) * 2.0 - 1.0;
+}
+
+/// Notes où `gains` est corrélé à `r` avec `forme`.
+ScoresCriteres notesCorrelees(int numero, int cycle, double r) {
+  final base = 80.0 - numero * 7.0;
+  const amplitude = 12.0;
+  final b = bruit(numero, cycle, 1) * amplitude;
+  final gains = 50.0 + r * (base - 50.0) + math.sqrt(1 - r * r) * b;
+  return ScoresCriteres(
+    forme: base,
+    gains: gains.clamp(0.0, 100.0),
+    record: 96.0 - numero * 6, cote: 96.0 - numero * 6,
+    constance: 96.0 - numero * 6, victoires: 96.0 - numero * 6,
+    discipline: 96.0 - numero * 6, distSpec: 96.0 - numero * 6,
+    jockey: 96.0 - numero * 6, repos: 96.0 - numero * 6,
+    hippo: 96.0 - numero * 6, entraineur: 96.0 - numero * 6,
+    elo: 96.0 - numero * 6, terrain: 96.0 - numero * 6,
+    divergence: 96.0 - numero * 6, poidsRel: 96.0 - numero * 6,
+    progression: 96.0 - numero * 6, mouvCote: 96.0 - numero * 6,
+    placeDepart: 96.0 - numero * 6,
+  );
+}
+
+/// Sème un historique DÉJÀ RÉSOLU de [historique] courses (fenêtre ≥ 50) plus
+/// [cibles] courses non résolues, puis déroule les cibles une à une.
+///
+/// La VARIANCE varie d'une course à l'autre : c'est la condition mesurée pour
+/// que `_mettreAJourCalibration` calcule réellement les corrélations.
+Future<List<({Map<String, double> poids, Set<String> geles, int nb, int corr})>>
+    derouler({
+  required int cibles,
+  required double Function(int cycle) rDe,
+  int historique = 60,
+}) async {
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cibles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0, // variance VARIÉE (condition mesurée)
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesCorrelees(n, i, rDe(i)),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesCorrelees(n, j, rDe(0)),
+        },
+      ),
+  ];
+  await semer(pronostics: courses, verifierNombre: false);
+
+  final trace = <({Map<String, double> poids, Set<String> geles, int nb, int corr})>[];
+  for (var i = 0; i < cibles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add((
+      poids: poidsEffectifs(),
+      geles: Set<String>.from(IaExperimentation.derniersGeles),
+      nb: IaExperimentation.derniereFenetre,
+      corr: IaMemoryService.instance.poids.correlations.length,
+    ));
+  }
+  return trace;
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B1 — LE GEL SE DÉCLENCHE-T-IL, ET À QUEL COÛT ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B1 — trajectoire AVEC gel contre SANS gel', () async {
+    const cycles = 40;
+    double rDe(int c) => 0.95;
+
+    IaExperimentation.reinitialiser();
+    final avecGel = await derouler(cibles: cycles, rDe: rDe);
+    final nbGeles = avecGel.where((t) => t.geles.isNotEmpty).length;
+    final corrFin = avecGel.last.corr;
+
+    IaExperimentation.reinitialiser();
+    IaExperimentation.gelActif = false;
+    final sansGel = await derouler(cibles: cycles, rDe: rDe);
+
+    final (ecartFin, pireFin, bouges) =
+        ecart(avecGel.last.poids, sansGel.last.poids, seuil: 1e-12);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B1] ═══ GEL : DÉCLENCHEMENT ET COÛT ═══');
+    // ignore: avoid_print
+    print('[B1] fenêtre au dernier cycle = ${avecGel.last.nb} '
+        '(seuil de gel = 50)');
+    // ignore: avoid_print
+    print('[B1] paires de corrélations mémorisées = $corrFin');
+    // ignore: avoid_print
+    print('[B1] cycles avec au moins un gelé = $nbGeles/$cycles');
+    // ignore: avoid_print
+    print('[B1] écart final AVEC/SANS gel = ${_e(ecartFin)} '
+        '(pire : $pireFin · $bouges/19)');
+    for (final k in kCles) {
+      final d = avecGel.last.poids[k]! - sansGel.last.poids[k]!;
+      if (d.abs() > 1e-12) {
+        // ignore: avoid_print
+        print('[B1]   ${k.padRight(12)} avec=${_e(avecGel.last.poids[k]!)} · '
+            'sans=${_e(sansGel.last.poids[k]!)} · delta=${_e(d)}');
+      }
+    }
+
+    expect(avecGel.last.nb, greaterThanOrEqualTo(50),
+        reason: 'CONDITION MESURÉE : sous 50 courses en fenêtre, le bloc de '
+            'gel est structurellement inatteignable (l.4121). Le harnais doit '
+            'se placer au-dessus, sinon la mesure est vide.');
+    expect(nbGeles, greaterThan(0),
+        reason: 'Si le gel ne se déclenche jamais même avec r ≈ 0,95 et une '
+            'fenêtre ≥ 50, la cause est à chercher dans la table de '
+            'corrélations (seuil de population 0,65, variance, etc.).');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B2 — SÉLECTION DU GELÉ : LE POIDS OU LA PERTINENCE ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B2 — quel critère est gelé, et pourquoi ?', () async {
+    double rDe(int c) => 0.95;
+    IaExperimentation.reinitialiser();
+    final trace = await derouler(cibles: 40, rDe: rDe);
+
+    final geles = <String>{};
+    for (final t in trace) {
+      geles.addAll(t.geles);
+    }
+    final corr = IaMemoryService.instance.poids.correlations;
+    final p = poidsEffectifs();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B2] ═══ SÉLECTION DU GELÉ ═══');
+    // ignore: avoid_print
+    print('[B2] paires mémorisées (r ≥ 0,65) = ${corr.length}');
+    for (final e in corr.entries) {
+      final parts = e.key.split('|');
+      // ignore: avoid_print
+      print('[B2]   ${e.key} r=${e.value.toStringAsFixed(6)} '
+          '(poids : ${parts[0]}=${_e(p[parts[0]] ?? 0)} · '
+          '${parts[1]}=${_e(p[parts[1]] ?? 0)})');
+    }
+    // ignore: avoid_print
+    print('[B2] critères gelés observés : '
+        '${geles.isEmpty ? "aucun" : geles.join(", ")}');
+    for (final g in geles) {
+      // ignore: avoid_print
+      print('[B2]   ${g.padRight(12)} poids actuel = ${_e(p[g] ?? 0)}');
+    }
+    // ignore: avoid_print
+    print('[B2] ⇒ le gelé est-il le plus LÉGER de sa paire ? Vérifiable '
+        'directement sur les deux lignes ci-dessus.');
+
+    expect(corr.length, greaterThan(0),
+        reason: 'Aucune corrélation mémorisée : la variance ou la population '
+            'manque encore. Le dire au lieu de conclure.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B3 — DÉGEL : la corrélation chute, le gradient revient-il ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B3 — gel puis dégel : le critère gelé reprend-il sa trajectoire ?',
+      () async {
+    // Phase 1 : r ≈ 0,95 (gel attendu). Phase 2 : r ≈ 0,30 (dégel attendu).
+    double rDe(int c) => c < 25 ? 0.95 : 0.30;
+    IaExperimentation.reinitialiser();
+    final trace = await derouler(cibles: 50, rDe: rDe);
+
+    final gelPhase1 = trace.sublist(0, 25).where((t) => t.geles.isNotEmpty).length;
+    final gelPhase2 = trace.sublist(25).where((t) => t.geles.isNotEmpty).length;
+    final p1 = trace[24].poids;
+    final p2 = trace.last.poids;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B3] ═══ GEL PUIS DÉGEL (r 0,95 → 0,30) ═══');
+    // ignore: avoid_print
+    print('[B3] cycles gelés phase 1 (r≈0,95) = $gelPhase1/25');
+    // ignore: avoid_print
+    print('[B3] cycles gelés phase 2 (r≈0,30) = $gelPhase2/25');
+    // ignore: avoid_print
+    print('[B3] paires mémorisées à la fin = '
+        '${IaMemoryService.instance.poids.correlations.length}');
+    // ignore: avoid_print
+    print('[B3] évolution du poids des critères corrélés après le dégel :');
+    for (final k in ['forme', 'gains']) {
+      // ignore: avoid_print
+      print('[B3]   ${k.padRight(8)} fin phase 1 = ${_e(p1[k]!)} → '
+          'fin phase 2 = ${_e(p2[k]!)} · delta=${_e(p2[k]! - p1[k]!)}');
+    }
+
+    expect(gelPhase1, greaterThan(0),
+        reason: 'Sans gel en phase 1, il n y a pas de dégel à mesurer.');
+  });
+}

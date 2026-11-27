@@ -1,0 +1,207 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE D1-v2 — PLANCHER, PROTOCOLE À CRITÈRES À PEU PRÈS INDÉPENDANTS
+//  ESPACE ISOLÉ /home/user/exp  —  Phase 4.5 du cadrage
+//
+//  POURQUOI UNE v2 (défaut de harnais n°9, consigné après mesure) :
+//  Dans D1-v1, les 18 critères non pilotés reçoivent, pour un numéro de
+//  cheval donné, EXACTEMENT la même note dans toutes les courses. Leur
+//  corrélation inter-courses vaut donc r = 1,0 (mesuré : 171 paires à 1,0).
+//  C'est le régime de redondance parfaite dont G1/G3 ont montré qu'il n'est
+//  pas celui de données hippiques réelles et qu'il déclenche le gel
+//  quasi total. Une mesure prise dans ce régime ne dit rien du moteur en
+//  conditions réalistes.
+//
+//  PROTOCOLE v2 :
+//   • Chaque critère non piloté reçoit un bruit déterministe PROPRE (graine
+//     dépendant du cycle et de l'indice du critère) : les 18 critères varient
+//     indépendamment d'une course à l'autre.
+//   • Le critère piloté suit le même protocole en deux phases que D1-v1.
+//   • Même nombre de cycles, même amorçage, même gel actif.
+//
+//  Ce que l'on veut mesurer, sans présupposer la réponse : le plancher est-il
+//  ATTEINT par apprentissage, puis QUITTÉ quand le signal s'inverse ?
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+const int kCycles = 120;
+const int kBascule = 60;
+
+String _e(double v) => v.toStringAsFixed(9);
+
+/// Bruit déterministe et REPRODUCTIBLE, propre à (course, critère).
+/// Amplitude volontairement bornée pour rester dans [0, 100].
+double _bruit(int numero, int cycle, int critere) {
+  final g = math.Random(numero * 7919 + cycle * 104729 + critere * 1299709);
+  return (g.nextDouble() - 0.5) * 60.0;
+}
+
+const List<String> _ordre = kCles;
+
+ScoresCriteres _notes(int numero, int cycle, String cible) {
+  double v(int idx, String nom) {
+    final base = 96.0 - numero * 6;
+    if (nom != cible) {
+      return (base + _bruit(numero, cycle, idx)).clamp(0.0, 100.0);
+    }
+    // Critère piloté : deux phases, signal inversé à la bascule.
+    final valeur = cycle < kBascule
+        ? (20.0 + numero * 14.0) // anti-discriminant
+        : (100.0 - numero * 30.0); // fortement discriminant
+    return valeur.clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+ScoresCriteres _notesPour(int numero, int cycle, String cible) {
+  final idx = _ordre.indexOf(cible);
+  assert(idx >= 0, 'critère inconnu : $cible');
+  return _notes(numero, cycle, cible);
+}
+
+Future<List<Map<String, double>>> derouler({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  Map<String, double>? depart,
+  int historique = 60,
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D1-v2 — plancher : atteindre puis quitter (19 critères, bruit propre)',
+      () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D1v2] ═══ PLANCHER — critères à bruit INDÉPENDANT · '
+        '$kCycles cycles · bascule $kBascule ═══');
+    // ignore: avoid_print
+    print('[D1v2] critere      | plancher | mini p1     | fin p1      | '
+        'fin p2      | atteint | quitte');
+
+    var atteints = 0;
+    var quittes = 0;
+    var horsBornes = 0;
+    var gelTotal = 0;
+    final detail = <String>[];
+
+    for (final k in kCles) {
+      IaExperimentation.reinitialiser();
+      final tr = await derouler(
+        cycles: kCycles,
+        notes: (n, c) => _notesPour(n, c, k),
+      );
+      gelTotal += IaExperimentation.derniersGeles.length;
+
+      final lo = bornes[k]![0];
+      final hi = bornes[k]![1];
+      for (final m in tr) {
+        final w = m[k]!;
+        if (w < lo - 1e-9 || w > hi + 1e-9) horsBornes++;
+      }
+
+      final mini = tr
+          .sublist(0, kBascule)
+          .map((m) => m[k]!)
+          .reduce((a, b) => a < b ? a : b);
+      final fin1 = tr[kBascule - 1][k]!;
+      final fin2 = tr[kCycles - 1][k]!;
+      final atteint = (mini - lo).abs() < 1e-9;
+      final quitte = fin2 > fin1 + 1e-9;
+      if (atteint) atteints++;
+      if (quitte) quittes++;
+
+      detail.add('[D1v2] ${k.padRight(12)} | ${lo.toStringAsFixed(3)}    | '
+          '${_e(mini)} | ${_e(fin1)} | ${_e(fin2)} | '
+          '${atteint ? "OUI" : "non"}    | '
+          '${quitte ? "OUI (+${_e(fin2 - fin1)})" : "non"}');
+    }
+
+    for (final l in detail) {
+      // ignore: avoid_print
+      print(l);
+    }
+    // ignore: avoid_print
+    print('[D1v2] ⇒ plancher ATTEINT par apprentissage : $atteints/19');
+    // ignore: avoid_print
+    print('[D1v2] ⇒ plancher QUITTÉ après retournement : $quittes/19');
+    // ignore: avoid_print
+    print('[D1v2] ⇒ sorties de bornes : $horsBornes');
+    // ignore: avoid_print
+    print('[D1v2] ⇒ critères gelés cumulés sur les 19 campagnes : $gelTotal');
+
+    expect(horsBornes, 0,
+        reason: 'Le respect des bornes individuelles est une garantie dure '
+            'du moteur et doit tenir sur toute la trajectoire.');
+    // ignore: avoid_print
+    print('[D1v2] STATUT BRUT : atteints=$atteints/19 quittes=$quittes/19');
+  }, timeout: const Timeout(Duration(minutes: 40)));
+}

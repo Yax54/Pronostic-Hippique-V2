@@ -1,0 +1,190 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE D5 — LES 19 CRITÈRES : ATTEINDRE ET QUITTER PLANCHER ET PLAFOND
+//  ESPACE ISOLÉ /home/user/exp — Phase 4.5 du cadrage
+//
+//  PORTE FRANCHIE : le harnais v2 a produit, sur `distSpec` et 240 cycles,
+//  un poids passant de 0,005000000 (plancher) à 0,179504007 (à 0,0005 de son
+//  plafond), avec une discrimination qui suit les données.
+//
+//  PROTOCOLE PAR CRITÈRE (deux campagnes indépendantes) :
+//   • PLANCHER : 240 cycles. Phase 1 (0-59) le critère est ANTI-discriminant
+//     (notes croissantes avec le rang) ⇒ il doit descendre au plancher.
+//     Phase 2 (60-239) il devient LE PLUS discriminant (pente 16) ⇒ il doit
+//     remonter. On mesure s'il ATTEINT le plancher et s'il le QUITTE.
+//   • PLAFOND : 240 cycles, ordre inverse. Phase 1 (0-59) très discriminant
+//     (pente 16) ⇒ il doit monter au plafond. Phase 2 (60-239) anti-discriminant
+//     ⇒ il doit redescendre.
+//   Les 18 autres critères reçoivent un bruit INDÉPENDANT par critère et par
+//   cycle (amplitude ±12) : aucun clone, aucune corrélation artificielle.
+//   60 cours d'amorçage, dates à la minute strictement croissantes (harnais v2),
+//   gel ACTIF, coefficients de production, aucune constante modifiée.
+//
+//  CRITÈRES D'ARRÊT DOCUMENTÉS :
+//   • 240 cycles : le temps de descente observé sur `distSpec` était de 30 à 59
+//     cycles, et la remontée s'étalait sur ~120 cycles. 240 laisse une marge
+//     de 2× après la bascule.
+//   • Si un critère n'a pas atteint sa borne en fin de phase 1, le résultat est
+//     consigné comme « borne NON atteinte en 60 cycles » — ce n'est pas un
+//     échec de la campagne, c'est une mesure.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v2.dart';
+
+const int kCycles = 240;
+const int kBascule = 60;
+
+/// Une campagne complète pour UN critère, dans UN sens.
+Future<({
+  List<double> poids,
+  List<double> disc,
+  int geles,
+  bool valide,
+})> campagneCritere({
+  required String cible,
+  required bool versPlancher,
+}) async {
+  IaExperimentation.reinitialiser();
+  final poids = <double>[];
+  final disc = <double>[];
+  var geles = 0;
+  var sommeOk = true;
+
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle(i, nbCycles: kCycles),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesIndependantes(
+              n,
+              i,
+              cible: cible,
+              valeurCible: _valeur(i, n, versPlancher),
+            ),
+        },
+      ),
+    for (var j = 0; j < 60; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce(j, kCycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesIndependantes(n, 0),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: kInitial,
+    sigmaAttendue: sommeCle(kInitial, kCles),
+  );
+
+  for (var i = 0; i < kCycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    if ((sommeCle(p, kCles) - 1.0).abs() > 1e-6) sommeOk = false;
+    poids.add(p[cible]!);
+    disc.add(IaExperimentation.dernieresDiscriminations[cible] ?? 0.0);
+    if (IaExperimentation.derniersGeles.contains(cible)) geles++;
+  }
+  final discVarie = disc.sublist(kBascule).toSet().length > 1;
+  return (poids: poids, disc: disc, geles: geles,
+      valide: sommeOk && discVarie);
+}
+
+/// Valeur du critère piloté.
+/// `versPlancher` : phase 1 anti-discriminante, phase 2 très discriminante.
+/// Sinon (vers le plafond) : l'inverse.
+double _valeur(int cycle, int numero, bool versPlancher) {
+  final phase1 = cycle < kBascule;
+  final anti = versPlancher ? phase1 : !phase1;
+  return anti
+      ? (30.0 + numero * 12.0).clamp(0.0, 100.0) // notes croissantes avec le rang
+      : (100.0 - numero * 16.0).clamp(0.0, 100.0); // notes décroissantes
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D5 — 19 critères : plancher et plafond, atteindre et quitter',
+      () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    final lignes = <String>[];
+    var plancherAtteint = 0, plancherQuitte = 0, plancherValide = 0;
+    var plafondAtteint = 0, plafondQuitte = 0, plafondValide = 0;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D5] ═══ 19 CRITÈRES · $kCycles CYCLES · BASCULE $kBascule ═══');
+
+    for (final k in kCles) {
+      final lo = bornes[k]![0];
+      final hi = bornes[k]![1];
+
+      final p = await campagneCritere(cible: k, versPlancher: true);
+      final mini = p.poids.sublist(0, kBascule).reduce((a, b) => a < b ? a : b);
+      final finP = p.poids.last;
+      final atPLo = (mini - lo).abs() < 1e-9;
+      final quitteLo = finP > lo + 1e-9;
+      if (atPLo) plancherAtteint++;
+      if (quitteLo) plancherQuitte++;
+      if (p.valide) plancherValide++;
+
+      final h = await campagneCritere(cible: k, versPlancher: false);
+      final maxi = h.poids.sublist(0, kBascule).reduce((a, b) => a > b ? a : b);
+      final finH = h.poids.last;
+      final atHi = (maxi - hi).abs() < 1e-6;
+      final quitteHi = finH < hi - 1e-9;
+      if (atHi) plafondAtteint++;
+      if (quitteHi) plafondQuitte++;
+      if (h.valide) plafondValide++;
+
+      lignes.add('[D5] ${k.padRight(12)} | lo=${lo.toStringAsFixed(3)} '
+          'mini=${d9(mini)} fin=${d9(finP)} '
+          '${atPLo ? "ATTEINT" : "--------"} ${quitteLo ? "QUITTE" : "------"} '
+          'g=${p.geles.toString().padLeft(3)} | '
+          'hi=${hi.toStringAsFixed(2)} maxi=${d9(maxi)} fin=${d9(finH)} '
+          '${atHi ? "ATTEINT" : "--------"} ${quitteHi ? "QUITTE" : "------"} '
+          'g=${h.geles.toString().padLeft(3)}');
+    }
+
+    for (final l in lignes) {
+      // ignore: avoid_print
+      print(l);
+    }
+    // ignore: avoid_print
+    print('[D5] ⇒ PLANCHER : atteint $plancherAtteint/19 · '
+        'quitté $plancherQuitte/19 · campagnes valides $plancherValide/19');
+    // ignore: avoid_print
+    print('[D5] ⇒ PLAFOND  : atteint $plafondAtteint/19 · '
+        'quitté $plafondQuitte/19 · campagnes valides $plafondValide/19');
+
+    expect(plancherValide + plafondValide, 38,
+        reason: 'Toute campagne dont la discrimination ne varie pas est '
+            'invalide : ses résultats ne doivent pas être interprétés.');
+  }, timeout: const Timeout(Duration(minutes: 180)));
+}

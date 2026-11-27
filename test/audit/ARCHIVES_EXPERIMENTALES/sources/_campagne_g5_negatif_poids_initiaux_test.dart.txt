@@ -1,0 +1,311 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G5 — CORRÉLATIONS NÉGATIVES ET INFLUENCE DES POIDS INITIAUX
+//  ESPACE ISOLÉ /home/user/exp — rectification §2 « Gel », volet 3
+//
+//  EXIGENCES (mot pour mot)
+//  ───────────────────────
+//   • « Vérifie également les corrélations négatives et l'influence des poids
+//     initiaux sur la sélection. »
+//   • « Examine la dépendance du calcul des corrélations envers varianceScores
+//     et le retour anticipé de la calibration. »
+//
+//  TROIS QUESTIONS, TROIS DISPOSITIFS
+//  ─────────────────────────────────
+//  G5-a  CORRÉLATION NÉGATIVE. Le code stocke `pearson(...).abs()` (l.4520).
+//        Une paire à r = −0,95 est donc mémorisée comme 0,95 et franchit le
+//        seuil de gel 0,85 exactement comme une paire redondante. Or deux
+//        critères ANTI-corrélés ne mesurent PAS la même chose : ils mesurent
+//        des choses opposées. Geler l'un des deux supprime une information que
+//        l'autre n'apporte pas. C'est une conséquence logique du `.abs()` —
+//        et c'est l'objet de la proposition P4. Ce fichier MESURE si le gel se
+//        déclenche réellement sur une paire anti-corrélée.
+//
+//  G5-b  INFLUENCE DES POIDS INITIAUX SUR LA SÉLECTION. La règle est
+//        `aGeler = p1 <= p2 ? c1 : c2` (l.4133), donc le critère de poids le
+//        plus FAIBLE. Sur une MÊME paire corrélée, changer les poids de départ
+//        doit changer le critère gelé. On le vérifie sur trois configurations
+//        de départ identiques par ailleurs.
+//
+//  G5-c  DÉPENDANCE À varianceScores ET RETOUR ANTICIPÉ. `_mettreAJourCalibration`
+//        (l.4429) sort tôt si `avecResultat.length < 5`, si
+//        `avecVariance.length < 5`, ou si `hautConfiance`/`basseConfiance` est
+//        vide. Or `hautConfiance`/`basseConfiance` se construisent en coupant
+//        `avecVariance` à la MÉDIANE de `varianceScores` : si toutes les
+//        variances sont ÉGALES, un des deux groupes est VIDE et la calibration
+//        sort AVANT `_detecterCorrelationsCriteres`. Donc `_poids.correlations`
+//        reste vide et le GEL EST STRUCTURELLEMENT INATTEIGNABLE, quelle que
+//        soit la corrélation des données. On mesure les deux régimes.
+//
+//  ⚠️ AUCUNE MODIFICATION DE PRODUCTION. `IaExperimentation` est laissé à ses
+//  valeurs de production ; seule la DONNÉE (notes, varianceScores) varie.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kCycles = 260;
+const int kAmorce = 60;
+
+/// Notes où `jockey` est soit un CLONE de `distSpec` (r ≈ +1), soit son
+/// ANTI-clone (r ≈ −1), soit indépendant.
+///
+/// L'anti-clone est construit en renversant la position du cheval dans la
+/// permutation : V0ter a mesuré r = −1,000000000 sur ce dispositif.
+ScoresCriteres notesG5(
+  int numero,
+  int cycle, {
+  required String mode, // 'clone' | 'anti' | 'indep'
+  required double pente,
+}) {
+  final dist = (55.0 + pente * (3.0 - numero)).clamp(0.0, 100.0);
+  final base = notesDistinctes(numero, cycle, pilote: 'distSpec', valeurPilote: dist);
+
+  if (mode == 'clone') {
+    return notesDistinctes(
+      numero, cycle,
+      pilote: 'distSpec', valeurPilote: dist,
+      clones: const <String, int>{'jockey': 7},
+    );
+  }
+  if (mode == 'anti') {
+    // Anti-clone : la position dans la permutation de distSpec est renversée.
+    final pos = permutation(cycle, 7)[numero - 1];
+    final jak = (20.0 + 15.0 * (4 - pos) +
+            bruit3(numero, cycle, 8, amp: 6.0, sel: 9))
+        .clamp(0.0, 100.0);
+    return ScoresCriteres(
+      forme: base.forme, gains: base.gains, record: base.record,
+      cote: base.cote, constance: base.constance, victoires: base.victoires,
+      discipline: base.discipline, distSpec: dist, jockey: jak,
+      repos: base.repos, hippo: base.hippo, entraineur: base.entraineur,
+      elo: base.elo, terrain: base.terrain, divergence: base.divergence,
+      poidsRel: base.poidsRel, progression: base.progression,
+      mouvCote: base.mouvCote, placeDepart: base.placeDepart,
+    );
+  }
+  // 'indep' : jockey garde sa permutation propre.
+  return base;
+}
+
+/// Sème puis déroule, en renvoyant par cycle : gel de jockey/distSpec,
+/// r mémorisé, poids des deux, et la sélection effective.
+Future<({
+  List<int> gelJ,
+  List<int> gelD,
+  List<double> rPaire,
+  List<double> pJ,
+  List<double> pD,
+  List<String> selection,
+})> deroulerG5({
+  required String mode,
+  required Map<String, double> depart,
+  required bool varianceVarie,
+  double pente = -12.0,
+}) async {
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle3(i, nbCycles: kCycles),
+        resolu: false,
+        // varianceScores : soit VARIÉE (5 valeurs), soit CONSTANTE.
+        variance: varianceVarie ? 6.0 + (i % 5) * 4.0 : 12.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesG5(n, i, mode: mode, pente: pente),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    for (var j = 0; j < kAmorce; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce3(j, kCycles),
+        variance: varianceVarie ? 6.0 + (j % 5) * 4.0 : 12.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesG5(n, j, mode: mode, pente: pente),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: depart,
+    sigmaAttendue: sommeCle(depart, kCles),
+  );
+
+  final gelJ = <int>[], gelD = <int>[], rPaire = <double>[];
+  final pJ = <double>[], pD = <double>[], selection = <String>[];
+  for (var i = 0; i < kCycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    gelJ.add(IaExperimentation.derniersGeles.contains('jockey') ? 1 : 0);
+    gelD.add(IaExperimentation.derniersGeles.contains('distSpec') ? 1 : 0);
+    rPaire.add(correlationsMemorisees()['distSpec|jockey'] ?? 0.0);
+    pJ.add(p['jockey']!);
+    pD.add(p['distSpec']!);
+    selection.add(p['distSpec']! <= p['jockey']! ? 'distSpec' : 'jockey');
+  }
+  return (gelJ: gelJ, gelD: gelD, rPaire: rPaire,
+      pJ: pJ, pD: pD, selection: selection);
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('G5-a — une paire ANTI-corrélée déclenche-t-elle le gel ?', () async {
+    IaExperimentation.reinitialiser();
+    final t = await deroulerG5(
+      mode: 'anti',
+      depart: kInitial,
+      varianceVarie: true,
+    );
+    final gelJ = t.gelJ.reduce((a, b) => a + b);
+    final gelD = t.gelD.reduce((a, b) => a + b);
+    final rMoy = t.rPaire.reduce((a, b) => a + b) / t.rPaire.length;
+    final rMax = t.rPaire.reduce((a, b) => a > b ? a : b);
+    final rMin = t.rPaire.reduce((a, b) => a < b ? a : b);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G5-a] ═══ PAIRE ANTI-CORRÉLÉE (distSpec, jockey) ═══');
+    // ignore: avoid_print
+    print('[G5-a] r mémorisé par le moteur : moy=${rMoy.toStringAsFixed(4)} '
+        'min=${rMin.toStringAsFixed(4)} max=${rMax.toStringAsFixed(4)}');
+    // ignore: avoid_print
+    print('[G5-a] ⇒ le moteur stocke |r| (l.4520) : une corrélation de −0,95 '
+        'est mémorisée 0,95');
+    // ignore: avoid_print
+    print('[G5-a] gel jockey=$gelJ/$kCycles · gel distSpec=$gelD/$kCycles');
+    // ignore: avoid_print
+    print('[G5-a] ⇒ ${gelJ + gelD > 0 ? "LE GEL SE DÉCLENCHE SUR UNE PAIRE ANTI-CORRÉLÉE" : "gel non déclenché sur paire anti-corrélée"}');
+    // ignore: avoid_print
+    print('[G5-a] CONSÉQUENCE : deux critères mesurant des choses OPPOSÉES se '
+        'voient privés de l\'un des deux. C\'est le fondement factuel de P4.');
+
+    // On ne force pas le résultat : on le rapporte. Si le gel ne se déclenche
+    // pas, c'est aussi une mesure (seuil non franchi sur ce jeu de données).
+    expect(rMax >= 0.0, isTrue); // simple garde de non-régression
+  }, timeout: const Timeout(Duration(minutes: 120)));
+
+  test('G5-b — les poids initiaux changent-ils le critère gelé ?', () async {
+    IaExperimentation.reinitialiser();
+    // Trois départs, IDENTIQUES par ailleurs, ne différant que par le rapport
+    // des poids de la paire (distSpec, jockey).
+    final departA = <String, double>{...kInitial}; // distSpec 0,08 > jockey 0,07
+    final departB = <String, double>{...kInitial}
+      ..['distSpec'] = 0.03
+      ..['jockey'] = 0.09; // on inverse le rapport
+    final departC = <String, double>{...kInitial}
+      ..['distSpec'] = 0.07
+      ..['jockey'] = 0.07; // égalité parfaite
+
+    final ra = await deroulerG5(mode: 'clone', depart: departA, varianceVarie: true);
+    final rb = await deroulerG5(mode: 'clone', depart: departB, varianceVarie: true);
+    final rc = await deroulerG5(mode: 'clone', depart: departC, varianceVarie: true);
+
+    String sel(Map<String, int> hist) {
+      final e = hist.entries.toList()..sort((x, y) => y.value.compareTo(x.value));
+      return e.isEmpty ? 'aucune' : '${e.first.key}:${e.first.value}';
+    }
+
+    int cnt(List<String> s, String who) => s.where((x) => x == who).length;
+
+    // ignore: avoid_print
+    print('[G5-b] ═══ INFLUENCE DES POIDS INITIAUX SUR LA SÉLECTION ═══');
+    // ignore: avoid_print
+    print('[G5-b] départ A (distSpec 0,08 > jockey 0,07) : '
+        'gelJ=${ra.gelJ.reduce((a, b) => a + b)} '
+        'gelD=${ra.gelD.reduce((a, b) => a + b)} · '
+        'sélection ${sel({'jockey': cnt(ra.selection, 'jockey'), 'distSpec': cnt(ra.selection, 'distSpec')})}');
+    // ignore: avoid_print
+    print('[G5-b] départ B (distSpec 0,03 < jockey 0,09) : '
+        'gelJ=${rb.gelJ.reduce((a, b) => a + b)} '
+        'gelD=${rb.gelD.reduce((a, b) => a + b)} · '
+        'sélection ${sel({'jockey': cnt(rb.selection, 'jockey'), 'distSpec': cnt(rb.selection, 'distSpec')})}');
+    // ignore: avoid_print
+    print('[G5-b] départ C (distSpec 0,07 = jockey 0,07) : '
+        'gelJ=${rc.gelJ.reduce((a, b) => a + b)} '
+        'gelD=${rc.gelD.reduce((a, b) => a + b)} · '
+        'sélection ${sel({'jockey': cnt(rc.selection, 'jockey'), 'distSpec': cnt(rc.selection, 'distSpec')})}');
+    // ignore: avoid_print
+    print('[G5-b] ⇒ la sélection est PUREMENT comparative (p1 <= p2 ? c1 : c2) : '
+        'elle ne dépend pas de la corrélation, seulement des poids du moment.');
+
+    // Le critère gelé doit CHANGER entre A et B : c'est le fait mesurable.
+    final geleA = ra.gelJ.reduce((a, b) => a + b) > ra.gelD.reduce((a, b) => a + b)
+        ? 'jockey'
+        : 'distSpec';
+    final geleB = rb.gelJ.reduce((a, b) => a + b) > rb.gelD.reduce((a, b) => a + b)
+        ? 'jockey'
+        : 'distSpec';
+    // ignore: avoid_print
+    print('[G5-b] ⇒ critère gelé : départ A = $geleB ; départ B = $geleA '
+        '⇒ ${geleA != geleB ? "LE CRITÈRE GELÉ CHANGE AVEC LES POIDS INITIAUX" : "critère gelé IDENTIQUE malgré l inversion des poids"}');
+  }, timeout: const Timeout(Duration(minutes: 180)));
+
+  test('G5-c — varianceScores constante rend-elle le gel INATTEIGNABLE ?',
+      () async {
+    IaExperimentation.reinitialiser();
+    // Régime 1 : varianceScores VARIÉE ⇒ calibration complète ⇒ corrélations
+    // mémorisées ⇒ gel possible.
+    final varie = await deroulerG5(
+      mode: 'clone',
+      depart: kInitial,
+      varianceVarie: true,
+    );
+    // Régime 2 : varianceScores CONSTANTE ⇒ médiane == toutes les valeurs ⇒
+    // `hautConfiance` vide (strictement >) ⇒ retour anticipé ⇒ corrélations
+    // jamais calculées ⇒ gel impossible.
+    IaExperimentation.reinitialiser();
+    final constante = await deroulerG5(
+      mode: 'clone',
+      depart: kInitial,
+      varianceVarie: false,
+    );
+
+    final gelVar = varie.gelJ.reduce((a, b) => a + b);
+    final gelCons = constante.gelJ.reduce((a, b) => a + b);
+    final rVarMax = varie.rPaire.reduce((a, b) => a > b ? a : b);
+    final rConsMax = constante.rPaire.reduce((a, b) => a > b ? a : b);
+
+    // ignore: avoid_print
+    print('[G5-c] ═══ DÉPENDANCE À varianceScores ═══');
+    // ignore: avoid_print
+    print('[G5-c] varianceScores VARIÉE   : r max mémorisé = '
+        '${rVarMax.toStringAsFixed(4)} · gel jockey = $gelVar/$kCycles');
+    // ignore: avoid_print
+    print('[G5-c] varianceScores CONSTANTE : r max mémorisé = '
+        '${rConsMax.toStringAsFixed(4)} · gel jockey = $gelCons/$kCycles');
+    // ignore: avoid_print
+    print('[G5-c] ⇒ ${rConsMax == 0.0 ? "CONFIRMÉ : sans variation de varianceScores, r reste à 0 — le gel est STRUCTURELLEMENT inatteignable" : "NON CONFIRMÉ : les corrélations sont calculées malgré une variance constante, à instruire"}');
+    // ignore: avoid_print
+    print('[G5-c] ⇒ conséquence : l\'absence de gel dans une campagne ne prouve '
+        'RIEN sur le mécanisme de gel si varianceScores n\'a pas varié.');
+
+    expect(rConsMax, 0.0,
+        reason: 'Avec une varianceScores constante, la médiane vaut toutes les '
+            'valeurs, `hautConfiance` est vide et la calibration sort avant '
+            '`_detecterCorrelationsCriteres` : r doit rester 0.');
+  }, timeout: const Timeout(Duration(minutes: 180)));
+}

@@ -1,0 +1,140 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 3ter — L'APLATISSEMENT DES ENRICHIS : EST-IL DÛ AUX PLANCHERS 0,005 ?
+//
+//  MESURE DE DÉPART (P3bis, T3) : les 12 critères enrichis poussés tous vers
+//  0,0001 donnent
+//    • b3a0107 : distSpec 0,034482759 · jockey 0,022988506 · repos 0,011494253
+//                (hiérarchie CONSERVÉE, rapport distSpec/repos = 3,0)
+//    • c31cbef : les 12 à 0,015000000 EXACTEMENT (hiérarchie DÉTRUITE)
+//
+//  HYPOTHÈSE À TESTER, PAS À AFFIRMER : si tout le groupe est sous son plancher,
+//  la projection KKT de c31cbef colle chaque membre au plancher et répartit le
+//  budget uniformément — d'autant plus uniformément que les planchers sont
+//  ÉGAUX. Or le chantier a abaissé 12 planchers enrichis à 0,005, ce qui les
+//  rend TOUS ÉGAUX (alors qu'ils valaient 0,01/0,02/0,03, donc distincts).
+//
+//  PROTOCOLE :
+//   (a) reproduire l'aplatissement sur c31cbef (déjà fait en T3) ;
+//   (b) refaire la même mesure sur c31cbef en RELEVANT les planchers enrichis
+//       aux valeurs d'avant chantier, via `bornesOverrideExp` ;
+//   (c) comparer : si la hiérarchie revient, la cause est établie.
+//
+//  `bornesOverrideExp` court-circuite uniquement la TABLE DES BORNES, jamais
+//  l'algorithme de projection : c'est exactement la modification d'un seul
+//  paramètre étudié, autorisée par la Phase 5-C.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+String d9(double v) => v.toStringAsFixed(9);
+
+IaPoidsAdaptatifs depuis(Map<String, double> m) => IaPoidsAdaptatifs(
+      forme: m['forme']!, gains: m['gains']!, record: m['record']!,
+      cote: m['cote']!, constance: m['constance']!, victoires: m['victoires']!,
+      discipline: m['discipline']!, distSpec: m['distSpec']!,
+      jockey: m['jockey']!, repos: m['repos']!, hippo: m['hippo']!,
+      entraineur: m['entraineur']!, elo: m['elo']!, terrain: m['terrain']!,
+      divergence: m['divergence']!, poidsRel: m['poidsRel']!,
+      progression: m['progression']!, mouvCote: m['mouvCote']!,
+      placeDepart: m['placeDepart']!,
+    );
+
+Map<String, double> claquer(Map<String, double> m) {
+  final p = depuis(m);
+  p.clamp();
+  return <String, double>{for (final k in kCles) k: p.getPoids(k)};
+}
+
+/// Table des bornes d'AVANT le chantier (mesurées dans b3a0107, `clamp()`).
+/// Les 7 bases y sont identiques ; les 12 enrichis ont des planchers
+/// 0,01 / 0,02 / 0,03 au lieu de 0,005.
+Map<String, List<double>> bornesAvantChantier() => <String, List<double>>{
+      'forme': <double>[0.05, 0.55],
+      'gains': <double>[0.04, 0.40],
+      'record': <double>[0.03, 0.35],
+      'cote': <double>[0.05, 0.40],
+      'constance': <double>[0.03, 0.25],
+      'victoires': <double>[0.01, 0.15],
+      'discipline': <double>[0.01, 0.10],
+      'distSpec': <double>[0.03, 0.18],
+      'jockey': <double>[0.02, 0.15],
+      'repos': <double>[0.01, 0.08],
+      'hippo': <double>[0.01, 0.10],
+      'entraineur': <double>[0.01, 0.08],
+      'elo': <double>[0.01, 0.10],
+      'terrain': <double>[0.01, 0.10],
+      'divergence': <double>[0.01, 0.08],
+      'poidsRel': <double>[0.01, 0.07],
+      'progression': <double>[0.01, 0.08],
+      'mouvCote': <double>[0.02, 0.12],
+      'placeDepart': <double>[0.01, 0.07],
+    };
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('3ter — aplatissement : planchers 0,005 contre planchers d\'avant',
+      () {
+    // État identique à T3 : tous les enrichis écrasés à 0,0001.
+    final m = Map<String, double>.from(kInitial);
+    for (final k in kEnrichis) {
+      m[k] = 0.0001;
+    }
+
+    // (a) bornes de PRODUCTION actuelles (planchers 0,005).
+    IaPoidsAdaptatifs.bornesOverrideExp = null;
+    final actuel = claquer(m);
+
+    // (b) bornes d'AVANT le chantier (planchers 0,01 / 0,02 / 0,03).
+    IaPoidsAdaptatifs.bornesOverrideExp = bornesAvantChantier();
+    final avant = claquer(m);
+    IaPoidsAdaptatifs.bornesOverrideExp = null;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[3ter] ═══ APLATISSEMENT DES ENRICHIS : EFFET DE LA TABLE DE BORNES ═══');
+    // ignore: avoid_print
+    print('[3ter] critère      | bornes 0,005  | bornes d\'avant | écart');
+    for (final k in kEnrichis) {
+      // ignore: avoid_print
+      print('[3ter] ${k.padRight(12)} | ${d9(actuel[k]!)} | '
+          '${d9(avant[k]!)} | ${d9((actuel[k]! - avant[k]!).abs())}');
+    }
+    final (mx, pire, bouges) = ecart(actuel, avant, seuil: 1e-12);
+    // ignore: avoid_print
+    print('[3ter] écart max = ${d9(mx)} (pire : $pire · $bouges/19)');
+
+    // Hiérarchie conservée ? On compare le rapport max/min des 12 enrichis.
+    final valsA = kEnrichis.map((k) => actuel[k]!).toList();
+    final valsB = kEnrichis.map((k) => avant[k]!).toList();
+    final ratioA = valsA.reduce((a, b) => a > b ? a : b) /
+        valsA.reduce((a, b) => a < b ? a : b);
+    final ratioB = valsB.reduce((a, b) => a > b ? a : b) /
+        valsB.reduce((a, b) => a < b ? a : b);
+    // ignore: avoid_print
+    print('[3ter] rapport max/min des 12 enrichis : '
+        'planchers 0,005 = ${ratioA.toStringAsFixed(6)} · '
+        'planchers d\'avant = ${ratioB.toStringAsFixed(6)}');
+    // ignore: avoid_print
+    print('[3ter] Σ actuel = ${d9(sommeCle(actuel, kCles))} · '
+        'Σ avant = ${d9(sommeCle(avant, kCles))}');
+
+    expect(sommeCle(actuel, kCles), closeTo(1.0, 1e-6));
+    expect(sommeCle(avant, kCles), closeTo(1.0, 1e-6));
+  });
+}

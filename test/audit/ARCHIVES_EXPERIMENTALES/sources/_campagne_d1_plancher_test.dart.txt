@@ -1,0 +1,207 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE D1 — BORNES INDIVIDUELLES : ATTEINDRE PUIS QUITTER LE PLANCHER
+//  ESPACE ISOLÉ /home/user/exp  —  Phase 4.5 du cadrage
+//
+//  « Pour chacun des 19 critères, vérifie : la capacité à atteindre son
+//    plancher ; la capacité à quitter son plancher ; la capacité à inverser
+//    sa trajectoire ; la capacité à retrouver une influence importante après
+//    une période défavorable. Utilise les véritables mécanismes
+//    d'apprentissage. L'accessibilité mathématique d'une borne ne constitue
+//    pas à elle seule une preuve d'accessibilité par l'apprentissage. »
+//
+//  PROTOCOLE (identique pour D1 et D2, seul l'ordre des phases change) :
+//   • Un seul critère est piloté, les 18 autres sont IDENTIQUES entre toutes
+//     les courses à numéro égal ⇒ leur discrimination est la même partout,
+//     mais elle est FORTE : ils montent vers leur plafond. C'est le régime
+//     le plus défavorable au critère piloté (il est noyé).
+//   • Phase 1 (cycles 0-59) : le critère piloté est ANTI-discriminant
+//     (notes croissantes avec le rang ⇒ les derniers arrivés ont les
+//     meilleures notes ⇒ contribution négative). Il doit descendre.
+//   • Phase 2 (cycles 60-119) : il devient LE PLUS discriminant (pente 30).
+//     Il doit remonter.
+//   • Le gel est ACTIF (configuration de production) et la variance varie
+//     entre courses, condition mesurée d'accès au gel.
+//   • 60 courses d'amorçage résolues pour que le gel soit accessible
+//     (fenêtre >= 50 mesurée) et que le gradient dispose de matière.
+//
+//  Aucune constante n'est modifiée : on utilise le moteur tel quel.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+const int kCycles = 120;
+const int kBascule = 60;
+
+String _e(double v) => v.toStringAsFixed(9);
+
+/// Anti-discriminant : notes croissantes avec le rang ⇒ signal négatif.
+double _anti(int n) => (20.0 + n * 14.0).clamp(0.0, 100.0);
+
+/// Très discriminant : notes décroissantes avec le rang ⇒ signal positif.
+double _pro(int n, double pente) => (100.0 - n * pente).clamp(0.0, 100.0);
+
+ScoresCriteres _notes(int n, int c, String cible) {
+  final double valeur;
+  if (c < kBascule) {
+    valeur = _anti(n);
+  } else {
+    valeur = _pro(n, 30.0);
+  }
+  double v(String k) => k == cible ? valeur : 96.0 - n * 6;
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'),
+    cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'),
+    jockey: v('jockey'), repos: v('repos'), hippo: v('hippo'),
+    entraineur: v('entraineur'), elo: v('elo'), terrain: v('terrain'),
+    divergence: v('divergence'), poidsRel: v('poidsRel'),
+    progression: v('progression'), mouvCote: v('mouvCote'),
+    placeDepart: v('placeDepart'),
+  );
+}
+
+/// Déroule [cycles] cycles réels. Les cours d'amorçage ([historique]) sont
+/// données avec le numéro 0 et le cycle 0, donc notes FIXES : elles servent au
+/// gel et à la matière du gradient, jamais à piloter la trajectoire.
+Future<List<Map<String, double>>> derouler({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  Map<String, double>? depart,
+  int historique = 60,
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D1 — atteindre puis quitter le plancher (19 critères)', () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D1] ═══ ATTEINDRE PUIS QUITTER LE PLANCHER — $kCycles cycles, '
+        'bascule $kBascule ═══');
+    // ignore: avoid_print
+    print('[D1] départ : poids initiaux bruts (Σ 1,26), gel actif, '
+        'coefficients de production');
+    // ignore: avoid_print
+    print('[D1] critere      | plancher | mini phase1 | fin phase1 | '
+        'fin phase2 | atteint | quitte');
+
+    var atteints = 0;
+    var quittes = 0;
+    var horsBornes = 0;
+    final lignes = <String>[];
+
+    for (final k in kCles) {
+      IaExperimentation.reinitialiser();
+      final tr = await derouler(
+        cycles: kCycles,
+        historique: 60,
+        notes: (n, c) => _notes(n, c, k),
+      );
+
+      final lo = bornes[k]![0];
+      final hi = bornes[k]![1];
+
+      // Contrôle de borne sur TOUTE la trajectoire, pas seulement aux extrêmes.
+      for (final m in tr) {
+        final w = m[k]!;
+        if (w < lo - 1e-9 || w > hi + 1e-9) horsBornes++;
+      }
+
+      final mini = tr
+          .sublist(0, kBascule)
+          .map((m) => m[k]!)
+          .reduce((a, b) => a < b ? a : b);
+      final fin1 = tr[kBascule - 1][k]!;
+      final fin2 = tr[kCycles - 1][k]!;
+
+      final atteint = (mini - lo).abs() < 1e-9;
+      final quitte = fin2 > fin1 + 1e-9;
+      if (atteint) atteints++;
+      if (quitte) quittes++;
+
+      lignes.add('[D1] ${k.padRight(12)} | '
+          '${lo.toStringAsFixed(3)}    | ${_e(mini)} | ${_e(fin1)} | '
+          '${_e(fin2)} | ${atteint ? "OUI" : "non"}    | '
+          '${quitte ? "OUI (+${_e(fin2 - fin1)})" : "non"}');
+    }
+
+    for (final l in lignes) {
+      // ignore: avoid_print
+      print(l);
+    }
+    // ignore: avoid_print
+    print('[D1] ⇒ plancher ATTEINT par apprentissage : $atteints/19');
+    // ignore: avoid_print
+    print('[D1] ⇒ plancher QUITTÉ après retournement du signal : $quittes/19');
+    // ignore: avoid_print
+    print('[D1] ⇒ sorties de bornes individuelles sur la trajectoire : '
+        '$horsBornes');
+
+    // La contrainte de borne est une garantie dure du moteur : elle doit tenir.
+    expect(horsBornes, 0,
+        reason: 'Aucun poids ne doit sortir de ses bornes individuelles, '
+            'même transitoirement : c est la contrainte que le mécanisme de '
+            'projection doit assurer à chaque cycle.');
+
+    // On CONSTATE, on n'exige pas : si aucun critère ne remonte, c'est un fait
+    // à documenter comme défaut structurel, pas un test à faire passer.
+    // ignore: avoid_print
+    print('[D1] STATUT BRUT : atteints=$atteints/19 quittes=$quittes/19');
+  }, timeout: const Timeout(Duration(minutes: 30)));
+}

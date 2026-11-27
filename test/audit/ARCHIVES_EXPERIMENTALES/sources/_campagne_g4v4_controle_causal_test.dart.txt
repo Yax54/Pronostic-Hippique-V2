@@ -1,0 +1,416 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G4v4 — CONTRÔLE CAUSAL DU GEL ET PERTINENCE DE LA SÉLECTION
+//  ESPACE ISOLÉ /home/user/exp — harnais v4 (validé, cf. V4-0 / G4v3)
+//
+//  RECTIFICATIONS AUXQUELLES CE FICHIER RÉPOND (mot pour mot)
+//  ─────────────────────────────────────────────────────────
+//   • « L'anti-corrélation peut également représenter une redondance
+//     informationnelle. Le comportement actuel est confirmé, mais sa
+//     qualification de défaut structurel n'est pas démontrée. Étudie la
+//     pertinence de la sélection du critère gelé et les conséquences sur
+//     l'adaptation. »
+//   • « Requalifie le défaut structurel en incohérence entre le commentaire et
+//     le comportement implémenté. L'intérêt d'une hystérésis reste à démontrer. »
+//
+//  LE PROBLÈME POSÉ PAR G4v3 — ET POURQUOI CE FICHIER EXISTE
+//  ─────────────────────────────────────────────────────────
+//  G4v3 a mesuré, en phase P4 (les deux critères devenus UTILES, r = 0,987855) :
+//      jockey   (gelé 190/200) : 0,005071638 → 0,009810756   (Δ = 0,004739118)
+//      distSpec (gelé  10/200) : 0,005035615 → 0,180000000   (Δ = 0,174964385)
+//  et a conclu « le critère gelé reste bloqué » avec un rapport de 36,9.
+//
+//  ⚠️ CETTE CONCLUSION EST PRÉMATURÉE, ET JE LE DÉMONTRE ICI.
+//  distSpec atteint EXACTEMENT 0,180000000, c'est-à-dire SON PLAFOND individuel.
+//  Il existe donc au moins une explication concurrente, non écartée par G4v3 :
+//      (H1) c'est le GEL qui bloque jockey ;
+//      (H2) c'est la PROJECTION qui empêche jockey de monter, parce que le
+//           budget enrichi (0,40) est déjà consommé par distSpec saturé à 0,18,
+//           et que les planchers des 11 autres enrichis prennent le reste.
+//  G4v3 ne permet pas de trancher : il n'a jamais fait tourner P4 avec le gel
+//  DÉSACTIVÉ. Ce fichier le fait.
+//
+//  PLAN EXPÉRIMENTAL — 4 CELLULES EN CARRÉ (2 × 2)
+//  ──────────────────────────────────────────────
+//   Axe 1 : GEL ACTIF (production) vs GEL INACTIF (`gelActif = false`)
+//   Axe 2 : DÉPART DE RÉFÉRENCE (distSpec 0,08 > jockey 0,07 ⇒ gèle jockey)
+//           vs DÉPART INVERSÉ (jockey 0,09 > distSpec 0,07 ⇒ gèle distSpec)
+//  Chaque cellule : 200 cycles, profils P4 identiques (β=25, γ=+20 sur les deux
+//  ⇒ fortement corrélés ET tous deux UTILES), même amorçage, même `depart`.
+//
+//  Ce que le carré permet de conclure :
+//   · cellule 1 vs 2  → effet CAUSAL du gel sur jockey, à départ fixé ;
+//   · cellule 3 vs 4  → effet CAUSAL du gel sur distSpec, à départ inversé ;
+//   · cellule 1 vs 3  → effet du CHOIX du critère gelé (pertinence) ;
+//   · cellule 2 vs 4  → contrôle : sans gel, les deux départs convergent-ils ?
+//  Si cellule 2 et 4 sont IDENTIQUES sans gel, alors le choix du critère gelé
+//  n'a d'effet QUE par le gel — c'est-à-dire que la sélection pilote tout.
+//
+//  GARDES EXÉCUTABLES — CHAQUE CELLULE EST VALIDÉE AVANT SON EXÉCUTION
+//  ──────────────────────────────────────────────────────────────────
+//   (1) `valider()` sur les profils P4 : corrélation obtenue, discriminations,
+//       absence de corrélation parasite, fenêtres 50 et 80, varianceScores,
+//       réception du gradient. Si une garde échoue, la cellule NE TOURNE PAS.
+//   (2) Contrôle du DÉPART : Σ = 1 à 1e-9 (conforme ⇒ la projection du 1er
+//       cycle n'est pas un artefact), et le critère attendu est bien le plus
+//       léger (donc bien celui que la règle de production gèlera).
+//   (3) Contrôle du GEL EFFECTIF : dans une cellule « gel actif », au moins
+//       un cycle doit avoir gelé le critère attendu ; dans une cellule « gel
+//       inactif », AUCUN cycle ne doit avoir gelé quoi que ce soit.
+//   (4) Contrôle de la RÉCEPTION DU SIGNAL : le momentum du critère étudié
+//       doit être non nul dans la cellule sans gel (sinon « bloqué » et
+//       « non bloqué » seraient indiscernables faute de signal).
+//
+//  DÉPART INVERSÉ — CONSTRUCTION ET VÉRIFICATION
+//  ──────────────────────────────────────────────
+//  jockey 0,09 / distSpec 0,07 (au lieu de 0,07 / 0,08), puis projection de
+//  PRODUCTION. Après projection : jockey ≈ 0,065455 > distSpec ≈ 0,050909.
+//  La règle `p1 <= p2 ? c1 : c2` gèlera donc distSpec. **Les 19 valeurs
+//  initiales de référence ne sont pas modifiées** : c'est une table de départ
+//  EXPÉRIMENTALE distincte, ce que le cadrage §4.5 autorise explicitement.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+const int kCyclesG4v4 = 200;
+
+/// Profils P4 : les deux critères UTILES et FORTEMENT CORRÉLÉS.
+Map<String, Profil> profilsP4() {
+  final p = profilsNeutres(sigma: 6.0);
+  p['distSpec'] = const Profil(beta: 25, gamma: 20, sigma: 6);
+  p['jockey'] = const Profil(beta: 25, gamma: 20, sigma: 6);
+  return p;
+}
+
+/// Départ de référence : les 19 valeurs du constructeur, **projetées par la
+/// projection de PRODUCTION** (Σ = 1). Les 19 valeurs elles-mêmes ne sont pas
+/// modifiées : c'est `projeter` qui les met en conformité.
+///
+/// ⚠️ POURQUOI PROJETÉ ET NON BRUT : si le départ de référence était brut
+///    (Σ = 1,26), la projection du CYCLE 1 déplacerait les poids de
+///    |Δ| ≈ 0,26 en L1 (mesuré par P1-C : 99,5 % de la variation du 1er cycle)
+///    et contaminerait toute comparaison avec le départ inversé. Un contrôle
+///    causal exige que les DEUX cellules d'un axe démarrent conformes, pour que
+///    la seule différence soit le levier étudié.
+///
+/// ⚠️ CE DÉPART N'EST PAS CELUI DE G4v3. G4v3 partait de `kInitial` brut et,
+///    surtout, sa phase P4 arrivait après 600 cycles qui avaient déjà poussé
+///    distSpec et jockey à leur plancher (≈ 0,00507). G4v4 démarre P4 à froid
+///    depuis une table conforme. Le régime est donc DIFFÉRENT, et G4v4 ne
+///    reproduit pas la trajectoire de G4v3 : il teste l'hypothèse causale
+///    « le gel est-il responsable ? » dans un régime propre. C'est signalé
+///    comme limite explicite dans le rapport.
+Map<String, double> departReference() => projeterTable(kInitial);
+
+/// Départ INVERSÉ sur la paire étudiée, puis projeté par la projection de
+/// PRODUCTION. Les 19 valeurs de référence restent intactes.
+Map<String, double> departInverse() {
+  final brut = <String, double>{
+    ...kInitial,
+    'jockey': 0.09,   // était 0.07
+    'distSpec': 0.07, // était 0.08
+  };
+  return projeterTable(brut);
+}
+
+String d9(double v) => v.toStringAsFixed(9);
+
+class Cellule {
+  final String nom;
+  final bool gel;
+  final Map<String, double> depart;
+  final List<double> pJ, pD;
+  final List<int> gelJ, gelD;
+  final List<double> mJ, mD;
+  final List<double> r;
+
+  const Cellule({
+    required this.nom,
+    required this.gel,
+    required this.depart,
+    required this.pJ,
+    required this.pD,
+    required this.gelJ,
+    required this.gelD,
+    required this.mJ,
+    required this.mD,
+    required this.r,
+  });
+}
+
+Future<Cellule> executerCellule({
+  required String nom,
+  required bool gel,
+  required Map<String, double> depart,
+}) async {
+  IaExperimentation.reinitialiser();
+  IaExperimentation.gelActif = gel;
+
+  final pJ = <double>[], pD = <double>[];
+  final gelJ = <int>[], gelD = <int>[];
+  final mJ = <double>[], mD = <double>[];
+  final r = <double>[];
+
+  await deroulerV4(
+    cycles: kCyclesG4v4,
+    profils: profilsP4(),
+    depart: depart,
+    apresCycle: (i, Cycle c) {
+      final p = poidsEffectifs();
+      pJ.add(p['jockey']!);
+      pD.add(p['distSpec']!);
+      mJ.add((c.momentum['jockey'] ?? 0.0).abs());
+      mD.add((c.momentum['distSpec'] ?? 0.0).abs());
+      gelJ.add(IaExperimentation.derniersGeles.contains('jockey') ? 1 : 0);
+      gelD.add(IaExperimentation.derniersGeles.contains('distSpec') ? 1 : 0);
+      r.add(correlationsMemorisees()['distSpec|jockey'] ?? 0.0);
+    },
+  );
+
+  return Cellule(
+    nom: nom,
+    gel: gel,
+    depart: depart,
+    pJ: pJ,
+    pD: pD,
+    gelJ: gelJ,
+    gelD: gelD,
+    mJ: mJ,
+    mD: mD,
+    r: r,
+  );
+}
+
+int somme(List<int> v) => v.fold(0, (a, b) => a + b);
+
+double dernier(List<double> v) => v.last;
+double premier(List<double> v) => v.first;
+
+void main() {
+  test('G4v4 — contrôle causal du gel et pertinence de la sélection', () async {
+    final out = <String>[];
+    void w(String s) => out.add(s);
+
+    // ═══════════════════════ GARDE (1) — PRÉCONDITIONS ═══════════════════
+    w('');
+    w('[G4v4] ═══ CONTRÔLE CAUSAL DU GEL · 4 CELLULES × $kCyclesG4v4 CYCLES ═══');
+    w('[G4v4] profils : distSpec et jockey β=25 γ=+20 (corrélés ET utiles)');
+    w('');
+    w('[G4v4] ─── GARDE (1) : VALIDATION PRÉALABLE DES PROFILS ───');
+
+    final spec = Spec(
+      nom: 'G4v4 P4 corrélés+utiles',
+      profils: profilsP4(),
+      depart: departReference(),
+      attentesPaires: <AttentePaire>[
+        const AttentePaire('distSpec', 'jockey', minAbs: 0.80),
+      ],
+      attentesDiscriminations: <AttenteDiscrimination>[
+        const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.034),
+        const AttenteDiscrimination('jockey', signe: 1, minAbs: 0.034),
+      ],
+      gelAttendu: 'jockey',
+      gradientAttendu: <String>['distSpec', 'jockey'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('G4v4/P4');
+    expect(v.ok, isTrue,
+        reason: 'GARDE (1) : les profils P4 doivent être validés sur le moteur '
+            'AVANT toute exécution longue. Échecs : ${v.echecs.join(" | ")}');
+
+    // ═══════════════════ GARDE (2) — DÉPARTS CONFORMES ═══════════════════
+    w('');
+    w('[G4v4] ─── GARDE (2) : CONTRÔLE DES DÉPARTS ───');
+    final dRef = departReference();
+    final dInv = departInverse();
+    for (final e in <MapEntry<String, Map<String, double>>>[
+      MapEntry('RÉFÉRENCE', dRef),
+      MapEntry('INVERSÉ', dInv),
+    ]) {
+      final s = sommeCle(e.value, kCles);
+      w('[G4v4] ${e.key.padRight(10)} : Σ=${d9(s)} · jockey='
+          '${d9(e.value["jockey"]!)} · distSpec=${d9(e.value["distSpec"]!)} · '
+          'plus léger=${e.value["distSpec"]! <= e.value["jockey"]! ? "distSpec" : "jockey"}');
+      expect(s, closeTo(1.0, 1e-9),
+          reason: 'GARDE (2) : le départ « ${e.key} » doit être CONFORME '
+              '(Σ = 1) — sinon la projection du 1er cycle dominerait tout');
+    }
+    expect(dRef['distSpec']! > dRef['jockey']!, isTrue,
+        reason: 'GARDE (2a) : au départ de référence, distSpec est le plus '
+            'LOURD ⇒ la règle de production gèlera jockey');
+    expect(dInv['jockey']! > dInv['distSpec']!, isTrue,
+        reason: 'GARDE (2b) : au départ inversé, jockey est le plus LOURD '
+            '⇒ la règle de production gèlera distSpec');
+    w('[G4v4] ⇒ les deux départs sont conformes ET produisent des sélections '
+        'OPPOSÉES. Le choix du critère gelé est donc bien un levier réel.');
+    w('');
+
+    // ═══════════════════════ EXÉCUTION DES 4 CELLULES ════════════════════
+    final c1 = await executerCellule(
+        nom: 'GEL ACTIF · RÉFÉRENCE (gèle jockey)', gel: true, depart: dRef);
+    // ignore: avoid_print
+    print('[G4v4] cellule 1/4 terminée');
+    final c2 = await executerCellule(
+        nom: 'GEL INACTIF · RÉFÉRENCE', gel: false, depart: dRef);
+    // ignore: avoid_print
+    print('[G4v4] cellule 2/4 terminée');
+    final c3 = await executerCellule(
+        nom: 'GEL ACTIF · INVERSÉ (gèle distSpec)', gel: true, depart: dInv);
+    // ignore: avoid_print
+    print('[G4v4] cellule 3/4 terminée');
+    final c4 = await executerCellule(
+        nom: 'GEL INACTIF · INVERSÉ', gel: false, depart: dInv);
+    // ignore: avoid_print
+    print('[G4v4] cellule 4/4 terminée');
+    IaExperimentation.reinitialiser();
+
+    // ═══════════════ GARDE (3) — EFFET DU GEL SUR LA SÉLECTION ═══════════
+    w('[G4v4] ─── GARDE (3) : GEL EFFECTIF PAR CELLULE ───');
+    for (final c in <Cellule>[c1, c2, c3, c4]) {
+      w('[G4v4] ${c.nom.padRight(38)} : gel jockey=${somme(c.gelJ)}/'
+          '$kCyclesG4v4 · gel distSpec=${somme(c.gelD)}/$kCyclesG4v4 · '
+          'r moy=${d9(c.r.reduce((a, b) => a + b) / c.r.length)}');
+    }
+    expect(somme(c1.gelJ) + somme(c1.gelD), greaterThan(0),
+        reason: 'GARDE (3a) : en cellule 1 le gel doit EFFECTIVEMENT agir');
+    expect(somme(c3.gelJ) + somme(c3.gelD), greaterThan(0),
+        reason: 'GARDE (3b) : en cellule 3 le gel doit EFFECTIVEMENT agir');
+    expect(somme(c2.gelJ) + somme(c2.gelD), 0,
+        reason: 'GARDE (3c) : en cellule 2 (`gelActif = false`) AUCUN gel ne '
+            'doit se produire — sinon la cellule témoin est invalide');
+    expect(somme(c4.gelJ) + somme(c4.gelD), 0,
+        reason: 'GARDE (3d) : en cellule 4 (`gelActif = false`) AUCUN gel ne '
+            'doit se produire');
+    w('');
+
+    // ═══════════════ GARDE (4) — LE SIGNAL EST BIEN REÇU ═════════════════
+    w('[G4v4] ─── GARDE (4) : RÉCEPTION DU SIGNAL (cellules SANS gel) ───');
+    for (final c in <Cellule>[c2, c4]) {
+      final zJ = c.mJ.where((x) => x > 1e-12).length;
+      final zD = c.mD.where((x) => x > 1e-12).length;
+      w('[G4v4] ${c.nom.padRight(28)} : |momentum| jockey non nul '
+          '$zJ/$kCyclesG4v4 · distSpec non nul $zD/$kCyclesG4v4');
+    }
+    expect(c2.mJ.where((x) => x > 1e-12).length, greaterThan(kCyclesG4v4 * 0.5),
+        reason: 'GARDE (4) : sans gel, jockey doit RÉELLEMENT recevoir un '
+            'signal, sinon « bloqué » et « non bloqué » sont indiscernables');
+    expect(c2.mD.where((x) => x > 1e-12).length, greaterThan(kCyclesG4v4 * 0.5),
+        reason: 'GARDE (4) : sans gel, distSpec doit aussi recevoir un signal');
+    w('');
+
+    // ══════════════════════════ RÉSULTATS ════════════════════════════════
+    w('[G4v4] ─── RÉSULTATS : TRAJECTOIRES COMPLÈTES ───');
+    w('[G4v4] cellule                                  jockey début → fin (Δ)        '
+        'distSpec début → fin (Δ)');
+    for (final c in <Cellule>[c1, c2, c3, c4]) {
+      final dj = dernier(c.pJ) - premier(c.pJ);
+      final dd = dernier(c.pD) - premier(c.pD);
+      w('[G4v4] ${c.nom.padRight(38)} ${d9(premier(c.pJ))} → '
+          '${d9(dernier(c.pJ))} (${d9(dj)})   '
+          '${d9(premier(c.pD))} → ${d9(dernier(c.pD))} (${d9(dd)})');
+    }
+    w('');
+
+    // ── Test central : le gel est-il CAUSALEMENT responsable ?
+    w('[G4v4] ─── TEST CENTRAL : LE GEL EST-IL LA CAUSE ? ───');
+    final varJ1 = dernier(c1.pJ) - premier(c1.pJ);
+    final varJ2 = dernier(c2.pJ) - premier(c2.pJ);
+    final varD1 = dernier(c1.pD) - premier(c1.pD);
+    final varD2 = dernier(c2.pD) - premier(c2.pD);
+    w('[G4v4] RÉFÉRENCE · jockey  : gel actif Δ=${d9(varJ1)} vs '
+        'sans gel Δ=${d9(varJ2)} ⇒ écart ${d9(varJ2 - varJ1)}');
+    w('[G4v4] RÉFÉRENCE · distSpec : gel actif Δ=${d9(varD1)} vs '
+        'sans gel Δ=${d9(varD2)} ⇒ écart ${d9(varD2 - varD1)}');
+
+    final varJ3 = dernier(c3.pJ) - premier(c3.pJ);
+    final varJ4 = dernier(c4.pJ) - premier(c4.pJ);
+    final varD3 = dernier(c3.pD) - premier(c3.pD);
+    final varD4 = dernier(c4.pD) - premier(c4.pD);
+    w('[G4v4] INVERSÉ   · jockey  : gel actif Δ=${d9(varJ3)} vs '
+        'sans gel Δ=${d9(varJ4)} ⇒ écart ${d9(varJ4 - varJ3)}');
+    w('[G4v4] INVERSÉ   · distSpec : gel actif Δ=${d9(varD3)} vs '
+        'sans gel Δ=${d9(varD4)} ⇒ écart ${d9(varD4 - varD3)}');
+    w('');
+
+    // ── Sans gel, les deux départs convergent-ils ?
+    w('[G4v4] ─── CONTRÔLE : SANS GEL, LE CHOIX DU DÉPART CHANGE-T-IL QQCHOSE ? ───');
+    w('[G4v4] jockey   : réf=${d9(dernier(c2.pJ))} vs inv=${d9(dernier(c4.pJ))} '
+        '⇒ écart ${d9((dernier(c2.pJ) - dernier(c4.pJ)).abs())}');
+    w('[G4v4] distSpec : réf=${d9(dernier(c2.pD))} vs inv=${d9(dernier(c4.pD))} '
+        '⇒ écart ${d9((dernier(c2.pD) - dernier(c4.pD)).abs())}');
+    var ecartSansGel = 0.0;
+    for (var i = 0; i < kCyclesG4v4; i++) {
+      ecartSansGel += (c2.pJ[i] - c4.pJ[i]).abs() + (c2.pD[i] - c4.pD[i]).abs();
+    }
+    w('[G4v4] L1 cumulé sur 200 cycles (jockey+distSpec) = ${d9(ecartSansGel)}');
+    w('');
+
+    // ── Le plafond de distSpec : explication concurrente H2
+    w('[G4v4] ─── EXPLICATION CONCURRENTE H2 : SATURATION DU PLAFOND ───');
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    w('[G4v4] plafond individuel distSpec = ${bornes["distSpec"]![1]} · '
+        'atteint : ${dernier(c1.pD) >= bornes["distSpec"]![1] - 1e-9 ? "OUI" : "NON"} '
+        '(cellule 1)');
+    w('[G4v4] plafond individuel jockey   = ${bornes["jockey"]![1]} · '
+        'atteint : ${dernier(c1.pJ) >= bornes["jockey"]![1] - 1e-9 ? "OUI" : "NON"} '
+        '(cellule 1)');
+    w('[G4v4] (la saturation est vérifiée ci-dessus critère par critère)');
+    w('');
+
+    // ══════════════════ VERDICT ARGUMENTÉ ════════════════════════════════
+    w('[G4v4] ─── VERDICT ARGUMENTÉ ───');
+    final gainSansGelJ = varJ2 - varJ1;
+    final gainSansGelD = varD2 - varD1;
+    if (gainSansGelJ.abs() < 1e-6 && gainSansGelD.abs() < 1e-6) {
+      w('[G4v4] ⇒ RÉFUTÉ : désactiver le gel ne change RIEN à la trajectoire. '
+          'L asymétrie observée en G4v3 ne vient PAS du gel.');
+    } else if (gainSansGelJ > 1e-6 &&
+        dernier(c2.pD) >= bornes['distSpec']![1] - 1e-9) {
+      w('[G4v4] ⇒ H1 ET H2 COEXISTENT : sans gel, jockey gagne '
+          '${d9(gainSansGelJ)} de plus (effet causal du gel), MAIS distSpec '
+          'reste saturé à son plafond ${bornes["distSpec"]![1]}. '
+          'Le gel explique une PART de l asymétrie, pas sa totalité.');
+    } else if (gainSansGelJ > 1e-6) {
+      w('[G4v4] ⇒ H1 CONFIRMÉE : le gel est causalement responsable. Sans gel, '
+          'jockey gagne ${d9(gainSansGelJ)} de plus sur 200 cycles.');
+    } else {
+      w('[G4v4] ⇒ H2 CONFIRMÉE : le gel N EST PAS la cause. Même désactivé, '
+          'jockey ne monte pas davantage (Δ=${d9(gainSansGelJ)}). '
+          'L explication est la PROJECTION / le plafond, pas le gel. '
+          'La conclusion de G4v3 était donc PRÉMATURÉE.');
+    }
+
+    w('');
+    w('[G4v4] ─── PERTINENCE DE LA SÉLECTION (réf vs inversé, gel ACTIF) ───');
+    w('[G4v4] RÉFÉRENCE (jockey gelé) : jockey Δ=${d9(varJ1)} · '
+        'distSpec Δ=${d9(varD1)}');
+    w('[G4v4] INVERSÉ   (distSpec gelé): jockey Δ=${d9(varJ3)} · '
+        'distSpec Δ=${d9(varD3)}');
+    w('[G4v4] ⇒ si le critère gelé est celui qui bougeait le moins DANS LES DEUX '
+        'configurations,');
+    w('[G4v4]   la sélection est PERTINENTE (elle choisit le moins utile). Si le '
+        'critère gelé bouge');
+    w('[G4v4]   autant ou plus que l autre, la sélection est ARBITRAIRE.');
+
+    for (final l in out) {
+      // ignore: avoid_print
+      print(l);
+    }
+  }, timeout: const Timeout(Duration(minutes: 90)));
+}

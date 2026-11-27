@@ -1,0 +1,201 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 3bis — LE MÉCANISME DE PROJECTION, MESURÉ DIRECTEMENT
+//
+//  POURQUOI CE TEST (constat mesuré, non supposé) :
+//  Le test P3 sur 40 cycles d'apprentissage réel a produit une empreinte
+//  IDENTIQUE caractère par caractère entre b3a0107 et c31cbef. Ce résultat
+//  ne signifie pas que les deux projections sont équivalentes : il signifie
+//  que la trajectoire observée n'a jamais ATTEINT la zone où elles divergent.
+//
+//  J'ai donc cherché cette zone dans le code. Elle existe :
+//   • b3a0107 : `clamp()` applique 19 `.clamp(lo, hi)` PUIS `normaliser()`.
+//     `normaliser()` remet à l'échelle par groupe avec une part enrichie
+//     bornée à [0,18 ; 0,40]. Il n'y a AUCUNE étape garantissant que les
+//     bornes individuelles soient encore respectées APRÈS la remise à
+//     l'échelle : c'est le défaut « dépassements de plafond » du chantier.
+//   • c31cbef : `normaliser()` → `projeter(brut)` (KKT par groupe) → clip
+//     sur `bornesIndividuelles()` → budget de groupe. Les bornes sont donc
+//     respectées APRÈS la projection, et 12 planchers enrichis ont été
+//     abaissés de 0,01/0,02/0,03 à 0,005.
+//
+//  CE TEST MESURE, sur des états construits qui violent les bornes :
+//   T1. Un poids individuel hors bornes est-il ramené DANS les bornes ?
+//   T2. La part enrichie reste-t-elle dans [0,18 ; 0,40] ?
+//   T3. La somme reste-t-elle 1,0 ?
+//   T4. `clamp()` est-il IDEMPOTENT (deux applications = une) ?
+//   T5. Quel est le PLANCHER effectif d'un critère enrichi ?
+//
+//  Toutes les mesures portent sur le CHEMIN PUBLIC `versMap()` + `clamp()`,
+//  identique dans les deux versions : aucune formule n'est recopiée.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+String d9(double v) => v.toStringAsFixed(9);
+
+double partEnrichie(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  final t = b + e;
+  return t == 0 ? 0 : e / t;
+}
+
+/// Construit un état à partir d'une Map, par le constructeur public.
+IaPoidsAdaptatifs depuis(Map<String, double> m) => IaPoidsAdaptatifs(
+      forme: m['forme']!, gains: m['gains']!, record: m['record']!,
+      cote: m['cote']!, constance: m['constance']!, victoires: m['victoires']!,
+      discipline: m['discipline']!, distSpec: m['distSpec']!,
+      jockey: m['jockey']!, repos: m['repos']!, hippo: m['hippo']!,
+      entraineur: m['entraineur']!, elo: m['elo']!, terrain: m['terrain']!,
+      divergence: m['divergence']!, poidsRel: m['poidsRel']!,
+      progression: m['progression']!, mouvCote: m['mouvCote']!,
+      placeDepart: m['placeDepart']!,
+    );
+
+/// Applique `clamp()` une fois et rend les 19 poids lus par `getPoids`.
+Map<String, double> claquer(Map<String, double> m) {
+  final p = depuis(m);
+  p.clamp();
+  return <String, double>{for (final k in kCles) k: p.getPoids(k)};
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('T1 — ramener un poids HORS BORNES (par le haut)', () {
+    // `forme` est poussé très au-dessus de son plafond 0,55.
+    final m = Map<String, double>.from(kInitial)..['forme'] = 0.90;
+    final r = claquer(m);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[T1] ═══ POIDS HORS BORNES VERS LE HAUT ═══');
+    // ignore: avoid_print
+    print('[T1] avant : forme=${m["forme"]} Σ=${d9(sommeCle(m, kCles))}');
+    // ignore: avoid_print
+    print('[T1] après : forme=${d9(r["forme"]!)} '
+        'Σ=${d9(sommeCle(r, kCles))} partE=${d9(partEnrichie(r))}');
+    // ignore: avoid_print
+    print('[T1] dans les bornes ? forme<=0.55 : ${r["forme"]! <= 0.55}');
+
+    expect(sommeCle(r, kCles), closeTo(1.0, 1e-6),
+        reason: 'La projection doit conserver Σ = 1,0.');
+  });
+
+  test('T2 — ramener un poids HORS BORNES (par le bas)', () {
+    // `forme` est poussé très en dessous de son plancher 0,05.
+    final m = Map<String, double>.from(kInitial)..['forme'] = 0.005;
+    final r = claquer(m);
+
+    // ignore: avoid_print
+    print('[T2] ═══ POIDS HORS BORNES VERS LE BAS ═══');
+    // ignore: avoid_print
+    print('[T2] avant : forme=${m["forme"]} Σ=${d9(sommeCle(m, kCles))}');
+    // ignore: avoid_print
+    print('[T2] après : forme=${d9(r["forme"]!)} '
+        'Σ=${d9(sommeCle(r, kCles))} partE=${d9(partEnrichie(r))}');
+    // ignore: avoid_print
+    print('[T2] dans les bornes ? forme>=0.05 : ${r["forme"]! >= 0.05}');
+
+    expect(sommeCle(r, kCles), closeTo(1.0, 1e-6));
+  });
+
+  test('T3 — PLANCHEUR EFFECTIF d\'un critère enrichi', () {
+    // On pousse TOUS les enrichis très bas et on regarde où ils atterrissent.
+    final m = Map<String, double>.from(kInitial);
+    for (final k in kEnrichis) {
+      m[k] = 0.0001;
+    }
+    final r = claquer(m);
+
+    // ignore: avoid_print
+    print('[T3] ═══ PLANCHER EFFECTIF DES 12 ENRICHIS ═══');
+    // ignore: avoid_print
+    print('[T3] partE après = ${d9(partEnrichie(r))} (bornes attendues '
+        '0,18–0,40)');
+    for (final k in kEnrichis) {
+      // ignore: avoid_print
+      print('[T3] ${k.padRight(12)} = ${d9(r[k]!)}');
+    }
+    // ignore: avoid_print
+    print('[T3] Σ=${d9(sommeCle(r, kCles))}');
+
+    expect(sommeCle(r, kCles), closeTo(1.0, 1e-6));
+    expect(partEnrichie(r), greaterThanOrEqualTo(0.18 - 1e-9));
+    expect(partEnrichie(r), lessThanOrEqualTo(0.40 + 1e-9));
+  });
+
+  test('T4 — IDEMPOTENCE : clamp(clamp(x)) == clamp(x)', () {
+    final m = Map<String, double>.from(kInitial)..['forme'] = 0.90;
+    final une = claquer(m);
+    final deux = claquer(une);
+    final (maxi, pire, bouges) = ecart(une, deux, seuil: 1e-12);
+
+    // ignore: avoid_print
+    print('[T4] ═══ IDEMPOTENCE DE clamp() ═══');
+    // ignore: avoid_print
+    print('[T4] écart max après 2e application = ${d9(maxi)} '
+        '(pire : $pire · $bouges/19 critères)');
+    // ignore: avoid_print
+    print('[T4] idempotent ? ${maxi < 1e-12}');
+
+    // On MESURE, on n'impose pas : l'idempotence est une propriété attendue
+    // de la nouvelle projection, elle ne l'était pas de l'ancienne.
+  });
+
+  test('T5 — part enrichie : forcer les bornes 0,18 et 0,40', () {
+    // État où les enrichis pèsent très lourd (au-dessus de 40 %).
+    final haut = Map<String, double>.from(kInitial);
+    for (final k in kEnrichis) {
+      haut[k] = 0.12;
+    }
+    final rh = claquer(haut);
+
+    // État où les bases pèsent très lourd (enrichis sous 18 %).
+    final bas = Map<String, double>.from(kInitial);
+    for (final k in kBase) {
+      bas[k] = 0.20;
+    }
+    for (final k in kEnrichis) {
+      bas[k] = 0.001;
+    }
+    final rb = claquer(bas);
+
+    // ignore: avoid_print
+    print('[T5] ═══ PART ENRICHIE : FORÇAGE DES DEUX BORNES ═══');
+    // ignore: avoid_print
+    print('[T5] demande haute : partE=${d9(partEnrichie(haut))} -> '
+        'obtenu ${d9(partEnrichie(rh))} | Σ=${d9(sommeCle(rh, kCles))}');
+    // ignore: avoid_print
+    print('[T5] demande basse : partE=${d9(partEnrichie(bas))} -> '
+        'obtenu ${d9(partEnrichie(rb))} | Σ=${d9(sommeCle(rb, kCles))}');
+    // ignore: avoid_print
+    print('[T5] plafond 0,40 respecté ? ${partEnrichie(rh) <= 0.40 + 1e-9}');
+    // ignore: avoid_print
+    print('[T5] plancher 0,18 respecté ? ${partEnrichie(rb) >= 0.18 - 1e-9}');
+
+    expect(sommeCle(rh, kCles), closeTo(1.0, 1e-6));
+    expect(sommeCle(rb, kCles), closeTo(1.0, 1e-6));
+  });
+}

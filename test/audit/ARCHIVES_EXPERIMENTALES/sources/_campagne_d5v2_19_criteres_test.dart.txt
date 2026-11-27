@@ -1,0 +1,238 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE D5v2 — LES 19 CRITÈRES : ATTEINDRE ET QUITTER PLANCHER / PLAFOND
+//  ESPACE ISOLÉ /home/user/exp — Phase 4.5 du cadrage
+//  RÉEXÉCUTION COMPLÈTE : la version D5 initiale est INVALIDÉE (défauts n°15
+//  et n°16, mesurés par les campagnes V0 / V0bis du même chantier).
+//
+//  CE QUI CHANGE PAR RAPPORT À D5 (et pourquoi ce n'est pas cosmétique)
+//  ──────────────────────────────────────────────────────────────────
+//  D5 utilisait `notesIndependantes` du harnais v2. Mesures :
+//   • V0 (générateur) : le bruit était une projection modulo 1 ⇒ |r| croisé
+//     jusqu'à 0,940533, 49/171 paires ≥ 0,65. Résultat : 17 435 messages de
+//     gel sur des données corrélées artificiellement.
+//   • V0bis (notes) : même après correction du bruit, tous les critères
+//     partageaient la pente `78 − 5 × rang` ⇒ corrélation croisée 0,450 à
+//     0,564 sur 171/171 paires, et les 18 « témoins » avaient une
+//     discrimination de 0,139 à 0,157 — donc ils étaient DISCRIMINANTS.
+//  D5v2 utilise le harnais v3, validé par V0ter :
+//   • indépendance : |r| max 0,088187, 0/171 paires ≥ 0,30 ;
+//   • neutralité : discrimination des témoins entre −0,024537 et +0,020956 ;
+//   • pilotage : discrimination du critère cible = ±0,360000000 exactement.
+//
+//  PROTOCOLE PAR CRITÈRE (deux campagnes indépendantes, 300 cycles)
+//  ──────────────────────────────────────────────────────────────
+//   • PLANCHER : phase 1 (0-99) le critère est NUISIBLE (pente −12 ⇒
+//     discrimination −0,36 : les bons chevaux ont les plus mauvaises notes).
+//     Il doit descendre à son plancher. Phase 2 (100-299) il devient UTILE
+//     (pente +12 ⇒ +0,36) : il doit remonter. On mesure s'il ATTEINT le
+//     plancher et s'il le QUITTE.
+//   • PLAFOND : ordre inverse. Phase 1 pente +12 (il doit monter au plafond),
+//     phase 2 pente −12 (il doit redescendre).
+//   Les 18 autres critères reçoivent des permutations INDÉPENDANTES : aucun
+//   clone, aucune anti-corrélation, aucune corrélation parasite.
+//
+//  CONDITIONS D'ARRÊT DOCUMENTÉES
+//  ──────────────────────────────
+//   • 300 cycles avec bascule à 100 : la porte v2 avait mesuré, sur distSpec,
+//     plancher atteint au cycle 59 et remontée à 0,179504007 (plafond 0,18) au
+//     cycle 239. On double donc la phase de descente (100 au lieu de 60) et on
+//     garde 200 cycles de remontée. Ce n'est pas un choix esthétique : c'est
+//     1,7× le temps mesuré de descente et 1,7× celui de remontée.
+//   • Une borne NON atteinte en fin de phase est consignée comme une MESURE
+//     (« non atteinte en 100 cycles »), pas comme un échec de campagne.
+//   • La campagne est déclarée INVALIDE pour un critère si Σ ≠ 1 (projection
+//     violée) ou si la discrimination du critère ne varie pas (le signal n'a
+//     pas atteint le gradient : signature du défaut n°12).
+//
+//  Limite de mesure assumée : ce dispositif mesure l'ACCESSIBILITÉ PAR
+//  L'APPRENTISSAGE (le poids bouge réellement sous l'effet des cycles), il ne
+//  mesure pas l'accessibilité mathématique des bornes, qui est triviale.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kCycles = 300;
+const int kBascule = 100;
+const int kAmorce = 60;
+
+/// Une campagne pour UN critère, dans UN sens.
+Future<({
+  List<double> poids,
+  List<double> disc,
+  int geles,
+  bool sommeOk,
+  bool discVarie,
+})> campagneCritere({required String cible, required bool versPlancher}) async {
+  IaExperimentation.reinitialiser();
+  final poids = <double>[];
+  final disc = <double>[];
+  var geles = 0;
+  var sommeOk = true;
+
+  double pente(int cycle) {
+    final phase1 = cycle < kBascule;
+    final nuisible = versPlancher ? phase1 : !phase1;
+    return nuisible ? -12.0 : 12.0;
+  }
+
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle3(i, nbCycles: kCycles),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesPilotees(n, i, pilote: cible, pente: pente(i)),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    // Amorçage : 60 courses DÉJÀ résolues, notes variées (cycle j+1) pour
+    // qu'elles ne soient pas toutes identiques. Elles occupent la fenêtre au
+    // début puis en sortent naturellement, la date étant plus ancienne.
+    for (var j = 0; j < kAmorce; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce3(j, kCycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesPilotees(n, 200 + j, pilote: cible, pente: pente(j)),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: kInitial,
+    sigmaAttendue: sommeCle(kInitial, kCles),
+  );
+
+  for (var i = 0; i < kCycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    if ((sommeCle(p, kCles) - 1.0).abs() > 1e-6) sommeOk = false;
+    poids.add(p[cible]!);
+    disc.add(IaExperimentation.dernieresDiscriminations[cible] ?? 0.0);
+    if (IaExperimentation.derniersGeles.contains(cible)) geles++;
+  }
+
+  final discVarie = disc.sublist(kBascule).toSet().length > 1;
+  return (
+    poids: poids,
+    disc: disc,
+    geles: geles,
+    sommeOk: sommeOk,
+    discVarie: discVarie,
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D5v2 — 19 critères × (plancher, plafond) · $kCycles cycles', () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    final lignes = <String>[];
+    var pAtteint = 0, pQuitte = 0, pValide = 0;
+    var hAtteint = 0, hQuitte = 0, hValide = 0;
+    var invalides = <String>[];
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D5v2] ═══ 19 CRITÈRES · $kCycles CYCLES · BASCULE $kBascule · '
+        'AMORCE $kAmorce ═══');
+    // ignore: avoid_print
+    print('[D5v2] harnais v3 (V0ter : |r|max 0,088187 · témoins |d|<0,025 · '
+        'piloté ±0,360000000)');
+
+    var idx = 0;
+    for (final k in kCles) {
+      idx++;
+      final lo = bornes[k]![0];
+      final hi = bornes[k]![1];
+
+      final p = await campagneCritere(cible: k, versPlancher: true);
+      final mini = p.poids.sublist(0, kBascule).reduce((a, b) => a < b ? a : b);
+      final finP = p.poids.last;
+      final atPLo = (mini - lo).abs() < 1e-9;
+      final quitteLo = finP > lo + 1e-9;
+      if (atPLo) pAtteint++;
+      if (quitteLo) pQuitte++;
+      final valideP = p.sommeOk && p.discVarie;
+      if (valideP) pValide++;
+      if (!valideP) invalides.add('$k/plancher');
+
+      final h = await campagneCritere(cible: k, versPlancher: false);
+      final maxi = p.poids.isEmpty
+          ? 0.0
+          : h.poids.sublist(0, kBascule).reduce((a, b) => a > b ? a : b);
+      final finH = h.poids.last;
+      final atHi = (maxi - hi).abs() < 1e-6;
+      final quitteHi = finH < hi - 1e-9;
+      if (atHi) hAtteint++;
+      if (quitteHi) hQuitte++;
+      final valideH = h.sommeOk && h.discVarie;
+      if (valideH) hValide++;
+      if (!valideH) invalides.add('$k/plafond');
+
+      lignes.add('[D5v2] ${k.padRight(12)} lo=${lo.toStringAsFixed(3)} '
+          'mini=${d9(mini)} fin=${d9(finP)} '
+          '${atPLo ? "ATTEINT" : "-------"} ${quitteLo ? "QUITTE" : "------"} '
+          'g=${p.geles.toString().padLeft(3)} | '
+          'hi=${hi.toStringAsFixed(2)} maxi=${d9(maxi)} fin=${d9(finH)} '
+          '${atHi ? "ATTEINT" : "-------"} ${quitteHi ? "QUITTE" : "------"} '
+          'g=${h.geles.toString().padLeft(3)}');
+
+      // Progression visible pour pouvoir estimer le temps restant.
+      if (idx % 5 == 0) {
+        // ignore: avoid_print
+        print('[D5v2] … $idx/19 critères traités');
+      }
+    }
+
+    for (final l in lignes) {
+      // ignore: avoid_print
+      print(l);
+    }
+    // ignore: avoid_print
+    print('[D5v2] ⇒ PLANCHER : atteint $pAtteint/19 · quitté $pQuitte/19 · '
+        'campagnes valides $pValide/19');
+    // ignore: avoid_print
+    print('[D5v2] ⇒ PLAFOND  : atteint $hAtteint/19 · quitté $hQuitte/19 · '
+        'campagnes valides $hValide/19');
+    if (invalides.isNotEmpty) {
+      // ignore: avoid_print
+      print('[D5v2] ⇒ CAMPAGNES INVALIDES (signal non atteint) : '
+          '${invalides.join(", ")}');
+    }
+
+    // On n'exige PAS un résultat : on exige que toute campagne rapportée soit
+    // valide. Un résultat « borne non atteinte » est une mesure recevable.
+    expect(pValide + hValide, 38,
+        reason: 'Toute campagne dont Σ ≠ 1 ou dont la discrimination ne varie '
+            'pas doit être exclue de l interprétation. Invalidées : '
+            '${invalides.join(", ")}');
+  }, timeout: const Timeout(Duration(minutes: 300)));
+}

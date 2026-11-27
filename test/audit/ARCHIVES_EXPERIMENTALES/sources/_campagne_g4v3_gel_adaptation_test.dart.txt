@@ -1,0 +1,355 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G4v3 — CONSÉQUENCE DU GEL SUR L'ADAPTATION
+//  ESPACE ISOLÉ /home/user/exp — harnais v4 (défaut n°19 corrigé)
+//
+//  EXIGENCES QUI ONT IMPOSÉ CETTE VERSION (mot pour mot)
+//  ────────────────────────────────────────────────────
+//   • « Le scénario doit vérifier le comportement du critère néfaste pendant
+//     qu'il est effectivement gelé, et pas uniquement après disparition de la
+//     corrélation. »
+//   • « Vérifie la paire ciblée, le critère sélectionné, son gradient et son
+//     état de gel à chaque phase. »
+//   • « Ne conclus pas à partir du seul maximum de corrélation observé. »
+//   • « Termine les investigations prévues, notamment sur les corrélations
+//     positives et négatives, la sélection par le poids et les conséquences
+//     sur l'adaptation. »
+//
+//  CE QUE G4v2 (harnais v3) AVAIT MESURÉ, ET POURQUOI IL EST REMPLACÉ
+//  ───────────────────────────────────────────────────────────────
+//  G4v2 a tourné 800 cycles et a produit des mesures RÉELLES mais biaisées par
+//  deux défauts de générateur, aujourd'hui corrigés :
+//   • défaut n°17 : le critère « piloté » avait une valeur arithmétique fixe,
+//     donc aucune variance inter-courses ; ses corrélations ne pouvaient pas
+//     être contrôlées (r paire = 0,0000 en P1 et P4) ;
+//   • défaut n°19 : les 60 courses d'amorçage étaient toutes IDENTIQUES, ce
+//     qui diluait vers zéro la corrélation mesurée sur la fenêtre de 80.
+//  G4v2 a néanmoins établi, sur son périmètre, deux faits CONSERVÉS :
+//   (i)  cycles gelés avec momentum exactement 0 : 68 · avec momentum non nul :
+//        0 ⇒ le `continue` de la ligne 4147 coupe le gradient, sans exception ;
+//   (ii) en P4, alors que les deux critères deviennent UTILES, jockey (gelé)
+//        ne bouge que de 0,000003573 tandis que distSpec (libre) monte de
+//        0,174981429 ⇒ un critère gelé reste BLOQUÉ face à un changement de
+//        pertinence. C'est la conséquence d'adaptation la plus nette obtenue.
+//
+//  PROTOCOLE G4v3 — QUATRE PHASES DE 200 CYCLES (800)
+//  ─────────────────────────────────────────────────
+//   La paire est (distSpec, jockey). Poids initiaux : distSpec 0,08 >
+//   jockey 0,07 ⇒ la règle `aGeler = p1 <= p2 ? c1 : c2` (l.4133) doit
+//   désigner JOCKEY. Ce n'est pas supposé : `valider` le vérifie.
+//
+//   Phase 1 (0-199)   NÉFASTE + GELÉ. Les DEUX critères sont NÉFASTES
+//                     (γ = −20) et corrélés (β = 25 des deux côtés, r ≈ 0,99).
+//                     ⇒ jockey est néfaste ET gelé. On mesure s'il descend.
+//   Phase 2 (200-399) DÉGEL PAR RUPTURE DE CORRÉLATION. On retire la
+//                     composante commune à jockey (β = 0) et on le rend NEUTRE
+//                     (γ = 0) : la paire tombe à r ≈ 0,04 (mesuré en V4-0/3).
+//                     ⇒ le gel doit cesser et le gradient de jockey reprendre.
+//                     On mesure la REPRISE, pas seulement l'état final.
+//   Phase 3 (400-599) REPRISE DU GEL. La paire redevient clone (β = 25, γ = −20
+//                     des deux côtés). ⇒ le gel doit revenir.
+//   Phase 4 (600-799) RÉVERSIBILITÉ. Les deux deviennent UTILES (γ = +20),
+//                     toujours corrélés. ⇒ si jockey est gelé il reste bloqué ;
+//                     s'il est libre il monte. C'est la mesure d'ADAPTATION.
+//
+//  MESURES PAR CYCLE (pas seulement par phase)
+//  ──────────────────────────────────────────
+//   paire, r mémorisé, critère gelé (lu dans `derniersGeles`), critère désigné
+//   par la règle de poids, gradient de chacun (lu dans `dernierGradient`),
+//   poids des deux.
+//
+//  GARDES EXÉCUTABLES
+//  ──────────────────
+//   La campagne commence par `valider` sur chaque configuration. Si une
+//   précondition n'est pas satisfaite, elle NE DÉMARRE PAS. Aucune garde n'est
+//   un commentaire.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+const int kPhaseG4 = 200;
+const int kTotalG4 = 4 * kPhaseG4;
+
+/// Profils de la phase [cycle].
+///
+/// ⚠️ ERREUR DE CONCEPTION MESURÉE PUIS CORRIGÉE — la phase 2 visait à faire
+/// TOMBER la corrélation en mettant jockey à β = 0 et γ = 0. La garde a
+/// REFUSÉ la configuration : |r| mesuré = 0,9884, identique à la phase 1.
+/// Cause : distSpec conservait β = 25. Or un critère neutre (γ = 0) qui porte
+/// un signal latent partagé est FORTEMENT corrélé à un autre critère qui porte
+/// le même signal : la corrélation ne vient pas de γ mais de β partagé. Mettre
+/// jockey à zéro ne le décorrèle donc pas du tout.
+/// CORRECTION : pour décorréler, il faut que jockey n ait PLUS la composante
+/// commune (β_jockey = 0) ET que son bruit propre soit LARGE (σ = 45), de sorte
+/// que sa variance soit dominée par du bruit indépendant. La corrélation entre
+/// un signal commun d'amplitude 25 et un bruit indépendant d'amplitude 45 vaut
+/// alors 25/√(25²+45²) ≈ 0,49, en théorie. Le moteur tranchera ; la garde
+/// exige |r| ≤ 0,60 et REFUSERA si ce n'est pas atteint.
+({double betaD, double gammaD, double sigmaD, double betaJ, double gammaJ,
+    double sigmaJ, String nom}) profilsPhase(int cycle) {
+  if (cycle < kPhaseG4) {
+    return (betaD: 25, gammaD: -20, sigmaD: 6, betaJ: 25, gammaJ: -20, sigmaJ: 6,
+        nom: 'P1 NÉFASTE+GELÉ');
+  }
+  if (cycle < 2 * kPhaseG4) {
+    return (betaD: 25, gammaD: -20, sigmaD: 6, betaJ: 0, gammaJ: 0, sigmaJ: 45,
+        nom: 'P2 DÉGEL (r≈0)');
+  }
+  if (cycle < 3 * kPhaseG4) {
+    return (betaD: 25, gammaD: -20, sigmaD: 6, betaJ: 25, gammaJ: -20, sigmaJ: 6,
+        nom: 'P3 REPRISE DU GEL');
+  }
+  return (betaD: 25, gammaD: 20, sigmaD: 6, betaJ: 25, gammaJ: 20, sigmaJ: 6,
+      nom: 'P4 UTILES (réversibilité)');
+}
+
+Map<String, Profil> profilsDe(int cycle) {
+  final p = profilsPhase(cycle);
+  return profilsV4G4(<String, Profil>{
+    'distSpec': Profil(beta: p.betaD, gamma: p.gammaD, sigma: p.sigmaD),
+    'jockey': Profil(beta: p.betaJ, gamma: p.gammaJ, sigma: p.sigmaJ),
+  });
+}
+
+Map<String, Profil> profilsV4G4(Map<String, Profil> r) {
+  final m = profilsNeutres();
+  m.addAll(r);
+  return m;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('G4v3 — conséquence du gel sur l adaptation, tracée par phase',
+      () async {
+    // ─── GARDE EXÉCUTABLE 1 : la phase 1 doit réellement corréler et geler ──
+    final specP1 = Spec(
+      nom: 'G4v3 P1 néfaste+corrélé (β=25 γ=−20)',
+      profils: profilsDe(0),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: -1, minAbs: 0.034),
+      ],
+      gelAttendu: 'jockey',
+      gradientAttendu: const <String>['distSpec'],
+    );
+    final vP1 = await valider(specP1, cycles: 45);
+    vP1.imprimer('G4v3/P1');
+
+    // ─── GARDE EXÉCUTABLE 2 : la phase 2 doit réellement DÉCORRÊLER ─────────
+    // ⚠️ ERREUR D'INDICE MESURÉE PUIS CORRIGÉE : cette garde appelait
+    //    `profilsDe(2 * kPhaseG4)`, soit le cycle 400, qui appartient déjà à la
+    //    phase 3. Le refus portait donc sur P3 et non sur P2, et il était
+    //    IDENTIQUE AU CHIFFRE PRÈS au refus précédent (|r| = 0,988412160),
+    //    ce qui trahissait l'erreur. La phase 2 couvre les cycles
+    //    [kPhaseG4 ; 2*kPhaseG4[, on évalue donc au cycle kPhaseG4.
+    final specP2 = Spec(
+      nom: 'G4v3 P2 décorrélé (β_jockey=0, γ_jockey=0, σ_jockey=45)',
+      profils: profilsDe(kPhaseG4),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.0, maxAbs: 0.60),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: -1, minAbs: 0.034),
+      ],
+      gradientAttendu: const <String>['distSpec', 'jockey'],
+    );
+    final vP2 = await valider(specP2, cycles: 45);
+    vP2.imprimer('G4v3/P2');
+
+    // ─── La campagne longue ne démarre QUE si les deux gardes passent ───────
+    expect(vP1.ok, isTrue,
+        reason: 'P1 doit corréler ≥ 0,85 ET geler jockey, sinon la mesure du '
+            'critère néfaste gelé serait un faux négatif');
+    expect(vP2.ok, isTrue,
+        reason: 'P2 doit réellement décorréler (|r| ≤ 0,60), sinon le dégel '
+            'mesuré n aurait aucune cause');
+
+    // ─── Campagne longue ────────────────────────────────────────────────────
+    IaExperimentation.reinitialiser();
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kTotalG4; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle4(i, nbCycles: kTotalG4),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesV4(n, i, profilsDe(i)),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce4(j, kTotalG4),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesV4(n, j + 1, profilsDe(0)),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    // ─── Trace par cycle ────────────────────────────────────────────────────
+    final pJ = <double>[], pD = <double>[];
+    final gJ = <double>[], gD = <double>[];
+    final rPaire = <double>[];
+    final gelJ = <int>[], gelD = <int>[];
+    final selJ = <int>[];
+
+    for (var i = 0; i < kTotalG4; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final p = poidsEffectifs();
+      final mg = IaMemoryService.instance.poids.dernierGradient;
+      pJ.add(p['jockey']!);
+      pD.add(p['distSpec']!);
+      gJ.add(mg['jockey'] ?? 0.0);
+      gD.add(mg['distSpec'] ?? 0.0);
+      rPaire.add(correlationsMemorisees()['distSpec|jockey'] ?? 0.0);
+      gelJ.add(IaExperimentation.derniersGeles.contains('jockey') ? 1 : 0);
+      gelD.add(IaExperimentation.derniersGeles.contains('distSpec') ? 1 : 0);
+      selJ.add(p['distSpec']! <= p['jockey']! ? 1 : 0);
+    }
+
+    int somme(List<int> v, int a, int b) =>
+        v.sublist(a, b).fold(0, (x, y) => x + y);
+    double moy(List<double> v, int a, int b) {
+      final s = v.sublist(a, b);
+      return s.reduce((x, y) => x + y) / s.length;
+    }
+
+    double maxAbs(List<double> v, int a, int b) {
+      var m = 0.0;
+      for (final x in v.sublist(a, b)) {
+        if (x.abs() > m) m = x.abs();
+      }
+      return m;
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G4v3] ═══ GEL ET ADAPTATION · $kTotalG4 CYCLES · '
+        '$kPhaseG4 PAR PHASE ═══');
+    // ignore: avoid_print
+    print('[G4v3] poids initiaux : distSpec 0,08 > jockey 0,07 ⇒ '
+        'règle de sélection ⇒ jockey (vérifié par valider)');
+
+    final noms = <String>['P1 NÉFASTE+GELÉ', 'P2 DÉGEL (r≈0)',
+        'P3 REPRISE DU GEL', 'P4 UTILES (réversibilité)'];
+    for (var ph = 0; ph < 4; ph++) {
+      final a = ph * kPhaseG4, b = a + kPhaseG4;
+      // ignore: avoid_print
+      print('[G4v3] ── ${noms[ph]} ──');
+      // ignore: avoid_print
+      print('[G4v3]   r paire        : moy=${d9v4(moy(rPaire, a, b))} '
+          'max=${d9v4(maxAbs(rPaire, a, b))}');
+      // ignore: avoid_print
+      print('[G4v3]   gel jockey     : ${somme(gelJ, a, b)}/$kPhaseG4 · '
+          'gel distSpec : ${somme(gelD, a, b)}/$kPhaseG4');
+      // ignore: avoid_print
+      print('[G4v3]   sélection jockey : ${somme(selJ, a, b)}/$kPhaseG4');
+      // ignore: avoid_print
+      print('[G4v3]   |gradient| jockey : moy=${d9v4(moy(gJ, a, b).abs())} '
+          'max=${d9v4(maxAbs(gJ, a, b))}');
+      // ignore: avoid_print
+      print('[G4v3]   |gradient| distSpec : moy=${d9v4(moy(gD, a, b).abs())} '
+          'max=${d9v4(maxAbs(gD, a, b))}');
+      // ignore: avoid_print
+      print('[G4v3]   poids jockey   : ${d9v4(pJ[a])} → ${d9v4(pJ[b - 1])} '
+          '· poids distSpec : ${d9v4(pD[a])} → ${d9v4(pD[b - 1])}');
+    }
+
+    // ─── Mesures de synthèse ────────────────────────────────────────────────
+    var geleMomentumNonNul = 0;
+    var geleMomentumNul = 0;
+    for (var i = 0; i < kTotalG4; i++) {
+      if (gelJ[i] == 1) {
+        if (gJ[i].abs() == 0.0) {
+          geleMomentumNul++;
+        } else {
+          geleMomentumNonNul++;
+        }
+      }
+    }
+
+    // Reprise du gradient : premier cycle de P2 où jockey bouge encore.
+    var reprise = -1;
+    for (var i = 2 * kPhaseG4; i < 3 * kPhaseG4; i++) {
+      if (gJ[i].abs() > 0.0) {
+        reprise = i - 2 * kPhaseG4;
+        break;
+      }
+    }
+
+    // Variation du poids de jockey en P2 (après dégel) et en P4 (utile).
+    final varP2J = pJ[3 * kPhaseG4 - 1] - pJ[2 * kPhaseG4];
+    final varP4J = pJ[kTotalG4 - 1] - pJ[3 * kPhaseG4];
+    final varP4D = pD[kTotalG4 - 1] - pD[3 * kPhaseG4];
+
+    // ignore: avoid_print
+    print('[G4v3] ─── MESURES ───');
+    // ignore: avoid_print
+    print('[G4v3] (a) GEL par phase : P1=${somme(gelJ, 0, kPhaseG4)} · '
+        'P2=${somme(gelJ, kPhaseG4, 2 * kPhaseG4)} · '
+        'P3=${somme(gelJ, 2 * kPhaseG4, 3 * kPhaseG4)} · '
+        'P4=${somme(gelJ, 3 * kPhaseG4, kTotalG4)}');
+    // ignore: avoid_print
+    print('[G4v3] (b) GEL ⇒ GRADIENT COUPÉ : cycles gelés avec momentum '
+        'EXACTEMENT 0 = $geleMomentumNul · non nul = $geleMomentumNonNul');
+    // ignore: avoid_print
+    print('[G4v3] (c) DÉGEL en P2 : premier cycle où le gradient de jockey '
+        'redevient non nul = $reprise (relatif à P2)');
+    // ignore: avoid_print
+    print('[G4v3] (d) RÉCUPÉRATION : variation du poids de jockey sur P2 = '
+        '${d9v4(varP2J)}');
+    // ignore: avoid_print
+    print('[G4v3] (e) ADAPTATION en P4 (les deux UTILES) : '
+        'jockey ${d9v4(varP4J)} · distSpec ${d9v4(varP4D)}');
+    // ignore: avoid_print
+    print('[G4v3] (f) ⇒ ${varP4J.abs() < varP4D.abs() / 10 ? "LE CRITÈRE GELÉ "
+        "RESTE BLOQUÉ malgré un changement de pertinence (rapport "
+        "${d9v4(varP4D.abs() / (varP4J.abs() == 0 ? 1e-12 : varP4J.abs()))})" : "le critère gelé a pu s adapter"}');
+    // ignore: avoid_print
+    print('[G4v3] (g) CONTRÔLE : cycles où le momentum gelé est non nul = '
+        '$geleMomentumNonNul ⇒ ${geleMomentumNonNul == 0 ? "AUCUNE EXCEPTION "
+        "au `continue` de la ligne 4147" : "EXCEPTION DÉTECTÉE, À INSTRUIRE"}');
+
+    // ─── Gardes de résultat (pas des commentaires) ──────────────────────────
+    expect(geleMomentumNonNul, 0,
+        reason: 'Le `continue` de la ligne 4147 doit couper le gradient de '
+            'TOUT critère gelé, sans exception.');
+    expect(somme(gelJ, 0, kPhaseG4) > 0, isTrue,
+        reason: 'P1 doit geler jockey : sinon la campagne ne mesure rien');
+  }, timeout: const Timeout(Duration(minutes: 300)));
+}

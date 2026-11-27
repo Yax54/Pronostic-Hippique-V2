@@ -1,0 +1,168 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  G3 — LE BLOCAGE DU NÉFASTE, AVEC DES CRITÈRES RÉELLEMENT DISTINCTS
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  POURQUOI CE FICHIER EXISTE
+//  ─────────────────────────
+//  G1 a mesuré « 19/19 critères empêchés d atteindre leur plancher ». Mais G1
+//  utilisait des critères CONSTUITS À L IDENTIQUE (clone `96 − 6·rang`), donc
+//  171 paires à r = 1,0 : c est encore l artefact des clones. Un tel résultat
+//  ne prouve RIEN sur des données réalistes, et le présenter comme un défaut de
+//  production serait exactement le genre de conclusion que ce chantier doit
+//  éviter.
+//
+//  ICI : chaque critère reçoit son PROPRE bruit indépendant. Les corrélations
+//  sont donc faibles (quelques paires parasites seulement), comme dans des
+//  données réelles. Le critère cible est rendu NÉFASTE (notes croissantes avec
+//  le rang) tandis que les autres restent faiblement pertinents (notes
+//  décroissantes avec un bruit propre).
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+double bruit(int i, int n, int sel) {
+  final x = (i * 7919 + n * 104729 + sel * 15485863) % 1000003;
+  return (x / 1000003.0) * 2.0 - 1.0;
+}
+
+const List<String> _cl = <String>[
+  'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+  'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart',
+];
+
+/// Chaque critère a son bruit propre (sel = son indice). La cible est NÉFASTE.
+ScoresCriteres notesDistinctes(int numero, int cycle) {
+  final vals = <String, double>{};
+  for (var k = 0; k < _cl.length; k++) {
+    final c = _cl[k];
+    if (c == 'repos') {
+      // NÉFASTE : notes croissantes avec le rang, faible bruit
+      vals[c] = (20.0 + numero * 13.0 + bruit(numero, cycle, 500) * 4.0)
+          .clamp(0.0, 100.0);
+    } else {
+      // faiblement pertinent : décroissant avec le rang + bruit propre
+      vals[c] = (78.0 - numero * 5.0 + bruit(numero, cycle, k) * 22.0)
+          .clamp(0.0, 100.0);
+    }
+  }
+  return ScoresCriteres(
+    forme: vals['forme']!, gains: vals['gains']!, record: vals['record']!,
+    cote: vals['cote']!, constance: vals['constance']!,
+    victoires: vals['victoires']!, discipline: vals['discipline']!,
+    distSpec: vals['distSpec']!, jockey: vals['jockey']!,
+    repos: vals['repos']!, hippo: vals['hippo']!,
+    entraineur: vals['entraineur']!, elo: vals['elo']!,
+    terrain: vals['terrain']!, divergence: vals['divergence']!,
+    poidsRel: vals['poidsRel']!, progression: vals['progression']!,
+    mouvCote: vals['mouvCote']!, placeDepart: vals['placeDepart']!,
+  );
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('G3 — critères distincts : le néfaste est-il pénalisé ?', () async {
+    const cycles = 80;
+
+    Future<({Map<String, double> p, int paires, Set<String> geles})> tirer(
+        bool gel) async {
+      final courses = <IaPronostic>[
+        for (var i = 0; i < cycles; i++)
+          pronostic(
+            courseKey: 'C${i.toString().padLeft(4, '0')}',
+            date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+            resolu: false,
+            variance: 6.0 + (i % 5) * 4.0,
+            scoresCriteres: <String, ScoresCriteres>{
+              for (var n = 1; n <= 5; n++) '$n': notesDistinctes(n, i),
+            },
+          ),
+        for (var j = 0; j < 60; j++)
+          pronostic(
+            courseKey: 'A${j.toString().padLeft(4, '0')}',
+            date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+            variance: 6.0 + (j % 5) * 4.0,
+            scoresCriteres: <String, ScoresCriteres>{
+              for (var n = 1; n <= 5; n++) '$n': notesDistinctes(n, j),
+            },
+          ),
+      ];
+      await semer(pronostics: courses, verifierNombre: false);
+      IaExperimentation.reinitialiser();
+      IaExperimentation.gelActif = gel;
+      var paires = 0;
+      for (var i = 0; i < cycles; i++) {
+        await executerCycle(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        );
+        paires = IaMemoryService.instance.poids.correlations.entries
+            .where((e) => e.value >= 0.85)
+            .length;
+      }
+      return (
+        p: poidsEffectifs(),
+        paires: paires,
+        geles: Set<String>.from(IaExperimentation.derniersGeles),
+      );
+    }
+
+    final sans = await tirer(false);
+    final avec = await tirer(true);
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G3] ═══ CRITÈRES DISTINCTS · cible NÉFASTE = repos ═══');
+    // ignore: avoid_print
+    print('[G3] paires ≥ 0,85 : SANS gel = ${sans.paires} · '
+        'AVEC gel = ${avec.paires}');
+    // ignore: avoid_print
+    print('[G3] gelés au dernier cycle = '
+        '${avec.geles.isEmpty ? "aucun" : avec.geles.join(", ")}');
+    // ignore: avoid_print
+    print('[G3] critère      | plancher | SANS gel              | AVEC gel');
+    for (final k in _cl) {
+      final lo = bornes[k]![0];
+      // ignore: avoid_print
+      print('[G3] ${k.padRight(12)} | ${lo.toStringAsFixed(3)}    | '
+          '${_e(sans.p[k]!)}${(sans.p[k]! - lo).abs() < 1e-9 ? " (plancher)" : "         "} | '
+          '${_e(avec.p[k]!)}${(avec.p[k]! - lo).abs() < 1e-9 ? " (plancher)" : ""}');
+    }
+    // ignore: avoid_print
+    print('[G3] ⇒ repos (néfaste) : SANS gel = ${_e(sans.p['repos']!)} · '
+        'AVEC gel = ${_e(avec.p['repos']!)} · '
+        'différence = ${_e(avec.p['repos']! - sans.p['repos']!)}');
+    // ignore: avoid_print
+    print('[G3] ⇒ VERDICT : si l écart est NÉGLIGEABLE avec des critères '
+        'distincts, alors G1 (« 19/19 bloqués ») était un ARTEFACT DES CLONES, '
+        'pas un défaut de production.');
+    // ignore: avoid_print
+    print('[G3]    Si l écart reste IMPORTANT, le blocage est réel et '
+        'constitue un défaut structurel à instruire en Phase 8.');
+
+    expect(avec.paires, greaterThanOrEqualTo(0));
+  });
+}

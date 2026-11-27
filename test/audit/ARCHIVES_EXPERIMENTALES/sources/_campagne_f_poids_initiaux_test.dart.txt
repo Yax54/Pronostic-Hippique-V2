@@ -1,0 +1,222 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE F — INFLUENCE DES POIDS INITIAUX SUR TRAJECTOIRES ET ÉQUILIBRES
+//  ESPACE ISOLÉ /home/user/exp — Phase 4.1 du cadrage et rectification §4
+//
+//  EXIGENCE (mot pour mot)
+//  ──────────────────────
+//   « Influence des poids initiaux. »
+//   Et, dans la rectification des coefficients : « les coefficients peuvent
+//     influencer les trajectoires, les équilibres, la projection, et la
+//     sélection ultérieure des critères gelés ».
+//
+//  QUESTION POSÉE
+//  ──────────────
+//  Deux installations ne différant QUE par leurs poids de départ convergent-
+//  elles vers le MÊME équilibre ? Si oui, les poids initiaux n'ont qu'un effet
+//  transitoire et le débat sur les « 19 poids de GitHub » perd de son
+//  importance à long terme. Si non, l'état initial détermine durablement le
+//  comportement — et la provenance des poids devient déterminante.
+//
+//  TROIS DÉPARTS, MÊME DONNÉE, 500 CYCLES
+//  ─────────────────────────────────────
+//   D1  GitHub brut          : les 19 poids du constructeur (Σ = 1,26).
+//   D2  GitHub projeté       : les mêmes, ramenés dans l'ensemble des
+//                              contraintes par `clamp()` (Σ = 1,00).
+//   D3  INVERSÉ              : les poids des 7 bases et des 12 enrichis
+//                              échangés deux à deux (le critère le mieux doté
+//                              devient le moins doté) — toujours Σ = 1,26.
+//   D4  UNIFORME             : 1/19 partout (Σ = 1,00).
+//
+//  La donnée est IDENTIQUE dans les quatre cas : un critère utile (forme), un
+//  critère nuisible (distSpec), le reste neutre. Ainsi, toute différence de
+//  trajectoire est imputable aux POIDS DE DÉPART, pas aux données.
+//
+//  MESURES
+//  ───────
+//   • trajectoire des 19 poids (trace complète) ;
+//   • écart L1 entre trajectoires, à cycles fixés (50, 100, 200, 300, 400, 500) ;
+//   • convergence : l'écart diminue-t-il (⇒ attracteur commun) ou reste-t-il
+//     borné (⇒ dépendance au chemin) ;
+//   • rang final des 5 critères les mieux dotés, pour voir si l'ORDRE final
+//     dépend du départ.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kCycles = 500;
+const int kAmorce = 60;
+
+/// Donnée commune : forme utile, distSpec nuisible, reste neutre.
+ScoresCriteres notesF(int numero, int cycle) {
+  final forme = (55.0 + 12.0 * (3.0 - numero)).clamp(0.0, 100.0);
+  final dist = (55.0 - 12.0 * (3.0 - numero)).clamp(0.0, 100.0);
+  final base = notesDistinctes(numero, cycle, pilote: 'forme', valeurPilote: forme);
+  return ScoresCriteres(
+    forme: forme, gains: base.gains, record: base.record,
+    cote: base.cote, constance: base.constance, victoires: base.victoires,
+    discipline: base.discipline, distSpec: dist,
+    jockey: base.jockey, repos: base.repos, hippo: base.hippo,
+    entraineur: base.entraineur, elo: base.elo, terrain: base.terrain,
+    divergence: base.divergence, poidsRel: base.poidsRel,
+    progression: base.progression, mouvCote: base.mouvCote,
+    placeDepart: base.placeDepart,
+  );
+}
+
+/// Départ INVERSÉ : on échange les poids deux à deux entre le haut et le bas
+/// de l'échelle, en conservant la somme exacte.
+Map<String, double> departInverse() {
+  final cles = List<String>.from(kCles)
+    ..sort((a, b) => kInitial[b]!.compareTo(kInitial[a]!));
+  final out = <String, double>{};
+  for (var i = 0; i < cles.length; i++) {
+    out[cles[i]] = kInitial[cles[cles.length - 1 - i]]!;
+  }
+  return out;
+}
+
+Map<String, double> departUniforme() =>
+    <String, double>{for (final k in kCles) k: 1.0 / 19.0};
+
+Future<List<Map<String, double>>> deroulerF(
+    Map<String, double> depart, String nom) async {
+  IaExperimentation.reinitialiser();
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle3(i, nbCycles: kCycles),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesF(n, i),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    for (var j = 0; j < kAmorce; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce3(j, kCycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesF(n, j),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: depart,
+    sigmaAttendue: sommeCle(depart, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < kCycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add(poidsEffectifs());
+  }
+  // ignore: avoid_print
+  print('[F] $nom terminé · Σ fin = '
+      '${f12(sommeCle(trace.last, kCles))}');
+  return trace;
+}
+
+/// Écart L1 entre deux tables de poids.
+double l1(Map<String, double> a, Map<String, double> b) {
+  var s = 0.0;
+  for (final k in kCles) {
+    s += ((a[k] ?? 0) - (b[k] ?? 0)).abs();
+  }
+  return s;
+}
+
+/// Les 5 critères les mieux dotés, dans l'ordre.
+String top5(Map<String, double> m) {
+  final e = <MapEntry<String, double>>[
+    for (final k in kCles) MapEntry(k, m[k]!),
+  ]..sort((a, b) => b.value.compareTo(a.value));
+  return e.take(5).map((x) => x.key).join(',');
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('F — quatre départs, une donnée, 500 cycles', () async {
+    final d1 = kInitial;
+    final d2 = poidsNormalisesDeDepart();
+    final d3 = departInverse();
+    final d4 = departUniforme();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[F] ═══ INFLUENCE DES POIDS INITIAUX · $kCycles CYCLES ═══');
+    // ignore: avoid_print
+    print('[F] D1 GitHub brut     : ${etatGroupes(d1)}');
+    // ignore: avoid_print
+    print('[F] D2 GitHub projeté  : ${etatGroupes(d2)}');
+    // ignore: avoid_print
+    print('[F] D3 INVERSÉ         : ${etatGroupes(d3)}');
+    // ignore: avoid_print
+    print('[F] D4 UNIFORME        : ${etatGroupes(d4)}');
+    // ignore: avoid_print
+    print('[F] top5 D1 = ${top5(d1)}');
+    // ignore: avoid_print
+    print('[F] top5 D3 = ${top5(d3)}');
+
+    final t1 = await deroulerF(d1, 'D1 GitHub brut');
+    final t2 = await deroulerF(d2, 'D2 GitHub projeté');
+    final t3 = await deroulerF(d3, 'D3 INVERSÉ');
+    final t4 = await deroulerF(d4, 'D4 UNIFORME');
+
+    // ignore: avoid_print
+    print('[F] ─── CONVERGENCE : écart L1 entre trajectoires ───');
+    // ignore: avoid_print
+    print('[F] cycle |  D1-D2   |  D1-D3   |  D1-D4   |  D3-D4  | top5 D1 | top5 D3');
+    for (final c in <int>[49, 99, 199, 299, 399, 499]) {
+      // ignore: avoid_print
+      print('[F] ${c.toString().padLeft(5)} | '
+          '${l1(t1[c], t2[c]).toStringAsFixed(9)} | '
+          '${l1(t1[c], t3[c]).toStringAsFixed(9)} | '
+          '${l1(t1[c], t4[c]).toStringAsFixed(9)} | '
+          '${l1(t3[c], t4[c]).toStringAsFixed(9)} | '
+          '${top5(t1[c]).padRight(20)} | ${top5(t3[c])}');
+    }
+
+    final ecartFinal13 = l1(t1.last, t3.last);
+    final ecartFinal14 = l1(t1.last, t4.last);
+    // ignore: avoid_print
+    print('[F] ─── SYNTHÈSE ───');
+    // ignore: avoid_print
+    print('[F] écart L1 final D1↔D3 = ${ecartFinal13.toStringAsFixed(9)}');
+    // ignore: avoid_print
+    print('[F] écart L1 final D1↔D4 = ${ecartFinal14.toStringAsFixed(9)}');
+    final top1 = top5(t1.last), top3 = top5(t3.last), top4 = top5(t4.last);
+    // ignore: avoid_print
+    print('[F] top5 final : D1=[$top1] D3=[$top3] D4=[$top4]');
+    // ignore: avoid_print
+    print('[F] ⇒ ${top1 == top3 ? "l ORDRE final est IDENTIQUE malgré un départ inversé : les poids initiaux n ont qu un effet transitoire" : "l ORDRE final DIFFÈRE : la dépendance au chemin est MESURÉE"}');
+
+    expect(sommeCle(t1.last, kCles), closeTo(1.0, 1e-9));
+    expect(sommeCle(t3.last, kCles), closeTo(1.0, 1e-9));
+  }, timeout: const Timeout(Duration(minutes: 400)));
+}

@@ -1,0 +1,249 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE A — COEFFICIENTS : 1,0/0,5/0,4/0,3  CONTRE  19 × 1,0
+//  ESPACE ISOLÉ /home/user/exp — moteur de production instrumenté
+//
+//  QUESTION (Phase 4.2 / Phase 5-C)
+//  ────────────────────────────────
+//  Le `switch` de production applique quatre coefficients : 1,0 aux 7 critères
+//  de base, 0,5 à 5 enrichis, 0,4 à 4 enrichis, 0,3 à 3 enrichis. L'égalité
+//  « 19 × 1,0 » existe-t-elle une différence mesurable sur une trajectoire
+//  RÉELLE multi-cycles — et laquelle ?
+//
+//  PRÉDICTION À RÉFUTER — lue dans le code AVANT de mesurer
+//  ────────────────────────────────────────────────────────
+//  `_apprendreParGradient` (l.4150-4155) calcule :
+//      gradAvecMomentum = grad + momentumFactor × momentum[c]
+//      momentum[c]      = gradAvecMomentum          ← MÉMORISÉ AVANT le coeff
+//      poids[c]        += gradAvecMomentum × coeff[c] ← coeff appliqué APRÈS
+//  `discriminations[c]` (l.4079) ne dépend QUE des notes 0-100 et des arrivées,
+//  jamais des poids. Donc le coefficient n'entre PAS dans la boucle du signal :
+//  il ne fait que moduler l'AMPLITUDE du déplacement appliqué.
+//  ⇒ PRÉDICTION : les deux configurations ont des `dernierGradient` IDENTIQUES
+//    à chaque cycle, et des poids qui ne diffèrent que par l'échelle du
+//    déplacement — donc des TRAJECTOIRES DIFFÉRENTES mais un ORDRE de
+//    discrimination identique.
+//  Ce harnais mesure les deux : l'identité du signal (qui réfuterait la
+//  prédiction si elle était fausse) et la différence des trajectoires.
+//
+//  ⚠️ Ce fichier est un HARNAIS. Le moteur est celui de production, copié et
+//     instrumenté ; aucune formule n'est réécrite ici.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+// ─── Jeux de données CONTRÔLÉS (le seul levier : les notes 0-100) ──────────
+
+/// Un critère est FRANCHEMENT plus discriminant que les autres.
+ScoresCriteres notesAvecCible(int numero, String? cible, double pente) {
+  double v(String c) => c == cible ? 100.0 - numero * pente : 96.0 - numero * 6;
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'), cote: v('cote'),
+    constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}
+
+/// Sème [amorce] courses résolues + [cycles] courses à résoudre, puis déroule.
+/// Retourne la trace : poids après chaque cycle.
+Future<List<Map<String, double>>> derouler({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  int amorce = 12,
+}) async {
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 2 + i)),
+        resolu: false,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+      ),
+    for (var j = 0; j < amorce; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 30 + j)),
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+      ),
+  ];
+  await semer(pronostics: courses, verifierNombre: false);
+
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  A1 — LE SIGNAL EST-IL INDÉPENDANT DES COEFFICIENTS ? (réfutation)
+  // ═══════════════════════════════════════════════════════════════════════
+  test('A1 — le gradient publié change-t-il quand les coefficients changent ?',
+      () async {
+    const cycles = 25;
+    ScoresCriteres notes(int n, int c) => notesAvecCible(n, null, 0);
+
+    // ── Config 1 : coefficients de production
+    IaExperimentation.reinitialiser();
+    final traceProd = await derouler(
+        cycles: cycles, notes: notes);
+    final gradsProd = <String, double>{};
+    for (final k in kCles) {
+      gradsProd[k] = IaMemoryService.instance.poids.dernierGradient[k] ?? 0.0;
+    }
+    final discProd = Map<String, double>.from(
+        IaExperimentation.dernieresDiscriminations);
+
+    // ── Config 2 : 19 × 1,0
+    IaExperimentation.reinitialiser();
+    IaExperimentation.coefficientsUniformes(1.0);
+    final traceUni = await derouler(
+        cycles: cycles, notes: notes);
+    final gradsUni = <String, double>{};
+    for (final k in kCles) {
+      gradsUni[k] = IaMemoryService.instance.poids.dernierGradient[k] ?? 0.0;
+    }
+    final discUni = Map<String, double>.from(
+        IaExperimentation.dernieresDiscriminations);
+
+    // ── Mesure 1 : les discriminations sont-elles identiques ?
+    var ecartDisc = 0.0;
+    for (final k in kCles) {
+      final d = ((discProd[k] ?? 0) - (discUni[k] ?? 0)).abs();
+      if (d > ecartDisc) ecartDisc = d;
+    }
+    // ── Mesure 2 : le momentum publié est-il identique ?
+    var ecartGrad = 0.0;
+    var pireGrad = '';
+    for (final k in kCles) {
+      final d = ((gradsProd[k] ?? 0) - (gradsUni[k] ?? 0)).abs();
+      if (d > ecartGrad) {
+        ecartGrad = d;
+        pireGrad = k;
+      }
+    }
+    // ── Mesure 3 : les trajectoires diffèrent-elles ?
+    final (ecartFin, pireFin, bouges) =
+        ecart(traceProd.last, traceUni.last, seuil: 1e-12);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[A1] ═══ SIGNAL vs COEFFICIENTS ($cycles cycles) ═══');
+    // ignore: avoid_print
+    print('[A1] écart max sur les 19 DISCRIMINATIONS = ${_e(ecartDisc)}');
+    // ignore: avoid_print
+    print('[A1] écart max sur le MOMENTUM publié (19)   = ${_e(ecartGrad)}'
+        ' (pire : $pireGrad)');
+    // ignore: avoid_print
+    print('[A1] écart max sur les POIDS finaux          = ${_e(ecartFin)}'
+        ' (pire : $pireFin · $bouges/19 critères ont bougé)');
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[A1] poids finaux — production puis 19×1,0 :');
+    for (final k in kCles) {
+      // ignore: avoid_print
+      print('[A1]   ${k.padRight(12)} '
+          'prod=${_e(traceProd.last[k]!)} · uni=${_e(traceUni.last[k]!)} · '
+          'delta=${_e((traceUni.last[k]! - traceProd.last[k]!))}');
+    }
+
+    // PRÉDICTION : signal identique au sens de la discrimination.
+    expect(ecartDisc, lessThan(1e-15),
+        reason: 'Si les discriminations différaient, elles dépendraient des '
+            'poids, et la prédiction « signal indépendant des coefficients » '
+            'serait RÉFUTÉE. C est le point à trancher, pas à supposer.');
+    // PRÉDICTION : le momentum envoyé au cycle suivant doit aussi être identique.
+    expect(ecartGrad, lessThan(1e-15),
+        reason: 'Le momentum est mémorisé AVANT le coefficient. Un écart ici '
+            'signifierait que le coefficient entre dans la boucle du signal.');
+    // CONSÉQUENCE : les trajectoires, elles, doivent différer.
+    expect(bouges, greaterThan(0),
+        reason: 'Si les poids finaux étaient identiques, les coefficients '
+            'n auraient AUCUN effet sur une trajectoire réelle — ce serait un '
+            'résultat majeur, il faut le constater, pas le supposer.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  A2 — UN CRITÈRE ENRICHI TRÈS DISCRIMINANT PEUT-IL DÉPASSER UNE BASE ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('A2 — un enrichi à forte discrimination dépasse-t-il une base ?',
+      () async {
+    const cycles = 60;
+    // `distSpec` (enrichi, coeff 0,5) est rendu BEAUCOUP plus discriminant :
+    // sa note décroît de 30 points par rang, les autres de 6.
+    ScoresCriteres notes(int n, int c) => notesAvecCible(n, 'distSpec', 30.0);
+
+    IaExperimentation.reinitialiser();
+    final traceProd = await derouler(cycles: cycles, notes: notes);
+    final discProd = Map<String, double>.from(
+        IaExperimentation.dernieresDiscriminations);
+
+    IaExperimentation.reinitialiser();
+    IaExperimentation.coefficientsUniformes(1.0);
+    final traceUni = await derouler(cycles: cycles, notes: notes);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[A2] discriminations (enrichi distSpec forcé à pente 30) :');
+    // ignore: avoid_print
+    print('[A2]   distSpec = ${_e(discProd['distSpec'] ?? 0)} · '
+        'forme = ${_e(discProd['forme'] ?? 0)} · '
+        'discipline = ${_e(discProd['discipline'] ?? 0)}');
+    // ignore: avoid_print
+    print('[A2] poids finaux après $cycles cycles :');
+    for (final k in ['forme', 'gains', 'discipline', 'distSpec', 'jockey', 'repos']) {
+      // ignore: avoid_print
+      print('[A2]   ${k.padRight(12)} prod=${_e(traceProd.last[k]!)} · '
+          'uni=${_e(traceUni.last[k]!)}');
+    }
+    // distSpec dépasse-t-il la plus faible des bases ?
+    final baseMinProd = ['victoires', 'discipline']
+        .map((k) => traceProd.last[k]!)
+        .reduce((a, b) => a < b ? a : b);
+    // ignore: avoid_print
+    print('[A2] distSpec (prod) = ${_e(traceProd.last['distSpec']!)} · '
+        'base la plus faible (prod) = ${_e(baseMinProd)} · '
+        'dépassement = ${traceProd.last['distSpec']! > baseMinProd}');
+
+    // Aucun jugement ici : on CONSTATE. Le coefficient 0,5 est-il un
+    // plafond déguisé ? C'est la question du §4.2, et la réponse est
+    // « à quelle vitesse et jusqu'où », pas « possible ou non ».
+    expect(traceProd.last['distSpec']!, greaterThan(0.005),
+        reason: 'distSpec doit au moins quitter son plancher de 0,005.');
+  });
+}

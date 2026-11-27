@@ -1,0 +1,289 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HARNAIS v4 — SIGNAL LATENT COMMUN + PERTURBATIONS INDÉPENDANTES
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  POURQUOI v4 APRÈS v3 — DÉFAUT N°17, MESURÉ
+//  ───────────────────────────────────────────
+//  v3 construisait un critère « piloté » en lui donnant une valeur
+//  ARITHMÉTIQUE FIXE : `55 + pente × (3 − numéro)`. Cette valeur ne dépend que
+//  du numéro de cheval, donc sa variance INTER-COURSES est NULLE. Or les deux
+//  mesures du moteur travaillent sur le vecteur APLATI (courses × partants) :
+//    • `_detecterCorrelationsCriteres` (ia_memory_service:4476) empile
+//      `valeurPourCritere(c)` pour les 80 courses les plus récentes ;
+//    • `discriminations[c]` (l.4079) moyenne les valeurs pondérées.
+//  Un critère sans variance inter-courses ne peut donc avoir de covariance
+//  qu'avec un critère qui, lui, en a — et la corrélation mesurée reste faible.
+//
+//  MESURES QUI ONT ÉTABLI LE DÉFAUT (journaux conservés dans
+//  `traces_archive/`) :
+//    • G4v2 — la paire (distSpec, jockey) était fabriquée par CLONE de
+//      permutation ; elle a bien atteint r = 0,981 sur 164 observations
+//      (min 0,651), donc le gel EST atteignable par clone. Mais le critère
+//      « néfaste » y était une valeur fixe : sa discrimination ne pouvait pas
+//      être contrôlée indépendamment de la corrélation.
+//    • G5-a — dispositif « anti-clone » : r mémorisé = 0,0000 pendant 260
+//      cycles, gel 0/260. Le renversement de la permutation du partenaire ne
+//      produit une anti-corrélation que si les DEUX critères dérivent d'une
+//      permutation ; face à un critère à valeur fixe, il ne produit rien.
+//
+//  PRINCIPE DE v4 — UNE SEULE FAMILLE À DEUX PARAMÈTRES
+//  ────────────────────────────────────────────────────
+//  Soit L(i, n) un signal latent uniforme sur [−1, +1], indépendant pour
+//  chaque couple (course i, cheval n). Chaque critère c reçoit
+//
+//      valeur_c(i, n) = 50 + β_c · L(i, n) + γ_c · (3 − n) + σ_c · E_c(i, n)
+//
+//  avec E_c uniforme sur [−1, +1] indépendant de tout le reste.
+//
+//    • β_c CHARGE LE SIGNAL COMMUN. Deux critères de même signe de β ont une
+//      corrélation positive forte ; de signes opposés, une corrélation
+//      négative forte. C'est le levier de CORRÉLATION.
+//    • γ_c CHARGE LE MOTIF LIÉ À L'ARRIVÉE. Comme l'arrivée est [1,2,3,4,5],
+//      γ_c > 0 rend le critère UTILE (les bons chevaux ont les meilleures
+//      notes) et γ_c < 0 le rend NÉFASTE. C'est le levier de DISCRIMINATION.
+//    • σ_c est le bruit propre, qui permet de faire baisser la corrélation
+//      sans toucher à la discrimination.
+//
+//  Les deux leviers sont donc ORTHOGONAUX PAR CONSTRUCTION, ce qui permet —
+//  contrairement à v3 — de fabriquer une paire à la fois FORTEMENT CORRÉLÉE et
+//  à DISCRIMINATION CONTRÔLÉE, y compris une paire anti-corrélée dont les deux
+//  membres sont UTILES. C'est précisément le cas que la proposition P4 doit
+//  documenter : `pearson(...).abs()` (l.4520) mémorise la valeur absolue, donc
+//  deux critères utiles mais opposés se voient retirer l'un des deux.
+//
+//  ⚠️ ATTENTION MESURÉE, PAS SUPPOSÉE
+//  ──────────────────────────────────
+//  La discrimination et la corrélation ne sont pas indépendantes : γ entre
+//  dans les deux. Ce fichier ne PRÉTEND donc pas qu'un réglage demandé
+//  produise la valeur attendue. Il fournit des gardes qui lisent les
+//  publications du MOTEUR lui-même :
+//    • `IaExperimentation.dernieresDiscriminations` (l.4079) ;
+//    • `IaMemoryService.instance.poids.correlations` (l.4527).
+//  Une campagne qui n'aurait pas, MESURÉES, les propriétés requises ne doit
+//  pas démarrer — c'est le rôle de `validation_prealable.dart`.
+//
+//  ⚠️ CE FICHIER NE RÉIMPLÉMENTE AUCUN MÉCANISME DU MOTEUR. Il ne construit
+//  que la DONNÉE D'ENTRÉE (notes 0-100, varianceScores) et des utilitaires de
+//  protocole.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+// ─────────────────────────── Mélangeur déterministe ────────────────────────
+
+const int _m32 = 0xFFFFFFFF;
+
+int melange4(int h) {
+  h &= _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & _m32;
+  h = h ^ (h >> 16);
+  return h & _m32;
+}
+
+/// Uniforme [0,1) dépendant de trois indices et d'un sel.
+double unif4(int a, int b, int c, {int sel = 0}) {
+  final x = (a * 0x9E3779B1) ^
+      (b * 0x85EBCA77) ^
+      (c * 0xC2B2AE3D) ^
+      (sel * 0x27D4EB2F);
+  return melange4(x) / 4294967296.0;
+}
+
+/// Uniforme sur [−1, +1].
+double bruit4(int a, int b, int c, {int sel = 0}) =>
+    (unif4(a, b, c, sel: sel) - 0.5) * 2.0;
+
+// ───────────────────────────── Profil d'un critère ─────────────────────────
+
+/// Paramètres d'un critère dans la famille v4.
+///
+/// [beta]  charge du signal latent commun  ⇒ CORRÉLATION.
+/// [gamma] charge du motif lié à l'arrivée  ⇒ DISCRIMINATION (utile si > 0).
+/// [sigma] amplitude du bruit propre       ⇒ dilution de la corrélation.
+class Profil {
+  final double beta;
+  final double gamma;
+  final double sigma;
+  const Profil({this.beta = 0.0, this.gamma = 0.0, this.sigma = 6.0});
+
+  Profil copieAvec({double? beta, double? gamma, double? sigma}) => Profil(
+        beta: beta ?? this.beta,
+        gamma: gamma ?? this.gamma,
+        sigma: sigma ?? this.sigma,
+      );
+
+  @override
+  String toString() =>
+      'Profil(β=$beta, γ=$gamma, σ=$sigma)';
+}
+
+/// Motif lié à l'arrivée : +2 pour le cheval 1 … −2 pour le cheval 5.
+double motif4(int numero) => 3.0 - numero;
+
+/// Tous les critères NEUTRES (β = 0, γ = 0) : discrimination nulle en
+/// espérance, aucune corrélation avec quoi que ce soit.
+Map<String, Profil> profilsNeutres({double sigma = 6.0}) =>
+    <String, Profil>{for (final k in kCles) k: Profil(sigma: sigma)};
+
+/// Valeur d'un critère selon la famille v4.
+///
+/// ⚠️ DÉFAUT N°18, MESURÉ AVANT CORRECTION — le signal latent doit être
+/// PARTAGÉ. Une première version écrivait
+/// `bruit4(numero, cycle, 1, sel: 1000 + idx)` : le sel dépendait de l'indice
+/// du critère, donc chaque critère avait son PROPRE signal latent et il
+/// n'existait plus de composante commune. Mesures obtenues sur 400 points
+/// (80 courses × 5 partants) : une paire conçue « non corrélée » (β = 0 des
+/// deux côtés, même γ) ressortait à r = 0,9599, et une paire conçue
+/// « anti-corrélée » (β = +40 / −40) ressortait à r = 0,0117. Le paramètre
+/// `beta` n'avait donc aucun effet de corrélation : il n'ajoutait qu'un bruit
+/// de plus, et la corrélation observée ne provenait que du motif commun γ.
+///
+/// CORRECTION : `sel: 1000` est désormais CONSTANT. Tous les critères
+/// partagent le MÊME tirage L(i, n). Seul le bruit propre garde un sel
+/// dépendant du critère (`2000 + idx`), ce qui est nécessaire pour qu'ils ne
+/// soient pas des clones exacts.
+double valeurV4(String critere, int idx, int numero, int cycle, Profil p) {
+  final l = bruit4(numero, cycle, 1, sel: 1000); // ← COMMUN à tous les critères
+  final e = bruit4(numero, cycle, 2, sel: 2000 + idx); // ← propre au critère
+  return (50.0 + p.beta * l + p.gamma * motif4(numero) + p.sigma * e)
+      .clamp(0.0, 100.0);
+}
+
+/// Notes d'une course sous la famille v4.
+ScoresCriteres notesV4(int numero, int cycle, Map<String, Profil> profils) {
+  double v(String c) => valeurV4(c, kCles.indexOf(c), numero, cycle, profils[c]!);
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'),
+    cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}
+
+// ───────────────────────── Mesures du MOTEUR, pas les nôtres ───────────────
+
+/// Discriminations publiées par le moteur au dernier cycle d'apprentissage.
+Map<String, double> discriminationsMoteur() =>
+    Map<String, double>.from(IaExperimentation.dernieresDiscriminations);
+
+/// Corrélations mémorisées par le moteur, valeurs absolues incluses.
+Map<String, double> correlationsMoteur() => correlationsMemorisees();
+
+/// Paires dont la valeur mémorisée atteint le seuil de gel EFFECTIF.
+Map<String, double> pairesGelees() => pairesAuSeuilDeGel();
+
+// ───────────────────────────── Protocole d'exécution ───────────────────────
+
+/// Date du cycle [i] : STRICTEMENT croissante avec l'ordre d'apprentissage
+/// (défaut n°14 : une première version décroissante figeait la fenêtre).
+DateTime dateCycle4(int i, {int nbCycles = 400}) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles - i)));
+
+DateTime dateAmorce4(int j, int nbCycles) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles + j + 1)));
+
+/// Semence + déroulement, avec retour de la trace des poids par cycle.
+///
+/// [varianceVarie] doit rester vrai : sans variation de `varianceScores`, la
+/// médiane vaut toutes les valeurs, `hautConfiance` est vide et
+/// `_mettreAJourCalibration` sort à la ligne 4443 AVANT l'appel à
+/// `_detecterCorrelationsCriteres` — le gel devient structurellement
+/// inatteignable (mesuré par G5-c dans son périmètre).
+Future<List<Map<String, double>>> deroulerV4({
+  required int cycles,
+  required Map<String, Profil> profils,
+  Map<String, double>? depart,
+  int historique = 60,
+  List<int> arrivee = const <int>[1, 2, 3, 4, 5],
+  bool varianceVarie = true,
+  void Function(int cycle, Cycle c)? apresCycle,
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle4(i, nbCycles: cycles),
+        resolu: false,
+        variance: varianceVarie ? 6.0 + (i % 5) * 4.0 : 12.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesV4(n, i, profils),
+        },
+        arrivee: arrivee,
+      ),
+    // ⚠️ DÉFAUT N°19, MESURÉ AVANT CORRECTION — les courses d'AMORÇAGE
+    //    recevaient TOUTES les mêmes notes (`notesV4(n, 0, profils)`), donc une
+    //    variance nulle à l'intérieur de chaque critère et une covariance
+    //    nulle entre critères : le coefficient de Pearson y vaut 0/0, et la
+    //    ligne 4506 du moteur mémorise 0,0 pour ces points. La fenêtre de 80
+    //    courses étant majoritairement composée d'amorçage, les corrélations
+    //    « mesurées » étaient DILUÉES vers zéro.
+    //    Ce que la validation V4-0 a révélé : dans la configuration C1, où seuls
+    //    distSpec et jockey sont corrélés, le moteur a rapporté ONZE critères
+    //    gelés (gains, elo, placeDepart, cote, distSpec, jockey, repos,
+    //    discipline, hippo, poidsRel, divergence) — ce qui est impossible si
+    //    seuls deux critères sont corrélés, et qui signait le défaut.
+    //    CORRECTION : chaque course d'amorçage reçoit désormais des notes
+    //    DISTINCTES (cycle = j + 1), ce qui restaure une covariance non
+    //    dégénérée. La correction est purement structurelle : elle ne modifie
+    //    AUCUN mécanisme étudié, seulement l'échantillon de données.
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce4(j, cycles),
+        variance: varianceVarie ? 6.0 + (j % 5) * 4.0 : 12.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesV4(n, j + 1, profils),
+        },
+        arrivee: arrivee,
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    final c = await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: arrivee,
+    );
+    trace.add(poidsEffectifs());
+    apresCycle?.call(i, c);
+  }
+  return trace;
+}
+
+double partEnrichie4(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  final t = b + e;
+  return t == 0 ? 0 : e / t;
+}
+
+String d9v4(double v) => v.toStringAsFixed(9);

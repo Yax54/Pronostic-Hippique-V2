@@ -1,0 +1,249 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE B v2 — LE GEL : ARTEFACT DE DONNÉES OU VERROU STRUCTUREL ?
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  LA MESURE QUI A MOTIVÉ CE FICHIER (et qui est gênante)
+//  ──────────────────────────────────────────────────────
+//  Avec des notes où les 17 critères « non étudiés » sont CONSTRUITS À
+//  L'IDENTIQUE (même formule 96 − 6·rang), la campagne B v1 a mesuré :
+//      · r = 1,000000 pour 17 paires sur 171 ;
+//      · 18 critères gelés sur 19, seul `forme` apprenant encore ;
+//      · en phase 2 (corrélation des données ramenée à 0,30), le gel reste à
+//        25/25 cycles.
+//  Deux lectures possibles, et il faut les DISTINGUER :
+//      (a) artefact de harnais — des critères clones n'existent pas en vrai ;
+//      (b) propriété du moteur — un critère reste gelé tant qu'UNE SEULE de
+//          ses paires dépasse 0,85, même si les autres sont retombées.
+//  (b) serait un défaut structurel : le dégel dépendrait du MAXIMUM sur toutes
+//  les paires, donc une paire durablement corrélée suffirait à figer un critère
+//  pour toujours.
+//
+//  PROTOCOLE — créer des critères DISTINCTS (bruit indépendant par critère),
+//  avec une corrélation contrôlée seulement sur la paire étudiée.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+double bruit(int i, int n, int sel) {
+  final x = (i * 7919 + n * 104729 + sel * 15485863) % 1000003;
+  return (x / 1000003.0) * 2.0 - 1.0;
+}
+
+/// Critères DISTINCTS : chaque critère a son propre bruit (sel différent), donc
+/// aucune corrélation parasite. Seule la paire `forme|gains` est pilotée à [r].
+ScoresCriteres notesDistinctes(int numero, int cycle, double rGains) {
+  final base = 80.0 - numero * 7.0; // forme
+  const amp = 14.0;
+  final g = 50.0 +
+      rGains * (base - 50.0) +
+      math.sqrt(1 - rGains * rGains) * bruit(numero, cycle, 2) * amp;
+  double autre(int sel) =>
+      (55.0 + bruit(numero, cycle, sel) * amp * 2.2).clamp(0.0, 100.0);
+  return ScoresCriteres(
+    forme: base,
+    gains: g.clamp(0.0, 100.0),
+    record: autre(3), cote: autre(4), constance: autre(5),
+    victoires: autre(6), discipline: autre(7), distSpec: autre(8),
+    jockey: autre(9), repos: autre(10), hippo: autre(11),
+    entraineur: autre(12), elo: autre(13), terrain: autre(14),
+    divergence: autre(15), poidsRel: autre(16), progression: autre(17),
+    mouvCote: autre(18), placeDepart: autre(19),
+  );
+}
+
+Future<List<({Map<String, double> poids, Set<String> geles, int corr})>>
+    deroulerDistinct({
+  required int cibles,
+  required double Function(int cycle) rDe,
+  int historique = 60,
+}) async {
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cibles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesDistinctes(n, i, rDe(i)),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesDistinctes(n, j, rDe(0)),
+        },
+      ),
+  ];
+  await semer(pronostics: courses, verifierNombre: false);
+
+  final trace = <({Map<String, double> poids, Set<String> geles, int corr})>[];
+  for (var i = 0; i < cibles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add((
+      poids: poidsEffectifs(),
+      geles: Set<String>.from(IaExperimentation.derniersGeles),
+      corr: IaMemoryService.instance.poids.correlations.length,
+    ));
+  }
+  return trace;
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B5 — CRITÈRES DISTINCTS : combien de paires dépassent 0,85 ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B5 — critères distincts : le gel reste-t-il sélectif ?', () async {
+    IaExperimentation.reinitialiser();
+    final trace = await deroulerDistinct(cibles: 40, rDe: (c) => 0.95);
+
+    final corr = IaMemoryService.instance.poids.correlations;
+    final hautes = corr.entries.where((e) => e.value >= 0.85).toList();
+    final gelesFin = trace.last.geles;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B5] ═══ CRITÈRES DISTINCTS (seule forme|gains pilotée à 0,95) ═══');
+    // ignore: avoid_print
+    print('[B5] paires mémorisées = ${corr.length} · '
+        'dont r ≥ 0,85 = ${hautes.length}');
+    for (final e in hautes) {
+      // ignore: avoid_print
+      print('[B5]   ${e.key} r=${e.value.toStringAsFixed(6)}');
+    }
+    // ignore: avoid_print
+    print('[B5] critères gelés au dernier cycle = '
+        '${gelesFin.isEmpty ? "aucun" : gelesFin.join(", ")}');
+    // ignore: avoid_print
+    print('[B5] cycles où un gel a eu lieu = '
+        '${trace.where((t) => t.geles.isNotEmpty).length}/${trace.length}');
+
+    // ignore: avoid_print
+    print('[B5] poids finaux (les 19) :');
+    for (final k in kCles) {
+      // ignore: avoid_print
+      print('[B5]   ${k.padRight(12)} ${_e(trace.last.poids[k]!)}');
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B6 — LE VERROU : une paire haute suffit-elle à figer pour toujours ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B6 — dégel : r chute à 0,20 sur TOUTES les paires', () async {
+    // Phase 1 : r ≈ 0,95 pendant 30 cycles. Phase 2 : r ≈ 0,20 pendant 30.
+    // Avec des critères distincts, si le dégel ne se produit TOUJOURS pas,
+    // alors la cause n'est pas la redondance des données mais le fait que la
+    // table `_poids.correlations` conserve les ANCIENNES valeurs — donc que le
+    // dégel dépend d'une remise à jour effective de cette table.
+    double rDe(int c) => c < 30 ? 0.95 : 0.20;
+    IaExperimentation.reinitialiser();
+    final trace = await deroulerDistinct(cibles: 60, rDe: rDe);
+
+    final gelP1 = trace.sublist(0, 30).where((t) => t.geles.isNotEmpty).length;
+    final gelP2 = trace.sublist(30).where((t) => t.geles.isNotEmpty).length;
+    final corrP1 = trace[29].corr;
+    final corrP2 = trace.last.corr;
+    final hautesFin = IaMemoryService.instance.poids.correlations.entries
+        .where((e) => e.value >= 0.85)
+        .toList();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B6] ═══ DÉGEL : r 0,95 → 0,20 SUR LA PAIRE PILOTÉE ═══');
+    // ignore: avoid_print
+    print('[B6] gel phase 1 (r≈0,95) = $gelP1/30');
+    // ignore: avoid_print
+    print('[B6] gel phase 2 (r≈0,20) = $gelP2/30');
+    // ignore: avoid_print
+    print('[B6] paires mémorisées : fin phase 1 = $corrP1 · fin phase 2 = $corrP2');
+    // ignore: avoid_print
+    print('[B6] paires encore ≥ 0,85 à la fin = ${hautesFin.length}');
+    for (final e in hautesFin) {
+      // ignore: avoid_print
+      print('[B6]   ${e.key} r=${e.value.toStringAsFixed(6)}');
+    }
+    // ignore: avoid_print
+    print('[B6] ⇒ si le gel persiste alors que la paire est retombée sous 0,85, '
+        'la cause est identifiable sur la ligne « paires encore ≥ 0,85 ».');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  B7 — LA TABLE DE CORRÉLATIONS EST-ELLE RÉELLEMENT RECALCULÉE ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('B7 — r mémorisé suit-il les données, cycle après cycle ?', () async {
+    // r décroît par paliers : 0,95 · 0,90 · 0,85 · 0,75 · 0,70 · 0,60 · 0,30
+    const paliers = <double>[0.95, 0.90, 0.85, 0.75, 0.70, 0.60, 0.30];
+    double rDe(int c) => paliers[(c ~/ 8).clamp(0, paliers.length - 1)];
+    IaExperimentation.reinitialiser();
+    final trace = await deroulerDistinct(cibles: 56, rDe: rDe);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[B7] palier | r demandé | r mémorisé forme|gains | ≥ 0,85 ? | gelés');
+    for (var i = 0; i < paliers.length; i++) {
+      final idx = (i * 8 + 7).clamp(0, trace.length - 1);
+      final corr = IaMemoryService.instance.poids.correlations;
+      // On relit la table APRÈS le cycle : elle est écrasée à chaque passage.
+      final r = _rMemorise(trace, idx, 'forme', 'gains');
+      // ignore: avoid_print
+      print('[B7] ${paliers[i].toStringAsFixed(2)}   | '
+          '${paliers[i].toStringAsFixed(2)}     | '
+          '${r == null ? "paire absente" : r.toStringAsFixed(6)}       | '
+          '${r != null && r >= 0.85} | '
+          '${trace[idx].geles.isEmpty ? "aucun" : trace[idx].geles.join(",")}');
+      if (corr.isEmpty) break;
+    }
+    // ignore: avoid_print
+    print('[B7] NOTE : « paire absente » signifie r < seuil de population '
+        '(0,65) ⇒ la paire est SUPPRIMÉE de la table. Ce n est pas « r = 0 ».');
+  });
+}
+
+/// Relit r pour une paire à un index donné en ré-exécutant la mesure locale.
+/// ⚠️ La table est écrasée à chaque cycle : on ne peut donc PAS relire le
+/// passé. Cette fonction retourne donc `null` si la paire n'est plus mémorisée,
+/// ce qui est précisément l'information utile.
+double? _rMemorise(
+  List<({Map<String, double> poids, Set<String> geles, int corr})> trace,
+  int idx,
+  String a,
+  String b,
+) {
+  final key = '$a|$b';
+  final alt = '$b|$a';
+  final corr = IaMemoryService.instance.poids.correlations;
+  if (corr.containsKey(key)) return corr[key];
+  if (corr.containsKey(alt)) return corr[alt];
+  return null;
+}

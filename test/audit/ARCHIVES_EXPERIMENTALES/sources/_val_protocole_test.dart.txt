@@ -1,0 +1,261 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  VALIDATEUR DE PROTOCOLE — OBLIGATOIRE AVANT TOUTE CAMPAGNE
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  Exigence du cadrage : « Avant chaque campagne, vérifie que les conditions
+//  expérimentales permettent effectivement de mesurer le mécanisme étudié. »
+//
+//  Ce fichier ne mesure AUCUNE trajectoire d'apprentissage. Il répond à une
+//  seule question : le protocole est-il capable de mesurer ce que je veux
+//  mesurer ? Il est exécuté AVANT la campagne et ses verdicts sont consignés.
+//
+//  Les cinq conditions vérifiées :
+//   V1. La somme des poids effectifs vaut 1,0 à chaque cycle (invariant de la
+//       projection). Une somme à 0,28 est la signature d'un protocole cassé.
+//   V2. Les discriminations sont EFFECTIVEMENT calculées, et leur SIGNE sur le
+//       critère piloté est celui attendu (négatif en phase anti, positif en
+//       phase pro). Sinon le gradient ne pousse pas dans le sens voulu.
+//   V3. Le critère piloté n'est pas involontairement GELÉ (le gel annulerait
+//       son gradient avant tout examen du signe — mesuré en X1/X2).
+//   V4. Aucune paire de corrélations n'est saturée à r = 1,0 en masse, ce qui
+//       signalerait des critères clones et non des données réalistes.
+//   V5. Les poids VARIENT réellement d'un cycle à l'autre (si tout est figé,
+//       il n'y a rien à mesurer).
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+String d9(double v) => v.toStringAsFixed(9);
+
+/// Résultat d'une validation : les cinq conditions et les preuves chiffrées.
+class Verdict {
+  Verdict({
+    required this.sommeParCycle,
+    required this.discriminations,
+    required this.geles,
+    required this.pairesSaturees,
+    required this.pairesTotal,
+    required this.variations,
+    required this.derniereFenetre,
+    required this.dernierLr,
+  });
+
+  final List<double> sommeParCycle;
+  final Map<String, List<double>> discriminations;
+  final List<Set<String>> geles;
+  final int pairesSaturees;
+  final int pairesTotal;
+  final List<double> variations;
+  final List<int> derniereFenetre;
+  final List<double> dernierLr;
+
+  bool get v1Somme => sommeParCycle.every((s) => (s - 1.0).abs() < 1e-6);
+  bool get v2Discriminations =>
+      discriminations.values.every((l) => l.isNotEmpty);
+  bool get v3PiloteNonGele => geles.every((g) => !g.contains(_pilote));
+  String _pilote = '';
+  bool get v4NonSature => pairesTotal == 0 || pairesSaturees < pairesTotal;
+  bool get v5Variation => variations.any((v) => v > 1e-9);
+
+  void fixerPilote(String p) => _pilote = p;
+
+  String get resume => 'V1 somme=${v1Somme ? "OK" : "ÉCHEC"} · '
+      'V2 discriminations=${v2Discriminations ? "OK" : "ÉCHEC"} · '
+      'V3 pilote non gelé=${v3PiloteNonGele ? "OK" : "ÉCHEC"} · '
+      'V4 non saturé=${v4NonSature ? "OK" : "ÉCHEC"} '
+      '($pairesSaturees/$pairesTotal paires à r=1,0) · '
+      'V5 variation=${v5Variation ? "OK" : "ÉCHEC"}';
+
+  bool get valide => v1Somme && v2Discriminations && v4NonSature && v5Variation;
+}
+
+/// Déroule [cycles] cycles en collectant les preuves de validité.
+Future<Verdict> valider({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  required String pilote,
+  Map<String, double>? depart,
+  int historique = 60,
+  void Function(int cycle, Map<String, double> poids)? observateur,
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+
+  final sommes = <double>[];
+  final discrims = <String, List<double>>{for (final k in kCles) k: <double>[]};
+  final geles = <Set<String>>[];
+  final variations = <double>[];
+  final fenetres = <int>[];
+  final lrs = <double>[];
+  var precedent = poidsEffectifs();
+
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    sommes.add(sommeCle(p, kCles));
+    for (final k in kCles) {
+      discrims[k]!.add(IaExperimentation.dernieresDiscriminations[k] ?? 0.0);
+    }
+    geles.add(Set<String>.from(IaExperimentation.derniersGeles));
+    final (e, _, _) = ecart(precedent, p, seuil: 1e-12);
+    variations.add(e);
+    fenetres.add(IaExperimentation.derniereFenetre);
+    lrs.add(IaExperimentation.dernierLr);
+    precedent = p;
+    observateur?.call(i, p);
+  }
+
+  final paires = correlationsMemorisees();
+  final saturees = paires.values.where((r) => (r - 1.0).abs() < 1e-9).length;
+
+  final v = Verdict(
+    sommeParCycle: sommes,
+    discriminations: discrims,
+    geles: geles,
+    pairesSaturees: saturees,
+    pairesTotal: paires.length,
+    variations: variations,
+    derniereFenetre: fenetres,
+    dernierLr: lrs,
+  );
+  v.fixerPilote(pilote);
+  return v;
+}
+
+void imprimerVerdict(String prefixe, Verdict v) {
+  // ignore: avoid_print
+  print('[$prefixe] ── VALIDATION DU PROTOCOLE ──');
+  // ignore: avoid_print
+  print('[$prefixe] ${v.resume}');
+  // ignore: avoid_print
+  print('[$prefixe] Σ poids : min=${d9(v.sommeParCycle.reduce((a, b) => a < b ? a : b))} '
+      'max=${d9(v.sommeParCycle.reduce((a, b) => a > b ? a : b))} '
+      '| attendu 1,000000000');
+  // ignore: avoid_print
+  print('[$prefixe] fenêtre gradient : ${v.derniereFenetre.toSet()} '
+      '| lr : ${v.dernierLr.map((l) => l.toStringAsFixed(6)).toSet()}');
+  // ignore: avoid_print
+  print('[$prefixe] variation max par cycle : '
+      '${d9(v.variations.reduce((a, b) => a > b ? a : b))}');
+  // ignore: avoid_print
+  print('[$prefixe] critères gelés (dernier cycle) : '
+      '${v.geles.isEmpty ? "?" : v.geles.last}');
+  // ignore: avoid_print
+  print('[$prefixe] VERDICT : ${v.valide ? "PROTOCOLE VALIDE" : "PROTOCOLE INVALIDE"}');
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  VAL-1 — REPRODUIT-ON L'EFFONDREMENT DE D1 v2 ?
+  //  On rejoue EXACTEMENT le protocole D1 v2 sur 6 cycles seulement, avec
+  //  observation cycle par cycle. Si Σ ≠ 1 dès le cycle 1, le protocole est
+  //  cassé et le résultat de D1 v2 est nul.
+  // ═══════════════════════════════════════════════════════════════════════
+  test('VAL-1 — D1 v2 : Σ des poids cycle par cycle', () async {
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[VAL-1] ═══ REPRODUCTION DU PROTOCOLE D1 v2 SUR 6 CYCLES ═══');
+    final v = await valider(
+      cycles: 6,
+      pilote: 'distSpec',
+      notes: (n, c) => d1v2Notes(n, c, 'distSpec'),
+      observateur: (i, p) {
+        // ignore: avoid_print
+        print('[VAL-1] cycle $i | Σ=${d9(sommeCle(p, kCles))} | '
+            'forme=${d9(p["forme"]!)} | distSpec=${d9(p["distSpec"]!)}');
+      },
+    );
+    imprimerVerdict('VAL-1', v);
+  }, timeout: const Timeout(Duration(minutes: 10)));
+}
+
+/// Copie conforme du générateur de notes de D1 v2, pour reproduire son
+/// comportement sans dépendre du fichier de campagne.
+ScoresCriteres d1v2Notes(int numero, int cycle, String cible) {
+  final bruit = <int, double>{};
+  for (var i = 0; i < kCles.length; i++) {
+    bruit[i] = (96.0 - numero * 6) +
+        _pseudoAleatoire(numero, cycle, i) * 60.0;
+  }
+  double v(int idx, String nom) {
+    if (nom != cible) return bruit[idx]!.clamp(0.0, 100.0);
+    return (cycle < 60
+            ? (20.0 + numero * 14.0)
+            : (100.0 - numero * 30.0))
+        .clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+/// Bruit déterministe sans `dart:math` : (a·φ mod 1) − 0,5, dans [−0,5, 0,5].
+double _pseudoAleatoire(int numero, int cycle, int critere) {
+  // DÉFAUT N°15 (campagne V0, mesuré) : l'ancien générateur
+  //   (numero*7919 + cycle*104729 + critere*1299709) * 0.6180339887, modulo 1
+  // est une projection LINÉAIRE : deux critères produisent, à une translation
+  // près, le MÊME bruit. Mesuré : |r| max 0,9405, 131/171 paires >= 0,30,
+  // 49/171 >= 0,65. Remplacé par lowbias32 : |r| max 0,0897, 0/171 >= 0,30.
+  var h = (numero * 0x9E3779B1) ^ (cycle * 0x85EBCA77) ^ (critere * 0xC2B2AE3D);
+  h &= 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = h ^ (h >> 16);
+  h &= 0xFFFFFFFF;
+  return (h / 4294967296.0 - 0.5);
+}

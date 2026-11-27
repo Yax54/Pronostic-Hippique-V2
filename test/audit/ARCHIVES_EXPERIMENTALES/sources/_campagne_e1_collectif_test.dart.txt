@@ -1,0 +1,237 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE E1 — CONTRAINTE COLLECTIVE : 40 % → 18 % → 40 % → INVERSION
+//  ESPACE ISOLÉ /home/user/exp — Phase 4.6 du cadrage
+//  RÉEXÉCUTION : la version initiale, écrite sur le harnais v2, n'a jamais été
+//  lancée ; elle est réécrite sur le harnais v3 (défauts n°15 et n°16 mesurés).
+//
+//  CE QUI EST MESURÉ, ET CE QUI NE L'EST PAS
+//  ────────────────────────────────────────
+//  La contrainte collective de production est portée par la projection :
+//  `projeter` (ia_memory_models:1011) traite la part du groupe enrichi `part`
+//  et la borne à `[0,18 ; 0,40]` avant de répartir le budget par `_remplirGroupe`
+//  (l.897). Ce fichier mesure trois choses distinctes :
+//
+//    (1) LA TRAJECTOIRE DE LA PART ENRICHIE sous l'effet de l'apprentissage,
+//        dans les deux sens, puis une INVERSION de tendance.
+//    (2) LA REDISTRIBUTION INTERNE : à l'intérieur d'un groupe dont le budget
+//        est contraint, les critères se départagent-ils encore ? On le mesure
+//        par l'écart-type des 12 poids enrichis et par l'amplitude
+//        (max − min). Si l'écart-type s'effondre, la projection écrase la
+//        différenciation interne — c'est exactement le défaut T3 déjà observé
+//        en Phase 3bis (les 12 enrichis aplatis à 0,015000000 chacun).
+//    (3) LA CONFORMITÉ : à chaque cycle, Σ = 1 et part ∈ [0,18 ; 0,40].
+//        Une seule violation invalide la campagne.
+//
+//  PROTOCOLE — trois phases de 400 cycles (1 200 au total)
+//  ─────────────────────────────────────────────────────
+//   Phase 1 (0-399)   : les 7 BASES sont UTILES (pente +12), les 12 ENRICHIS
+//                       sont NUISIBLES (pente −12). La part enrichie doit
+//                       descendre vers 0,18.
+//   Phase 2 (400-799) : on INVERSE — les 12 ENRICHIS utiles, les 7 bases
+//                       nuisibles. La part doit remonter vers 0,40.
+//   Phase 3 (800-1199): on RÉTABLIT la phase 1. La part doit REDESCENDRE :
+//                       c'est le test de l'INVERSION DE TENDANCE, qui interdit
+//                       d'attribuer la remontée de la phase 2 à une dérive
+//                       monotone ou à un artefact.
+//
+//  CONDITIONS D'ARRÊT DOCUMENTÉES
+//  ──────────────────────────────
+//   • 400 cycles par phase : la porte v2 a mesuré, sur UN SEUL critère, un
+//     déplacement de 0,005 à 0,1795 en 180 cycles. Déplacer la part d'un
+//     GROUPE de 12 critères de 0,18 à 0,40 est une opération d'une autre
+//     ampleur ; on triple donc la durée observée, avec une marge.
+//   • Aucune phase n'est interrompue en cours : si la borne n'est pas atteinte
+//     en 400 cycles, c'est un RÉSULTAT (borne non atteinte dans le budget de
+//     cycles), consigné comme tel.
+//   • Le dispositif mesure l'accessibilité PAR L'APPRENTISSAGE. Il ne prouve
+//     pas que 0,18 et 0,40 soient atteignables par simple choix de données :
+//     il mesure ce que le moteur fait réellement.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kPhase = 400;
+const int kTotal = 3 * kPhase;
+
+/// Écart-type des 12 poids enrichis : mesure de la REDISTRIBUTION INTERNE.
+double ecartTypeEnrichis(Map<String, double> m) {
+  final v = <double>[for (final k in kEnrichis) m[k] ?? 0.0];
+  final moy = v.reduce((a, b) => a + b) / v.length;
+  final var2 = v.map((x) => (x - moy) * (x - moy)).reduce((a, b) => a + b) /
+      v.length;
+  return math.sqrt(var2);
+}
+
+double amplitudeEnrichis(Map<String, double> m) {
+  final v = <double>[for (final k in kEnrichis) m[k] ?? 0.0];
+  return v.reduce((a, b) => a > b ? a : b) - v.reduce((a, b) => a < b ? a : b);
+}
+
+/// Notes du scénario E1 : le groupe pilote est utile, l'autre nuisible.
+ScoresCriteres notesE1(int numero, int cycle) {
+  // Phase 1 et 3 : les bases dominent. Phase 2 : les enrichis dominent.
+  final basesUtiles = cycle < kPhase || cycle >= 2 * kPhase;
+  // Un seul « pilote » par groupe suffirait à porter la discrimination ; on
+  // applique la pente à TOUT le groupe pour que la contrainte collective soit
+  // réellement sollicitée par les 7 ou les 12 critères simultanément.
+  double v(int idx, String nom) {
+    final estBase = kBase.contains(nom);
+    final utile = (estBase && basesUtiles) || (!estBase && !basesUtiles);
+    // utile ⇒ pente +12 (les bons chevaux ont les meilleures notes)
+    // nuisible ⇒ pente −12
+    final pente = utile ? 12.0 : -12.0;
+    final base = (55.0 + pente * (3.0 - numero)).clamp(0.0, 100.0);
+    // Bruit propre pour éviter que les critères d'un même groupe soient des
+    // clones exacts (V0ter : |r| max 0,088187 avec des permutations propres ;
+    // ici la pente est commune, donc on ajoute un bruit individuel pour que
+    // les critères d'un groupe restent DISTINCTS les uns des autres).
+    return (base + bruit3(numero, cycle, idx, amp: 8.0, sel: 3)).clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('E1 — part enrichie 40 % → 18 % → 40 % → inversion', () async {
+    IaExperimentation.reinitialiser();
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kTotal; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle3(i, nbCycles: kTotal),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesE1(n, i),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce3(j, kTotal),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesE1(n, j),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    final parts = <double>[];
+    final ets = <double>[];
+    final amps = <double>[];
+    var hors = 0;
+
+    for (var i = 0; i < kTotal; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final p = poidsEffectifs();
+      final sigma = sommeCle(p, kCles);
+      final part = partEnrichie3(p);
+      if ((sigma - 1.0).abs() > 1e-6) hors++;
+      if (part < 0.18 - 1e-9 || part > 0.40 + 1e-9) hors++;
+      parts.add(part);
+      ets.add(ecartTypeEnrichis(p));
+      amps.add(amplitudeEnrichis(p));
+    }
+
+    double minDe(int a, int b) => parts.sublist(a, b).reduce((x, y) => x < y ? x : y);
+    double maxDe(int a, int b) => parts.sublist(a, b).reduce((x, y) => x > y ? x : y);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[E1] ═══ PART ENRICHIE · $kTotal CYCLES · PHASES DE $kPhase ═══');
+    // ignore: avoid_print
+    print('[E1] départ (après 1re projection) : ${d9(parts.first)}');
+    // ignore: avoid_print
+    print('[E1] PHASE 1 (bases utiles, enrichis nuisibles) : '
+        'min=${d9(minDe(0, kPhase))} max=${d9(maxDe(0, kPhase))} '
+        'fin=${d9(parts[kPhase - 1])}');
+    // ignore: avoid_print
+    print('[E1] PHASE 2 (enrichis utiles, bases nuisibles) : '
+        'min=${d9(minDe(kPhase, 2 * kPhase))} '
+        'max=${d9(maxDe(kPhase, 2 * kPhase))} '
+        'fin=${d9(parts[2 * kPhase - 1])}');
+    // ignore: avoid_print
+    print('[E1] PHASE 3 (retour phase 1)                  : '
+        'min=${d9(minDe(2 * kPhase, kTotal))} '
+        'max=${d9(maxDe(2 * kPhase, kTotal))} '
+        'fin=${d9(parts[kTotal - 1])}');
+
+    final descente = parts[0] - minDe(0, kPhase);
+    final montee = maxDe(kPhase, 2 * kPhase) - minDe(kPhase, 2 * kPhase);
+    final inversion = parts[2 * kPhase - 1] - parts[kTotal - 1];
+
+    // ignore: avoid_print
+    print('[E1] ⇒ (a) descente 40 % → 18 % : ${d9(descente)} '
+        '${parts[kPhase - 1] <= 0.18 + 1e-9 ? "[BORNE 0,18 ATTEINTE]" : "[borne non atteinte]"}');
+    // ignore: avoid_print
+    print('[E1] ⇒ (b) remontée 18 % → 40 % : ${d9(montee)} '
+        '${parts[2 * kPhase - 1] >= 0.40 - 1e-9 ? "[BORNE 0,40 ATTEINTE]" : "[borne non atteinte]"}');
+    // ignore: avoid_print
+    print('[E1] ⇒ (c) inversion de tendance (phase 3) : ${d9(inversion)} '
+        '${inversion > 1e-6 ? "[INVERSION OBSERVÉE]" : "[inversion NON observée]"}');
+
+    // ── Redistribution interne ────────────────────────────────────────────
+    final etMin = ets.reduce((x, y) => x < y ? x : y);
+    final etMax = ets.reduce((x, y) => x > y ? x : y);
+    final ampMin = amps.reduce((x, y) => x < y ? x : y);
+    final ampMax = amps.reduce((x, y) => x > y ? x : y);
+    // ignore: avoid_print
+    print('[E1] ⇒ (d) redistribution interne des 12 enrichis : '
+        'écart-type min=${d9(etMin)} max=${d9(etMax)} · '
+        'amplitude min=${d9(ampMin)} max=${d9(ampMax)}');
+    // ignore: avoid_print
+    print('[E1]     (un écart-type qui tend vers 0 signifie que la projection '
+        'écrase la différenciation interne — défaut T3)');
+    final aplati = ets.where((e) => e < 1e-4).length;
+    // ignore: avoid_print
+    print('[E1]     cycles à écart-type < 1e-4 : $aplati/$kTotal');
+
+    // ignore: avoid_print
+    print('[E1] ⇒ (e) conformité : violations (Σ ou part hors bornes) = $hors');
+    expect(hors, 0,
+        reason: 'Aucune violation de Σ = 1 ni de la part [0,18 ; 0,40] n est '
+            'tolérée : la campagne serait invalide.');
+  }, timeout: const Timeout(Duration(minutes: 300)));
+}

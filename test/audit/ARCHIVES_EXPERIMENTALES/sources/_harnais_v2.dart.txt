@@ -1,0 +1,222 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HARNAIS v2 — SEMIS CHRONOLOGIQUE À DATES STRICTEMENT DISTINCTES
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  DEUX DÉFAUTS CORRIGÉS ICI (n°12 et n°13) :
+//
+//  N°12 — ORDRE. La production maintient `_pronostics.insert(0, …)`
+//  (ia_memory_service:3097) : index 0 = le plus RÉCENT, et la fenêtre du
+//  gradient est `fenetreBrute.take(50)` (l.3972). Le fichier chargé par
+//  `_load()` (l.2413-2434) doit donc être écrit « plus récent d'abord ».
+//  → `ordreProduction()` (dans test/support) trie par date décroissante, et
+//    `semer` porte désormais une GARDE qui échoue si l'invariant est violé.
+//
+//  N°13 — DATES EX ÆQUO. Le harnais précédent datait les cycles
+//  `J - (1 + i % 20)` : les cycles 0, 20, 40… partageaient la MÊME date. Un tri
+//  par date ne peut alors pas rétablir l'ordre des cycles, et la fenêtre
+//  glissante n'a aucun sens. De plus, `take(50)` sélectionnait un mélange
+//  arbitraire au lieu des 50 cycles les plus récents.
+//  → les cycles sont désormais datés à la MINUTE, STRICTEMENT CROISSANTS avec
+//    l'ordre d'apprentissage (voir le défaut n°14 ci-dessous, qui a imposé de
+//    corriger le sens). `age` est calculé en JOURS (l.3966) et vaut 0 pour tous
+//    les cycles ⇒ ils restent tous dans la fenêtre de 45 jours (l.3967) quelle
+//    que soit leur nombre. Pour 400 cycles : 5 x 400 = 2000 minutes ≈ 1,4 jour.
+//    Aucun élargissement à 90 jours n'est déclenché : on mesure bien le régime
+//    de production.
+//
+//  N°15 — GÉNÉRATEUR DE BRUIT DÉGÉNÉRÉ. C'est le défaut le plus grave trouvé
+//  dans ce chantier : il a rendu FAUSSES toutes les mesures de corrélation et
+//  de gel des campagnes qui l'utilisaient.
+//  Le générateur d'origine était une projection linéaire modulo 1 :
+//      x = (numero*7919 + cycle*104729 + critere*1299709) * 0.6180339887
+//      bruit = (frac(x) - 0.5) * 2 * amp
+//  Pour deux critères, l'écart est une CONSTANTE modulo 1 : les « bruits »
+//  sont, à une translation près, IDENTIQUES. Mesuré en Dart avec le Pearson de
+//  production (campagne V0) : |r| max = 0,940533, 131/171 paires ≥ 0,30 et
+//  49/171 ≥ 0,65. La campagne D5 a produit 17 435 messages de gel sur ces
+//  données : ce n'était pas un comportement du moteur, c'était ce défaut.
+//  → remplacé par un mélangeur entier 32 bits (lowbias32) : mesuré |r| max =
+//    0,089732, 0/171 paires ≥ 0,30. Voir `campagne_v0_validation_generateurs`.
+//
+//  ⚠️ La même famille de générateur modulo-1 existe dans d'autres harnais sous
+//  la forme `(i*7919 + n*104729 + sel*15485863) % 1000003` (campagnes B, B3,
+//  G3). Mesuré : |r| max 0,843761, 137/171 paires ≥ 0,30, 32/171 ≥ 0,65. Leurs
+//  résultats de gel sont donc à instruire séparément.
+//
+//  L'atelier partagé n'est PAS modifié : ce fichier n'ajoute que des
+//  utilitaires de protocole, il ne touche à aucun mécanisme.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+/// Date du cycle [i] : STRICTEMENT CROISSANTE avec l'ordre d'apprentissage.
+///
+/// ⚠️ DÉFAUT N°14, MESURÉ PAR LA PORTE v2 (240 cycles, `EXITCODE=1`) :
+/// une première version posait `dateCycle(i) = maintenant − 5 × (i + 1)`, donc
+/// le cycle 0 était le plus RÉCENT. Après exécution du cycle 120, les entrées
+/// résolues restaient C0…C120 et `take(50)` sélectionnait **C0…C49, tous en
+/// phase 1**. La discrimination restait figée à −0.047332008 pendant 240
+/// cycles : le harnais ne mesurait toujours pas le mécanisme.
+///
+/// CORRECTION : l'apprentissage avance dans le TEMPS, donc la date doit
+/// avancer avec l'indice. `dateCycle(i) = maintenant − (n − i) × 5 min` où
+/// `n` est le nombre total de cycles : le cycle 0 est le plus ancien, le cycle
+/// n−1 est le plus récent (≈ maintenant). Après exécution du cycle i, `take(50)`
+/// sélectionne **Ci … C(i−49)** : une vraie fenêtre glissante.
+///
+/// `age` (l.3966) vaut au plus (400 × 5) minutes ≈ 1,4 jour pour 400 cycles :
+/// tous restent dans la fenêtre de 45 jours et aucun élargissement à 90 jours
+/// n'est déclenché. Pour 2 000 cycles : 5 × 2000 = 10 000 min ≈ 6,9 jours,
+/// toujours < 45.
+DateTime dateCycle(int i, {int nbCycles = 400}) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles - i)));
+
+/// Date d'une course d'amorçage [j] : plus ancienne que le cycle 0.
+DateTime dateAmorce(int j, int nbCycles) =>
+    DateTime.now().subtract(Duration(minutes: 5 * (nbCycles + j + 1)));
+
+/// Sème puis déroule [cycles] cycles réels.
+///
+/// [notes] reçoit (numéro de cheval, index de cycle). Les cours d'amorçage
+/// reçoivent l'index 0 : elles apportent de la matière au gradient mais ne
+/// pilotent jamais la trajectoire.
+///
+/// Renvoie la trace des 19 poids effectifs, un point par cycle.
+Future<List<Map<String, double>>> deroulerV2({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  Map<String, double>? depart,
+  int historique = 60,
+  List<int> arrivee = const <int>[1, 2, 3, 4, 5],
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle(i, nbCycles: cycles),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+        arrivee: arrivee,
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce(j, cycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+        arrivee: arrivee,
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: arrivee,
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+/// Bruit déterministe dans [−amp, +amp], SANS corrélation croisée parasite.
+///
+/// ⚠️ DÉFAUT N°15 — CE QUI ÉTAIT ÉCRIT AVANT, ET POURQUOI C'ÉTAIT FAUX.
+///    L'ancienne version était :
+///        `final x = (numero*7919 + cycle*104729 + critere*1299709) * 0.618…;`
+///        `return ((x - x.floorToDouble()) - 0.5) * 2 * amp;`
+///    C'est une projection linéaire modulo 1. Pour deux critères k et k', la
+///    différence des deux suites vaut `(k−k')*1299709*0.618… mod 1`, soit une
+///    CONSTANTE : les deux « bruits » sont identiques à une translation près,
+///    et le Pearson entre eux vaut 1 en théorie, 0,9405 mesuré sur 240×5.
+///    Le commentaire d'alors affirmait pourtant « bruit INDÉPENDANT par
+///    critère : aucun clone, aucune corrélation artificielle ». C'était un
+///    FAUX POSITIF de ma part, qui a contaminé la campagne D5 (17 435 gels).
+///
+/// ⚠️ CE QUI EST ÉCRIT MAINTENANT : un mélangeur d'entiers (lowbias32).
+///    L'entrée est un XOR de trois multiples impairs distincts mélangé par
+///    deux multiplications et deux décalages XOR. Chaque bit de l'entrée
+///    influence tous les bits de sortie, donc deux critères quelconques
+///    produisent deux suites décorrélées. Mesuré (campagne V0, Pearson de
+///    production) : |r| max = 0,089732, 0/171 paires ≥ 0,30, moyenne −0,000020,
+///    écart-type 0,283771 pour une amplitude unitaire (théorique 0,288675).
+///
+///    Aucun `dart:math`, aucun `Random` : la reproductibilité est totale et ne
+///    dépend ni de la version du SDK ni de l'ordre d'appel.
+double bruit(int numero, int cycle, int critere, {double amp = 12.0}) {
+  // Mélangeur 32 bits : entrée = XOR de trois multiples impairs.
+  var h = (numero * 0x9E3779B1) ^ (cycle * 0x85EBCA77) ^ (critere * 0xC2B2AE3D);
+  h &= 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = h ^ (h >> 16);
+  h &= 0xFFFFFFFF;
+  final u = h / 4294967296.0; // uniforme sur [0, 1)
+  return (u - 0.5) * 2 * amp;
+}
+
+/// Notes à bruit INDÉPENDANT par critère (évite les clones, défaut n°3/9/10).
+ScoresCriteres notesIndependantes(
+  int numero,
+  int cycle, {
+  String? cible,
+  double? valeurCible,
+  double amp = 12.0,
+}) {
+  double v(int idx, String nom) {
+    if (nom == cible && valeurCible != null) {
+      return valeurCible.clamp(0.0, 100.0);
+    }
+    return (78.0 - numero * 5 + bruit(numero, cycle, idx, amp: amp))
+        .clamp(5.0, 95.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+double partEnrichieDe(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  final t = b + e;
+  return t == 0 ? 0 : e / t;
+}
+
+String d9(double v) => v.toStringAsFixed(9);

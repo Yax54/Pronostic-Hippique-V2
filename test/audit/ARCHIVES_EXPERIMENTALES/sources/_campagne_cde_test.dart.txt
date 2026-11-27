@@ -1,0 +1,396 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE C — MOMENTUM · CAMPAGNE D — BORNES · CAMPAGNE E — COLLECTIF
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  C. MOMENTUM (Phase 4.3) — construction, application, inversion de signal,
+//     interaction avec les coefficients.
+//  D. BORNES INDIVIDUELLES (Phase 4.5) — pour les 19 critères : atteindre le
+//     plancher, le QUITTER, atteindre le plafond, le QUITTER, inverser sa
+//     trajectoire. L'accessibilité MATHÉMATIQUE ne prouve rien : il faut
+//     l'accessibilité par l'APPRENTISSAGE RÉEL.
+//  E. CONTRAINTES COLLECTIVES (Phase 4.6) — la part enrichie peut-elle
+//     descendre à 18 % puis remonter à 40 % ?
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+/// Notes dirigées : les critères de [forts] ont une pente [pente], les autres 6.
+ScoresCriteres notesCiblees(
+    int numero, Set<String> forts, double pente) {
+  double v(String c) => forts.contains(c)
+      ? (100.0 - numero * pente).clamp(0.0, 100.0)
+      : 96.0 - numero * 6;
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'), cote: v('cote'),
+    constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}
+
+/// Déroule [cycles] cycles ; [notes] reçoit (numéro, index de cycle).
+Future<List<Map<String, double>>> derouler({
+  required int cycles,
+  required ScoresCriteres Function(int numero, int cycle) notes,
+  Map<String, double>? depart,
+  int historique = 60,
+}) async {
+  final d = depart ?? kInitial;
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+        },
+      ),
+    for (var j = 0; j < historique; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: d,
+    sigmaAttendue: sommeCle(d, kCles),
+  );
+  final trace = <Map<String, double>>[];
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    trace.add(poidsEffectifs());
+  }
+  return trace;
+}
+
+double partEnrichie(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  return (b + e) == 0 ? 0 : e / (b + e);
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  C1 — LE MOMENTUM : accélère-t-il, et de combien ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('C1 — momentum 0,3 (production) contre 0,0 (sans mémoire)', () async {
+    const cycles = 40;
+    ScoresCriteres notes(int n, int c) => notesCiblees(n, {'distSpec'}, 25.0);
+
+    IaExperimentation.reinitialiser();
+    final avec = await derouler(cycles: cycles, notes: notes);
+
+    IaExperimentation.reinitialiser();
+    IaExperimentation.momentumFactor = 0.0;
+    final sans = await derouler(cycles: cycles, notes: notes);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[C1] ═══ MOMENTUM 0,3 CONTRE 0,0 ($cycles cycles) ═══');
+    // ignore: avoid_print
+    print('[C1] critère    | momentum 0,3 | momentum 0,0 | delta');
+    for (final k in ['distSpec', 'forme', 'repos']) {
+      // ignore: avoid_print
+      print('[C1] ${k.padRight(12)} | ${_e(avec.last[k]!)} | '
+          '${_e(sans.last[k]!)} | ${_e(avec.last[k]! - sans.last[k]!)}');
+    }
+    final (em, pm, bm) = ecart(avec.last, sans.last, seuil: 1e-12);
+    // ignore: avoid_print
+    print('[C1] écart max = ${_e(em)} (pire : $pm · $bm/19)');
+
+    expect(bm, greaterThan(0),
+        reason: 'Si le momentum n avait aucun effet, le paramètre serait '
+            'inerte — ce serait un fait à constater, pas à supposer.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  C2 — INVERSION DE SIGNAL : le momentum retarde-t-il le retournement ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('C2 — inversion du signal : coût du momentum', () async {
+    // 25 cycles : `distSpec` très discriminant. Puis 25 cycles : `distSpec`
+    // devient ANTI-discriminant (pente inversée) — le signal change de signe.
+    const cycles = 50;
+    ScoresCriteres notes(int n, int c) {
+      if (c < 25) return notesCiblees(n, {'distSpec'}, 25.0);
+      // notes croissantes avec le rang : les mauvais chevaux ont les meilleures
+      // notes sur distSpec ⇒ contribution négative à la discrimination.
+      final base = notesCiblees(n, <String>{}, 0.0);
+      return ScoresCriteres(
+        forme: base.forme, gains: base.gains, record: base.record,
+        cote: base.cote, constance: base.constance, victoires: base.victoires,
+        discipline: base.discipline,
+        distSpec: (20.0 + n * 14.0).clamp(0.0, 100.0),
+        jockey: base.jockey, repos: base.repos, hippo: base.hippo,
+        entraineur: base.entraineur, elo: base.elo, terrain: base.terrain,
+        divergence: base.divergence, poidsRel: base.poidsRel,
+        progression: base.progression, mouvCote: base.mouvCote,
+        placeDepart: base.placeDepart,
+      );
+    }
+
+    IaExperimentation.reinitialiser();
+    final avec = await derouler(cycles: cycles, notes: notes);
+    IaExperimentation.reinitialiser();
+    IaExperimentation.momentumFactor = 0.0;
+    final sans = await derouler(cycles: cycles, notes: notes);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[C2] ═══ INVERSION DU SIGNAL (cycle 25) : distSpec ═══');
+    // ignore: avoid_print
+    print('[C2] cycle | mom 0,3     | mom 0,0');
+    for (final i in [24, 26, 28, 30, 34, 38, 44, 49]) {
+      // ignore: avoid_print
+      print('[C2] ${i.toString().padLeft(5)} | '
+          '${_e(avec[i]['distSpec']!)} | ${_e(sans[i]['distSpec']!)}');
+    }
+    final sommetAvec = avec.sublist(0, 25)
+        .map((m) => m['distSpec']!)
+        .reduce((a, b) => a > b ? a : b);
+    final sommetSans = sans.sublist(0, 25)
+        .map((m) => m['distSpec']!)
+        .reduce((a, b) => a > b ? a : b);
+    // ignore: avoid_print
+    print('[C2] sommet phase 1 : mom 0,3 = ${_e(sommetAvec)} · '
+        'mom 0,0 = ${_e(sommetSans)}');
+    // ignore: avoid_print
+    print('[C2] retournement : le momentum retarde-t-il la descente ? '
+        'Comparer les deux colonnes après le cycle 25.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  D1 — LES 19 CRITÈRES PEUVENT-ILS ATTEINDRE ET QUITTER LEUR PLANCHER ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('D1 — atteindre puis quitter le plancher (19 critères)', () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    // Phase 1 : le critère est ANTI-discriminant ⇒ il pousse vers le plancher.
+    // Phase 2 : il devient LE PLUS discriminant ⇒ il doit REMONTER.
+    const cycles = 120;
+    ScoresCriteres notes(int n, int c, String cible) {
+      if (c < 60) {
+        final base = notesCiblees(n, <String>{}, 0.0);
+        // contribution négative : notes croissantes avec le rang
+        double v(String k) => k == cible
+            ? (20.0 + n * 14.0).clamp(0.0, 100.0)
+            : 96.0 - n * 6;
+        return ScoresCriteres(
+          forme: v('forme'), gains: v('gains'), record: v('record'),
+          cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+          discipline: v('discipline'), distSpec: v('distSpec'),
+          jockey: v('jockey'), repos: v('repos'), hippo: v('hippo'),
+          entraineur: v('entraineur'), elo: v('elo'), terrain: v('terrain'),
+          divergence: v('divergence'), poidsRel: v('poidsRel'),
+          progression: v('progression'), mouvCote: v('mouvCote'),
+          placeDepart: v('placeDepart'),
+        );
+      }
+      return notesCiblees(n, {cible}, 30.0);
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D1] ═══ ATTEINDRE PUIS QUITTER LE PLANCHER ═══');
+    // ignore: avoid_print
+    print('[D1] critère      | plancher | bas atteint | fin phase 1 | fin phase 2 | remontée ?');
+    var remontes = 0;
+    var auPlancher = 0;
+
+    for (final k in kCles) {
+      IaExperimentation.reinitialiser();
+      final tr = await derouler(
+        cycles: cycles,
+        notes: (n, c) => notes(n, c, k),
+      );
+      final lo = bornes[k]![0];
+      final bas = tr.sublist(0, 60).map((m) => m[k]!).reduce((a, b) => a < b ? a : b);
+      final f1 = tr[59][k]!;
+      final f2 = tr[119][k]!;
+      final atteint = (bas - lo).abs() < 1e-9;
+      final remonte = f2 > f1 + 1e-9;
+      if (atteint) auPlancher++;
+      if (remonte) remontes++;
+      // ignore: avoid_print
+      print('[D1] ${k.padRight(12)} | ${lo.toStringAsFixed(3)}    | '
+          '${_e(bas)}  | ${_e(f1)}  | ${_e(f2)}  | '
+          '${remonte ? "OUI (+${_e(f2 - f1)})" : "non"}${atteint ? "  [plancher ATTEINT]" : ""}');
+    }
+    // ignore: avoid_print
+    print('[D1] ⇒ planchers atteints : $auPlancher/19 · remontées : $remontes/19');
+
+    expect(remontes, greaterThan(0),
+        reason: 'Aucune remontée signifierait que le plancher est un puits '
+            'sans retour. Ce serait un défaut structurel majeur : il faut le '
+            'constater par la mesure, pas l inférer.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  D2 — ATTEINDRE ET QUITTER LE PLAFOND
+  // ═══════════════════════════════════════════════════════════════════════
+  test('D2 — atteindre puis quitter le plafond (19 critères)', () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    const cycles = 120;
+    // Phase 1 : critère très discriminant (pousse au plafond).
+    // Phase 2 : il devient anti-discriminant (doit redescendre).
+    ScoresCriteres notes(int n, int c, String cible) {
+      double v(String k) {
+        if (k != cible) return 96.0 - n * 6;
+        return c < 60
+            ? (100.0 - n * 30.0).clamp(0.0, 100.0)
+            : (20.0 + n * 14.0).clamp(0.0, 100.0);
+      }
+      return ScoresCriteres(
+        forme: v('forme'), gains: v('gains'), record: v('record'),
+        cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+        discipline: v('discipline'), distSpec: v('distSpec'),
+        jockey: v('jockey'), repos: v('repos'), hippo: v('hippo'),
+        entraineur: v('entraineur'), elo: v('elo'), terrain: v('terrain'),
+        divergence: v('divergence'), poidsRel: v('poidsRel'),
+        progression: v('progression'), mouvCote: v('mouvCote'),
+        placeDepart: v('placeDepart'),
+      );
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D2] ═══ ATTEINDRE PUIS QUITTER LE PLAFOND ═══');
+    // ignore: avoid_print
+    print('[D2] critère      | plafond | haut atteint | fin phase 1 | fin phase 2 | descente ?');
+    var descentes = 0;
+    var auPlafond = 0;
+    for (final k in kCles) {
+      IaExperimentation.reinitialiser();
+      final tr = await derouler(
+        cycles: cycles,
+        notes: (n, c) => notes(n, c, k),
+      );
+      final hi = bornes[k]![1];
+      final haut = tr.sublist(0, 60).map((m) => m[k]!).reduce((a, b) => a > b ? a : b);
+      final f1 = tr[59][k]!;
+      final f2 = tr[119][k]!;
+      final atteint = (haut - hi).abs() < 1e-6;
+      final descend = f2 < f1 - 1e-9;
+      if (atteint) auPlafond++;
+      if (descend) descentes++;
+      // ignore: avoid_print
+      print('[D2] ${k.padRight(12)} | ${hi.toStringAsFixed(2)}    | '
+          '${_e(haut)}  | ${_e(f1)}  | ${_e(f2)}  | '
+          '${descend ? "OUI (${_e(f2 - f1)})" : "non"}${atteint ? "  [plafond ATTEINT]" : ""}');
+    }
+    // ignore: avoid_print
+    print('[D2] ⇒ plafonds atteints : $auPlafond/19 · descentes : $descentes/19');
+
+    expect(descentes, greaterThan(0),
+        reason: 'Aucune descente depuis un plafond atteint serait un défaut '
+            'structurel : un critère resterait bloqué au maximum.');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  E1 — LA PART ENRICHIE PEUT-ELLE DESCENDRE À 18 % PUIS REMONTER À 40 % ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('E1 — part enrichie : descente puis remontée', () async {
+    const cycles = 140;
+    // Phase 1 (0-69)  : les 7 bases dominent, les 12 enrichis sont neutres
+    //                   ⇒ la part enrichie doit tendre vers son minimum 18 %.
+    // Phase 2 (70-139): les 12 enrichis dominent ⇒ elle doit remonter à 40 %.
+    ScoresCriteres notes(int n, int c) {
+      final phase1 = c < 70;
+      double v(String k) {
+        final estBase = kBase.contains(k);
+        if (phase1) {
+          return estBase ? (100.0 - n * 18.0).clamp(0.0, 100.0) : 50.0;
+        }
+        return estBase ? 50.0 : (100.0 - n * 18.0).clamp(0.0, 100.0);
+      }
+      return ScoresCriteres(
+        forme: v('forme'), gains: v('gains'), record: v('record'),
+        cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+        discipline: v('discipline'), distSpec: v('distSpec'),
+        jockey: v('jockey'), repos: v('repos'), hippo: v('hippo'),
+        entraineur: v('entraineur'), elo: v('elo'), terrain: v('terrain'),
+        divergence: v('divergence'), poidsRel: v('poidsRel'),
+        progression: v('progression'), mouvCote: v('mouvCote'),
+        placeDepart: v('placeDepart'),
+      );
+    }
+
+    IaExperimentation.reinitialiser();
+    final tr = await derouler(cycles: cycles, notes: notes);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[E1] ═══ PART ENRICHIE : DESCENTE PUIS REMONTÉE ═══');
+    // ignore: avoid_print
+    print('[E1] cycle | part enrichie');
+    for (final i in [0, 10, 20, 40, 60, 69, 75, 90, 110, 130, 139]) {
+      // ignore: avoid_print
+      print('[E1] ${i.toString().padLeft(5)} | '
+          '${partEnrichie(tr[i]).toStringAsFixed(9)}');
+    }
+    final minPart = tr.map(partEnrichie).reduce((a, b) => a < b ? a : b);
+    final maxPart = tr.map(partEnrichie).reduce((a, b) => a > b ? a : b);
+    final p1Fin = partEnrichie(tr[69]);
+    final p2Fin = partEnrichie(tr[139]);
+    // ignore: avoid_print
+    print('[E1] part minimale sur 140 cycles = ${minPart.toStringAsFixed(9)} '
+        '(plancher 0,18)');
+    // ignore: avoid_print
+    print('[E1] part maximale sur 140 cycles = ${maxPart.toStringAsFixed(9)} '
+        '(plafond 0,40)');
+    // ignore: avoid_print
+    print('[E1] fin phase 1 = ${p1Fin.toStringAsFixed(9)} · '
+        'fin phase 2 = ${p2Fin.toStringAsFixed(9)}');
+    // ignore: avoid_print
+    print('[E1] ⇒ la remontée 18 % → 40 % est-elle observée ? '
+        '${p2Fin > p1Fin + 1e-6}');
+
+    expect(minPart, greaterThanOrEqualTo(0.18 - 1e-9),
+        reason: 'La part ne peut pas descendre sous 0,18 : c est la contrainte.');
+    expect(maxPart, lessThanOrEqualTo(0.40 + 1e-9),
+        reason: 'La part ne peut pas dépasser 0,40 : c est la contrainte.');
+  });
+}

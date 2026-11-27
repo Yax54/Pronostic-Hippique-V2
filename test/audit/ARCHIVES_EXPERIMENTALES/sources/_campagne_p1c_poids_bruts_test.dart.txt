@@ -1,0 +1,560 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE P1-C — CONSÉQUENCES CONCRÈTES DES POIDS BRUTS AU 1er PRONOSTIC
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  RECTIFICATION À LAQUELLE CE FICHIER RÉPOND (mot pour mot) :
+//   • « Il reste à mesurer les conséquences concrètes de l'utilisation des
+//     poids bruts lors du premier pronostic, comparativement aux mêmes poids
+//     projetés avant toute forme d'apprentissage. »
+//   • « Compare les scores bruts, les scores normalisés, les classements, les
+//     recommandations et la première trajectoire d'apprentissage. »
+//   • « Ne modifie pas les 19 valeurs initiales de référence. »
+//
+//  CE QUE CE FICHIER FAIT — ET CE QU'IL NE FAIT PAS
+//  ────────────────────────────────────────────────
+//  ✅ Il appelle le POINT D'ENTRÉE DE PRODUCTION `IaPronosticEngine
+//     .genererPronostic(course, hippodrome)`. Ce point d'entrée lit
+//     `IaMemoryService.instance.poids` : il n'y a donc AUCUN paramètre
+//     d'override dans la mesure. Le SEUL élément qui change entre les deux
+//     passes est l'ÉTAT DE LA MÉMOIRE (brut Σ = 1,26 vs projeté Σ = 1,00) —
+//     c'est-à-dire exactement la différence étudiée.
+//  ✅ Il mesure, pour les deux états :
+//       – les scores BRUTS (recomposés Σ note×poids avec les notes publiées
+//         et les poids effectifs exposés par la production) ;
+//       – les scores NORMALISÉS publiés (`scoreIA`) ;
+//       – le CLASSEMENT complet + les paires inversées ;
+//       – les LABELS (`_determinerLabel`) et le CONSEIL de pari ;
+//       – le TOP5, la SÉLECTION et la CONFIANCE ;
+//       – la PREMIÈRE TRAJECTOIRE d'apprentissage (un cycle réel depuis
+//         chacun des deux états).
+//  ❌ Il ne touche NI aux 19 valeurs initiales, NI aux formules, NI au moteur.
+//     La table « projetée » est obtenue par `IaPoidsAdaptatifs.defaut().clamp()`
+//     — la FONCTION DE PROJECTION DE PRODUCTION, pas une réimplémentation.
+//
+//  LEVIER MESURÉ — CALCULÉ AVANT EXÉCUTION PUIS VÉRIFIÉ
+//  ────────────────────────────────────────────────────
+//  Base Σ = 0,710 · enrichis Σ = 0,550 · Σ = 1,260.
+//  La projection ramène Σ à 1,00 et la part enrichie de 0,436508 à 0,40.
+//  Avec les planchers de référence, AUCUN critère n'est écrêté :
+//    · groupe BASE    : λ_base = 0,600 / 0,710 = 0,845070422535
+//    · groupe ENRICHI : λ_enr  = 0,400 / 0,550 = 0,727272727273
+//  ⇒ les deux groupes ne sont PAS mis à l'échelle par le même facteur.
+//  Le rapport base/enrichi passe de 1,290909 à 1,500000 (+16,20 %).
+//  Deux conséquences distinctes, à ne pas confondre :
+//     (i)  ÉCHELLE : la somme pondérée est multipliée par ≈ 0,793651
+//          (1,00/1,26) — donc les scores BRUTS baissent, pas montent ;
+//     (ii) RÉPARTITION : le poids relatif des deux groupes change de 16,20 %,
+//          ce qui peut déplacer le CLASSEMENT.
+//  (i) déplace les SEUILS ABSOLUS (labels, conseil) ; (ii) peut déplacer
+//  l'ORDRE. Ce fichier mesure les deux séparément, et ne les confond pas.
+//
+//  GARDES EXÉCUTABLES (pas des commentaires)
+//  ─────────────────────────────────────────
+//   · Σ brute = 1,26 et Σ projetée = 1,00 à 1e-9 ;
+//   · part enrichie brute = 0,436507936508 ; projetée = 0,40 ;
+//   · AUCUNE des 19 valeurs brutes altérée par le semis (1e-12) ;
+//   · 8 partants scorés, tous finis ;
+//   · identité de recomposition validée : le score brut recomposé est ≥ au
+//     score publié (la normalisation min-max ne peut que l'élever).
+//
+//  PÉRIMÈTRE ET LIMITES ASSUMÉES
+//  ─────────────────────────────
+//   · Course SYNTHÉTIQUE mais construite dans les FORMATS D'ENTRÉE réels des
+//     parseurs (« 1a 1a 2a », « 1'11"8 », « NOM|%vic|%plc|nbC|%vic7j|nb7j »).
+//     Aucune formule de critère n'est réimplémentée : ce sont les getters de
+//     `ZtPartant` qui calculent.
+//   · UNE course ⇒ le classement mesuré porte sur 8 partants d'UNE épreuve.
+//     Le nombre de paires inversées est une mesure sur cette course, pas un
+//     taux extrapolable.
+//   · `EloService` est vide ⇒ le critère `elo` vaut 37,5 pour tous : il ne
+//     peut pas déplacer le classement, seulement le niveau. Même état dans
+//     les deux passes, donc la comparaison reste valide ; c'est signalé.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/models/zt_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+import 'package:pronostic_hippique/services/ia_pronostic_engine.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart' show partEnrichie4;
+
+// ───────────────────────────────────────────────────────────────────────────
+//  COURSE SYNTHÉTIQUE — FORMATS D'ENTRÉE RÉELS DES PARSEURS
+// ───────────────────────────────────────────────────────────────────────────
+ZtCourse courseP1c() {
+  final partants = <ZtPartant>[];
+
+  // num, musique, cote, gains, record, jockey, entraineur, terrain, repos,
+  // hippo, poids/place, ageSexe, gainsAn
+  final specs = <List<Object>>[
+    [1, '1a 1a 2a 1a 3a', '2,1', '185000', '1\'11"8', 'BAZIRE J.M.|26|58',
+      'BAZIRE J.M.|24|52|44|30|6', 'bon|12|5|9', 21, '18|6|4', 2, 'H6', 92000],
+    [2, '2a 3a 1a 4a 2a', '4,8', '121000', '1\'12"5', 'THOMAIN D.|19|46',
+      'ROUSSEL A.|17|44|38|14|5', 'bon|10|2|6', 28, '16|3|2', 4, 'H5', 61000],
+    [3, '5a 2a 4a 3a 1a', '7,5', '98000', '1\'13"1', 'RAFFIN E.|15|41',
+      'BAUDOUIN E.|12|38|30|8|4', 'bon|8|1|3', 35, '12|2|1', 6, 'H7', 44000],
+    [4, '3a 6a 5a 2a 7a', '11,0', '74000', '1\'13"6', 'ABRIVARD M.|12|36',
+      'DERSOIR J.L.|10|33|26|5|3', 'bon|6|0|2', 14, '10|1|1', 8, 'H8', 28000],
+    [5, '7a 4a 8a 6a 5a', '18,0', '52000', '1\'14"2', 'VERVA P.Y.|9|30',
+      'LEBLANC P.|8|29|22|4|2', 'souple|5|0|1', 50, '8|0|0', 11, 'H9', 15000],
+    [6, 'Dai 9a 7a 8a 4a', '26,0', '31000', '1\'14"9', 'BARRIER A.|6|24',
+      'GUELPA J.|5|22|18|2|1', 'souple|4|0|0', 70, '6|0|0', 15, 'H10', 9000],
+    [7, '8a 0a 9a 7a 9a', '41,0', '18000', '1\'16"0', 'MARTENS C.|4|18',
+      'MARTENS C.|3|19|14|1|1', 'lourd|3|0|0', 90, '5|0|0', 20, 'H11', 4000],
+    [8, '0a 0a 0a 9a 0a', '75,0', '6000', '1\'17"4', 'LEFEVRE T.|2|11',
+      'LEFEVRE T.|2|12|9|0|0', 'lourd|2|0|0', 120, '3|0|0', 25, 'H12', 1000],
+  ];
+
+  for (final s in specs) {
+    partants.add(ZtPartant(
+      numero: '${s[0]}',
+      nom: 'CHEVAL_${s[0]}',
+      driver: 'D${s[0]}',
+      entraineur: 'E${s[0]}',
+      proprietaire: 'P${s[0]}',
+      gains: s[3] as String,
+      record: s[4] as String,
+      musique: s[1] as String,
+      cote: s[2] as String,
+      ageSexe: s[11] as String,
+      statsJockeyCsv: s[5] as String,
+      statsEntraineurCsv: s[6] as String,
+      statsTerrainCsv: s[7] as String,
+      joursRepos: s[8] as int,
+      statsHippodromeCsv: s[9] as String,
+      poids: (s[10] as int) * 1.5,
+      placeDepartInt: s[10] as int,
+      gainsDernierAn: s[12] as int,
+      gainsDernierAnDisponible: true,
+      gainsDernierAnSource: 'corpus_synthetique',
+    ));
+  }
+
+  return ZtCourse(
+    numCourse: 1,
+    anchor: 'P1C',
+    nom: 'PRIX P1-C',
+    heure: '15:15',
+    distance: '2700',
+    prix: '60000',
+    type: 'Trot Attelé',
+    piste: 'bon',
+    categorie: '',
+    isQuinte: false,
+    pronosticZt: <int>[1, 2, 3, 4, 5],
+    partants: partants,
+    dateStr: '27112026',
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  SCORE BRUT — recomposé avec les grandeurs PUBLIÉES par la production
+// ───────────────────────────────────────────────────────────────────────────
+//
+//  `analyserCourseAvecCriteres` publie les `ScoresCriteres` par cheval. Les
+//  poids effectifs sont exposés par `poidsEffectifsPourDiscipline()`, exactement
+//  le `pe` que `_calculerScoreBrutEtCriteres` emploie. La composition est la
+//  MÊME expression que la production : Σ note×poids, SANS division par Σ
+//  (cf. ia_pronostic_engine.dart:391-409). Ce n'est donc pas un second moteur.
+double scoreBrutRecompose(ScoresCriteres sc, Map<String, double> pe) {
+  var s = 0.0;
+  for (final k in kCles) {
+    s += sc.valeurPourCritere(k) * (pe[k] ?? 0.0);
+  }
+  return s;
+}
+
+String d9(double v) => v.toStringAsFixed(9);
+
+class Etat {
+  final String nom;
+  final Map<String, double> poids;
+  final double sigma;
+  final double partEnrichie;
+  final Map<int, double> brut;
+  final Map<int, double> publie;
+  final Map<int, int> rang;
+  final Map<int, String> label;
+  final List<int> top5;
+  final String selection;
+  final double confiance;
+  final String conseil;
+
+  const Etat({
+    required this.nom,
+    required this.poids,
+    required this.sigma,
+    required this.partEnrichie,
+    required this.brut,
+    required this.publie,
+    required this.rang,
+    required this.label,
+    required this.top5,
+    required this.selection,
+    required this.confiance,
+    required this.conseil,
+  });
+}
+
+/// Ordonne les numéros par score décroissant (l'ordre du moteur).
+List<int> ordrePar(Map<int, double> m) {
+  final ks = m.keys.toList();
+  ks.sort((a, b) => m[b]!.compareTo(m[a]!));
+  return ks;
+}
+
+int pairesInversees(List<int> a, List<int> b) {
+  expect(a.length, b.length);
+  var n = 0;
+  for (var i = 0; i < a.length; i++) {
+    for (var j = i + 1; j < a.length; j++) {
+      final ia = a.indexOf(a[i]);
+      final ja = a.indexOf(a[j]);
+      final ib = b.indexOf(a[i]);
+      final jb = b.indexOf(a[j]);
+      if ((ia < ja) != (ib < jb)) n++;
+    }
+  }
+  return n;
+}
+
+void main() {
+  test('P1-C — poids bruts vs projetés au premier pronostic', () async {
+    final course = courseP1c();
+    final mem = IaMemoryService.instance;
+    final out = <String>[];
+    void w(String s) => out.add(s);
+
+    // ── GARDE 0 : les 19 valeurs initiales de RÉFÉRENCE, non modifiées
+    expect(sommeCle(kInitial, kCles), closeTo(1.26, 1e-9),
+        reason: 'GARDE : les 19 poids initiaux de référence somment 1,26');
+
+    // ═══════════════════════ PASSE 1 — POIDS BRUTS ══════════════════════
+    await semer(
+      pronostics: <IaPronostic>[],
+      poidsDepart: kInitial,
+      autoriserVide: true,
+      sigmaAttendue: 1.26,
+    );
+    for (final k in kCles) {
+      expect(mem.poids.getPoids(k), closeTo(kInitial[k]!, 1e-12),
+          reason: 'GARDE : la valeur brute de « $k » ne doit pas être altérée '
+              'par fromJson (aucune projection au chargement)');
+    }
+    final poidsBrut = <String, double>{
+      for (final k in kCles) k: mem.poids.getPoids(k),
+    };
+
+    // Chemin de production RÉEL — aucun override.
+    final prono1 = IaPronosticEngine.genererPronostic(course, 'VINCENNES');
+    final (partants1, criteres1) =
+        IaPronosticEngine.analyserCourseAvecCriteres(course);
+    final pe1 = mem.poids.poidsEffectifsPourDiscipline(course.type);
+
+    final brut1 = <int, double>{};
+    final publie1 = <int, double>{};
+    final rang1 = <int, int>{};
+    final label1 = <int, String>{};
+    for (final p in partants1) {
+      final n = int.parse(p.numero);
+      publie1[n] = p.scoreIA;
+      rang1[n] = p.rang;
+      label1[n] = p.labelIA;
+      brut1[n] = scoreBrutRecompose(criteres1['$n']!, pe1);
+    }
+    final notes1 = <int, Map<String, double>>{
+      for (final n in criteres1.keys)
+        int.parse(n): <String, double>{
+          for (final k in kCles) k: criteres1[n]!.valeurPourCritere(k),
+        },
+    };
+
+    // ═══════════════════ PASSE 2 — POIDS PROJETÉS ═══════════════════════
+    final projete = poidsNormalisesDeDepart();
+    await semer(
+      pronostics: <IaPronostic>[],
+      poidsDepart: projete,
+      autoriserVide: true,
+      sigmaAttendue: 1.0,
+    );
+    final poidsProj = <String, double>{
+      for (final k in kCles) k: mem.poids.getPoids(k),
+    };
+
+    final prono2 = IaPronosticEngine.genererPronostic(course, 'VINCENNES');
+    final (partants2, criteres2) =
+        IaPronosticEngine.analyserCourseAvecCriteres(course);
+    final pe2 = mem.poids.poidsEffectifsPourDiscipline(course.type);
+
+    final brut2 = <int, double>{};
+    final publie2 = <int, double>{};
+    final rang2 = <int, int>{};
+    final label2 = <int, String>{};
+    for (final p in partants2) {
+      final n = int.parse(p.numero);
+      publie2[n] = p.scoreIA;
+      rang2[n] = p.rang;
+      label2[n] = p.labelIA;
+      brut2[n] = scoreBrutRecompose(criteres2['$n']!, pe2);
+    }
+    final notes2 = <int, Map<String, double>>{
+      for (final n in criteres2.keys)
+        int.parse(n): <String, double>{
+          for (final k in kCles) k: criteres2[n]!.valeurPourCritere(k),
+        },
+    };
+
+    // ═══════════════════════ GARDES DE VALIDITÉ ═════════════════════════
+    expect(brut1.length, 8, reason: 'GARDE : 8 partants scorés (brut)');
+    expect(brut2.length, 8, reason: 'GARDE : 8 partants scorés (projeté)');
+    for (final m in <Map<int, double>>[brut1, brut2, publie1, publie2]) {
+      for (final v in m.values) {
+        expect(v.isFinite, isTrue, reason: 'GARDE : aucun score NaN/infini');
+      }
+    }
+    // Les NOTES de critères sont des données d'entrée : elles ne doivent pas
+    // changer entre les deux passes (nulle part le moteur ne pondère sa propre
+    // donnée). Si elles changeaient, la comparaison serait contaminée.
+    var notesIdentiques = true;
+    for (final n in notes1.keys) {
+      for (final k in kCles) {
+        if ((notes1[n]![k]! - notes2[n]![k]!).abs() > 1e-9) {
+          notesIdentiques = false;
+        }
+      }
+    }
+    expect(notesIdentiques, isTrue,
+        reason: 'GARDE : les 19×8 notes d entrée doivent être IDENTIQUES '
+            'entre les deux passes — seule la table de poids change');
+
+    final etat1 = Etat(
+      nom: 'BRUT',
+      poids: poidsBrut,
+      sigma: sommeCle(poidsBrut, kCles),
+      partEnrichie: partEnrichie4(poidsBrut),
+      brut: brut1,
+      publie: publie1,
+      rang: rang1,
+      label: label1,
+      top5: prono1.top5.map((p) => int.parse(p.numero)).toList(),
+      selection: prono1.selection,
+      confiance: prono1.confianceGlobale,
+      conseil: prono1.conseil,
+    );
+    final etat2 = Etat(
+      nom: 'PROJETÉ',
+      poids: poidsProj,
+      sigma: sommeCle(poidsProj, kCles),
+      partEnrichie: partEnrichie4(poidsProj),
+      brut: brut2,
+      publie: publie2,
+      rang: rang2,
+      label: label2,
+      top5: prono2.top5.map((p) => int.parse(p.numero)).toList(),
+      selection: prono2.selection,
+      confiance: prono2.confianceGlobale,
+      conseil: prono2.conseil,
+    );
+
+    // ══════════════════════════ SORTIE ══════════════════════════════════
+    w('');
+    w('[P1C] ═══ POIDS BRUTS vs PROJETÉS · PREMIER PRONOSTIC ═══');
+    w('[P1C] course : 8 partants · Trot Attelé · 2700 m · piste bon');
+    w('[P1C] point d entrée : IaPronosticEngine.genererPronostic() '
+        '(lecture de IaMemoryService.instance.poids, AUCUN override)');
+    w('[P1C] garde : les 152 notes d entrée (19 critères × 8) sont '
+        'IDENTIQUES entre les deux passes');
+    w('');
+
+    // ─── 1. ÉTATS DE DÉPART
+    w('[P1C] ─── 1. ÉTATS DE DÉPART ───');
+    w('[P1C] BRUT    : Σ=${d9(etat1.sigma)} · part enrichie='
+        '${d9(etat1.partEnrichie)}');
+    w('[P1C] PROJETÉ : Σ=${d9(etat2.sigma)} · part enrichie='
+        '${d9(etat2.partEnrichie)}');
+
+    var sb1 = 0.0, se1 = 0.0, sb2 = 0.0, se2 = 0.0;
+    for (final k in kCles) {
+      if (kBase.contains(k)) {
+        sb1 += etat1.poids[k]!;
+        sb2 += etat2.poids[k]!;
+      } else {
+        se1 += etat1.poids[k]!;
+        se2 += etat2.poids[k]!;
+      }
+    }
+    final lamBase = sb2 / sb1;
+    final lamEnr = se2 / se1;
+    w('[P1C] λ BASE    = ${d9(lamBase)} (${d9(sb1)} → ${d9(sb2)})');
+    w('[P1C] λ ENRICHI = ${d9(lamEnr)} (${d9(se1)} → ${d9(se2)})');
+    w('[P1C] rapport base/enrichi : brut=${d9(sb1 / se1)} → projeté='
+        '${d9(sb2 / se2)} (×${d9((sb2 / se2) / (sb1 / se1))})');
+    w('[P1C] λ GLOBAL  = ${d9(1.0 / 1.26)} (= 1,00 / 1,26) — mais les deux '
+        'groupes ne sont PAS mis à l échelle pareil');
+
+    // Écrêtage effectif : un critère est écrêté si sa valeur projetée diffère
+    // du produit brut × λ de son groupe.
+    var ecretes = 0;
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    for (final k in kCles) {
+      final lam = kBase.contains(k) ? lamBase : lamEnr;
+      final attendu = etat1.poids[k]! * lam;
+      if ((etat2.poids[k]! - attendu).abs() > 1e-9) {
+        ecretes++;
+        w('[P1C] ⚠ écrêtage « $k » : ${d9(etat1.poids[k]!)} × ${d9(lam)} = '
+            '${d9(attendu)} ≠ ${d9(etat2.poids[k]!)} '
+            '(bornes ${bornes[k]![0]}..${bornes[k]![1]})');
+      }
+    }
+    w('[P1C] critères écrêtés par la projection : $ecretes/19');
+    w('       ⇒ 0 signifie que le levier est un pur changement d ÉCHELLE '
+        'par groupe,');
+    w('         donc que TOUTE différence de classement vient du rapport '
+        'base/enrichi.');
+    expect(ecretes, 0,
+        reason: 'GARDE : aucun critère ne doit être écrêté — sinon le levier '
+            'n est plus un pur changement d échelle et l interprétation change');
+    w('');
+
+    // ─── 2. SCORES BRUTS ET NORMALISÉS
+    w('[P1C] ─── 2. SCORES BRUTS (Σ note×poids, sans division) ───');
+    w('[P1C] num │      brut BRUT │    brut PROJETÉ │     Δbrut │ '
+        '   Δbrut % │ publ BRUT │ publ PROJETÉ');
+    final ns = ordrePar(brut1)..sort();
+    for (final n in ns) {
+      final a = brut1[n]!, b = brut2[n]!;
+      final delta = b - a;
+      final pct = a == 0 ? double.nan : delta / a * 100.0;
+      w('[P1C] ${'$n'.padLeft(3)} │ ${d9(a).padLeft(13)} │ '
+          '${d9(b).padLeft(15)} │ ${d9(delta).padLeft(9)} │ '
+          '${pct.toStringAsFixed(3).padLeft(8)} │ '
+          '${d9(publie1[n]!).padLeft(9)} │ ${d9(publie2[n]!).padLeft(11)}');
+    }
+    final sommeBrut1 = brut1.values.reduce((a, b) => a + b);
+    final sommeBrut2 = brut2.values.reduce((a, b) => a + b);
+    w('[P1C] somme des scores bruts : ${d9(sommeBrut1)} → '
+        '${d9(sommeBrut2)} (×${d9(sommeBrut2 / sommeBrut1)})');
+    w('');
+    w('[P1C] ─── 3. SCORES NORMALISÉS PUBLIÉS (scoreIA) ───');
+    for (final n in ns) {
+      final a = publie1[n]!, b = publie2[n]!;
+      w('[P1C] ${'$n'.padLeft(3)} : ${d9(a)} → ${d9(b)} '
+          '(Δ=${(b - a).toStringAsFixed(6)}) · label « '
+          '${etat1.label[n]} » → « ${etat2.label[n]} » '
+          '${etat1.label[n] == etat2.label[n] ? "IDENTIQUE" : "CHANGÉ"}');
+    }
+    w('');
+
+    // ─── 4. CLASSEMENTS
+    w('[P1C] ─── 4. CLASSEMENTS ───');
+    final ordrePublie1 = ordrePar(publie1);
+    final ordrePublie2 = ordrePar(publie2);
+    final ordreBrut1 = ordrePar(brut1);
+    final ordreBrut2 = ordrePar(brut2);
+    w('[P1C] ordre par score PUBLIÉ   BRUT    : ${ordrePublie1.join(" > ")}');
+    w('[P1C] ordre par score PUBLIÉ   PROJETÉ : ${ordrePublie2.join(" > ")}');
+    w('[P1C] ordre par score BRUT     BRUT    : ${ordreBrut1.join(" > ")}');
+    w('[P1C] ordre par score BRUT     PROJETÉ : ${ordreBrut2.join(" > ")}');
+    w('[P1C] paires inversées (publié) : ${pairesInversees(ordrePublie1, ordrePublie2)}/28');
+    w('[P1C] paires inversées (brut)   : ${pairesInversees(ordreBrut1, ordreBrut2)}/28');
+    final memeOrdrePublie = ordrePublie1.join(',') == ordrePublie2.join(',');
+    w('[P1C] ordre publié identique ? ${memeOrdrePublie ? "OUI" : "NON"}');
+    w('');
+
+    // ─── 5. RECOMMANDATIONS
+    w('[P1C] ─── 5. TOP5 · SÉLECTION · CONFIANCE · CONSEIL ───');
+    w('[P1C] top5 BRUT    : ${etat1.top5.join(" - ")}');
+    w('[P1C] top5 PROJETÉ : ${etat2.top5.join(" - ")}');
+    w('[P1C] sélection BRUT    : ${etat1.selection}');
+    w('[P1C] sélection PROJETÉ : ${etat2.selection}');
+    w('[P1C] confiance BRUT    : ${d9(etat1.confiance)}');
+    w('[P1C] confiance PROJETÉ : ${d9(etat2.confiance)}');
+    w('[P1C] conseil BRUT    : ${etat1.conseil}');
+    w('[P1C] conseil PROJETÉ : ${etat2.conseil}');
+    w('[P1C] conseil identique ? '
+        '${etat1.conseil == etat2.conseil ? "OUI" : "NON"}');
+    w('');
+
+    // ─── 6. PREMIÈRE TRAJECTOIRE D'APPRENTISSAGE
+    //  Un cycle RÉEL depuis CHACUN des deux états. On mesure les poids obtenus,
+    //  la variation par critère, et l'état du signal (momentum) reçu.
+    w('[P1C] ─── 6. PREMIÈRE TRAJECTOIRE D APPRENTISSAGE ───');
+    final histo = <IaPronostic>[
+      for (var i = 0; i < 12; i++)
+        pronostic(
+          courseKey: 'P1C_H$i',
+          date: DateTime(2026, 11, 20).subtract(Duration(days: 12 - i)),
+        ),
+    ];
+
+    Future<List<String>> trajectoire(Map<String, double> depart) async {
+      await semer(
+        pronostics: <IaPronostic>[
+          ...histo,
+          pronostic(
+            courseKey: 'P1C_CIBLE',
+            date: DateTime(2026, 11, 21),
+            resolu: false,
+          ),
+        ],
+        poidsDepart: depart,
+        sigmaAttendue: sommeCle(depart, kCles),
+      );
+      final av = <String, double>{
+        for (final k in kCles) k: IaMemoryService.instance.poids.getPoids(k),
+      };
+      final c = await executerCycle(
+        courseKey: 'P1C_CIBLE',
+        arrivee: <int>[1, 2, 3, 4, 5],
+      );
+      final res = <String>[];
+      res.add('  aAppris=${c.aAppris} · nbMisesAJour=${c.nbMisesAJour}');
+      res.add('  critère      avant        proposé      obtenu      '
+          'Δproposé     Δobtenu     momentum');
+      for (final k in kCles) {
+        res.add('  ${k.padRight(12)} ${d9(av[k]!).padLeft(11)} '
+            '${d9(c.propose[k]!).padLeft(12)} ${d9(c.obtenu[k]!).padLeft(12)} '
+            '${d9(c.propose_(k)).padLeft(12)} ${d9(c.obtenu_(k)).padLeft(12)} '
+            '${d9(c.momentum[k] ?? 0.0).padLeft(12)}');
+      }
+      var sAv = 0.0, sOb = 0.0, sMo = 0.0;
+      var nz = 0;
+      for (final k in kCles) {
+        sAv += av[k]!;
+        sOb += c.obtenu[k]!;
+        sMo += (c.momentum[k] ?? 0.0).abs();
+        if ((c.momentum[k] ?? 0.0).abs() > 1e-12) nz++;
+      }
+      res.add('  Σ avant=${d9(sAv)} Σ obtenu=${d9(sOb)} · critères avec '
+          'momentum non nul : $nz/19 · Σ|momentum|=${d9(sMo)}');
+      return res;
+    }
+
+    w('[P1C] -- trajectoire depuis BRUT --');
+    for (final l in await trajectoire(kInitial)) {
+      w('[P1C] $l');
+    }
+    w('[P1C] -- trajectoire depuis PROJETÉ --');
+    for (final l in await trajectoire(projete)) {
+      w('[P1C] $l');
+    }
+
+    for (final l in out) {
+      // ignore: avoid_print
+      print(l);
+    }
+  }, timeout: const Timeout(Duration(minutes: 15)));
+}

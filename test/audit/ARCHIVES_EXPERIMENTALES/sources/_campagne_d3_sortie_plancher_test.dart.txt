@@ -1,0 +1,279 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE D3 — SORTIE DE PLANCHER : MÉCANISME BLOQUANT, MESURÉ
+//  ESPACE ISOLÉ /home/user/exp  —  Phase 4.5
+//
+//  CONSTAT DE DÉPART (mesuré, D1 v2) : sur les 19 critères, le poids atteint
+//  EXACTEMENT son plancher et n'en ressort JAMAIS, même quand le signal
+//  s'inverse et devient le plus discriminant des 19.
+//
+//  Ce fichier ne se contente pas de le reconfirmer : il MESURE, cycle par
+//  cycle, lequel des quatre mécanismes candidats bloque la remontée :
+//    (a) GEL         — le critère est membre d'une paire r >= 0,85 et il est
+//                      le plus léger ⇒ `momentum = 0 ; continue` avant tout
+//                      examen du signe (ia_memory_service:4139-4147).
+//    (b) GRADIENT    — la discrimination du critère est nulle ou de signe
+//                      inattendu ⇒ le gradient ne pousse pas vers le haut.
+//    (c) BUDGET      — la part enrichie est au plafond et le groupe n'a plus
+//                      de marge ⇒ la projection ramène le poids au plancher.
+//    (d) MOMENTUM    — le momentum reste négatif (mémoire du passé) et annule
+//                      la poussée positive.
+//  Le diagnostic est publié pour CHAQUE cycle des deux phases.
+//
+//  VALIDATION PRÉALABLE (exigée par le cadrage) :
+//   Σ = 1,0 à chaque cycle ; discriminations calculées ; poids variables ;
+//   aucune paire saturée en masse. Si une seule échoue, la campagne est
+//   déclarée invalide et aucun résultat n'est interprété.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+const int kCycles = 120;
+const int kBascule = 60;
+
+String d9(double v) => v.toStringAsFixed(9);
+
+/// Bruit déterministe, faible amplitude (±12) pour ÉVITER la saturation à
+/// 0/100 qui fabriquerait des critères clones et des corrélations à r = 1,0.
+/// C'est la correction du défaut de harnais n°11 (mesuré en VAL-1 : 17/45
+/// paires saturées avec une amplitude de ±30).
+double bruit(int numero, int cycle, int critere) {
+  // DÉFAUT N°15 (campagne V0, mesuré) : l'ancien générateur
+  //   (numero*7919 + cycle*104729 + critere*1299709) * 0.6180339887, modulo 1
+  // est une projection LINÉAIRE : deux critères produisent, à une translation
+  // près, le MÊME bruit. Mesuré : |r| max 0,9405, 131/171 paires >= 0,30,
+  // 49/171 >= 0,65. Remplacé par lowbias32 : |r| max 0,0897, 0/171 >= 0,30.
+  var h = (numero * 0x9E3779B1) ^ (cycle * 0x85EBCA77) ^ (critere * 0xC2B2AE3D);
+  h &= 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = h ^ (h >> 16);
+  h &= 0xFFFFFFFF;
+  return (h / 4294967296.0 - 0.5) * 24.0;
+}
+
+ScoresCriteres notes(int numero, int cycle, String cible, int idxCible) {
+  double v(int idx, String nom) {
+    if (nom != cible) {
+      return (78.0 - numero * 5 + bruit(numero, cycle, idx)).clamp(5.0, 95.0);
+    }
+    // Phase 1 : ANTI-discriminant (notes croissantes avec le rang).
+    // Phase 2 : LE PLUS discriminant (notes décroissantes, pente forte).
+    return cycle < kBascule
+        ? (30.0 + numero * 12.0).clamp(0.0, 100.0)
+        : (100.0 - numero * 16.0).clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+class Ligne {
+  Ligne(this.cycle, this.poids, this.disc, this.gele, this.momentum,
+      this.propose, this.obtenu);
+  final int cycle;
+  final double poids;
+  final double disc;
+  final bool gele;
+  final double momentum;
+  final double propose;
+  final double obtenu;
+}
+
+Future<({List<Ligne> trace, bool valide, String verdict})> campagne(
+  String cible,
+) async {
+  final idx = kCles.indexOf(cible);
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, i, cible, idx),
+        },
+      ),
+    for (var j = 0; j < 60; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notes(n, 0, cible, idx),
+        },
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: kInitial,
+    sigmaAttendue: sommeCle(kInitial, kCles),
+  );
+
+  final trace = <Ligne>[];
+  var sommeOk = true;
+  for (var i = 0; i < kCycles; i++) {
+    final av = poidsEffectifs();
+    final cyc = await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final s = sommeCle(cyc.obtenu, kCles);
+    if ((s - 1.0).abs() > 1e-6) sommeOk = false;
+    trace.add(Ligne(
+      i,
+      cyc.obtenu[cible]!,
+      IaExperimentation.dernieresDiscriminations[cible] ?? 0.0,
+      IaExperimentation.derniersGeles.contains(cible),
+      cyc.momentum[cible] ?? 0.0,
+      cyc.propose[cible]!,
+      cyc.obtenu[cible]!,
+    ));
+    // garde : `av` n'est lu que pour vérifier que l'écart est exploitable
+    assert(av.isNotEmpty);
+  }
+
+  final paires = correlationsMemorisees();
+  final saturees = paires.values.where((r) => (r - 1.0).abs() < 1e-9).length;
+  final variations = <double>[];
+  for (var i = 1; i < trace.length; i++) {
+    variations.add((trace[i].poids - trace[i - 1].poids).abs());
+  }
+  final v1 = sommeOk;
+  final v2 = trace.any((l) => l.disc != 0.0);
+  final v4 = paires.isEmpty || saturees < paires.length;
+  final v5 = variations.any((v) => v > 1e-9);
+  final valide = v1 && v2 && v4 && v5;
+  final verdict = 'V1 Σ=${v1 ? "OK" : "ÉCHEC"} · '
+      'V2 disc=${v2 ? "OK" : "ÉCHEC"} · '
+      'V4 saturées=$saturees/${paires.length} ${v4 ? "OK" : "ÉCHEC"} · '
+      'V5 var=${v5 ? "OK" : "ÉCHEC"}';
+  return (trace: trace, valide: valide, verdict: verdict);
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D3 — sortie de plancher : diagnostic du blocage, 19 critères', () async {
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D3] ═══ SORTIE DE PLANCHER — DIAGNOSTIC SUR 19 CRITÈRES ═══');
+    // ignore: avoid_print
+    print('[D3] $kCycles cycles · bascule $kBascule · bruit ±12 · gel actif');
+
+    var valides = 0;
+    var atteints = 0;
+    var sortis = 0;
+    final lignes = <String>[];
+    final blocages = <String, int>{'gel': 0, 'gradient': 0, 'budget': 0,
+      'momentum': 0, 'inconnu': 0};
+
+    for (final k in kCles) {
+      IaExperimentation.reinitialiser();
+      final r = await campagne(k);
+      final tr = r.trace;
+      final lo = bornes[k]![0];
+
+      final mini = tr
+          .sublist(0, kBascule)
+          .map((l) => l.poids)
+          .reduce((a, b) => a < b ? a : b);
+      final fin1 = tr[kBascule - 1].poids;
+      final fin2 = tr.last.poids;
+      final atteint = (mini - lo).abs() < 1e-9;
+      final sorti = fin2 > fin1 + 1e-9;
+      if (r.valide) valides++;
+      if (atteint) atteints++;
+      if (sorti) sortis++;
+
+      // ── Diagnostic du blocage : on examine la PHASE 2, quand le signal est
+      //    franchement positif et que le poids stagne au plancher.
+      String diagnostic = '—';
+      if (atteint && !sorti) {
+        final p2 = tr.sublist(kBascule);
+        final auPlancher = p2.where((l) => (l.poids - lo).abs() < 1e-9).toList();
+        if (auPlancher.isEmpty) {
+          diagnostic = 'descente lente';
+        } else {
+          final ech = auPlancher.first;
+          final discMoy = p2.map((l) => l.disc).reduce((a, b) => a + b) /
+              p2.length;
+          final gelesPart = auPlancher.where((l) => l.gele).length /
+              auPlancher.length;
+          final momNeg = auPlancher.where((l) => l.momentum < 0).length /
+              auPlancher.length;
+          if (gelesPart > 0.5) {
+            diagnostic = 'GEL (${(gelesPart * 100).toStringAsFixed(0)}% des '
+                'cycles au plancher)';
+            blocages['gel'] = blocages['gel']! + 1;
+          } else if (discMoy <= 0.001) {
+            diagnostic = 'GRADIENT (disc moy=${d9(discMoy)})';
+            blocages['gradient'] = blocages['gradient']! + 1;
+          } else if (momNeg > 0.5) {
+            diagnostic = 'MOMENTUM (${(momNeg * 100).toStringAsFixed(0)}% '
+                'négatif)';
+            blocages['momentum'] = blocages['momentum']! + 1;
+          } else if (ech.propose > lo + 1e-6 && ech.obtenu <= lo + 1e-9) {
+            diagnostic = 'BUDGET (proposé ${d9(ech.propose)} → '
+                'projeté ${d9(ech.obtenu)})';
+            blocages['budget'] = blocages['budget']! + 1;
+          } else {
+            diagnostic = 'INCONNU (disc=${d9(discMoy)} '
+                'gel=${(gelesPart * 100).toStringAsFixed(0)}% '
+                'prop=${d9(ech.propose)})';
+            blocages['inconnu'] = blocages['inconnu']! + 1;
+          }
+        }
+      }
+
+      lignes.add('[D3] ${k.padRight(12)} | lo=${lo.toStringAsFixed(3)} | '
+          'mini=${d9(mini)} | fin1=${d9(fin1)} | fin2=${d9(fin2)} | '
+          'att=${atteint ? "O" : "n"} | sorti=${sorti ? "O" : "n"} | '
+          '$diagnostic');
+    }
+
+    for (final l in lignes) {
+      // ignore: avoid_print
+      print(l);
+    }
+    // ignore: avoid_print
+    print('[D3] ⇒ protocoles valides : $valides/19');
+    // ignore: avoid_print
+    print('[D3] ⇒ plancher atteint : $atteints/19');
+    // ignore: avoid_print
+    print('[D3] ⇒ plancher QUITTÉ : $sortis/19');
+    // ignore: avoid_print
+    print('[D3] ⇒ répartition des blocages : $blocages');
+
+    expect(valides, 19,
+        reason: 'Si un seul protocole est invalide, la campagne entière doit '
+            'être rejetée : on ne mélange pas mesures valides et invalides.');
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

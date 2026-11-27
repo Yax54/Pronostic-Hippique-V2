@@ -1,0 +1,228 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE T3 — TRAJECTOIRE MULTI-CYCLES DE LA DIFFÉRENTIATION DES ENRICHIS
+//  ESPACE ISOLÉ /home/user/exp — réponse à la rectification §2 « Projection »
+//
+//  EXIGENCE (mot pour mot)
+//  ──────────────────────
+//   « L'aplatissement des 12 enrichis à 0,015 chacun doit faire l'objet d'une
+//     trajectoire multi-cycles permettant de vérifier la récupération de leur
+//     différenciation. La sortie du plancher de distSpec à 0,005 ne démontre
+//     pas cette propriété. »
+//
+//  CE QUI EST DÉJÀ ÉTABLI (Phase 3bis, mesure directe de `clamp()`)
+//  ──────────────────────────────────────────────────────────────
+//  Avec les 12 enrichis écrasés à 0,0001 :
+//   • b3a0107 (ancien `clamp()` + `normaliser()`) rend partE = 0,183908046
+//     avec distSpec 0,034482759 / jockey 0,022988506 / repos 0,011494253 —
+//     hiérarchie 3:2:1 CONSERVÉE (planchers distincts 0,03/0,02/0,01) ;
+//   • c31cbef (projeter + KKT) rend partE = 0,180000000 avec les 12 à
+//     **0,015000000 exactement** — hiérarchie DÉTRUITE (plancher uniforme
+//     0,005, budget 0,18 réparti en 12 parts égales).
+//  C'est une mesure d'une SEULE application de la projection, sur un état
+//  artificiel. Elle ne dit RIEN de ce que devient cette indifférenciation
+//  lorsqu'elle est soumise à des cycles réels d'apprentissage.
+//
+//  CE QUE CE FICHIER AJOUTE
+//  ───────────────────────
+//  Une TRAJECTOIRE RÉELLE de 400 cycles dans laquelle :
+//   • les 12 enrichis sont initialement ÉCRASÉS au plancher (distSpec et
+//     jockey reçoivent en plus une pente DISCRIMINANTE, les 10 autres non) ;
+//   • on mesure, cycle après cycle : l'écart-type, l'amplitude, le nombre de
+//     valeurs distinctes à 1e-9, et la hiérarchie des 12 ;
+//   • on vérifie si la différenciation SE RECONSTRUIT, et à quel rythme.
+//
+//  La question n'est pas « le plancher est-il quitté » (ce serait la question
+//  de distSpec seul, insuffisante) mais « les 12 redeviennent-ils DIFFÉRENTS
+//  les uns des autres, et selon quelle hiérarchie ».
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kCycles = 400;
+const int kAmorce = 60;
+
+double ecartType(Map<String, double> m, List<String> cles) {
+  final v = <double>[for (final k in cles) m[k] ?? 0.0];
+  final moy = v.reduce((a, b) => a + b) / v.length;
+  return math.sqrt(
+      v.map((x) => (x - moy) * (x - moy)).reduce((a, b) => a + b) / v.length);
+}
+
+int nbDistincts(Map<String, double> m, List<String> cles, {double eps = 1e-9}) {
+  final v = <double>[for (final k in cles) m[k] ?? 0.0];
+  // Compte les valeurs distinctes à eps près.
+  final uniq = <double>[];
+  for (final x in v) {
+    var trouve = false;
+    for (final u in uniq) {
+      if ((x - u).abs() < eps) {
+        trouve = true;
+        break;
+      }
+    }
+    if (!trouve) uniq.add(x);
+  }
+  return uniq.length;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('T3 — les 12 enrichis écrasés reconstruisent-ils leur différenciation ?',
+      () async {
+    IaExperimentation.reinitialiser();
+
+    // État de départ : les 12 enrichis sont ÉCRASÉS à 0,0001 (asymétrie
+    // extrême reproduisant l'observation de la Phase 3bis), le reste inchangé.
+    final depart = <String, double>{...kInitial};
+    for (final k in kEnrichis) {
+      depart[k] = 0.0001;
+    }
+    // Σ du départ : base 0,710 + 12 × 0,0001 = 0,7112
+    final sigmaDepart = sommeCle(depart, kCles);
+
+    // Sur les 12 enrichis, DEUX reçoivent une pente discriminante :
+    //   distSpec (+12) et jockey (−12). Les 10 autres restent neutres.
+    // C'est ce qui permet de mesurer si la projection ÉCRASE ou non leur
+    // différence de signal.
+    ScoresCriteres notesT3(int numero, int cycle) {
+      final dist = (55.0 + 12.0 * (3.0 - numero)).clamp(0.0, 100.0);
+      final jak = (55.0 - 12.0 * (3.0 - numero)).clamp(0.0, 100.0);
+      final base = notesDistinctes(
+        numero, cycle,
+        pilote: 'distSpec', valeurPilote: dist,
+      );
+      return ScoresCriteres(
+        forme: base.forme, gains: base.gains, record: base.record,
+        cote: base.cote, constance: base.constance, victoires: base.victoires,
+        discipline: base.discipline, distSpec: dist, jockey: jak,
+        repos: base.repos, hippo: base.hippo, entraineur: base.entraineur,
+        elo: base.elo, terrain: base.terrain, divergence: base.divergence,
+        poidsRel: base.poidsRel, progression: base.progression,
+        mouvCote: base.mouvCote, placeDepart: base.placeDepart,
+      );
+    }
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kCycles; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle3(i, nbCycles: kCycles),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesT3(n, i),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+      for (var j = 0; j < kAmorce; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce3(j, kCycles),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesT3(n, j),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: depart,
+      sigmaAttendue: sigmaDepart,
+    );
+
+    final ets = <double>[];
+    final amps = <double>[];
+    final nds = <int>[];
+    final parts = <double>[];
+    final trace = <String>[];
+
+    for (var i = 0; i < kCycles; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final p = poidsEffectifs();
+      ets.add(ecartType(p, kEnrichis));
+      final vals = <double>[for (final k in kEnrichis) p[k]!];
+      amps.add(vals.reduce((a, b) => a > b ? a : b) -
+          vals.reduce((a, b) => a < b ? a : b));
+      nds.add(nbDistincts(p, kEnrichis));
+      parts.add(partEnrichie3(p));
+      if (i % 40 == 0 || i == kCycles - 1) {
+        final top = <MapEntry<String, double>>[
+          for (final k in kEnrichis) MapEntry(k, p[k]!),
+        ]..sort((a, b) => b.value.compareTo(a.value));
+        trace.add('[T3] c=${i.toString().padLeft(3)} '
+            'σ=${ets.last.toStringAsFixed(9)} '
+            'amp=${amps.last.toStringAsFixed(9)} '
+            'distincts=${nds.last}/12 '
+            'part=${parts.last.toStringAsFixed(9)} | '
+            '${top.map((e) => '${e.key}=${e.value.toStringAsFixed(6)}').join(" ")}');
+      }
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[T3] ═══ 12 ENRICHIS ÉCRASÉS À 0,0001 · $kCycles CYCLES ═══');
+    // ignore: avoid_print
+    print('[T3] départ : Σ=${f12(sigmaDepart)} · σ(enrichis)='
+        '${ecartType(depart, kEnrichis).toStringAsFixed(9)} · '
+        'part=${partEnrichie3(depart).toStringAsFixed(9)}');
+    for (final l in trace) {
+      // ignore: avoid_print
+      print(l);
+    }
+
+    final sigma0 = ecartType(depart, kEnrichis);
+    final sigmaFin = ets.last;
+    final sigmaMax = ets.reduce((a, b) => a > b ? a : b);
+    final distinctsFin = nds.last;
+    final distinctsMax = nds.reduce((a, b) => a > b ? a : b);
+
+    // ignore: avoid_print
+    print('[T3] ─── SYNTHÈSE ───');
+    // ignore: avoid_print
+    print('[T3] σ des 12 enrichis : départ=${sigma0.toStringAsFixed(9)} '
+        '· max=${sigmaMax.toStringAsFixed(9)} · fin=${sigmaFin.toStringAsFixed(9)}');
+    // ignore: avoid_print
+    print('[T3] valeurs DISTINCTES (à 1e-9) : fin=$distinctsFin/12 '
+        '· max observé=$distinctsMax/12');
+    // ignore: avoid_print
+    print('[T3] ⇒ ${sigmaFin > sigma0 * 2 ? "DIFFÉRENCIATION RECONSTRUITE" : "différenciation NON reconstruite"} '
+        '(σ final = ${(sigmaFin / sigma0).toStringAsFixed(2)}× le départ)');
+    // ignore: avoid_print
+    print('[T3] ⇒ ${distinctsFin >= 10 ? "les 12 enrichis sont redevenus DIFFÉRENTS" : "les 12 enrichis restent partiellement INDISTINCTS"}');
+
+    // Mesure de l'aplatissement uniforme : si les 12 valent tous la même
+    // chose, σ = 0 et distincts = 1. On le rapporte sans le prescrire.
+    final aplatis = ets.where((e) => e < 1e-12).length;
+    // ignore: avoid_print
+    print('[T3] cycles où les 12 sont EXACTEMENT ÉGAUX (σ=0) : '
+        '$aplatis/$kCycles');
+
+    expect(sigmaFin, greaterThan(0.0),
+        reason: 'La différenciation doit au moins cesser d être nulle.');
+  }, timeout: const Timeout(Duration(minutes: 300)));
+}

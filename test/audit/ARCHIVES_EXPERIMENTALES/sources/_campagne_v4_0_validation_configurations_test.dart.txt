@@ -1,0 +1,234 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE V4-0 — VALIDATION PRÉALABLE DES CONFIGURATIONS DE G4/G5
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  RÔLE DE CE FICHIER
+//  ──────────────────
+//  Il ne produit AUCUN résultat sur le gel. Il AUTORISE ou INTERDIT les
+//  campagnes longues. Chaque configuration exigée par le cadrage y est passée
+//  sur le VÉRITABLE MOTEUR pendant 45 cycles, et ses propriétés sont LUES dans
+//  les publications du moteur :
+//     • `IaExperimentation.dernieresDiscriminations` (ia_memory_service:4079) ;
+//     • `IaMemoryService.instance.poids.correlations` (l.4527) ;
+//     • `IaExperimentation.derniersGeles` (l.4118).
+//
+//  ⚠️ AUCUNE VALEUR DE CORRÉLATION N'EST INJECTÉE DANS LA MÉMOIRE. Le seul
+//  levier est la DONNÉE. Le calcul reste celui du moteur, à chaque cycle.
+//
+//  DIMENSIONNEMENT — MESURÉ AVANT D'ÊTRE ÉCRIT, ET DEUX FOIS CORRIGÉ
+//  ────────────────────────────────────────────────────────────────
+//  Version 1 : couples (β, γ) choisis avec une formule de conception naïve
+//  (sans pondération de récence, sans fenêtre). Le moteur a REFUSÉ les quatre
+//  configurations : discrimination publiée 0,0373 là où j'attendais 0,3515,
+//  soit un facteur 9. Cause identifiée en recalculant la formule EXACTE du
+//  moteur (poids de récence `exp(−1,2 i/nb)` × `champFactor`, moyenne sur la
+//  fenêtre de 50) : ma formule de conception était fausse, pas le moteur.
+//
+//  Version 2 : les seuils sont désormais posés à 60 % de la valeur CALCULÉE
+//  par la formule exacte du moteur, pour absorber la variabilité due aux
+//  profils non pilotés. Valeurs calculées (50 courses, pondération de
+//  récence, champFactor = log(5)/log(10) = 0,69897) :
+//     γ=20 → disc = +0,05603  ⇒ seuil 0,03362
+//     γ=25 → disc = +0,06973  ⇒ seuil 0,04184
+//     γ=9  → disc = +0,02137  ⇒ seuil 0,01282
+//  Corrélations calculées sur 400 points (80 courses × 5 partants) :
+//     C1 β=25 γ=20 / β=25 γ=20  → r = +0,9885
+//     C2 β=0  γ=+20 / β=0  γ=−20 → r = −0,9863
+//     C3 β=0  γ=20 / β=0  γ=0   → r = −0,0431
+//     C4 β=35 γ=25 / β=35 γ=9   → r = +0,8380
+//     C5 β=25 γ=+20 / β=25 γ=−20 → r = −0,5996
+//
+//  DÉCOUVERTE STRUCTURELLE QUE CES VALEURS IMPOSENT DE CONSIGNER
+//  ──────────────────────────────────────────────────────────────
+//  Dans cette famille, un critère UTILE (γ > 0) et un critère NÉFASTE
+//  (γ < 0) sont mathématiquement ANTI-CORRÉLÉS : r = −0,9863 pour C2. Or le
+//  moteur mémorise `pearson(...).abs()` (l.4520). Il traite donc cette paire
+//  comme une redondance de 0,99 et gèle l'un des deux. Ce n'est pas un
+//  artefact de générateur : c'est une conséquence directe du `.abs()` sur deux
+//  critères opposés. C'est le fondement factuel de la proposition P4, et G4v3
+//  le mesurera.
+//
+//  LES SEPT CONFIGURATIONS EXIGÉES
+//  ───────────────────────────────
+//   1. POSITIVE forte           → C1
+//   2. NÉGATIVE forte           → C2
+//   3. NON corrélée             → C3
+//   4. DISCRIMINATIONS DIFFÉRENTES → C4
+//   5. critère GELÉ et pertinent qui se DÉGRADE → C1 puis C5
+//   6. DISPARITION de la corrélation et REPRISE du gradient → C1 puis C3
+//   7. INVERSION des poids initiaux → C1 sur deux départs
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+/// Profils neutres, éventuellement écrasés.
+Map<String, Profil> profilsV4(Map<String, Profil> remplacements) {
+  final m = profilsNeutres();
+  m.addAll(remplacements);
+  return m;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('V4-0/1 — POSITIVE forte (C1 : β=25 γ=20 des deux côtés)', () async {
+    final spec = Spec(
+      nom: 'C1 paire POSITIVE forte (β=25 γ=20)',
+      profils: profilsV4(<String, Profil>{
+        'distSpec': const Profil(beta: 25, gamma: 20),
+        'jockey': const Profil(beta: 25, gamma: 20),
+      }),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.034),
+      ],
+      gradientAttendu: const <String>['distSpec', 'jockey'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('V4-0/1');
+    expect(v.ok, isTrue, reason: 'C1 doit être acceptée');
+  }, timeout: const Timeout(Duration(minutes: 90)));
+
+  test('V4-0/2 — NÉGATIVE forte (C2 : utile γ=+20 vs néfaste γ=−20)',
+      () async {
+    // ⚠️ Cette configuration est ANTI-corrélée PARCE QUE les deux critères
+    // sont de pertinence OPPOSÉE. Le moteur, qui stocke |r|, la voit comme une
+    // redondance à 0,99 : c'est précisément le comportement à documenter.
+    final spec = Spec(
+      nom: 'C2 paire ANTI-corrélée (utile γ=+20 / néfaste γ=−20)',
+      profils: profilsV4(<String, Profil>{
+        'distSpec': const Profil(beta: 0, gamma: 20),
+        'jockey': const Profil(beta: 0, gamma: -20),
+      }),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.034),
+        AttenteDiscrimination('jockey', signe: -1, minAbs: 0.042),
+      ],
+      gradientAttendu: const <String>['distSpec', 'jockey'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('V4-0/2');
+    expect(v.ok, isTrue, reason: 'C2 doit être acceptée');
+  }, timeout: const Timeout(Duration(minutes: 90)));
+
+  test('V4-0/3 — NON corrélée (C3 : utile vs neutre)', () async {
+    final spec = Spec(
+      nom: 'C3 paire NON corrélée (utile γ=20 · neutre)',
+      profils: profilsV4(<String, Profil>{
+        'distSpec': const Profil(beta: 0, gamma: 20),
+        'jockey': const Profil(beta: 0, gamma: 0),
+      }),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.0, maxAbs: 0.60),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.034),
+      ],
+      gradientAttendu: const <String>['distSpec', 'jockey'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('V4-0/3');
+    expect(v.ok, isTrue, reason: 'C3 doit être acceptée');
+  }, timeout: const Timeout(Duration(minutes: 90)));
+
+  test('V4-0/4 — DISCRIMINATIONS DIFFÉRENTES (C4 : γ=25 / γ=9)', () async {
+    final spec = Spec(
+      nom: 'C4 paire corrélée, discriminations différentes (γ=25 / γ=9)',
+      profils: profilsV4(<String, Profil>{
+        'distSpec': const Profil(beta: 35, gamma: 25),
+        'jockey': const Profil(beta: 35, gamma: 9),
+      }),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.78),
+      ],
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.042),
+        AttenteDiscrimination('jockey', signe: 1, minAbs: 0.013),
+      ],
+      gradientAttendu: const <String>['distSpec', 'jockey'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('V4-0/4');
+    expect(v.ok, isTrue, reason: 'C4 doit être acceptée');
+  }, timeout: const Timeout(Duration(minutes: 90)));
+
+  test('V4-0/5 — critère effectivement GELÉ (C1)', () async {
+    final spec = Spec(
+      nom: '5. critère effectivement GELÉ (C1)',
+      profils: profilsV4(<String, Profil>{
+        'distSpec': const Profil(beta: 25, gamma: 20),
+        'jockey': const Profil(beta: 25, gamma: 20),
+      }),
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      gelAttendu: 'jockey',
+      gradientAttendu: const <String>['distSpec'],
+    );
+    final v = await valider(spec, cycles: 45);
+    v.imprimer('V4-0/5');
+    // Le gel doit être ATTEINT : sans cela G4v3 n'a rien à mesurer.
+    // Le critère désigné par la règle `p1 <= p2 ? c1 : c2` doit être jockey
+    // (0,07 < 0,08 au départ), ce que `valider` vérifie explicitement.
+    expect(v.ok, isTrue, reason: 'le gel doit être atteint sur jockey');
+  }, timeout: const Timeout(Duration(minutes: 90)));
+
+  test('V4-0/7 — INVERSION des poids initiaux (C1 sur deux départs)', () async {
+    final profils = profilsV4(<String, Profil>{
+      'distSpec': const Profil(beta: 25, gamma: 20),
+      'jockey': const Profil(beta: 25, gamma: 20),
+    });
+
+    final specA = Spec(
+      nom: '7a. inversion — A (distSpec 0,08 > jockey 0,07)',
+      profils: profils,
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      gelAttendu: 'jockey',
+      gradientAttendu: const <String>['distSpec'],
+    );
+    final va = await valider(specA, cycles: 45);
+    va.imprimer('V4-0/7a');
+
+    final departB = <String, double>{...kInitial}
+      ..['distSpec'] = 0.03
+      ..['jockey'] = 0.09;
+    final specB = Spec(
+      nom: '7b. inversion — B (distSpec 0,03 < jockey 0,09)',
+      profils: profils,
+      depart: departB,
+      attentesPaires: const <AttentePaire>[
+        AttentePaire('distSpec', 'jockey', minAbs: 0.85),
+      ],
+      gelAttendu: 'distSpec',
+      gradientAttendu: const <String>['jockey'],
+    );
+    final vb = await valider(specB, cycles: 45);
+    vb.imprimer('V4-0/7b');
+
+    // ignore: avoid_print
+    print('[V4-0/7] ⇒ A gèle jockey · B gèle distSpec ⇒ '
+        '${va.ok && vb.ok ? "L INVERSION EST MESURÉE" : "REFUS"}');
+    expect(va.ok && vb.ok, isTrue);
+  }, timeout: const Timeout(Duration(minutes: 180)));
+}

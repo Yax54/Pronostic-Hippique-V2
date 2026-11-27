@@ -1,0 +1,161 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  D4 — LE SIGNAL INVERSÉ EST-IL EFFECTIVEMENT LU PAR LE GRADIENT ?
+//
+//  ORIGINE (mesuré, D3) : les 19 sous-campagnes de D3 ont TOUTES rapporté
+//  `disc moy = −0,047332008` à 9 décimales identiques, alors que chacune
+//  pilotait un critère différent. Une valeur identique à la 9e décimale pour
+//  19 entrées distinctes ne peut pas être une propriété du moteur : c'est la
+//  signature d'un harnais dont la phase 2 ne fournit jamais le signal attendu.
+//
+//  Ce fichier mesure, cycle par cycle, la discrimination RÉELLEMENT publiée
+//  par `_apprendreParGradient` sur le critère piloté, et le poids obtenu.
+//  Il ne conclut rien tant que la discrimination n'a pas été vue changer de
+//  signe : sans signal inversé lu, il n'y a pas de question de sortie de
+//  plancher à poser.
+//
+//  PROTOCOLE : 200 cycles, bascule à 60. Le critère `distSpec` est anti-
+//  discriminant avant, très discriminant après. On lit tous les 10 cycles :
+//   • disc     : discrimination publiée pour `distSpec` ;
+//   • poids    : poids effectif de `distSpec` ;
+//   • fenêtre  : nb de courses dans la fenêtre du gradient ;
+//   • lr       : taux d'apprentissage réellement appliqué ;
+//   • gelé     : `distSpec` figure-t-il dans l'ensemble gelé ?
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+const int kCycles = 200;
+const int kBascule = 60;
+
+String d9(double v) => v.toStringAsFixed(9);
+
+double bruit(int numero, int cycle, int critere) {
+  // DÉFAUT N°15 (campagne V0, mesuré) : l'ancien générateur
+  //   (numero*7919 + cycle*104729 + critere*1299709) * 0.6180339887, modulo 1
+  // est une projection LINÉAIRE : deux critères produisent, à une translation
+  // près, le MÊME bruit. Mesuré : |r| max 0,9405, 131/171 paires >= 0,30,
+  // 49/171 >= 0,65. Remplacé par lowbias32 : |r| max 0,0897, 0/171 >= 0,30.
+  var h = (numero * 0x9E3779B1) ^ (cycle * 0x85EBCA77) ^ (critere * 0xC2B2AE3D);
+  h &= 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = h ^ (h >> 16);
+  h &= 0xFFFFFFFF;
+  return (h / 4294967296.0 - 0.5) * 24.0;
+}
+
+ScoresCriteres notes(int numero, int cycle) {
+  double v(int idx, String nom) {
+    if (nom != 'distSpec') {
+      return (78.0 - numero * 5 + bruit(numero, cycle, idx)).clamp(5.0, 95.0);
+    }
+    return cycle < kBascule
+        ? (30.0 + numero * 12.0).clamp(0.0, 100.0)
+        : (100.0 - numero * 16.0).clamp(0.0, 100.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('D4 — discrimination réelle de distSpec, cycle par cycle', () async {
+    IaExperimentation.reinitialiser();
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kCycles; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notes(n, i),
+          },
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notes(n, 0),
+          },
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[D4] ═══ distSpec : discrimination RÉELLE cycle par cycle ═══');
+    // ignore: avoid_print
+    print('[D4] cycle | disc distSpec  | poids distSpec | fenêtre | lr       '
+        '| gelé');
+    var discPositifsApres = 0;
+    var discNegatifsAvant = 0;
+    for (var i = 0; i < kCycles; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final disc = IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0.0;
+      final p = poidsEffectifs();
+      if (i < kBascule && disc < 0) discNegatifsAvant++;
+      if (i >= kBascule && disc > 0) discPositifsApres++;
+      if (i % 10 == 0 || i == kBascule || i == kCycles - 1) {
+        // ignore: avoid_print
+        print('[D4] ${i.toString().padLeft(5)} | ${d9(disc)} | '
+            '${d9(p["distSpec"]!)} | ${IaExperimentation.derniereFenetre.toString().padLeft(7)} '
+            '| ${IaExperimentation.dernierLr.toStringAsFixed(6)} | '
+            '${IaExperimentation.derniersGeles.contains("distSpec")}');
+      }
+    }
+    final fin = poidsEffectifs();
+    // ignore: avoid_print
+    print('[D4] ⇒ cycles phase 1 avec disc NÉGATIVE : $discNegatifsAvant/'
+        '$kBascule');
+    // ignore: avoid_print
+    print('[D4] ⇒ cycles phase 2 avec disc POSITIVE : $discPositifsApres/'
+        '${kCycles - kBascule}');
+    // ignore: avoid_print
+    print('[D4] ⇒ poids final distSpec = ${d9(fin["distSpec"]!)} '
+        '(plancher 0,005)');
+    // ignore: avoid_print
+    print('[D4] ⇒ Σ final = ${d9(sommeCle(fin, kCles))}');
+    // ignore: avoid_print
+    print('[D4] ⇒ lr final = ${IaExperimentation.dernierLr.toStringAsFixed(6)}');
+
+    expect(sommeCle(fin, kCles), closeTo(1.0, 1e-6));
+  }, timeout: const Timeout(Duration(minutes: 40)));
+}

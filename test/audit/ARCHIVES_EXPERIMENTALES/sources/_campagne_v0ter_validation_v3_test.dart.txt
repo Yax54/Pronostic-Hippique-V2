@@ -1,0 +1,214 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE V0ter — VALIDATION DU HARNAIS v3 AVANT TOUT USAGE
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  Le cadrage §5 exige, avant toute comparaison, de démontrer que le dispositif
+//  se comporte comme attendu. Appliqué au harnais lui-même, cela donne trois
+//  propriétés à MESURER, pas à affirmer :
+//
+//    V3-1  INDÉPENDANCE. Deux critères non clonés doivent avoir une corrélation
+//          croisée faible. Les notes étant des permutations indépendantes de
+//          {20,35,50,65,80}, l'espérance de r est 0.
+//
+//    V3-2  NEUTRALITÉ. Un critère non piloté doit avoir une discrimination
+//          nulle en espérance : `(moy(rang 1-2) − moy(rang 4-5))/100 ≈ 0`.
+//          C'est la propriété que V0bis avait RÉFUTÉE pour le harnais v2
+//          (mesure : 0,139 à 0,157 sur les 19 critères, tous « témoins »).
+//
+//    V3-3  CONTRÔLE. On doit pouvoir FABRIQUER à volonté une paire corrélée
+//          (clone ⇒ r ≈ 1), une paire anti-corrélée (permutation renversée ⇒
+//          r ≈ −1) et un critère piloté de discrimination imposée. Sans ces
+//          trois leviers, les campagnes de gel et de projection ne peuvent pas
+//          être construites.
+//
+//  L'arrivée de référence est [1,2,3,4,5] : le cheval 1 gagne. Les critères
+//  neutres tirent leur permutation SANS référence à ce classement.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'harnais_v3.dart';
+
+const List<String> _noms = <String>[
+  'forme', 'gains', 'record', 'cote', 'constance', 'victoires', 'discipline',
+  'distSpec', 'jockey', 'repos', 'hippo', 'entraineur', 'elo',
+  'terrain', 'divergence', 'poidsRel', 'progression', 'mouvCote', 'placeDepart',
+];
+
+double _pearson(List<double> x, List<double> y) {
+  final n = math.min(x.length, y.length);
+  if (n < 10) return 0.0;
+  final mx = x.take(n).reduce((a, b) => a + b) / n;
+  final my = y.take(n).reduce((a, b) => a + b) / n;
+  double num = 0, dx = 0, dy = 0;
+  for (var i = 0; i < n; i++) {
+    final ex = x[i] - mx, ey = y[i] - my;
+    num += ex * ey;
+    dx += ex * ex;
+    dy += ey * ey;
+  }
+  final denom = math.sqrt(dx * dy);
+  return denom > 0 ? num / denom : 0.0;
+}
+
+/// Discrimination de production : (moy rang 1-2 − moy rang 4-5)/100.
+double _disc(List<double> parNumero) =>
+    ((parNumero[0] + parNumero[1]) / 2 - (parNumero[3] + parNumero[4]) / 2) /
+    100.0;
+
+void main() {
+  const cycles = 240;
+
+  test('V0ter-1 — indépendance : corrélation croisée des critères non clonés',
+      () {
+    final vecteurs = <List<double>>[];
+    for (var k = 0; k < 19; k++) {
+      final v = <double>[];
+      for (var c = 0; c < cycles; c++) {
+        for (var n = 1; n <= 5; n++) {
+          v.add(notesDistinctes(n, c).valeurPourCritere(_noms[k]));
+        }
+      }
+      vecteurs.add(v);
+    }
+    final rs = <double>[];
+    var maxi = -1.0, pireI = 0, pireJ = 0, ge30 = 0, ge65 = 0;
+    for (var i = 0; i < 19; i++) {
+      for (var j = i + 1; j < 19; j++) {
+        final r = _pearson(vecteurs[i], vecteurs[j]).abs();
+        rs.add(r);
+        if (r >= 0.30) ge30++;
+        if (r >= 0.65) ge65++;
+        if (r > maxi) {
+          maxi = r;
+          pireI = i;
+          pireJ = j;
+        }
+      }
+    }
+    rs.sort();
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[V0ter] (1) INDÉPENDANCE — |r| min=${rs.first.toStringAsFixed(6)} '
+        'méd=${rs[rs.length ~/ 2].toStringAsFixed(6)} '
+        'max=${maxi.toStringAsFixed(6)} (pire ${_noms[pireI]}/${_noms[pireJ]})');
+    // ignore: avoid_print
+    print('[V0ter]     >=0.30 : $ge30/171 · >=0.65 : $ge65/171');
+    expect(ge30, equals(0),
+        reason: 'Le harnais v3 doit être INDÉPENDANT : aucune paire >= 0,30.');
+  });
+
+  test('V0ter-2 — neutralité : discrimination nulle des critères non pilotés',
+      () {
+    final discs = <String, double>{};
+    for (var k = 0; k < 19; k++) {
+      var s = 0.0;
+      for (var c = 0; c < cycles; c++) {
+        s += _disc(<double>[
+          for (var n = 1; n <= 5; n++)
+            notesDistinctes(n, c).valeurPourCritere(_noms[k]),
+        ]);
+      }
+      discs[_noms[k]] = s / cycles;
+    }
+    final v = discs.values.toList()..sort();
+    // ignore: avoid_print
+    print('[V0ter] (2) NEUTRALITÉ — discrimination : '
+        'min=${v.first.toStringAsFixed(9)} '
+        'méd=${v[v.length ~/ 2].toStringAsFixed(9)} '
+        'max=${v.last.toStringAsFixed(9)}');
+    // ignore: avoid_print
+    print('[V0ter]     comparer à v2 (V0bis) : 0,139266354 → 0,156962550 — '
+        'les 19 « témoins » y étaient DISCRIMINANTS');
+    expect(v.last.abs() < 0.05, isTrue,
+        reason: 'Aucun critère non piloté ne doit dépasser |d| = 0,05. '
+            'Obtenu max : ${v.last}.');
+  });
+
+  test('V0ter-3 — contrôles : clone, anti-corrélation, critère piloté', () {
+    // ── Clone : forme et gains reçoivent la MÊME permutation et le même bruit.
+    const clones = <String, int>{'gains': 0}; // gains prend la graine de forme
+    final vForme = <double>[], vGains = <double>[];
+    for (var c = 0; c < cycles; c++) {
+      for (var n = 1; n <= 5; n++) {
+        final sc = notesDistinctes(n, c, clones: clones);
+        vForme.add(sc.forme);
+        vGains.add(sc.gains);
+      }
+    }
+    final rClone = _pearson(vForme, vGains);
+    // ignore: avoid_print
+    print('[V0ter] (3a) CLONE forme/gains : r=${rClone.toStringAsFixed(9)}');
+    expect(rClone > 0.97, isTrue,
+        reason: 'Un clone doit produire r ≈ 1. Obtenu : $rClone');
+
+    // ── Anti-corrélation : la permutation de `record` est renversée par
+    // rapport à `forme`. On construit directement les notes correspondantes.
+    final vA = <double>[], vB = <double>[];
+    for (var c = 0; c < cycles; c++) {
+      for (var n = 1; n <= 5; n++) {
+        // position de n dans forme
+        final pos = permutation(c, 0)[n - 1];
+        vA.add(20.0 + 15.0 * pos);
+        vB.add(20.0 + 15.0 * (4 - pos)); // renversé
+      }
+    }
+    final rAnti = _pearson(vA, vB);
+    // ignore: avoid_print
+    print('[V0ter] (3b) ANTI-CORRÉLATION : r=${rAnti.toStringAsFixed(9)}');
+    expect(rAnti < -0.97, isTrue,
+        reason: 'Une permutation renversée doit produire r ≈ −1. '
+            'Obtenu : $rAnti');
+
+    // ── Critère piloté : discrimination imposée par la pente.
+    for (final pente in <double>[-12.0, 12.0]) {
+      var s = 0.0;
+      for (var c = 0; c < cycles; c++) {
+        s += _disc(<double>[
+          for (var n = 1; n <= 5; n++)
+            notesPilotees(n, c, pilote: 'distSpec', pente: pente).distSpec,
+        ]);
+      }
+      final d = s / cycles;
+      // ignore: avoid_print
+      print('[V0ter] (3c) PILOTÉ pente=${pente.toStringAsFixed(1)} '
+          '⇒ discrimination=${d.toStringAsFixed(9)}');
+      // pente 12 ⇒ notes 55+12*(3-n) ⇒ cheval1 = 79, cheval5 = 31
+      // ⇒ (79+67)/2 − (43+31)/2 = 73 − 37 = 36 ⇒ d = 0,36
+      expect((d - (pente / 12.0 * 0.36)).abs() < 0.02, isTrue,
+          reason: 'La discrimination du critère piloté doit valoir '
+              'pente/12 × 0,36. Obtenu : $d pour pente $pente');
+    }
+  });
+
+  test('V0ter-4 — le gel est ATTEIGNABLE : varianceScores varie', () {
+    // Condition d'accessibilité du gel, déjà identifiée : pour que
+    // `_mettreAJourCalibration` (l.4440) aille jusqu'à `_detecterCorrelations`,
+    // il faut `avecVariance.length >= 5`, `hautConfiance` ET `basseConfiance`
+    // non vides, donc une `varianceScores` qui VARIE. Le harnais v3 alterne
+    // 5 valeurs : on vérifie que les deux groupes sont non vides.
+    final vars = <double>{for (var c = 0; c < 24; c++) 6.0 + (c % 5) * 4.0};
+    final tri = vars.toList()..sort();
+    final mediane = tri[tri.length ~/ 2];
+    final haut = tri.where((x) => x > mediane).length;
+    final bas = tri.where((x) => x <= mediane).length;
+    // ignore: avoid_print
+    print('[V0ter] (4) varianceScores : ${vars.length} valeurs '
+        '(${tri.join(", ")}) ⇒ haut=$haut bas=$bas');
+    expect(haut, greaterThan(0));
+    expect(bas, greaterThan(0));
+  });
+}

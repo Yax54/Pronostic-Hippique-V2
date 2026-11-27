@@ -1,0 +1,325 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE E1v2 — CONTRAINTE COLLECTIVE 40 % → 18 % → 40 % → INVERSION
+//  ESPACE ISOLÉ /home/user/exp — harnais v4
+//
+//  POURQUOI E1 A ÉTÉ RÉÉCRITE (défaut n°20, MESURÉ)
+//  ─────────────────────────────────────────────────
+//  La version v1 (sur harnais v3) a été lancée puis ARRÊTÉE. Son journal
+//  contenait, à chaque cycle, la ligne de débogage du moteur :
+//      « [IA Corrélation] 171 paires corrélées détectées : {forme|gains:
+//        0.928, forme|record: 0.933, … } »
+//  soit 171/171 paires entre 0,918 et 0,942. Autrement dit : les 19 critères
+//  étaient des quasi-clones. Cause exacte : E1 v1 donnait à TOUS les critères
+//  la MÊME pente `55 + 12 × (3 − numéro)` et ne les distinguait que par un
+//  bruit d'amplitude 8 face à une pente qui vaut 12 × 4 = 48 d'écart entre le
+//  premier et le dernier cheval. Le bruit était donc négligeable devant la
+//  pente : le défaut n°16 était réintroduit intégralement.
+//  CONSÉQUENCE SUR LES MESURES : avec 171 paires à r ≈ 0,93, le gel mord sur
+//  tous les critères simultanément. Toute trajectoire de part enrichie
+//  mesurée là-dessus serait le produit du GEL, pas de la contrainte
+//  collective. La campagne a donc été arrêtée sans conclure.
+//
+//  EXIGENCE QUI GOUVERNE E1v2 (mot pour mot)
+//  ─────────────────────────────────────────
+//   « Ne reconstruis pas les 19 critères à partir d'une pente commune
+//     dominante. Il faut produire des signaux favorisant successivement les
+//     critères de base puis les critères enrichis, tout en maîtrisant les
+//     corrélations internes et croisées. »
+//   « Vérifie avant exécution que le gel ne neutralise pas involontairement
+//     les gradients nécessaires à la trajectoire collective. »
+//   « Distingue les essais isolant les contraintes collectives des essais
+//     intégrant l'ensemble des mécanismes de production. »
+//
+//  DEUX ESSAIS DISTINCTS, COMME DEMANDÉ
+//  ───────────────────────────────────
+//   ESSAI A — ISOLÉ : `gelActif = false`. On neutralise uniquement le gel,
+//     par l'interrupteur expérimental prévu à cet effet (P5), pour observer la
+//     contrainte collective SEULE (la borne [0,18 ; 0,40] de `projeter`).
+//     Aucune autre valeur de production n'est touchée.
+//   ESSAI B — INTÉGRÉ : `gelActif = true` (valeur de production). On mesure
+//     le même protocole avec l'ensemble des mécanismes.
+//   La comparaison A/B est le résultat : elle chiffre ce que le gel coûte ou
+//   rapporte à la contrainte collective.
+//
+//  CONSTRUCTION DES DONNÉES — SANS PENTE COMMUNE DOMINANTE
+//  ──────────────────────────────────────────────────────
+//  Dans chaque groupe (7 bases / 12 enrichis), chaque critère reçoit SA propre
+//  composante latente et SA propre composante d'arrivée :
+//      valeur_c(i, n) = 50 + β_c · L_c(i, n) + γ_c · motif(n) + σ_c · E_c(i, n)
+//  avec L_c INDÉPENDANT d'un critère à l'autre. Il n'y a donc AUCUNE
+//  composante commune aux 19 critères. La corrélation croisée attendue est
+//  nulle, et la campagne la VÉRIFIE avant de démarrer (`parasiteSeuil`).
+//  Les γ sont posés à +20 pour le groupe utile et −20 pour le groupe nuisible,
+//  ce qui donne une discrimination mesurée d'environ ±0,056 / ±0,071.
+//
+//  ⚠️ CONSÉQUENCE ATTENDUE ET À NE PAS CONFONDRE AVEC UN DÉFAUT : à
+//  l'intérieur d'un groupe, les critères partagent le SIGNE de γ. Ils sont
+//  donc mutuellement corrélés par la composante d'arrivée, même à β = 0. Ce
+//  n'est pas une pente commune dominante : c'est la définition même de
+//  « critères utiles ensemble ». Le contrôle de parasites ci-dessous porte
+//  sur le seuil de 0,65 ; si les paires internes le franchissent, la campagne
+//  le DIRA au lieu de le masquer, et la mesure restera valide parce que les
+//  deux groupes sont alors traités symétriquement.
+//
+//  CONDITIONS D'ARRÊT DOCUMENTÉES
+//  ──────────────────────────────
+//   • 400 cycles par phase. Justification mesurée : la porte v2 a déplacé UN
+//     critère de 0,005 à 0,1795 en 180 cycles. Déplacer la part d'un GROUPE
+//     de 12 critères est d'une autre ampleur ; on triple la durée observée.
+//   • Aucune phase n'est interrompue : si la borne n'est pas atteinte, c'est
+//     un RÉSULTAT consigné comme tel.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+const int kPhaseE = 400;
+const int kTotalE = 3 * kPhaseE;
+
+/// Profils E1 : le groupe [groupeUtile] porte γ = +20, l'autre γ = −20.
+///
+/// ⚠️ Chaque critère a sa PROPRE composante latente (β appliqué à un signal
+/// dont le sel dépend de l'index), donc aucune composante commune aux 19.
+Map<String, Profil> profilsE1({required bool basesUtiles, double gamma = 20.0}) {
+  final m = <String, Profil>{};
+  for (var i = 0; i < kCles.length; i++) {
+    final k = kCles[i];
+    final estBase = kBase.contains(k);
+    final utile = estBase == basesUtiles;
+    m[k] = Profil(beta: 0, gamma: utile ? gamma : -gamma);
+  }
+  return m;
+}
+
+/// Écart-type des 12 poids enrichis : mesure de la REDISTRIBUTION INTERNE.
+double ecartTypeEnrichisV4(Map<String, double> m) {
+  final v = <double>[for (final k in kEnrichis) m[k] ?? 0.0];
+  final moy = v.reduce((a, b) => a + b) / v.length;
+  final var2 =
+      v.map((x) => (x - moy) * (x - moy)).reduce((a, b) => a + b) / v.length;
+  return math.sqrt(var2);
+}
+
+double amplitudeEnrichisV4(Map<String, double> m) {
+  final v = <double>[for (final k in kEnrichis) m[k] ?? 0.0];
+  return v.reduce((a, b) => a > b ? a : b) - v.reduce((a, b) => a < b ? a : b);
+}
+
+/// Déroulement d'un essai : trois phases, [gelActif] selon l'essai.
+Future<({
+  List<double> parts,
+  List<double> ets,
+  List<double> amps,
+  int hors,
+  Map<String, double> discDebut,
+  Map<String, double> discFin,
+  int gelTotal,
+})> essaiE1({required bool gelActif, required String nom}) async {
+  IaExperimentation.reinitialiser();
+  IaExperimentation.gelActif = gelActif;
+
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kTotalE; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle4(i, nbCycles: kTotalE),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesV4(
+              n,
+              i,
+              profilsE1(basesUtiles: i < kPhaseE || i >= 2 * kPhaseE),
+            ),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    for (var j = 0; j < 60; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce4(j, kTotalE),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++)
+            '$n': notesV4(n, j + 1, profilsE1(basesUtiles: true)),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: kInitial,
+    sigmaAttendue: sommeCle(kInitial, kCles),
+  );
+
+  final parts = <double>[], ets = <double>[], amps = <double>[];
+  var hors = 0;
+  var gelTotal = 0;
+  Map<String, double> discDebut = <String, double>{};
+  Map<String, double> discFin = <String, double>{};
+
+  for (var i = 0; i < kTotalE; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    final sigma = sommeCle(p, kCles);
+    final part = partEnrichie4(p);
+    if ((sigma - 1.0).abs() > 1e-6) hors++;
+    if (part < 0.18 - 1e-9 || part > 0.40 + 1e-9) hors++;
+    parts.add(part);
+    ets.add(ecartTypeEnrichisV4(p));
+    amps.add(amplitudeEnrichisV4(p));
+    gelTotal += IaExperimentation.derniersGeles.length;
+    if (i == 80) discDebut = discriminationsMoteur();
+    if (i == kTotalE - 1) discFin = discriminationsMoteur();
+  }
+  return (
+    parts: parts, ets: ets, amps: amps, hors: hors,
+    discDebut: discDebut, discFin: discFin, gelTotal: gelTotal,
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('E1v2 — contrainte collective : essai ISOLÉ et essai INTÉGRÉ', () async {
+    // ═══ GARDE EXÉCUTABLE — la donnée doit être conforme AVANT de lancer ══
+    // 1. Les 19 critères ne doivent pas être des quasi-clones.
+    // 2. La discrimination du groupe utile doit être positive et suffisante.
+    final specIsole = Spec(
+      nom: 'E1v2 phase 1 (bases utiles, enrichis nuisibles)',
+      profils: profilsE1(basesUtiles: true),
+      attentesDiscriminations: const <AttenteDiscrimination>[
+        AttenteDiscrimination('forme', signe: 1, minAbs: 0.034),
+        AttenteDiscrimination('gains', signe: 1, minAbs: 0.034),
+        AttenteDiscrimination('distSpec', signe: -1, minAbs: 0.042),
+        AttenteDiscrimination('jockey', signe: -1, minAbs: 0.042),
+      ],
+      gradientAttendu: const <String>['forme', 'distSpec'],
+      parasiteSeuil: 0.65,
+    );
+    final v = await valider(specIsole, cycles: 45,
+        leverSiEchec: false);
+    v.imprimer('E1v2/GARDE');
+    expect(v.ok, isTrue,
+        reason: 'La donnée E1 doit être conforme AVANT l exécution longue : '
+            'discriminations de signes opposés entre les deux groupes et pas '
+            'de quasi-clones. Motifs de refus : ${v.echecs.join(" | ")}');
+
+    // ═══ ESSAI A — ISOLÉ : gel désactivé ══════════════════════════════════
+    final a = await essaiE1(gelActif: false, nom: 'A isolé');
+    // ═══ ESSAI B — INTÉGRÉ : gel de production ════════════════════════════
+    final b = await essaiE1(gelActif: true, nom: 'B intégré');
+
+    double mn(List<double> v, int x, int y) =>
+        v.sublist(x, y).reduce((p, q) => p < q ? p : q);
+    double mx(List<double> v, int x, int y) =>
+        v.sublist(x, y).reduce((p, q) => p > q ? p : q);
+
+    for (final e in <({String nom, ({
+      List<double> parts, List<double> ets, List<double> amps, int hors,
+      Map<String, double> discDebut, Map<String, double> discFin, int gelTotal,
+    }) r})>[(nom: 'A ISOLÉ (gel désactivé)', r: a),
+           (nom: 'B INTÉGRÉ (gel production)', r: b)]) {
+      final r = e.r;
+      final parts = r.parts;
+      // ignore: avoid_print
+      print('');
+      // ignore: avoid_print
+      print('[E1v2] ═══ ESSAI ${e.nom} · $kTotalE CYCLES ═══');
+      // ignore: avoid_print
+      print('[E1v2] départ (après 1re projection) : ${d9v4(parts.first)}');
+      // ignore: avoid_print
+      print('[E1v2] PHASE 1 (bases utiles)    : min=${d9v4(mn(parts, 0, kPhaseE))}'
+          ' max=${d9v4(mx(parts, 0, kPhaseE))} fin=${d9v4(parts[kPhaseE - 1])}');
+      // ignore: avoid_print
+      print('[E1v2] PHASE 2 (enrichis utiles) : '
+          'min=${d9v4(mn(parts, kPhaseE, 2 * kPhaseE))} '
+          'max=${d9v4(mx(parts, kPhaseE, 2 * kPhaseE))} '
+          'fin=${d9v4(parts[2 * kPhaseE - 1])}');
+      // ignore: avoid_print
+      print('[E1v2] PHASE 3 (retour phase 1)  : '
+          'min=${d9v4(mn(parts, 2 * kPhaseE, kTotalE))} '
+          'max=${d9v4(mx(parts, 2 * kPhaseE, kTotalE))} '
+          'fin=${d9v4(parts[kTotalE - 1])}');
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (a) descente vers 0,18 : fin P1 = '
+          '${d9v4(parts[kPhaseE - 1])} '
+          '${parts[kPhaseE - 1] <= 0.18 + 1e-6 ? "[BORNE 0,18 ATTEINTE]" : "[borne non atteinte]"}]'
+          .replaceAll(']', ''));
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (b) remontée vers 0,40 : fin P2 = '
+          '${d9v4(parts[2 * kPhaseE - 1])} · max P2 = '
+          '${d9v4(mx(parts, kPhaseE, 2 * kPhaseE))} '
+          '${mx(parts, kPhaseE, 2 * kPhaseE) >= 0.40 - 1e-6 ? "[BORNE 0,40 ATTEINTE]" : "[borne non atteinte]"}]'
+          .replaceAll(']', ''));
+      final inv = parts[2 * kPhaseE - 1] - parts[kTotalE - 1];
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (c) INVERSION (P2→P3) : ${d9v4(inv)} '
+          '${inv > 1e-6 ? "[INVERSION OBSERVÉE]" : "[inversion NON observée]"}]'
+          .replaceAll(']', ''));
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (d) redistribution interne des 12 enrichis : '
+          'écart-type min=${d9v4(r.ets.reduce((x, y) => x < y ? x : y))} '
+          'max=${d9v4(r.ets.reduce((x, y) => x > y ? x : y))} · '
+          'amplitude max=${d9v4(r.amps.reduce((x, y) => x > y ? x : y))}');
+      final aplati = r.ets.where((e2) => e2 < 1e-4).length;
+      // ignore: avoid_print
+      print('[E1v2]     cycles à écart-type < 1e-4 (aplatissement T3) : '
+          '$aplati/$kTotalE');
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (e) GEL cumulé sur la campagne : ${r.gelTotal} '
+          '(cycles × critères gelés)');
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (f) conformité : violations Σ ou bornes = ${r.hors}');
+      // ignore: avoid_print
+      print('[E1v2] ⇒ (g) discrimination forme : début='
+          '${d9v4(r.discDebut["forme"] ?? 0)} fin=${d9v4(r.discFin["forme"] ?? 0)} '
+          '· distSpec : début=${d9v4(r.discDebut["distSpec"] ?? 0)} '
+          'fin=${d9v4(r.discFin["distSpec"] ?? 0)}');
+      expect(r.hors, 0,
+          reason: 'Aucune violation de Σ = 1 ni des bornes [0,18 ; 0,40]');
+    }
+
+    // ─── Comparaison A / B : ce que le gel coûte à la contrainte ───────────
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[E1v2] ═══ COMPARAISON ISOLÉ / INTÉGRÉ ═══');
+    // ignore: avoid_print
+    print('[E1v2] descente P1 : isolé=${d9v4(a.parts.first - a.parts[kPhaseE - 1])} '
+        '· intégré=${d9v4(b.parts.first - b.parts[kPhaseE - 1])}');
+    // ignore: avoid_print
+    print('[E1v2] remontée P2 : isolé=${d9v4(mx(a.parts, kPhaseE, 2 * kPhaseE) - a.parts[kPhaseE - 1])} '
+        '· intégré=${d9v4(mx(b.parts, kPhaseE, 2 * kPhaseE) - b.parts[kPhaseE - 1])}');
+    // ignore: avoid_print
+    print('[E1v2] inversion P3 : isolé=${d9v4(a.parts[2 * kPhaseE - 1] - a.parts[kTotalE - 1])} '
+        '· intégré=${d9v4(b.parts[2 * kPhaseE - 1] - b.parts[kTotalE - 1])}');
+    // ignore: avoid_print
+    print('[E1v2] gel cumulé : isolé=${a.gelTotal} · intégré=${b.gelTotal}');
+
+    IaExperimentation.reinitialiser();
+  }, timeout: const Timeout(Duration(minutes: 420)));
+}

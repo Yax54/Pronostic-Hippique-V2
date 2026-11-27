@@ -1,0 +1,88 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// DIAGNOSTIC TEMPORAIRE — reconstitution de la décision de gel, cycle par cycle.
+// Aucun résultat scientifique : sert à établir QUEL instant est utilisé par la
+// règle `aGeler = p1 <= p2 ? c1 : c2` (ia_memory_service:4132-4133).
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+
+Map<String, Profil> profilsDiag() {
+  final m = profilsNeutres();
+  m['distSpec'] = const Profil(beta: 25, gamma: -20);
+  m['jockey'] = const Profil(beta: 25, gamma: -20);
+  return m;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('diag — instant de décision du gel', () async {
+    IaExperimentation.reinitialiser();
+    final cycles = 40;
+    final courses = <IaPronostic>[
+      for (var i = 0; i < cycles; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: dateCycle4(i, nbCycles: cycles),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesV4(n, i, profilsDiag()),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: dateAmorce4(j, cycles),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesV4(n, j + 1, profilsDiag()),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    var corrPrev = <String, double>{};
+    for (var i = 0; i < cycles; i++) {
+      final c = await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final geles = IaExperimentation.derniersGeles;
+      final corrNow = correlationsMemorisees();
+      final r = corrNow['distSpec|jockey'] ?? corrPrev['distSpec|jockey'] ?? 0.0;
+      final rPrev = corrPrev['distSpec|jockey'] ?? 0.0;
+      final aJ = c.avant['jockey']!, aD = c.avant['distSpec']!;
+      final oJ = c.obtenu['jockey']!, oD = c.obtenu['distSpec']!;
+      final prJ = c.propose['jockey']!, prD = c.propose['distSpec']!;
+      // ignore: avoid_print
+      print('[DIAG] i=$i geles=${geles.toList()} '
+          'r_now=${r.toStringAsFixed(3)} r_prev=${rPrev.toStringAsFixed(3)} '
+          'aJ=${aJ.toStringAsFixed(6)} aD=${aD.toStringAsFixed(6)} '
+          'prJ=${prJ.toStringAsFixed(6)} prD=${prD.toStringAsFixed(6)} '
+          'oJ=${oJ.toStringAsFixed(6)} oD=${oD.toStringAsFixed(6)}');
+      corrPrev = corrNow;
+    }
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

@@ -1,0 +1,555 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G4v5 — LE GEL BLOQUE-T-IL UN CRITÈRE DEVENU NÉFASTE
+//  ALORS QUE LA CORRÉLATION PERSISTE ? (régime LIBRE, non saturé)
+//  ESPACE ISOLÉ /home/user/exp — harnais v4 validé
+//
+//  POURQUOI CE FICHIER EXISTE APRÈS G4v3 ET G4v4
+//  ─────────────────────────────────────────────
+//  G4v3 (800 cycles, EXITCODE=0) a mesuré en P4 :
+//      jockey (gelé 190/200) : Δ = 0,004739118
+//      distSpec (gelé  10/200) : Δ = 0,174964385   ⇒ rapport 36,9
+//  et a conclu « le critère gelé reste bloqué ».
+//
+//  G4v4 (4 cellules × 200 cycles, EXITCODE=0) a montré :
+//      gel ACTIF vs gel INACTIF ⇒ écart EXACTEMENT 0,000000000 sur les
+//      4 cellules, pour jockey comme pour distSpec.
+//  ⇒ **la conclusion de G4v3 était une ERREUR D'ATTRIBUTION.** L'asymétrie
+//    qu'elle décrivait ne vient pas du gel.
+//
+//  ⚠️ MAIS G4v4 a un DÉFAUT DE RÉGIME que je dois déclarer : avec β=25 γ=+20,
+//     les DEUX critères atteignent leur plafond individuel (jockey 0,15 ;
+//     distSpec 0,18). En régime SATURÉ, désactiver le gel ne peut rien changer :
+//     la projection repose le critère exactement au plafond à chaque cycle.
+//     G4v4 mesure donc honnêtement « le gel n'est pas la cause EN RÉGIME
+//     SATURÉ », et **rien de plus**. Ce fichier comble ce trou.
+//
+//  QUESTION POSÉE — texte de la consigne, POINT 4
+//  ─────────────────────────────────────────────
+//  « Étudier également le cas d'un critère devenu néfaste alors que la
+//   corrélation persiste. Vérifier que le critère étudié est effectivement
+//   celui qui est gelé et non simplement celui dont la discrimination devient
+//   négative. Déterminer si le gel peut empêcher durablement une adaptation
+//   nécessaire. Distinguer : l'absence de gradient, la remise à zéro du
+//   momentum, les variations indirectes dues à la projection, le véritable
+//   dégel, la reprise effective de l'apprentissage. »
+//
+//  PLAN — 2 CELLULES × 3 PHASES × 60 CYCLES (régime LIBRE)
+//  ────────────────────────────────────────────────────────
+//    Phase A (0-59)   : jockey UTILE (γ=+8), distSpec UTILE (γ=+8), β=20
+//    Phase B (60-119) : jockey NÉFASTE (γ=−8), distSpec UTILE (γ=+8), β=20
+//                       ⇒ la corrélation PERSISTE (β=20 identique) pendant
+//                         que la pertinence de jockey s'inverse. C'est
+//                         EXACTEMENT le cas demandé.
+//    Phase C (120-179): les deux UTILES à nouveau (γ=+8) ⇒ réversibilité
+//
+//  γ=+8 et 60 cycles ⇒ les critères restent LOIN de leurs plafonds (contrôle
+//  exécutable : max atteint < 90 % du plafond). Régime LIBRE, donc le gel peut
+//  manifester son effet s'il en a un.
+//
+//  LES 5 DISTINCTIONS EXIGÉES — MESURÉES SÉPARÉMENT
+//  ───────────────────────────────────────────────
+//   (i)   ABSENCE DE GRADIENT  : |momentum| du critère AU cycle où il est gelé
+//   (ii)  REMISE À ZÉRO        : momentum == 0.0 exactement au cycle gelé
+//   (iii) VARIATION INDIRECTE  : Δ poids du critère gelé les cycles où il est
+//                                gelé MAIS où la projection redistribue
+//   (iv)  VÉRITABLE DÉGEL      : premier cycle où le critère n'est PLUS dans
+//                                `derniersGeles` alors qu'il l'était au cycle
+//                                précédent
+//   (v)   REPRISE EFFECTIVE    : premier cycle après le dégel où le momentum
+//                                du critère redevient non nul
+//
+//  GARDES EXÉCUTABLES
+//  ──────────────────
+//   G1  validation préalable `valider()` sur les profils de la phase A ET de
+//       la phase B (pertinence inversée) — les deux doivent passer.
+//   G2  contrôle que le critère étudié est bien CELUI QUI EST GELÉ, et non
+//       simplement celui dont la discrimination devient négative : on vérifie
+//       que (a) sa discrimination est négative en phase B, (b) il figure dans
+//       `derniersGeles`, (c) l'AUTRE critère n'y figure pas au même cycle.
+//   G3  contrôle de non-saturation : max atteint < 90 % du plafond, sinon le
+//       régime n'est pas libre et la mesure perd son sens.
+//   G4  contrôle de gel effectif dans la cellule « gel actif » et de gel NUL
+//       dans la cellule témoin.
+//   G5  contrôle de réception du signal en phase A (momentum non nul).
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v4.dart';
+import 'validation_prealable.dart';
+
+const int kPhaseG5 = 60;
+const int kTotalG5 = 3 * kPhaseG5; // 180 cycles
+
+/// Profils de la phase A : les deux UTILES, corrélés, discrimination MODÉRÉE.
+Map<String, Profil> profilsA() {
+  final p = profilsNeutres(sigma: 6.0);
+  p['distSpec'] = const Profil(beta: 20, gamma: 8, sigma: 6);
+  p['jockey'] = const Profil(beta: 20, gamma: 8, sigma: 6);
+  return p;
+}
+
+/// Profils de la phase B : jockey NÉFASTE, distSpec UTILE, MÊME corrélation.
+Map<String, Profil> profilsB() {
+  final p = profilsNeutres(sigma: 6.0);
+  p['distSpec'] = const Profil(beta: 20, gamma: 8, sigma: 6);
+  p['jockey'] = const Profil(beta: 20, gamma: -8, sigma: 6);
+  return p;
+}
+
+Map<String, Profil> profilsDeG5(int cycle) {
+  if (cycle < kPhaseG5) return profilsA();
+  if (cycle < 2 * kPhaseG5) return profilsB();
+  return profilsA();
+}
+
+String d9(double v) => v.toStringAsFixed(9);
+
+class Trace {
+  final List<double> pJ, pD;
+  final List<double> mJ, mD;
+  final List<int> gelJ, gelD;
+  final List<double> r;
+  final List<double> discJ, discD;
+
+  const Trace({
+    required this.pJ,
+    required this.pD,
+    required this.mJ,
+    required this.mD,
+    required this.gelJ,
+    required this.gelD,
+    required this.r,
+    required this.discJ,
+    required this.discD,
+  });
+}
+
+Future<Trace> deroulerG5({required bool gel}) async {
+  IaExperimentation.reinitialiser();
+  IaExperimentation.gelActif = gel;
+
+  final pJ = <double>[], pD = <double>[];
+  final mJ = <double>[], mD = <double>[];
+  final gelJ = <int>[], gelD = <int>[];
+  final r = <double>[];
+  final discJ = <double>[], discD = <double>[];
+
+  final depart = projeterTable(kInitial);
+  await semer(
+    pronostics: <IaPronostic>[],
+    poidsDepart: depart,
+    autoriserVide: true,
+    sigmaAttendue: 1.0,
+  );
+
+  // Amorçage + cycles, avec profils qui CHANGENT par phase.
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kTotalG5; i++)
+      pronostic(
+        courseKey: 'G5_C${i.toString().padLeft(4, '0')}',
+        date: dateCycle4(i, nbCycles: kTotalG5),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesV4(n, i, profilsDeG5(i)),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    for (var j = 0; j < 60; j++)
+      pronostic(
+        courseKey: 'G5_A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce4(j, kTotalG5),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesV4(n, j + 1, profilsA()),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: depart,
+    sigmaAttendue: sommeCle(depart, kCles),
+  );
+
+  for (var i = 0; i < kTotalG5; i++) {
+    final c = await executerCycle(
+      courseKey: 'G5_C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    pJ.add(p['jockey']!);
+    pD.add(p['distSpec']!);
+    mJ.add((c.momentum['jockey'] ?? 0.0).abs());
+    mD.add((c.momentum['distSpec'] ?? 0.0).abs());
+    gelJ.add(IaExperimentation.derniersGeles.contains('jockey') ? 1 : 0);
+    gelD.add(IaExperimentation.derniersGeles.contains('distSpec') ? 1 : 0);
+    r.add(correlationsMemorisees()['distSpec|jockey'] ?? 0.0);
+    discJ.add(IaExperimentation.dernieresDiscriminations['jockey'] ?? 0.0);
+    discD.add(IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0.0);
+  }
+  IaExperimentation.reinitialiser();
+  return Trace(
+    pJ: pJ,
+    pD: pD,
+    mJ: mJ,
+    mD: mD,
+    gelJ: gelJ,
+    gelD: gelD,
+    r: r,
+    discJ: discJ,
+    discD: discD,
+  );
+}
+
+int somme(List<int> v, int a, int b) => v.sublist(a, b).fold(0, (x, y) => x + y);
+double moy(List<double> v, int a, int b) {
+  final s = v.sublist(a, b);
+  return s.reduce((x, y) => x + y) / s.length;
+}
+
+double maxDe(List<double> v) => v.reduce((a, b) => a > b ? a : b);
+double minDe(List<double> v) => v.reduce((a, b) => a < b ? a : b);
+
+void main() {
+  test('G4v5 — gel d un critère devenu néfaste, corrélation persistante', () async {
+    final out = <String>[];
+    void w(String s) => out.add(s);
+
+    w('');
+    w('[G4v5] ═══ GEL D UN CRITÈRE DEVENU NÉFASTE · 3 PHASES × $kPhaseG5 '
+        'CYCLES ═══');
+    w('[G4v5] phase A : jockey UTILE (γ=+8) · distSpec UTILE (γ=+8) · β=20');
+    w('[G4v5] phase B : jockey NÉFASTE (γ=−8) · distSpec UTILE · β=20 '
+        '(CORRÉLATION PERSISTE)');
+    w('[G4v5] phase C : les deux UTILES à nouveau (réversibilité)');
+    w('');
+
+    // ═══════════════════════ G1 — VALIDATION PRÉALABLE ═══════════════════
+    w('[G4v5] ─── G1 : VALIDATION PRÉALABLE DES DEUX RÉGIMES ───');
+    final specA = Spec(
+      nom: 'G4v5 phase A (les deux UTILES)',
+      profils: profilsA(),
+      depart: projeterTable(kInitial),
+      attentesPaires: <AttentePaire>[
+        const AttentePaire('distSpec', 'jockey', minAbs: 0.80),
+      ],
+      attentesDiscriminations: <AttenteDiscrimination>[
+        const AttenteDiscrimination('jockey', signe: 1, minAbs: 0.005),
+        const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.005),
+      ],
+      gradientAttendu: <String>['distSpec', 'jockey'],
+    );
+    final vA = await valider(specA, cycles: 45);
+    vA.imprimer('G4v5/A');
+    expect(vA.ok, isTrue,
+        reason: 'G1 : phase A doit être validée. Échecs : ${vA.echecs.join(" | ")}');
+
+    final specB = Spec(
+      nom: 'G4v5 phase B (jockey NÉFASTE, corrélation persistante)',
+      profils: profilsB(),
+      depart: projeterTable(kInitial),
+      attentesPaires: <AttentePaire>[
+        const AttentePaire('distSpec', 'jockey', minAbs: 0.80),
+      ],
+      attentesDiscriminations: <AttenteDiscrimination>[
+        const AttenteDiscrimination('jockey', signe: -1, minAbs: 0.005),
+        const AttenteDiscrimination('distSpec', signe: 1, minAbs: 0.005),
+      ],
+      gradientAttendu: <String>['distSpec', 'jockey'],
+    );
+    final vB = await valider(specB, cycles: 45);
+    vB.imprimer('G4v5/B');
+    expect(vB.ok, isTrue,
+        reason: 'G1 : phase B doit être validée — c est LA configuration du '
+            'POINT 4 (critère devenu néfaste, corrélation conservée). '
+            'Échecs : ${vB.echecs.join(" | ")}');
+    expect(vB.discriminations['jockey']!, lessThan(0),
+        reason: 'G1 : en phase B la discrimination de jockey doit être '
+            'NÉGATIVE — sinon le scénario ne teste rien');
+    w('');
+
+    // ═════════════════════════ EXÉCUTION ═════════════════════════════════
+    final avecGel = await deroulerG5(gel: true);
+    // ignore: avoid_print
+    print('[G4v5] cellule 1/2 terminée');
+    final sansGel = await deroulerG5(gel: false);
+    // ignore: avoid_print
+    print('[G4v5] cellule 2/2 terminée');
+    w('');
+
+    // ═════════════════ G4 — GEL EFFECTIF DANS LES DEUX CELLULES ══════════
+    w('[G4v5] ─── G4 : GEL EFFECTIF ───');
+    for (final e in <MapEntry<String, Trace>>[
+      MapEntry('GEL ACTIF', avecGel),
+      MapEntry('SANS GEL', sansGel),
+    ]) {
+      w('[G4v5] ${e.key.padRight(10)} · jockey gelé=${somme(e.value.gelJ, 0, kTotalG5)}'
+          '/$kTotalG5 · distSpec gelé=${somme(e.value.gelD, 0, kTotalG5)}/$kTotalG5');
+    }
+    expect(somme(sansGel.gelJ, 0, kTotalG5) + somme(sansGel.gelD, 0, kTotalG5), 0,
+        reason: 'G4 : la cellule témoin ne doit contenir AUCUN gel');
+    expect(somme(avecGel.gelJ, 0, kTotalG5) + somme(avecGel.gelD, 0, kTotalG5),
+        greaterThan(0),
+        reason: 'G4 : la cellule « gel actif » doit EFFECTIVEMENT geler');
+    w('');
+
+    // ═════════════════ G3 — NON-SATURATION (régime LIBRE) ════════════════
+    w('[G4v5] ─── G3 : CONTRÔLE DU RÉGIME LIBRE (non saturé) ───');
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+    final hj = bornes['jockey']![1];
+    final hd = bornes['distSpec']![1];
+    w('[G4v5] plafonds : jockey $hj · distSpec $hd');
+    w('[G4v5] max atteint (gel actif) : jockey ${d9(maxDe(avecGel.pJ))} · '
+        'distSpec ${d9(maxDe(avecGel.pD))}');
+    w('[G4v5] max atteint (sans gel)  : jockey ${d9(maxDe(sansGel.pJ))} · '
+        'distSpec ${d9(maxDe(sansGel.pD))}');
+    final libreJ = maxDe(avecGel.pJ) < hj * 0.90;
+    final libreD = maxDe(avecGel.pD) < hd * 0.90;
+    w('[G4v5] régime LIBRE ? jockey=${libreJ ? "OUI" : "NON (saturé)"} · '
+        'distSpec=${libreD ? "OUI" : "NON (saturé)"}');
+    if (!libreJ || !libreD) {
+      w('[G4v5] ⚠️ LIMITE ASSUMÉE : au moins un critère sature son plafond. La '
+          'mesure du blocage est alors limitée');
+      w('[G4v5]   à la part du trajet effectuée HORS saturation. C est signalé '
+          'dans le rapport et non masqué.');
+    }
+    w('');
+
+    // ═══════════════════════ RÉSULTATS PAR PHASE ═════════════════════════
+    w('[G4v5] ─── TRAJECTOIRES PAR PHASE (GEL ACTIF vs SANS GEL) ───');
+    for (final ph in <List<Object>>[
+      <Object>['A UTILES', 0, kPhaseG5],
+      <Object>['B jockey NÉFASTE', kPhaseG5, 2 * kPhaseG5],
+      <Object>['C RETOUR UTILES', 2 * kPhaseG5, 3 * kPhaseG5],
+    ]) {
+      final nom = ph[0] as String;
+      final a = ph[1] as int;
+      final b = ph[2] as int;
+      w('[G4v5] ── $nom (cycles $a..${b - 1}) ──');
+      w('[G4v5]   r paire        : actif=${d9(moy(avecGel.r, a, b))} · '
+          'sans=${d9(moy(sansGel.r, a, b))}');
+      w('[G4v5]   disc jockey    : actif=${d9(moy(avecGel.discJ, a, b))} · '
+          'sans=${d9(moy(sansGel.discJ, a, b))}');
+      w('[G4v5]   disc distSpec  : actif=${d9(moy(avecGel.discD, a, b))} · '
+          'sans=${d9(moy(sansGel.discD, a, b))}');
+      w('[G4v5]   gel jockey     : actif=${somme(avecGel.gelJ, a, b)}/$kPhaseG5 · '
+          'gel distSpec : actif=${somme(avecGel.gelD, a, b)}/$kPhaseG5');
+      w('[G4v5]   |momentum| jockey  : actif=${d9(moy(avecGel.mJ, a, b))} · '
+          'sans=${d9(moy(sansGel.mJ, a, b))}');
+      w('[G4v5]   |momentum| distSpec: actif=${d9(moy(avecGel.mD, a, b))} · '
+          'sans=${d9(moy(sansGel.mD, a, b))}');
+      w('[G4v5]   poids jockey   : ${d9(avecGel.pJ[a])} → '
+          '${d9(avecGel.pJ[b - 1])} (Δ=${d9(avecGel.pJ[b - 1] - avecGel.pJ[a])}) '
+          '· sans gel Δ=${d9(sansGel.pJ[b - 1] - sansGel.pJ[a])}');
+      w('[G4v5]   poids distSpec : ${d9(avecGel.pD[a])} → '
+          '${d9(avecGel.pD[b - 1])} (Δ=${d9(avecGel.pD[b - 1] - avecGel.pD[a])}) '
+          '· sans gel Δ=${d9(sansGel.pD[b - 1] - sansGel.pD[a])}');
+    }
+    w('');
+
+    // ═══════ LES CINQ DISTINCTIONS EXIGÉES (POINT 4) ═════════════════════
+    w('[G4v5] ─── LES 5 DISTINCTIONS EXIGÉES PAR LE POINT 4 ───');
+
+    // (i) ABSENCE DE GRADIENT au cycle où le critère est gelé
+    var gelsAvecMomentumNonNul = 0;
+    var gelsAvecMomentumNul = 0;
+    for (var i = 0; i < kTotalG5; i++) {
+      if (avecGel.gelJ[i] == 1) {
+        if (avecGel.mJ[i] > 1e-12) {
+          gelsAvecMomentumNonNul++;
+        } else {
+          gelsAvecMomentumNul++;
+        }
+      }
+    }
+    w('[G4v5] (i)  ABSENCE DE GRADIENT : sur ${somme(avecGel.gelJ, 0, kTotalG5)} '
+        'cycles où jockey est GELÉ,');
+    w('[G4v5]      momentum NON NUL = $gelsAvecMomentumNonNul · '
+        'momentum EXACTEMENT NUL = $gelsAvecMomentumNul');
+    expect(gelsAvecMomentumNonNul, 0,
+        reason: '(i) : aucun cycle gelé ne doit laisser passer un gradient');
+
+    // (ii) REMISE À ZÉRO du momentum
+    var remisesAZeroExact = 0;
+    for (var i = 0; i < kTotalG5; i++) {
+      if (avecGel.gelJ[i] == 1 && avecGel.mJ[i] == 0.0) remisesAZeroExact++;
+    }
+    w('[G4v5] (ii) REMISE À ZÉRO : momentum == 0,0 EXACTEMENT sur '
+        '$remisesAZeroExact cycles gelés');
+
+    // (iii) VARIATION INDIRECTE due à la projection, cycles gelés
+    var varIndirecte = 0.0;
+    var cyclesGelesAvecVariation = 0;
+    for (var i = 1; i < kTotalG5; i++) {
+      if (avecGel.gelJ[i] == 1) {
+        final d = (avecGel.pJ[i] - avecGel.pJ[i - 1]).abs();
+        varIndirecte += d;
+        if (d > 1e-12) cyclesGelesAvecVariation++;
+      }
+    }
+    w('[G4v5] (iii) VARIATION INDIRECTE : Σ|Δ poids jockey| sur les cycles gelés '
+        '= ${d9(varIndirecte)}');
+    w('[G4v5]       cycles gelés avec une variation NON NULLE = '
+        '$cyclesGelesAvecVariation ·');
+    if (cyclesGelesAvecVariation > 0) {
+      w('[G4v5]       ⇒ MESURÉ : le critère gelé BOUGE malgré le gel, sur '
+          '$cyclesGelesAvecVariation cycle(s).');
+      w('[G4v5]         Le momentum étant EXACTEMENT nul sur ces cycles (cf. (ii)), '
+          'ce mouvement NE PEUT PAS venir du gradient : il vient de la projection.');
+    } else {
+      w('[G4v5]       ⇒ le critère gelé NE BOUGE PAS DU TOUT sur ses cycles gelés.');
+    }
+
+    // (iv) VÉRITABLE DÉGEL
+    final degels = <int>[];
+    for (var i = 1; i < kTotalG5; i++) {
+      if (avecGel.gelJ[i - 1] == 1 && avecGel.gelJ[i] == 0) degels.add(i);
+    }
+    w('[G4v5] (iv) VÉRITABLE DÉGEL : $degels'.replaceAll('[', '').replaceAll(']', ''));
+    w('[G4v5]      nombre de dégels de jockey = ${degels.length}');
+
+    // (v) REPRISE EFFECTIVE de l'apprentissage
+    final reprises = <int>[];
+    for (final d in degels) {
+      for (var k = d; k < kTotalG5; k++) {
+        if (avecGel.mJ[k] > 1e-12) {
+          reprises.add(k - d);
+          break;
+        }
+      }
+    }
+    w('[G4v5] (v)  REPRISE EFFECTIVE : délai (en cycles, relatif au dégel) '
+        'avant le premier momentum non nul = ${reprises.isEmpty ? "AUCUNE REPRISE" : reprises.toString()}');
+    if (reprises.length != degels.length) {
+      w('[G4v5]      ⚠️ ${degels.length - reprises.length} dégel(s) SANS reprise '
+          'mesurée avant la fin de la campagne — à déclarer comme limite.');
+    }
+    if (reprises.isNotEmpty) {
+      final moyenne = reprises.reduce((a, b) => a + b) / reprises.length;
+      w('[G4v5]      délai moyen de reprise = ${moyenne.toStringAsFixed(2)} '
+          'cycle(s) · délai max = ${reprises.reduce((a, b) => a > b ? a : b)}');
+    }
+    w('');
+
+    // ══════════ G2 — LE CRITÈRE GELÉ EST-IL LE BON ? ═════════════════════
+    w('[G4v5] ─── G2 : LE CRITÈRE ÉTUDIÉ EST-IL CELUI QUI EST GELÉ ? ───');
+    // En phase B, jockey devient néfaste MAIS la corrélation persiste. Si c'est
+    // bien LUI qui est gelé, on doit voir : disc(jockey) < 0 ET gelJ == 1 ET
+    // gelD == 0 au même cycle.
+    var cyclesConcordants = 0;
+    var cyclesGelesB = 0;
+    for (var i = kPhaseG5; i < 2 * kPhaseG5; i++) {
+      if (avecGel.gelJ[i] == 1 || avecGel.gelD[i] == 1) {
+        cyclesGelesB++;
+        if (avecGel.gelJ[i] == 1 &&
+            avecGel.gelD[i] == 0 &&
+            avecGel.discJ[i] < 0) {
+          cyclesConcordants++;
+        }
+      }
+    }
+    w('[G4v5] phase B : cycles avec au moins un gel = $cyclesGelesB');
+    w('[G4v5]            cycles où c est BIEN jockey (néfaste) qui est gelé, '
+        'et lui seul = $cyclesConcordants');
+    if (cyclesGelesB > 0 && cyclesGelesB == cyclesConcordants) {
+      w('[G4v5]            ⇒ COÏNCIDENCE TOTALE ($cyclesConcordants/$cyclesGelesB) '
+          ': le critère gelé se confond, dans cette cellule, avec le critère '
+          'devenu néfaste.');
+      w('[G4v5]              Cela CONFIRME la propriété demandée par le POINT 4 '
+          '(c est bien lui qui est gelé).');
+      w('[G4v5]              Cela signifie aussi que ce dispositif NE SÉPARE PAS '
+          'les deux notions : il ne permet pas');
+      w('[G4v5]              de conclure qu un critère UTILE peut lui aussi être '
+          'gelé par la seule règle des poids.');
+    } else if (cyclesGelesB > 0) {
+      w('[G4v5]            ⇒ COÏNCIDENCE PARTIELLE ($cyclesConcordants/$cyclesGelesB) '
+          ': ${cyclesGelesB - cyclesConcordants} cycle(s) gèlent autre chose que '
+          'jockey-néfaste.');
+      w('[G4v5]              Cela SÉPARE les deux notions et permet de conclure '
+          'que le gel suit la règle des poids,');
+      w('[G4v5]              et non la perte de pertinence.');
+    } else {
+      w('[G4v5]            ⇒ AUCUN gel en phase B : le dispositif ne teste pas la '
+          'propriété demandée.');
+    }
+    w('');
+
+    // ═══════════════════════ VERDICT ARGUMENTÉ ═══════════════════════════
+    w('[G4v5] ─── VERDICT ARGUMENTÉ ───');
+    if (!libreJ || !libreD) {
+      w('[G4v5] ⚠️ CONDITIONNEMENT OBLIGATOIRE : G3 a déclaré une SATURATION '
+          '(jockey libre=${libreJ ? "OUI" : "NON"} · '
+          'distSpec libre=${libreD ? "OUI" : "NON"}).');
+      w('[G4v5]   Le verdict ci-dessous ne vaut donc QUE pour la part du trajet '
+          'effectuée hors saturation,');
+      w('[G4v5]   et NE PROUVE RIEN sur le régime libre demandé par le POINT 4.');
+    } else {
+      w('[G4v5] ✓ G3 a confirmé un régime LIBRE : le verdict porte bien sur le '
+          'cas demandé.');
+    }
+    final djActif = avecGel.pJ[2 * kPhaseG5 - 1] - avecGel.pJ[kPhaseG5];
+    final djSans = sansGel.pJ[2 * kPhaseG5 - 1] - sansGel.pJ[kPhaseG5];
+    final ddActif = avecGel.pD[2 * kPhaseG5 - 1] - avecGel.pD[kPhaseG5];
+    final ddSans = sansGel.pD[2 * kPhaseG5 - 1] - sansGel.pD[kPhaseG5];
+    w('[G4v5] PHASE B — pendant que jockey est NÉFASTE et CORRÉLÉ :');
+    w('[G4v5]   jockey   Δ avec gel=${d9(djActif)} · sans gel=${d9(djSans)} · '
+        'écart=${d9(djSans - djActif)}');
+    w('[G4v5]   distSpec Δ avec gel=${d9(ddActif)} · sans gel=${d9(ddSans)} · '
+        'écart=${d9(ddSans - ddActif)}');
+
+    final ecartJ = (djSans - djActif).abs();
+    final ecartD = (ddSans - ddActif).abs();
+    final seuil = 1e-6;
+    if (ecartJ < seuil && ecartD < seuil) {
+      w('[G4v5] ⇒ LE GEL NE MODIFIE RIEN, MÊME EN RÉGIME LIBRE. Le gradient de '
+          'jockey est coupé,');
+      w('[G4v5]   mais la PROJECTION le déplace autant que s il ne l était pas. '
+          'Le gel est donc');
+      w('[G4v5]   SANS EFFET FONCTIONNEL sur l adaptation, dans ce périmètre.');
+    } else {
+      w('[G4v5] ⇒ LE GEL MODIFIE L ADAPTATION : écart jockey=${d9(ecartJ)} · '
+          'écart distSpec=${d9(ecartD)}.');
+      if (djActif.abs() < djSans.abs()) {
+        w('[G4v5]   Le critère gelé se déplace MOINS que s il était libre ⇒ '
+            'BLOCAGE PARTIEL DÉMONTRÉ.');
+        w('[G4v5]   Rapport de blocage |Δ libre| / |Δ gelé| = '
+            '${d9(djSans.abs() / (djActif.abs() + 1e-18))}');
+      } else {
+        w('[G4v5]   Le critère gelé ne se déplace pas moins ⇒ pas de blocage '
+            'net dans ce régime.');
+      }
+    }
+    w('');
+    w('[G4v5] PHASE C — RÉVERSIBILITÉ (les deux redeviennent UTILES) :');
+    w('[G4v5]   jockey   ${d9(avecGel.pJ[2 * kPhaseG5])} → '
+        '${d9(avecGel.pJ[3 * kPhaseG5 - 1])} '
+        '(Δ=${d9(avecGel.pJ[3 * kPhaseG5 - 1] - avecGel.pJ[2 * kPhaseG5])})');
+    w('[G4v5]   distSpec ${d9(avecGel.pD[2 * kPhaseG5])} → '
+        '${d9(avecGel.pD[3 * kPhaseG5 - 1])} '
+        '(Δ=${d9(avecGel.pD[3 * kPhaseG5 - 1] - avecGel.pD[2 * kPhaseG5])})');
+    final remonte = avecGel.pJ[3 * kPhaseG5 - 1] > avecGel.pJ[2 * kPhaseG5] + 1e-9;
+    w('[G4v5]   ⇒ jockey REMONTE en phase C : ${remonte ? "OUI" : "NON"}');
+
+    for (final l in out) {
+      // ignore: avoid_print
+      print(l);
+    }
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

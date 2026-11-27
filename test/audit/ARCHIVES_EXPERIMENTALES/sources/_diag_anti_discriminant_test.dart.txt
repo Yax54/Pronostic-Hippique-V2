@@ -1,0 +1,190 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DIAGNOSTIC — POURQUOI UN CRITÈRE ANTI-DISCRIMINANT MONTE-T-IL ?
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  LA MESURE QUI EXIGE CE FICHIER
+//  ─────────────────────────────
+//  Campagne C2 : après le cycle 25, `distSpec` reçoit des notes CROISSANTES
+//  avec le rang des chevaux (les mauvais chevaux ont les meilleures notes).
+//  Sa discrimination devient donc fortement NÉGATIVE. Le gradient devrait le
+//  faire CHUTER vers son plancher. Mesure : il MONTE de 0,0581 à 0,0898.
+//
+//  Trois explications possibles, à trancher par mesure :
+//    (α) il est GELÉ et n apprend plus — mais alors il ne devrait pas monter ;
+//    (β) il n est pas gelé, le gradient le fait bien BAISSER, et c est la
+//        PROJECTION qui le remonte mécaniquement (redistribution de groupe) ;
+//    (γ) la discrimination n est pas négative (erreur de construction).
+//
+//  Ce fichier mesure, cycle par cycle : la discrimination publiée, le gel, le
+//  poids proposé avant projection, et le poids obtenu après projection. La
+//  décomposition est alors EXACTE et l explication tombe d elle-même.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+ScoresCriteres notesPhase(int numero, bool antiDistSpec) {
+  double v(String k) {
+    if (k == 'distSpec') {
+      return antiDistSpec
+          ? (20.0 + numero * 14.0).clamp(0.0, 100.0)
+          : (100.0 - numero * 30.0).clamp(0.0, 100.0);
+    }
+    return 96.0 - numero * 6;
+  }
+
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'),
+    cote: v('cote'), constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('X1 — distSpec anti-discriminant : qui le fait monter ?', () async {
+    // Toutes les courses sont ANTI-distSpec dès le départ : pas de phase 1.
+    // Ainsi aucune corrélation héritée d une phase 1 ne vient brouiller.
+    final courses = <IaPronostic>[
+      for (var i = 0; i < 30; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesPhase(n, true),
+          },
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesPhase(n, true),
+          },
+        ),
+    ];
+    await semer(pronostics: courses, verifierNombre: false);
+    IaExperimentation.reinitialiser();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[X1] distSpec ANTI-DISCRIMINANT dès le départ (notes croissantes avec le rang)');
+    // ignore: avoid_print
+    print('[X1] cycle | disc distSpec | gelé ? | lr      | poids distSpec | sens de variation');
+
+    var precedent = poidsEffectifs()['distSpec']!;
+    for (var i = 0; i < 30; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final disc = IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0;
+      final gele = IaExperimentation.derniersGeles.contains('distSpec');
+      final p = poidsEffectifs()['distSpec']!;
+      final delta = p - precedent;
+      precedent = p;
+      if (i < 6 || i % 5 == 0) {
+        // ignore: avoid_print
+        print('[X1] ${i.toString().padLeft(5)} | '
+            '${disc.toStringAsFixed(6).padLeft(13)} | '
+            '${(gele ? "OUI" : "non").padLeft(6)} | '
+            '${IaExperimentation.dernierLr.toStringAsFixed(4)} | '
+            '${_e(p)} | ${delta >= 0 ? "+" : ""}${_e(delta)}');
+      }
+    }
+
+    // Décomposition pour les critères qui bougent
+    final mem = IaMemoryService.instance;
+    // ignore: avoid_print
+    print('[X1] gelés au dernier cycle : '
+        '${IaExperimentation.derniersGeles.isEmpty ? "aucun" : IaExperimentation.derniersGeles.join(",")}');
+    // ignore: avoid_print
+    print('[X1] paires mémorisées = ${mem.poids.correlations.length}');
+    // ignore: avoid_print
+    print('[X1] ⇒ si disc < 0 et poids en HAUSSE alors que distSpec n est PAS '
+        'gelé, la cause est la PROJECTION (redistribution de groupe), pas le '
+        'gradient.');
+  });
+
+  test('X2 — le même protocole, gel DÉSACTIVÉ', () async {
+    final courses = <IaPronostic>[
+      for (var i = 0; i < 30; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesPhase(n, true),
+          },
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesPhase(n, true),
+          },
+        ),
+    ];
+    await semer(pronostics: courses, verifierNombre: false);
+    IaExperimentation.reinitialiser();
+    IaExperimentation.gelActif = false;
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[X2] MÊME PROTOCOLE, GEL DÉSACTIVÉ');
+    // ignore: avoid_print
+    print('[X2] cycle | disc distSpec | poids distSpec | delta');
+    var precedent = poidsEffectifs()['distSpec']!;
+    for (var i = 0; i < 30; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      final disc = IaExperimentation.dernieresDiscriminations['distSpec'] ?? 0;
+      final p = poidsEffectifs()['distSpec']!;
+      final delta = p - precedent;
+      precedent = p;
+      if (i < 6 || i % 5 == 0) {
+        // ignore: avoid_print
+        print('[X2] ${i.toString().padLeft(5)} | '
+            '${disc.toStringAsFixed(6).padLeft(13)} | ${_e(p)} | '
+            '${delta >= 0 ? "+" : ""}${_e(delta)}');
+      }
+    }
+    // ignore: avoid_print
+    print('[X2] poids final distSpec = ${_e(poidsEffectifs()['distSpec']!)}');
+    // ignore: avoid_print
+    print('[X2] ⇒ comparer avec X1 : si le comportement est IDENTIQUE, le gel '
+        'n est pas en cause. S il DIFFÈRE, le gel l est.');
+  });
+}

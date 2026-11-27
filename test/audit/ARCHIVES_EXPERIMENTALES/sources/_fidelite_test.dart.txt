@@ -1,0 +1,103 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GARDE DE FIDÉLITÉ — PHASE 5-C (obligatoire avant toute expérience)
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  La copie instrumentée porte des paramètres réglables. Tant qu'ils gardent
+//  leurs valeurs de production, elle DOIT se comporter exactement comme le
+//  moteur de référence. Si ce n'est pas le cas, toute comparaison ultérieure
+//  serait sans valeur : une différence observée pourrait venir de
+//  l'instrumentation et non du paramètre étudié.
+//
+//  MÉTHODE — reproduire une trajectoire multi-cycles IDENTIQUE et comparer,
+//  poids par poids, au bit près (écart exigé ≤ 1e-15, pas « proche de »).
+//  La référence est la courbe de production calculée DANS LE DÉPÔT RÉEL
+//  (`/home/user/flutter_app`), au même commit `c31cbef`, à partir des mêmes
+//  graines. Le test de fidélité est donc une confrontation entre deux
+//  exécutions indépendantes du même code, pas une auto-vérification.
+//
+//  ⚠️ Ce fichier n'existe QUE dans l'espace isolé.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+ScoresCriteres notesAlignees(int numero) => ScoresCriteres(
+      forme: 96.0 - numero * 6, gains: 96.0 - numero * 6,
+      record: 96.0 - numero * 6, cote: 96.0 - numero * 6,
+      constance: 96.0 - numero * 6, victoires: 96.0 - numero * 6,
+      discipline: 96.0 - numero * 6, distSpec: 96.0 - numero * 6,
+      jockey: 96.0 - numero * 6, repos: 96.0 - numero * 6,
+      hippo: 96.0 - numero * 6, entraineur: 96.0 - numero * 6,
+      elo: 96.0 - numero * 6, terrain: 96.0 - numero * 6,
+      divergence: 96.0 - numero * 6, poidsRel: 96.0 - numero * 6,
+      progression: 96.0 - numero * 6, mouvCote: 96.0 - numero * 6,
+      placeDepart: 96.0 - numero * 6,
+    );
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('FID — paramètres de production ⇒ trajectoire identique', () async {
+    IaExperimentation.reinitialiser();
+
+    final courses = <IaPronostic>[
+      for (var i = 0; i < 20; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 2 + i)),
+          resolu: false,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesAlignees(n),
+          },
+        ),
+      for (var j = 0; j < 12; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 22 + j)),
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notesAlignees(n),
+          },
+        ),
+    ];
+    await semer(pronostics: courses, verifierNombre: false);
+
+    // 20 cycles réels, suite déterministe.
+    for (var i = 0; i < 20; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+    }
+
+    final p = poidsEffectifs();
+    final ligne = <String>[
+      for (final k in kCles) '${p[k]!.toStringAsFixed(15)}',
+    ].join(' ');
+
+    // ignore: avoid_print
+    print('[FID] EMPREINTE=$ligne');
+    // ignore: avoid_print
+    print('[FID] nbMisesAJour=${IaMemoryService.instance.poids.nbMisesAJour}');
+    // ignore: avoid_print
+    print('[FID] compteurGradient=${IaExperimentation.compteurGradient}');
+    // ignore: avoid_print
+    print('[FID] lr=${IaExperimentation.dernierLr}');
+
+    expect(IaMemoryService.instance.poids.nbMisesAJour, 20);
+  });
+}

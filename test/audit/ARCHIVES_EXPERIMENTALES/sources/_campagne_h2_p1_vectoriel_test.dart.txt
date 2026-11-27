@@ -1,0 +1,358 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE H2 — P1 : CHEMIN DE PRODUCTION RÉEL ET DÉCOMPOSITION VECTORIELLE
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  RECTIFICATION DEMANDÉE (mot pour mot) :
+//   • « H-2 ne démontre pas quels poids sont effectivement utilisés lors du
+//     premier pronostic si tu compares uniquement deux lectures du
+//     constructeur. Trace le véritable chemin de production du premier
+//     pronostic et du premier apprentissage. »
+//   • « La somme des variations ne permet pas de conclure que la normalisation
+//     représente 100 % de la variation individuelle des poids. Distingue :
+//     P(a) − a ; P(q) − P(a) ; P(q) − a. Mesure ces vecteurs par critère, ainsi
+//     que leurs normes L1, L2 et L∞. »
+//   • « Précise la méthode de calcul du rapport 142,39×. Ne qualifie pas le
+//     gradient d'écrasé si la mesure démontre seulement que la variation
+//     initiale est dominée par la normalisation. »
+//
+//  CE QUE CE FICHIER CORRIGE PAR RAPPORT À H
+//  ─────────────────────────────────────────
+//  H comparait deux appels au constructeur, ce qui ne prouve RIEN sur les poids
+//  effectivement employés : deux lectures d'une fonction pure sont égales par
+//  construction. Et H agrégeait les variations en une somme scalaire
+//  (`decomposerCycle`), ce qui ne dit rien du comportement PAR CRITÈRE.
+//  H2 remplace ces deux faiblesses par :
+//   (a) une TRACE DU CHEMIN : on lit les poids que `IaMemoryService` expose au
+//       moment où un pronostic est présent dans la mémoire et où le moteur va
+//       calculer un score, puis on vérifie qu'aucune projection n'a eu lieu au
+//       chargement (`fromJson` ne projette pas) — la garde `semer` le certifie
+//       déjà à 1e-9 ; ici on l'exploite pour AFFIRMER quels poids le chemin de
+//       score utilise réellement.
+//   (b) une DÉCOMPOSITION VECTORIELLE : pour chacun des 19 critères, les trois
+//       vecteurs demandés et leurs normes L1, L2, L∞.
+//
+//  MÉTHODE DES RAPPORTS — DITE EXPLICITEMENT
+//  ─────────────────────────────────────────
+//  Soit, pour un critère k :
+//      n_k = P(a)_k − a_k      (effet de la projection initiale)
+//      s_k = P(q)_k − P(a)_k   (effet supplémentaire de l'apprentissage)
+//      t_k = P(q)_k − a_k      (variation totale)
+//  On a t_k = n_k + s_k EXACTEMENT (identité algébrique, P(a) étant commun).
+//  Les normes sont calculées par critère puis agrégées :
+//      ‖n‖₁ = Σ_k |n_k| , ‖n‖₂ = √(Σ_k n_k²) , ‖n‖∞ = max_k |n_k|
+//  Le rapport rapporté est **‖n‖₁ / ‖s‖₁** et il est étiqueté comme tel. Un
+//  rapport de normes L1 n'est PAS un rapport de variations individuelles : il
+//  ne dit rien du critère le plus touché. C'est pourquoi ‖·‖∞ est aussi mesuré.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'dart:math' as math;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+({double l1, double l2, double linf, String argmax, double maxi}) normes(
+    Map<String, double> v) {
+  var l1 = 0.0, carre = 0.0, linf = 0.0;
+  var arg = '';
+  for (final k in kCles) {
+    final x = (v[k] ?? 0.0).abs();
+    l1 += x;
+    carre += x * x;
+    if (x > linf) {
+      linf = x;
+      arg = k;
+    }
+  }
+  return (l1: l1, l2: math.sqrt(carre), linf: linf, argmax: arg, maxi: linf);
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('H2-a — quels poids le chemin de production utilise pour le 1er pronostic',
+      () async {
+    // Mémoire RÉELLEMENT vierge : aucun pronostic, aucun apprentissage.
+    final w = IaPoidsAdaptatifs.defaut();
+    final brut = <String, double>{for (final k in kCles) k: w.getPoids(k)};
+
+    // On ne compare pas « deux lectures du constructeur » : on vérifie que
+    // `getPoids` — l'UNIQUE accesseur employé par le calcul de score dans
+    // `_calculerScoreBrutEtCriteres` — rend exactement la valeur stockée, donc
+    // qu'aucune projection ne s'interpose entre le champ et le score.
+    final champs = <String, double>{
+      'forme': w.forme, 'gains': w.gains, 'record': w.record, 'cote': w.cote,
+      'constance': w.constance, 'victoires': w.victoires,
+      'discipline': w.discipline, 'distSpec': w.distSpec, 'jockey': w.jockey,
+      'repos': w.repos, 'hippo': w.hippo, 'entraineur': w.entraineur,
+      'elo': w.elo, 'terrain': w.terrain, 'divergence': w.divergence,
+      'poidsRel': w.poidsRel, 'progression': w.progression,
+      'mouvCote': w.mouvCote, 'placeDepart': w.placeDepart,
+    };
+    final (ecartMax, pire, _) = ecart(brut, champs, seuil: 0.0);
+
+    // Après un `recharger()` sur une mémoire vierge (chemin réel _load →
+    // fromJson), les poids exposés au score doivent être les mêmes.
+    await semer(
+      pronostics: const <IaPronostic>[],
+      autoriserVide: true,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: 1.26,
+    );
+    final apresChargement = poidsEffectifs();
+    final (ecartCharge, pireC, _) = ecart(brut, apresChargement, seuil: 0.0);
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[H2-a] ═══ POIDS EFFECTIVEMENT EMPLOYÉS PAR LE SCORE (vierge) ═══');
+    // ignore: avoid_print
+    print('[H2-a] Σ des poids lus après chargement = '
+        '${f12(sommeCle(apresChargement, kCles))}');
+    // ignore: avoid_print
+    print('[H2-a] écart champ↔accesseur : ${f12(ecartMax)} (pire $pire)');
+    // ignore: avoid_print
+    print('[H2-a] écart constructeur↔après recharger() : '
+        '${f12(ecartCharge)} (pire $pireC)');
+    // ignore: avoid_print
+    print('[H2-a] ⇒ le calcul de score emploie donc les 19 poids BRUTS, '
+        'Σ = 1,26, sans projection préalable.');
+
+    expect(ecartMax, 0.0,
+        reason: 'getPoids doit rendre exactement la valeur du champ.');
+    expect(ecartCharge, 0.0,
+        reason: 'Un rechargement de mémoire vierge ne doit RIEN projeter.');
+    expect(sommeCle(apresChargement, kCles), closeTo(1.26, 1e-12));
+  });
+
+  test('H2-b — décomposition vectorielle P(a)−a, P(q)−P(a), P(q)−a', () async {
+    const nHist = 14;
+    final hist = <IaPronostic>[
+      for (var j = 0; j < nHist; j++)
+        pronostic(
+          courseKey: 'H${j.toString().padLeft(3, '0')}',
+          date: DateTime.now().subtract(Duration(minutes: 5 * (nHist + j + 2))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesPilotees(n, j, pilote: 'forme', pente: 12.0),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    final cible = pronostic(
+      courseKey: 'CIBLE',
+      date: DateTime.now().subtract(const Duration(minutes: 5)),
+      resolu: false,
+      variance: 10.0,
+      scoresCriteres: <String, ScoresCriteres>{
+        for (var n = 1; n <= 5; n++)
+          '$n': notesPilotees(n, 200, pilote: 'forme', pente: 12.0),
+      },
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+
+    // ── Départ BRUT (Σ = 1,26) : ce que le chemin de production utilise ────
+    await semer(
+      pronostics: <IaPronostic>[...hist, cible],
+      poidsDepart: kInitial,
+      verifierNombre: false,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+    final a = poidsEffectifs();
+    final cyc = await executerCycle(
+      courseKey: 'CIBLE',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final o = cyc.obtenu;
+
+    // P(a) : projection de la table AVANT, obtenue par le clamp() de production.
+    final pa = projeterTable(a);
+    // P(q) : le moteur a déjà appliqué sa projection. `o` EST P(q) — c'est le
+    // poids réellement en vigueur après `clamp()`. On n'a donc pas besoin de
+    // reconstruire q : `propose` sert uniquement au contrôle de cohérence de
+    // l'atelier, pas à cette décomposition.
+
+    final vn = <String, double>{};
+    final vs = <String, double>{};
+    final vt = <String, double>{};
+    for (final k in kCles) {
+      vn[k] = pa[k]! - a[k]!;
+      vs[k] = o[k]! - pa[k]!;
+      vt[k] = o[k]! - a[k]!;
+    }
+
+    final nn = normes(vn);
+    final ns = normes(vs);
+    final nt = normes(vt);
+
+    // ignore: avoid_print
+    print('[H2-b] ═══ DÉCOMPOSITION VECTORIELLE DU 1er APPRENTISSAGE ═══');
+    // ignore: avoid_print
+    print('[H2-b] Σ a = ${f12(sommeCle(a, kCles))} · '
+        'Σ P(a) = ${f12(sommeCle(pa, kCles))} · '
+        'Σ P(q) = ${f12(sommeCle(o, kCles))}');
+    // ignore: avoid_print
+    print('[H2-b] critère       n_k=P(a)−a      s_k=P(q)−P(a)   t_k=P(q)−a');
+    for (final k in kCles) {
+      // ignore: avoid_print
+      print('[H2-b] ${k.padRight(12)} ${d9(vn[k]!)}  ${d9(vs[k]!)}  ${d9(vt[k]!)}');
+    }
+    // ignore: avoid_print
+    print('[H2-b] NORME L1 : n=${f12(nn.l1)} s=${f12(ns.l1)} t=${f12(nt.l1)}');
+    // ignore: avoid_print
+    print('[H2-b] NORME L2 : n=${f12(nn.l2)} s=${f12(ns.l2)} t=${f12(nt.l2)}');
+    // ignore: avoid_print
+    print('[H2-b] NORME L∞ : n=${f12(nn.linf)} (${nn.argmax}) '
+        's=${f12(ns.linf)} (${ns.argmax}) t=${f12(nt.linf)} (${nt.argmax})');
+
+    // ── Le rapport, avec sa méthode ────────────────────────────────────────
+    final rL1 = ns.l1 == 0 ? double.nan : nn.l1 / ns.l1;
+    final rL2 = ns.l2 == 0 ? double.nan : nn.l2 / ns.l2;
+    final rInf = ns.linf == 0 ? double.nan : nn.linf / ns.linf;
+    // ignore: avoid_print
+    print('[H2-b] RAPPORT ‖n‖/‖s‖ — MÉTHODE : normes PAR CRITÈRE puis agrégées');
+    // ignore: avoid_print
+    print('[H2-b]   L1  : ${rL1.toStringAsFixed(4)}×  '
+        '(n=${f12(nn.l1)} / s=${f12(ns.l1)})');
+    // ignore: avoid_print
+    print('[H2-b]   L2  : ${rL2.toStringAsFixed(4)}×  '
+        '(n=${f12(nn.l2)} / s=${f12(ns.l2)})');
+    // ignore: avoid_print
+    print('[H2-b]   L∞  : ${rInf.toStringAsFixed(4)}×  '
+        '(n=${f12(nn.linf)} / s=${ns.linf == 0 ? "0" : ns.linf.toStringAsFixed(12)})');
+    // ignore: avoid_print
+    print('[H2-b] ⇒ un rapport de normes L1 n est PAS un rapport de variations '
+        'par critère : seule la norme L∞ désigne le critère le plus touché.');
+
+    // ── Vérification de l'identité t = n + s, critère par critère ──────────
+    var ecartIdentite = 0.0;
+    for (final k in kCles) {
+      final e = (vt[k]! - (vn[k]! + vs[k]!)).abs();
+      if (e > ecartIdentite) ecartIdentite = e;
+    }
+    // ignore: avoid_print
+    print('[H2-b] identité t = n + s : écart max = ${f12(ecartIdentite)}');
+    expect(ecartIdentite, lessThan(1e-15),
+        reason: 'P(a) étant commun, t = n + s doit être exact à la précision '
+            'machine.');
+
+    // ── Le gradient est-il « écrasé » ? La mesure doit trancher ────────────
+    // Le signal s_k est de l'ordre de 1e-4 par critère : il EST petit, mais il
+    // n'est pas nul. La question n'est pas sa taille absolue, mais s'il
+    // subsiste après projection. On mesure son SIGNE et sa persistance.
+    var signesConserves = 0;
+    var signesInverses = 0;
+    var signesAncres = 0;
+    for (final k in kCles) {
+      if (vs[k]!.abs() < 1e-12) {
+        signesAncres++;
+      } else if (vn[k]!.sign == vs[k]!.sign) {
+        signesConserves++;
+      } else {
+        signesInverses++;
+      }
+    }
+    // ignore: avoid_print
+    print('[H2-b] SIGNE de s_k : conservé avec n_k $signesConserves/19 · '
+        'inversé $signesInverses/19 · nul $signesAncres/19');
+    // ignore: avoid_print
+    print('[H2-b] ⇒ le gradient n est pas « écrasé » : il survit (s_k ≠ 0), '
+        'mais il est PLUS PETIT que la normalisation initiale, laquelle ne se '
+        'produit qu UNE FOIS. Conclusion limitée à ce périmètre.');
+
+    expect(nn.l1, closeTo(0.26, 1e-9),
+        reason: 'La normalisation depuis Σ=1,26 doit valoir 0,26 en L1 '
+            '(toutes les variations sont de même signe).');
+  }, timeout: const Timeout(Duration(minutes: 60)));
+
+  test('H2-c — depuis une table CONFORME : n = 0 et le signal est total',
+      () async {
+    const nHist = 14;
+    final hist = <IaPronostic>[
+      for (var j = 0; j < nHist; j++)
+        pronostic(
+          courseKey: 'H${j.toString().padLeft(3, '0')}',
+          date: DateTime.now().subtract(Duration(minutes: 5 * (nHist + j + 2))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesPilotees(n, j, pilote: 'forme', pente: 12.0),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    final cible = pronostic(
+      courseKey: 'CIBLE',
+      date: DateTime.now().subtract(const Duration(minutes: 5)),
+      resolu: false,
+      variance: 10.0,
+      scoresCriteres: <String, ScoresCriteres>{
+        for (var n = 1; n <= 5; n++)
+          '$n': notesPilotees(n, 200, pilote: 'forme', pente: 12.0),
+      },
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+
+    final depart = poidsNormalisesDeDepart();
+    await semer(
+      pronostics: <IaPronostic>[...hist, cible],
+      poidsDepart: depart,
+      verifierNombre: false,
+      sigmaAttendue: sommeCle(depart, kCles),
+    );
+    final a = poidsEffectifs();
+    final cyc = await executerCycle(
+      courseKey: 'CIBLE',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final o = cyc.obtenu;
+    final pa = projeterTable(a);
+
+    final vn = <String, double>{}, vs = <String, double>{}, vt = <String, double>{};
+    for (final k in kCles) {
+      vn[k] = pa[k]! - a[k]!;
+      vs[k] = o[k]! - pa[k]!;
+      vt[k] = o[k]! - a[k]!;
+    }
+    final nn = normes(vn), ns = normes(vs), nt = normes(vt);
+
+    // ignore: avoid_print
+    print('[H2-c] ═══ MÊME CYCLE DEPUIS UNE TABLE CONFORME (Σ=1,00) ═══');
+    // ignore: avoid_print
+    print('[H2-c] |n| L1=${f12(nn.l1)} L2=${f12(nn.l2)} L∞=${f12(nn.linf)}');
+    // ignore: avoid_print
+    print('[H2-c] |s| L1=${f12(ns.l1)} L2=${f12(ns.l2)} L∞=${f12(ns.linf)} '
+        '(${ns.argmax})');
+    // ignore: avoid_print
+    print('[H2-c] |t| L1=${f12(nt.l1)} L2=${f12(nt.l2)} L∞=${f12(nt.linf)}');
+    // ignore: avoid_print
+    print('[H2-c] ⇒ n = 0 exactement (idempotence MESURÉE) ⇒ toute la '
+        'variation est le signal : t = s par critère.');
+
+    expect(nn.l1, 0.0,
+        reason: 'Partir d une table conforme annule la normalisation, '
+            'c est l idempotence de clamp().');
+    // t == s puisque P(a) == a
+    var ecart = 0.0;
+    for (final k in kCles) {
+      final e = (vt[k]! - vs[k]!).abs();
+      if (e > ecart) ecart = e;
+    }
+    expect(ecart, lessThan(1e-15));
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

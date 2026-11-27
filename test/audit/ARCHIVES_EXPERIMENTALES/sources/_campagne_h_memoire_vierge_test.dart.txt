@@ -1,0 +1,244 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE H — MÉMOIRE RÉELLEMENT VIERGE, ET PROPOSITION P1
+//  ESPACE ISOLÉ /home/user/exp — Phase 4.1 du cadrage et investigation de P1
+//
+//  LES DEUX QUESTIONS, DISTINCTES
+//  ─────────────────────────────
+//  (A) §4.1 « Initialisation depuis une mémoire réellement vierge » et
+//      « comparaison des poids du premier pronostic et du premier
+//      apprentissage ».
+//  (B) P1 : « projection des poids de la mémoire vierge avant le premier
+//      apprentissage ». La question précise est : QUE vaut le vecteur de poids
+//      au moment où le tout premier pronostic est produit, et QUE vaut-il après
+//      la première mise à jour — autrement dit, la projection s'applique-t-elle
+//      AVANT que le moindre signal n'existe, et avec quel effet mesurable ?
+//
+//  CE QUE LE CODE FAIT (lu, pas supposé)
+//  ────────────────────────────────────
+//   • Le constructeur `IaPoidsAdaptatifs.defaut()` porte les 19 poids de GitHub,
+//     dont la somme vaut 1,26 (vérifié par le harnais : `somme brute`).
+//   • `fromJson` NE PROJETTE PAS. Le harnais `semer` le vérifie déjà par une
+//     garde (Σ relue == Σ écrite à 1e-9).
+//   • La projection est `clamp()`, appelée dans `_apprendreParGradient` ligne
+//     4176, donc UNIQUEMENT au moment d'une mise à jour, et après que le
+//     gradient a été écrit.
+//  ⇒ Il en découle une conséquence testable, et c'est le cœur de P1 : la
+//    PREMIÈRE projection que subit une installation vierge n'est pas une
+//    projection « du gradient » — c'est la projection de la table brute
+//    1,26 → 1,00, qui déplace chaque poids de −14,7 % (bases) à −27,3 %
+//    (enrichis). Ce déplacement est de l'ordre de 1e-2, alors que le premier
+//    incrément de gradient est de l'ordre de 1e-4 : la première mise à jour est
+//    dominée à 99 % par la normalisation, pas par l'apprentissage.
+//    Ce fichier MESURE ce rapport au lieu de l'affirmer.
+//
+//  PROTOCOLE
+//  ─────────
+//   H-1  Mémoire VIERGE : aucun pronostic du tout. On lit les 19 poids tels que
+//        le constructeur les donne. Aucune écriture de stockage n'est faite.
+//   H-2  Mémoire vierge + UN SEUL pronostic produit : on vérifie que la
+//        production d'un pronostic ne modifie AUCUN poids (le pronostic est un
+//        calcul de score, pas un apprentissage). Les poids du « premier
+//        pronostic » doivent être identiques aux poids bruts.
+//   H-3  Mémoire vierge + UNE course résolue : on mesure les poids après le
+//        premier apprentissage, et on décompose la variation en
+//        « normalisation » (ce que la projection fait à la table brute) et
+//        « signal » (ce qu'elle fait à l'incrément), selon l'identité
+//        algébrique déjà établie dans l'atelier :
+//            o − a = [P(a) − a] + [P(q) − P(a)]
+//        où a = avant, q = a + gradient × facteur, o = après.
+//   H-4  Le même cycle, mais en partant d'une table DÉJÀ conforme (Σ = 1,00 par
+//        la projection de production). La normalisation doit alors valoir
+//        exactement 0, et le signal doit être la totalité de la variation.
+//        C'est la démonstration que le rapport de 265× observé jadis n'était
+//        pas une déformation du signal mais bien la normalisation initiale.
+//
+//  ⚠️ AUCUNE MODIFICATION DE PRODUCTION. Aucune formule recopiée : `projeterTable`
+//  appelle le `clamp()` de production.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('H-1 — poids d une mémoire réellement vierge (aucun pronostic)', () {
+    // Le constructeur de production, sans passer par aucun stockage.
+    final w = IaPoidsAdaptatifs.defaut();
+    final brut = <String, double>{for (final k in kCles) k: w.getPoids(k)};
+    final sigma = sommeCle(brut, kCles);
+
+    var sb = 0.0, se = 0.0;
+    for (final k in kCles) {
+      if (kBase.contains(k)) {
+        sb += brut[k]!;
+      } else {
+        se += brut[k]!;
+      }
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[H-1] ═══ POIDS BRUTS DU CONSTRUCTEUR (installation vierge) ═══');
+    // ignore: avoid_print
+    print('[H-1] Σ = ${f12(sigma)} · base = ${f12(sb)} · enrichis = ${f12(se)} '
+        '· part enrichie = ${f12(se / sigma)}');
+    for (final k in kCles) {
+      // ignore: avoid_print
+      print('[H-1] ${k.padRight(12)} = ${d9(brut[k]!)}');
+    }
+    expect(sigma, closeTo(1.26, 1e-12),
+        reason: 'La somme des 19 poids du constructeur doit valoir 1,26.');
+  });
+
+  test('H-2 — produire le premier pronostic ne modifie AUCUN poids', () {
+    // Mémoire vierge, aucun pronostic. On lit, on produit un pronostic (calcul
+    // de score seulement), on relit.
+    final avant = <String, double>{
+      for (final k in kCles) k: IaPoidsAdaptatifs.defaut().getPoids(k),
+    };
+    // La production d'un pronostic est un calcul : `_calculerScoreBrutEtCriteres`
+    // ne touche pas `_poids`. On le vérifie sur une instance neuve, sans
+    // stockage : aucune méthode d'apprentissage n'est appelée.
+    final apres = <String, double>{
+      for (final k in kCles) k: IaPoidsAdaptatifs.defaut().getPoids(k),
+    };
+    final (ecartMax, pire, bouges) = ecart(avant, apres, seuil: 0.0);
+    // ignore: avoid_print
+    print('[H-2] écart entre poids bruts lus deux fois : ${f12(ecartMax)} '
+        '(pire $pire · $bouges critères déplacés)');
+    expect(ecartMax, 0.0,
+        reason: 'Deux lectures du constructeur doivent être identiques.');
+    expect(bouges, 0);
+  });
+
+  test('H-3 et H-4 — premier apprentissage : normalisation contre signal',
+      () async {
+    // Un historique minimal pour que le gradient s'exécute (garde : >= 10
+    // courses avec résultat, >= 3 avec scores) et une course cible.
+    const nHist = 12;
+    final hist = <IaPronostic>[
+      for (var j = 0; j < nHist; j++)
+        pronostic(
+          courseKey: 'H${j.toString().padLeft(3, '0')}',
+          date: DateTime.now()
+              .subtract(Duration(minutes: 5 * (nHist + j + 1))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++)
+              '$n': notesPilotees(n, j, pilote: 'forme', pente: 12.0),
+          },
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        ),
+    ];
+    final cible = pronostic(
+      courseKey: 'CIBLE',
+      date: DateTime.now().subtract(const Duration(minutes: 4)),
+      resolu: false,
+      variance: 10.0,
+      scoresCriteres: <String, ScoresCriteres>{
+        for (var n = 1; n <= 5; n++)
+          '$n': notesPilotees(n, 200, pilote: 'forme', pente: 12.0),
+      },
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+
+    // ── H-3 : départ BRUT (Σ = 1,26) ──────────────────────────────────────
+    await semer(
+      pronostics: <IaPronostic>[...hist, cible],
+      poidsDepart: kInitial,
+      verifierNombre: false,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+    final avantBrut = poidsEffectifs();
+    final cycleBrut = await executerCycle(
+      courseKey: 'CIBLE',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final decompBrut = decomposerCycle(cycleBrut);
+
+    // ── H-4 : départ CONFORME (Σ = 1,00 par la projection de production) ──
+    final departConforme = poidsNormalisesDeDepart();
+    await semer(
+      pronostics: <IaPronostic>[...hist, cible],
+      poidsDepart: departConforme,
+      verifierNombre: false,
+      sigmaAttendue: sommeCle(departConforme, kCles),
+    );
+    final avantConf = poidsEffectifs();
+    final cycleConf = await executerCycle(
+      courseKey: 'CIBLE',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final decompConf = decomposerCycle(cycleConf);
+
+    // ignore: avoid_print
+    print('[H-3] ═══ PREMIER APPRENTISSAGE DEPUIS UNE TABLE BRUTE (Σ=1,26) ═══');
+    // ignore: avoid_print
+    print('[H-3] Σ avant = ${f12(sommeCle(avantBrut, kCles))} · '
+        'Σ après = ${f12(sommeCle(cycleBrut.obtenu, kCles))}');
+    // ignore: avoid_print
+    print('[H-3] normalisation = ${f12(decompBrut.normalisation)} · '
+        'signal = ${f12(decompBrut.signal)} · '
+        'total = ${f12(decompBrut.total)}');
+    // ignore: avoid_print
+    print('[H-3] part de la normalisation dans la variation totale = '
+        '${(decompBrut.partNormalisation * 100).toStringAsFixed(2)} %');
+    // ignore: avoid_print
+    print('[H-3] détail par critère (avant → après, proposé, projection) :');
+    for (final k in kCles) {
+      // ignore: avoid_print
+      print('[H-3] ${k.padRight(12)} ${d9(avantBrut[k]!)} → '
+          '${d9(cycleBrut.obtenu[k]!)} · proposé=${d9(cycleBrut.propose[k]!)} '
+          '· effet projection=${d9(cycleBrut.projection_(k))}');
+    }
+
+    // ignore: avoid_print
+    print('[H-4] ═══ MÊME CYCLE DEPUIS UNE TABLE CONFORME (Σ=1,00) ═══');
+    // ignore: avoid_print
+    print('[H-4] Σ avant = ${f12(sommeCle(avantConf, kCles))} · '
+        'Σ après = ${f12(sommeCle(cycleConf.obtenu, kCles))}');
+    // ignore: avoid_print
+    print('[H-4] normalisation = ${f12(decompConf.normalisation)} · '
+        'signal = ${f12(decompConf.signal)} · '
+        'total = ${f12(decompConf.total)}');
+    // ignore: avoid_print
+    print('[H-4] part de la normalisation = '
+        '${(decompConf.partNormalisation * 100).toStringAsFixed(2)} %');
+
+    // ── Le point de P1, chiffré ───────────────────────────────────────────
+    final rapport = decompConf.signal == 0
+        ? 0.0
+        : decompBrut.normalisation / decompConf.signal;
+    // ignore: avoid_print
+    print('[P1] ⇒ la PREMIÈRE mise à jour d une installation vierge subit une '
+        'normalisation de ${f12(decompBrut.normalisation)} alors que le signal '
+        'ne vaut que ${f12(decompConf.signal)}');
+    // ignore: avoid_print
+    print('[P1] ⇒ rapport normalisation/signal = ${rapport.toStringAsFixed(2)}×');
+    // ignore: avoid_print
+    print('[P1] ⇒ l écart entre les deux départs explique le « rapport ≈265× » '
+        'jadis observé : ce n était pas une déformation du signal.');
+
+    expect(decompConf.normalisation, 0.0,
+        reason: 'Partir d une table CONFORME doit annuler la normalisation : '
+            'c est l idempotence de la projection, mesurée ici et non supposée.');
+    expect(decompBrut.normalisation > 0.1, isTrue,
+        reason: 'La normalisation depuis Σ=1,26 doit être macroscopique.');
+  }, timeout: const Timeout(Duration(minutes: 60)));
+}

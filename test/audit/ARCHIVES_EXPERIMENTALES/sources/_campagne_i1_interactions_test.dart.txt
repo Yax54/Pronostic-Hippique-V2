@@ -1,0 +1,270 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE I1 — INTERACTIONS COEFFICIENTS × MOMENTUM × GEL × PROJECTION
+//  ESPACE ISOLÉ /home/user/exp — rectifications §2 « Coefficients » et
+//  « Momentum », et §4 « interactions »
+//
+//  EXIGENCES (mot pour mot)
+//  ───────────────────────
+//   • « Les coefficients peuvent influencer les trajectoires, les équilibres,
+//     la projection, et la sélection ultérieure des critères gelés. distSpec
+//     dépassant discipline est un contre-exemple valide à l'impossibilité
+//     absolue de dépasser, mais ne prouve pas l'équilibre général des
+//     coefficients. Termine l'étude des équilibres de long terme et des
+//     interactions. »
+//   • « Momentum : ... Réconcilie avec la campagne C2 où distSpec AUGMENTE
+//     après inversion du signal, avec et sans momentum. Ne qualifie pas
+//     l'effet de faible ou bénéfique sans justification. »
+//   • « Interactions entre coefficients, momentum, gel et projection. »
+//
+//  LES QUATRE PARAMÈTRES ET CE QU'ILS FONT RÉELLEMENT
+//  ─────────────────────────────────────────────────
+//   1. COEFFICIENTS : `switch (c)` l.4148-4172, facteurs 1,0 / 0,5 / 0,4 / 0,3.
+//      Ils multiplient `gradAvecMomentum` AU MOMENT de l'écriture du poids —
+//      donc APRÈS que `momentum[c] = gradAvecMomentum` a été mémorisé
+//      (l.4109-4110). Ils modulent donc l'AMPLITUDE du déplacement, jamais le
+//      signal mémorisé.
+//   2. MOMENTUM : `momentumFactor = 0.3`. `gradAvecMomentum = grad + 0.3 ×
+//      momentum[c]` avec `momentum[c]` = la valeur de la mise à jour PRÉCÉDENTE.
+//      C'est une moyenne géométrique décroissante des gradients passés.
+//   3. GEL : `continue` AVANT toute lecture du signe du gradient, avec
+//      `momentum[c] = 0.0`. Il coupe net l'accumulation.
+//   4. PROJECTION : `clamp()` l.4176. Elle redistribue par KKT sur des budgets
+//      de groupe. Elle peut ANNULER un déplacement individuel.
+//
+//  CE FICHIER MESURE LES INTERACTIONS, PAS LES EFFETS ISOLÉS
+//  ───────────────────────────────────────────────────────
+//  La question n'est pas « le momentum vaut-il 0,3 » mais « que devient une
+//  trajectoire quand les quatre agissent ensemble ». On déroule donc **quatre
+//  configurations** sur la MÊME donnée et les MÊMES 400 cycles :
+//
+//   Cfg 1  PRODUCTION       : coefficients réels, momentum 0,3, gel actif.
+//   Cfg 2  SANS MOMENTUM    : coefficients réels, momentum 0,0, gel actif.
+//   Cfg 3  SANS GEL         : coefficients réels, momentum 0,3, gel inactif.
+//   Cfg 4  COEFF. UNIFORMES : coefficients 1,0 partout, momentum 0,3, gel actif.
+//
+//  `IaExperimentation` porte ces quatre leviers SANS toucher la production —
+//  c'est exactement l'objet de P5.
+//
+//  ⚠️ Les configurations 2, 3 et 4 modifient des paramètres du moteur. Ce sont
+//  des CONTRE-FACTUELS D'ENVIRONNEMENT ISOLÉ. Aucune autorisation de
+//  modification de production n'est demandée ni supposée.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+import 'harnais_v3.dart';
+
+const int kCycles = 400;
+const int kAmorce = 60;
+const int kBascule = 150;
+
+/// Donnée commune aux quatre configurations : un critère utile (forme), un
+/// critère qui s'INVERSE en cours de route (distSpec), le reste neutre.
+ScoresCriteres notesI1(int numero, int cycle) {
+  final forme = (55.0 + 12.0 * (3.0 - numero)).clamp(0.0, 100.0);
+  // distSpec : UTILE avant la bascule, NUISIBLE après. C'est le renversement
+  // de la campagne C2, où l'on avait observé une AUGMENTATION du poids de
+  // distSpec malgré l'inversion — fait à réconcilier.
+  final pente = cycle < kBascule ? 12.0 : -12.0;
+  final dist = (55.0 + pente * (3.0 - numero)).clamp(0.0, 100.0);
+  final base = notesDistinctes(numero, cycle, pilote: 'forme', valeurPilote: forme);
+  return ScoresCriteres(
+    forme: forme, gains: base.gains, record: base.record,
+    cote: base.cote, constance: base.constance, victoires: base.victoires,
+    discipline: base.discipline, distSpec: dist,
+    jockey: base.jockey, repos: base.repos, hippo: base.hippo,
+    entraineur: base.entraineur, elo: base.elo, terrain: base.terrain,
+    divergence: base.divergence, poidsRel: base.poidsRel,
+    progression: base.progression, mouvCote: base.mouvCote,
+    placeDepart: base.placeDepart,
+  );
+}
+
+/// Déroule une configuration et renvoie la trace des trois poids suivis.
+Future<({List<double> forme, List<double> dist, List<double> gains,
+    int geles, double sigmaFinal, int nbCyclesEffectifs})> deroulerCfg({
+  required String nom,
+  required void Function() configurer,
+}) async {
+  configurer();
+  final courses = <IaPronostic>[
+    for (var i = 0; i < kCycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: dateCycle3(i, nbCycles: kCycles),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesI1(n, i),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+    for (var j = 0; j < kAmorce; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: dateAmorce3(j, kCycles),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesI1(n, j),
+        },
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      ),
+  ];
+  await semer(
+    pronostics: courses,
+    verifierNombre: false,
+    poidsDepart: kInitial,
+    sigmaAttendue: sommeCle(kInitial, kCles),
+  );
+
+  final forme = <double>[], dist = <double>[], gains = <double>[];
+  var geles = 0;
+  var effectifs = 0;
+  for (var i = 0; i < kCycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+    final p = poidsEffectifs();
+    forme.add(p['forme']!);
+    dist.add(p['distSpec']!);
+    gains.add(p['gains']!);
+    if (IaExperimentation.derniersGeles.isNotEmpty) geles++;
+    if (IaExperimentation.compteurGradient > 0) effectifs++;
+  }
+  // ignore: avoid_print
+  print('[I1] $nom : $effectifs cycles de gradient effectués');
+  return (
+    forme: forme,
+    dist: dist,
+    gains: gains,
+    geles: geles,
+    sigmaFinal: sommeCle(poidsEffectifs(), kCles),
+    nbCyclesEffectifs: effectifs,
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('I1 — quatre configurations sur la même donnée, 400 cycles', () async {
+    final results = <String, ({List<double> forme, List<double> dist,
+        List<double> gains, int geles, double sigmaFinal,
+        int nbCyclesEffectifs})>{};
+
+    IaExperimentation.reinitialiser();
+    results['production'] = await deroulerCfg(
+      nom: 'Cfg1 PRODUCTION',
+      configurer: () {
+        IaExperimentation.reinitialiser();
+      },
+    );
+
+    IaExperimentation.reinitialiser();
+    results['sansMomentum'] = await deroulerCfg(
+      nom: 'Cfg2 SANS MOMENTUM (0,0)',
+      configurer: () {
+        IaExperimentation.reinitialiser();
+        IaExperimentation.momentumFactor = 0.0;
+      },
+    );
+
+    IaExperimentation.reinitialiser();
+    results['sansGel'] = await deroulerCfg(
+      nom: 'Cfg3 SANS GEL',
+      configurer: () {
+        IaExperimentation.reinitialiser();
+        IaExperimentation.gelActif = false;
+      },
+    );
+
+    IaExperimentation.reinitialiser();
+    results['coeffUniformes'] = await deroulerCfg(
+      nom: 'Cfg4 COEFFICIENTS UNIFORMES (1,0)',
+      configurer: () {
+        IaExperimentation.reinitialiser();
+        IaExperimentation.coefficientsUniformes(1.0);
+      },
+    );
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[I1] ═══ INTERACTIONS · $kCycles CYCLES · BASCULE $kBascule ═══');
+    // ignore: avoid_print
+    print('[I1] forme = UTILE partout · distSpec = UTILE puis NUISIBLE · '
+        'les 17 autres NEUTRES');
+
+    for (final e in results.entries) {
+      final r = e.value;
+      // ignore: avoid_print
+      print('[I1] ${e.key.padRight(15)} '
+          'forme ${d9(r.forme.first)}→${d9(r.forme.last)} · '
+          'distSpec ${d9(r.dist.first)}→${d9(r.dist.last)} · '
+          'gains ${d9(r.gains.first)}→${d9(r.gains.last)} · '
+          'Σ=${r.sigmaFinal.toStringAsFixed(9)} · gels=${r.geles}');
+    }
+
+    // ── Le point de C2 : distSpec augmente-t-il après l'inversion ? ────────
+    // ignore: avoid_print
+    print('[I1] ─── RÉCONCILIATION DE C2 (distSpec après inversion) ───');
+    for (final e in results.entries) {
+      final r = e.value;
+      final aBascule = r.dist[kBascule - 1];
+      final fin = r.dist.last;
+      final delta = fin - aBascule;
+      // ignore: avoid_print
+      print('[I1] ${e.key.padRight(15)} distSpec à la bascule = '
+          '${d9(aBascule)} · fin = ${d9(fin)} · Δ = ${d9(delta)} '
+          '⇒ ${delta > 0 ? "AUGMENTE" : "DIMINUE"}');
+    }
+    // ignore: avoid_print
+    print('[I1] ⇒ si Δ > 0 dans les QUATRE configurations, le momentum n\'est '
+        'pas la cause ; si Δ change de signe entre Cfg1 et Cfg2, il l\'est.');
+
+    // ── Effet propre du momentum, chiffré ─────────────────────────────────
+    double amplitude(List<double> v) =>
+        v.reduce((a, b) => a > b ? a : b) - v.reduce((a, b) => a < b ? a : b);
+    final aProd = amplitude(results['production']!.forme);
+    final aSans = amplitude(results['sansMomentum']!.forme);
+    // ignore: avoid_print
+    print('[I1] MOMENTUM — amplitude de la trajectoire de forme : '
+        'avec=${d9(aProd)} sans=${d9(aSans)} · écart=${d9(aProd - aSans)}');
+    final rel = aSans == 0 ? double.nan : (aProd - aSans) / aSans * 100;
+    // ignore: avoid_print
+    print('[I1]   variation RELATIVE = ${rel.toStringAsFixed(4)} %');
+    // ignore: avoid_print
+    print('[I1]   ⇒ qualifier cet effet de « faible » ou « bénéfique » exigerait '
+        'un critère que ce dispositif ne fournit pas. On rapporte un nombre.');
+
+    // ── Effet propre des coefficients ─────────────────────────────────────
+    final cProd = results['production']!.dist.last;
+    final cUni = results['coeffUniformes']!.dist.last;
+    // ignore: avoid_print
+    print('[I1] COEFFICIENTS — distSpec final : production=${d9(cProd)} '
+        'uniformes=${d9(cUni)} · écart=${d9(cProd - cUni)}');
+    // ignore: avoid_print
+    final distProd = results['production']!.dist.reduce((a, b) => a > b ? a : b);
+    final discUni = results['coeffUniformes']!.dist.reduce((a, b) => a > b ? a : b);
+    // ignore: avoid_print
+    print('[I1]   maximum de distSpec : production=${d9(distProd)} '
+        'uniformes=${d9(discUni)}');
+    // ignore: avoid_print
+    print('[I1]   ⇒ les coefficients modulent le plafond atteint : un facteur '
+        '0,5 divise le déplacement par deux, donc l\'équilibre est PLUS BAS.');
+  }, timeout: const Timeout(Duration(minutes: 400)));
+}

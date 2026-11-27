@@ -1,0 +1,233 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAMPAGNE G — LE GEL BLOQUE-T-IL UN CRITÈRE DEVENU NÉFASTE ?
+//  ESPACE ISOLÉ /home/user/exp
+//
+//  LA QUESTION LA PLUS GRAVE POSÉE PAR CE CHANTIER (Phase 4.4)
+//  ──────────────────────────────────────────────────────────
+//  Le bloc de gel (l.4116-4145) EXÉCUTE `continue` AVANT de regarder le signe
+//  du gradient :
+//        if (criteresGeles.contains(c)) { momentum[c] = 0.0; continue; }
+//  Il gèle donc indifféremment un critère qui MONTE et un critère qui DESCEND.
+//  Un critère corrélé devenu NÉFASTE (discrimination négative) ne peut plus
+//  être pénalisé tant qu'une de ses paires reste au-dessus de 0,85.
+//
+//  MESURE PRÉALABLE (diag_anti_discriminant_test, X1 vs X2, mêmes données) :
+//      SANS gel : distSpec 0,0566 → 0,0050 (plancher) en 20 cycles. CORRECT.
+//      AVEC gel : distSpec 0,0566 → 0,0554. NE BOUGE PRESQUE PAS.
+//  Ce fichier établit l'AMPLEUR et les CONDITIONS de ce blocage, sans en
+//  tirer encore de recommandation (Phase 8 réservée à validation).
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_experimentation.dart';
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+import 'package:pronostic_hippique/services/ia_memory_service.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+/// Le critère [cible] est NÉFASTE (notes croissantes avec le rang) ; les autres
+/// sont franchement pertinents (notes décroissantes). Ainsi la cible est
+/// corrélée aux autres tout en étant individuellement nuisible.
+ScoresCriteres notesCibleNefaste(int numero, String cible) {
+  double v(String k) => k == cible
+      ? (20.0 + numero * 14.0).clamp(0.0, 100.0)
+      : (96.0 - numero * 6).clamp(0.0, 100.0);
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'), cote: v('cote'),
+    constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}
+
+Future<Map<String, double>> deroulerFin({
+  required int cycles,
+  required String cible,
+  required bool gel,
+}) async {
+  final courses = <IaPronostic>[
+    for (var i = 0; i < cycles; i++)
+      pronostic(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+        resolu: false,
+        variance: 6.0 + (i % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesCibleNefaste(n, cible),
+        },
+      ),
+    for (var j = 0; j < 60; j++)
+      pronostic(
+        courseKey: 'A${j.toString().padLeft(4, '0')}',
+        date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+        variance: 6.0 + (j % 5) * 4.0,
+        scoresCriteres: <String, ScoresCriteres>{
+          for (var n = 1; n <= 5; n++) '$n': notesCibleNefaste(n, cible),
+        },
+      ),
+  ];
+  await semer(pronostics: courses, verifierNombre: false);
+  IaExperimentation.reinitialiser();
+  IaExperimentation.gelActif = gel;
+  for (var i = 0; i < cycles; i++) {
+    await executerCycle(
+      courseKey: 'C${i.toString().padLeft(4, '0')}',
+      arrivee: const <int>[1, 2, 3, 4, 5],
+    );
+  }
+  return poidsEffectifs();
+}
+
+String _e(double v) => v.toStringAsFixed(9);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('G1 — un critère NÉFASTE peut-il être pénalisé, avec et sans gel ?',
+      () async {
+    const cycles = 60;
+    final bornes = IaPoidsAdaptatifs.bornesIndividuelles();
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G1] ═══ UN CRITÈRE NÉFASTE (discrimination négative) ═══');
+    // ignore: avoid_print
+    print('[G1] critère      | plancher | SANS gel   | AVEC gel   | écart gel−sans');
+    var bloques = 0;
+    for (final k in kCles) {
+      final sans = await deroulerFin(cycles: cycles, cible: k, gel: false);
+      final avec = await deroulerFin(cycles: cycles, cible: k, gel: true);
+      final lo = bornes[k]![0];
+      final vs = sans[k]!;
+      final va = avec[k]!;
+      final sSans = (vs - lo).abs() < 1e-9 ? 'plancher' : 'au-dessus';
+      final sAvec = (va - lo).abs() < 1e-9 ? 'plancher' : 'au-dessus';
+      if ((sans[k]! - lo).abs() < 1e-9 && (avec[k]! - lo) > 1e-9) bloques++;
+      // ignore: avoid_print
+      print('[G1] ${k.padRight(12)} | ${lo.toStringAsFixed(3)}    | '
+          '${_e(vs)} ($sSans) | ${_e(va)} ($sAvec) | ${_e(va - vs)}');
+    }
+    // ignore: avoid_print
+    print('[G1] ⇒ critères que le gel EMPÊCHE d atteindre leur plancher : '
+        '$bloques/19');
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G1] INTERPRÉTATION MESURÉE :');
+    // ignore: avoid_print
+    print('[G1]   · colonne « SANS gel » = ce que le GRADIENT veut faire.');
+    // ignore: avoid_print
+    print('[G1]   · colonne « AVEC gel »  = ce que le système FAIT.');
+    // ignore: avoid_print
+    print('[G1]   Un écart important sur un critère NÉFASTE signifie que le gel '
+        'empêche sa pénalisation.');
+
+    expect(bloques, greaterThanOrEqualTo(0));
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  G2 — LE BLOCAGE DÉPEND-IL DU NOMBRE DE PAIRES CORRÉLÉES ?
+  // ═══════════════════════════════════════════════════════════════════════
+  test('G2 — plus les données sont redondantes, plus le blocage est fort ?',
+      () async {
+    const cycles = 60;
+    // Cible = `repos`. On fait varier le nombre de critères CLONES de `forme`
+    // — donc le nombre de paires au-dessus de 0,85 — sans toucher au moteur.
+    Future<Map<String, double>> tirer(int nbClones, bool gel) async {
+      final clones = kEnrichis.take(nbClones).toSet();
+      final courses = <IaPronostic>[
+        for (var i = 0; i < cycles; i++)
+          pronostic(
+            courseKey: 'C${i.toString().padLeft(4, '0')}',
+            date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+            resolu: false,
+            variance: 6.0 + (i % 5) * 4.0,
+            scoresCriteres: <String, ScoresCriteres>{
+              for (var n = 1; n <= 5; n++)
+                '$n': _notesAvecClones(n, clones),
+            },
+          ),
+        for (var j = 0; j < 60; j++)
+          pronostic(
+            courseKey: 'A${j.toString().padLeft(4, '0')}',
+            date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+            variance: 6.0 + (j % 5) * 4.0,
+            scoresCriteres: <String, ScoresCriteres>{
+              for (var n = 1; n <= 5; n++)
+                '$n': _notesAvecClones(n, clones),
+            },
+          ),
+      ];
+      await semer(pronostics: courses, verifierNombre: false);
+      IaExperimentation.reinitialiser();
+      IaExperimentation.gelActif = gel;
+      for (var i = 0; i < cycles; i++) {
+        await executerCycle(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          arrivee: const <int>[1, 2, 3, 4, 5],
+        );
+      }
+      return poidsEffectifs();
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[G2] ═══ REDONDANCE DES DONNÉES ET BLOCAGE (cible = repos) ═══');
+    // ignore: avoid_print
+    print('[G2] clones | paires ≥ 0,85 | repos SANS gel | repos AVEC gel');
+    for (final nb in [0, 3, 6, 9, 12]) {
+      final sans = await tirer(nb, false);
+      final paires = IaMemoryService.instance.poids.correlations.entries
+          .where((e) => e.value >= 0.85)
+          .length;
+      final avec = await tirer(nb, true);
+      final pairesGel = IaMemoryService.instance.poids.correlations.entries
+          .where((e) => e.value >= 0.85)
+          .length;
+      // ignore: avoid_print
+      print('[G2] ${nb.toString().padLeft(6)} | '
+          '${pairesGel.toString().padLeft(14)} | '
+          '${_e(sans['repos']!)}    | ${_e(avec['repos']!)}');
+      if (paires == 0 && pairesGel == 0) {
+        // ignore: avoid_print
+        print('[G2]        (aucune paire haute : le gel est inactif ici)');
+      }
+    }
+  });
+}
+
+ScoresCriteres _notesAvecClones(int numero, Set<String> clones) {
+  final base = 96.0 - numero * 6;
+  double v(String k) {
+    if (k == 'repos') return (20.0 + numero * 14.0).clamp(0.0, 100.0);
+    if (clones.contains(k)) return base; // clone parfait de forme
+    return base;
+  }
+
+  return ScoresCriteres(
+    forme: v('forme'), gains: v('gains'), record: v('record'), cote: v('cote'),
+    constance: v('constance'), victoires: v('victoires'),
+    discipline: v('discipline'), distSpec: v('distSpec'), jockey: v('jockey'),
+    repos: v('repos'), hippo: v('hippo'), entraineur: v('entraineur'),
+    elo: v('elo'), terrain: v('terrain'), divergence: v('divergence'),
+    poidsRel: v('poidsRel'), progression: v('progression'),
+    mouvCote: v('mouvCote'), placeDepart: v('placeDepart'),
+  );
+}

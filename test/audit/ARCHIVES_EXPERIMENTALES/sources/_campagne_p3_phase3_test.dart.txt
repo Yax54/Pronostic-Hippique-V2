@@ -1,0 +1,193 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARCHIVE NON EXÉCUTABLE — CONSERVÉE COMME PREUVE, PAS COMME INSTRUMENT
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ce fichier provient de l'espace isolé /home/user/exp. Il EXIGE le fork
+//  du moteur (ia_experimentation.dart), qui N'EXISTE PAS en production.
+//  Il ne compile donc PAS ici et n'est PAS référencé par test/. Le préfixe
+//  « _ » dans son nom de fichier le rend EXCLU de la découverte de tests.
+//  Dépendance manquante : package:pronostic_hippique/services/ia_experimentation.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 3 — COMPARAISON AVANT / APRÈS, CONDITIONS STRICTEMENT IDENTIQUES
+//
+//  Ce fichier est conçu pour être exécuté à l'IDENTIQUE dans :
+//    • /home/user/exp_ref_avant  → moteur b3a0107 PUR (référence absolue)
+//    • /home/user/exp_avant      → b3a0107 + instrumentation (fidélité prouvée)
+//    • /home/user/exp            → moteur courant c31cbef (HEAD)
+//
+//  Il n'appelle AUCUNE API propre à une version : ni `bornesIndividuelles()`
+//  (absente en b3a0107), ni `projeter()` (absente en b3a0107). Il n'utilise
+//  que le chemin de production commun : `semer` → `executerCycle` →
+//  `poidsEffectifs` (donc `getPoids`).
+//
+//  DONNÉES STRICTEMENT IDENTIQUES : générateur déterministe, sans `Random`,
+//  sans dépendance à l'heure. Les mêmes 19 notes sont produites dans les trois
+//  environnements, cycle pour cycle.
+//
+//  CE QUI EST MESURÉ
+//   • la trajectoire complète des 19 poids, cycle par cycle ;
+//   • la part enrichie réelle à chaque cycle ;
+//   • la somme des poids à chaque cycle (invariant de projection) ;
+//   • une empreinte finale comparable caractère par caractère.
+//
+//  Interprétation attendue (Request B, point 2) : la mécanique de projection a
+//  CHANGÉ volontairement entre les deux versions. Une différence de trajectoire
+//  n'est donc PAS une régression par nature. Ce que l'on mesure ici, c'est la
+//  NATURE et l'AMPLEUR de cette différence, pour statuer : bénéfique, neutre
+//  ou indésirable.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:pronostic_hippique/services/ia_memory_models.dart';
+
+import '../support/atelier_apprentissage.dart';
+
+const int kCycles = 40;
+
+String d9(double v) => v.toStringAsFixed(9);
+
+/// Bruit déterministe, sans `dart:math`, dans [−12, +12].
+double bruit(int numero, int cycle, int critere) {
+  // DÉFAUT N°15 (campagne V0, mesuré) : l'ancien générateur
+  //   (numero*7919 + cycle*104729 + critere*1299709) * 0.6180339887, modulo 1
+  // est une projection LINÉAIRE : deux critères produisent, à une translation
+  // près, le MÊME bruit. Mesuré : |r| max 0,9405, 131/171 paires >= 0,30,
+  // 49/171 >= 0,65. Remplacé par lowbias32 : |r| max 0,0897, 0/171 >= 0,30.
+  var h = (numero * 0x9E3779B1) ^ (cycle * 0x85EBCA77) ^ (critere * 0xC2B2AE3D);
+  h &= 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = ((h ^ (h >> 16)) * 0x45d9f3b) & 0xFFFFFFFF;
+  h = h ^ (h >> 16);
+  h &= 0xFFFFFFFF;
+  return (h / 4294967296.0 - 0.5) * 24.0;
+}
+
+/// Notes identiques dans les trois environnements, pour un (numéro, cycle) donné.
+ScoresCriteres notes(int numero, int cycle, bool distSpecFort) {
+  double v(int idx, String nom) {
+    final base = 78.0 - numero * 5 + bruit(numero, cycle, idx);
+    if (nom == 'distSpec' && distSpecFort) {
+      return (100.0 - numero * 16.0).clamp(0.0, 100.0);
+    }
+    return base.clamp(5.0, 95.0);
+  }
+
+  return ScoresCriteres(
+    forme: v(0, 'forme'), gains: v(1, 'gains'), record: v(2, 'record'),
+    cote: v(3, 'cote'), constance: v(4, 'constance'),
+    victoires: v(5, 'victoires'), discipline: v(6, 'discipline'),
+    distSpec: v(7, 'distSpec'), jockey: v(8, 'jockey'), repos: v(9, 'repos'),
+    hippo: v(10, 'hippo'), entraineur: v(11, 'entraineur'), elo: v(12, 'elo'),
+    terrain: v(13, 'terrain'), divergence: v(14, 'divergence'),
+    poidsRel: v(15, 'poidsRel'), progression: v(16, 'progression'),
+    mouvCote: v(17, 'mouvCote'), placeDepart: v(18, 'placeDepart'),
+  );
+}
+
+double partEnrichie(Map<String, double> m) {
+  var b = 0.0, e = 0.0;
+  for (final k in kCles) {
+    if (kBase.contains(k)) {
+      b += m[k] ?? 0;
+    } else {
+      e += m[k] ?? 0;
+    }
+  }
+  final t = b + e;
+  return t == 0 ? 0 : e / t;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('P3 — trajectoire réelle sur $kCycles cycles (identique partout)',
+      () async {
+    // 60 courses d'amorçage + 40 cycles : la fenêtre du gradient doit contenir
+    // au moins 50 courses, condition mesurée d'exécution du gel.
+    final courses = <IaPronostic>[
+      for (var i = 0; i < kCycles; i++)
+        pronostic(
+          courseKey: 'C${i.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (i % 20))),
+          resolu: false,
+          variance: 6.0 + (i % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notes(n, i, i < 20),
+          },
+        ),
+      for (var j = 0; j < 60; j++)
+        pronostic(
+          courseKey: 'A${j.toString().padLeft(4, '0')}',
+          date: DateTime.now().subtract(Duration(days: 1 + (j % 20))),
+          variance: 6.0 + (j % 5) * 4.0,
+          scoresCriteres: <String, ScoresCriteres>{
+            for (var n = 1; n <= 5; n++) '$n': notes(n, 0, true),
+          },
+        ),
+    ];
+    await semer(
+      pronostics: courses,
+      verifierNombre: false,
+      poidsDepart: kInitial,
+      sigmaAttendue: sommeCle(kInitial, kCles),
+    );
+
+    final trace = <Map<String, double>>[];
+    for (var i = 0; i < kCycles; i++) {
+      await executerCycle(
+        courseKey: 'C${i.toString().padLeft(4, '0')}',
+        arrivee: const <int>[1, 2, 3, 4, 5],
+      );
+      trace.add(poidsEffectifs());
+    }
+
+    // ignore: avoid_print
+    print('');
+    // ignore: avoid_print
+    print('[P3] ═══ TRAJECTOIRE — $kCycles cycles ═══');
+
+    // Somme : invariant de projection, doit valoir 1,0 à chaque cycle.
+    for (final i in [0, 4, 9, 19, 29, 39]) {
+      final m = trace[i];
+      // ignore: avoid_print
+      print('[P3] cycle ${i.toString().padLeft(2)} | '
+          'Σ=${d9(sommeCle(m, kCles))} | '
+          'partE=${d9(partEnrichie(m))} | '
+          'forme=${d9(m["forme"]!)} | distSpec=${d9(m["distSpec"]!)} | '
+          'repos=${d9(m["repos"]!)}');
+    }
+
+    // Empreinte finale, comparable caractère par caractère.
+    final fin = trace.last;
+    // ignore: avoid_print
+    print('[P3] EMPREINTE_FINALE=${kCles.map((k) => d9(fin[k]!)).join(",")}');
+    // ignore: avoid_print
+    print('[P3] PART_ENRICHIE_FINALE=${d9(partEnrichie(fin))}');
+    // ignore: avoid_print
+    print('[P3] SOMME_MIN=${d9(trace.map((m) => sommeCle(m, kCles)).reduce((a, b) => a < b ? a : b))}');
+    // ignore: avoid_print
+    print('[P3] SOMME_MAX=${d9(trace.map((m) => sommeCle(m, kCles)).reduce((a, b) => a > b ? a : b))}');
+
+    // Amplitude du mouvement : combien chaque critère a bougé au total.
+    var maxMouv = 0.0;
+    var critMouv = '';
+    for (final k in kCles) {
+      final d = (fin[k]! - kInitial[k]!).abs();
+      if (d > maxMouv) {
+        maxMouv = d;
+        critMouv = k;
+      }
+    }
+    // ignore: avoid_print
+    print('[P3] MOUVEMENT_MAX=$critMouv:$d9(maxMouv)');
+
+    // Nombre de critères ayant quitté leur valeur initiale.
+    final bouges = kCles.where((k) => (fin[k]! - kInitial[k]!).abs() > 1e-9).length;
+    // ignore: avoid_print
+    print('[P3] CRITERES_BOUGES=$bouges/19');
+
+    expect(fin.length, 19);
+  }, timeout: const Timeout(Duration(minutes: 30)));
+}
