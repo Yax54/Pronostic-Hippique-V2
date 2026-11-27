@@ -126,6 +126,39 @@ ZtPartant partant(int n, {required String cote}) => ZtPartant(
 ///    figurer dans le discriminant. La mesure doit donc porter sur une course
 ///    À VENIR — c'est-à-dire sur le seul cas où un mouvement de cote est une
 ///    information. [dansFutur] place la course à +6 h.
+///
+/// ⚠️⚠️ CORRECTION DE MÉTHODE (troisième) — CAUSE RÉELLE DE L'ÉCHEC M2-a,
+///    MESURÉE ET DATÉE, PAS SUPPOSÉE (27/11/2026).
+///
+///    DÉFAUT : [dateStr] était dérivé de `now + 6 h`, mais [heure] restait
+///    FIGÉE à « 13:00 ». Les deux champs désignaient donc des instants
+///    INCOMPATIBLES, et `ZtCourse.heureDateTime` combine précisément les deux
+///    (`dateStr` pour le jour, `heure` pour l'heure).
+///
+///    CONSÉQUENCE ARITHMÉTIQUE : `heureDateTime` valait toujours AUJOURD'HUI à
+///    13:00. Le discriminant marque « terminée » dès que l'écart dépasse
+///    90 minutes (`data_refresh_service.dart:564`), c'est-à-dire dès que
+///    l'horloge de la machine franchit 14:30 heure locale. Le bloc des cotes
+///    (l.603) n'était alors JAMAIS écrit, les deux signatures devenaient
+///    identiques, et M2-a échouait — quel que soit le code de production.
+///
+///    MESURE DE LA CAUSE (horloge du 27/11/2026, 16:39 UTC) :
+///        dateStr du harnais    = 27112026   (now + 6 h → 22:39)
+///        heureDateTime retenue = 27/11/2026 13:00
+///        écart                 = 219 minutes
+///        isTerminee            = true  → bloc cote IGNORÉ
+///
+///    PREUVE QUE L'ÉCHEC EST HÉRITÉ ET NON INTRODUIT : le même test, exécuté
+///    sur le commit de référence `b3a0107` dans un worktree isolé, produit
+///    EXACTEMENT les mêmes signatures (`R1:1|113:00T8` deux fois) et échoue
+///    de la même manière. Le défaut est donc TEMPOREL, pas régressif.
+///
+///    CORRECTION APPLIQUÉE — et son périmètre : [heure] est désormais dérivée
+///    du MÊME instant que [dateStr], si bien que la course est réellement à
+///    venir. Aucune assertion n'est touchée : M2-a continue d'exiger que la
+///    signature CHANGE quand une seule cote change. Le défaut de production
+///    que M2-a surveille (cote invisible du discriminant) reste surveillé.
+///    ⚠️ AUCUN code de production n'est modifié par cette correction.
 ZtReunion reunionFactice({
   int numCourse = 1,
   String heure = '13:00',
@@ -138,11 +171,16 @@ ZtReunion reunionFactice({
   final String dateStr = '${depart.day.toString().padLeft(2, '0')}'
       '${depart.month.toString().padLeft(2, '0')}'
       '${depart.year}';
+  // ★ Correction M2-a : l'heure doit désigner le MÊME instant que dateStr.
+  //   Sinon `heureDateTime` retombe sur « aujourd'hui à 13:00 » et la course
+  //   est jugée terminée dès 14:30, ce qui vide la mesure de son objet.
+  final String heureCoherente = '${depart.hour.toString().padLeft(2, '0')}'
+      ':${depart.minute.toString().padLeft(2, '0')}';
   final c = ZtCourse(
     numCourse: numCourse,
     anchor: 'anchor',
     nom: 'COURSE MESURE',
-    heure: heure,
+    heure: heure == '13:00' ? heureCoherente : heure,
     distance: '2000m',
     prix: '20000',
     type: 'Attelé',

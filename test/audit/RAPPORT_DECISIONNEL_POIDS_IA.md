@@ -1934,3 +1934,355 @@ réinstallation, défaut M2-a du discriminant de cote.
 
 **Le chantier des poids IA est clos techniquement. La validation hippique
 prospective reste entière et n'empêche pas cette clôture.**
+
+---
+
+# §13 — CLÔTURE DÉFINITIVE (27/11/2026)
+
+Cette section **complète** §0–§12 et ne les reproduit pas. Elle ne consigne que
+ce qui a changé depuis le rapport précédent, plus les preuves nouvelles.
+
+## 13.1 — M2-a : résolution définitive [MESURÉ — hérité, non régressif]
+
+`test/audit/mecanismes_actualisation_mesure_test.dart`, test M2-a.
+
+**Cause, mesurée et non supposée.** Le montage `reunionFactice` dérivait
+`dateStr` de `DateTime.now() + 6 h` mais imposait `heure: '13:00'` en dur.
+`ZtCourse.heureDateTime` combine `dateStr` (le jour) avec `heure` (l'heure) :
+l'instant retenu était donc toujours « aujourd'hui 13:00 ». Or
+`_signaturedReunions` marque une course « terminée » dès que
+`maintenant.difference(c.heureDateTime).inMinutes > 90`. Mesure à l'horloge du
+27/11/2026, 16:39 UTC :
+
+| Grandeur | Valeur |
+|---|---|
+| `dateStr` du harnais | `27112026` (now + 6 h → 22:39) |
+| `heureDateTime` retenue | 27/11/2026 **13:00** |
+| écart au départ | **219 minutes** |
+| `isTerminee` | `true` → bloc cote **IGNORÉ** |
+
+Les deux signatures comparées étaient donc identiques, faute de cotes écrites.
+
+**Hérédité établie.** Le test a été rejoué sur `b3a0107` dans un worktree isolé :
+**même échec, mêmes signatures** (`R1:1|113:00T8` deux fois). L'échec est donc
+**hérité et temporel**, pas une régression du chantier.
+
+**Correction.** L'heure est dérivée du **même instant** que `dateStr`. Aucune
+assertion modifiée, aucun code de production modifié. Résultat :
+**13/13 verts**, signatures portant désormais les cotes (`R1:1|122:40A8~1:4.0~…`
+contre `~1:9.0~…`).
+
+**Portée de la correction :** le harnais seulement. Le comportement de
+production (« une course est terminée 90 min après son départ ») n'est **pas**
+touché et n'était pas en cause.
+
+## 13.2 — D-3 : politique métier validée et documentée
+
+**Décision arbitrée (définitive).** Une pondération **réellement corrompue** est
+remplacée par la **valeur initiale du constructeur** lorsque aucune valeur
+authentique fiable n'est disponible. La priorité 1 (dernière valeur authentique)
+ne s'applique **que** si une source existante, fiable et directement exploitable
+existe.
+
+**Absence actuelle de source secondaire fiable — documentée.** L'investigation
+a établi que `ia_journal_v2` **ne constitue pas** une telle source : il est
+chronologique, borné (`_maxJournal = 500`), écrêté en rotation, et ne conserve
+pas de copie intégrale de la table à une date donnée. En conséquence, et
+conformément à l'arbitrage :
+
+- `ia_journal_v2` **n'est pas** exploité pour reconstruire les poids ;
+- **aucune** clé de sauvegarde secondaire n'a été créée ;
+- **aucun** nouveau système de sauvegarde n'a été introduit ;
+- `_load()` **n'a pas** été réordonné (le journal n'est pas chargé avant les poids) ;
+- le journal **ne transite pas** dans le désérialiseur ;
+- **aucune** modification d'architecture n'a été faite pour cette récupération.
+
+**Deux défauts trouvés et corrigés dans ce périmètre.**
+
+**(a) Le chemin par discipline supprimait au lieu de remplacer.**
+Dans le `factory IaPoidsAdaptatifs.fromJson`, la boucle `poidsParDiscipline`
+**écartait** la clé corrompue faute de pouvoir la lire. Le trou était ensuite
+comblé par `poidsEffectifsPourDiscipline` avec la valeur **GLOBALE** du même
+critère — c'est-à-dire une valeur appartenant à **un autre périmètre**, ce que la
+politique interdit explicitement. Comportement mesuré avant correction :
+`plat.gains` corrompu → clé **absente**, puis servie à 0,11 (globale).
+Désormais : clé **présente**, portant `defauts['gains'] = 0.13`, avec trace.
+
+**(b) La trace des anomalies n'était jamais remise à zéro.**
+`_poidsDeserialisesAvecAnomalies` n'était affecté que dans la branche
+« anomalies non vides » et dans le `catch`. Un chargement **propre** succédant à
+un chargement corrompu continuait donc d'exposer l'anomalie **précédente** via
+`anomaliesRestaurationPoids` : la traçabilité mentait dans le sens dangereux,
+en signalant une récupération qui n'avait pas eu lieu. Mesure discriminante :
+D3-e passe exécuté **seul** (`anomalies = 0`, écart max `0.000000000000`) et
+échouait exécuté **après** D3-a/D3-b dans le même processus. Correction : remise
+à zéro en tête de bloc. Champ strictement diagnostique — n'influence **aucune**
+décision.
+
+## 13.3 — Preuve fonctionnelle complète sur le vrai chemin `_load()`
+
+`test/audit/poids_recuperation_load_test.dart` — **6/6 verts**, `-j 1`.
+Le chemin exercé est celui de production : écriture d'un blob JSON **réel** dans
+`SharedPreferences` simulé, puis `IaMemoryService.instance.recharger()` →
+`_load()` → `fromJson`. Aucune sauvegarde originale n'est lue en écriture ni
+modifiée ; aucun apprentissage n'est déclenché (on ne fait que charger).
+
+Corruption semée : `poidsParDiscipline.trot_attele.constance = "CORROMPU"`
+(valeur texte, inexploitable), **une seule** valeur dans tout le blob.
+
+| Exigence du §3 | Mesure |
+|---|---|
+| Remplacement du seul poids corrompu par sa valeur initiale | `constance` restituée = **0.090000000000** = `defauts['constance']` |
+| … et **non** la valeur globale du même critère | valeur globale = **0.070000000000** ⇒ écart > 1e-6 : provenance tranchée |
+| Conservation exacte des autres poids de la discipline | **18/18** conservés · écart max **0.000000000000** · 19 clés |
+| Conservation des autres disciplines | `plat` : écart max **0.000000000000** · 19 clés |
+| Conservation des poids globaux | écart max **0.000000000000** · Σ **1.000000000000** (non re-projetée au chargement) |
+| Conservation du compteur d'apprentissage | `nbMisesAJour` = **437** (valeur semée) |
+| Conservation des pronostics | **3/3** chargés |
+| Conservation des seuils | `sg` = **66.0** (défaut 80) · `ti` = **41.0** (défaut 35) · `qi` = **7.0** (défaut 0) |
+| Conservation des archives | archivage **confirmé = true** · **1** version relue après chargement corrompu |
+| Traçabilité | **1** anomalie, portant critère + discipline + motif + valeur |
+
+Trace exacte obtenue :
+
+```
+poidsParDiscipline[trot_attele][constance]: type String non numérique
+(« CORROMPU ») → repli sur la valeur initiale du constructeur 0.09
+(seule cette pondération est remplacée ; les autres sont conservées ;
+compteur d'apprentissage inchangé)
+```
+
+**Tests complémentaires du même harnais :**
+
+- **D3-b — blob illisible.** Littéral `NaN` injecté dans le JSON brut :
+  `FormatException` → table **par défaut** complète (écart aux poids initiaux
+  `0.000000000000`), pronostics **conservés**. L'échec est **confiné** aux poids ;
+  le blob fautif n'est ni supprimé ni réécrit.
+- **D3-c — valeur authentique hors bornes.** `trot_attele.cote = 0.90`
+  (plafond de référence 0.40) : restituée **0.900000000000**, **anomalies = 0**,
+  compteur intact. Une valeur hors bornes n'est **pas** une corruption.
+- **D3-d — archives.** Voir tableau ci-dessus.
+- **D3-e — garde sans corruption.** `anomalies = 0`, écart max sur les
+  **57** pondérations (19 globales + 2×19 disciplines) = `0.000000000000`.
+- **D3-g — garde du montage.** Deux défauts de **fixture** ont été détectés par
+  cette garde et corrigés, pas contournés : `kGlobauxTest` sommait **1,02** et
+  deux valeurs de `plat` coïncidaient avec les initiales, rendant « remplacé »
+  et « intact » indiscernables. Désormais Σ = **1.000000000000** et
+  **0/19** collision sur chacune des trois tables.
+
+## 13.4 — Justification mathématique exacte [MESURÉ]
+
+`test/audit/poids_nature_projection_test.dart` — **7/7 verts**.
+
+### 13.4.1 — Ce que la documentation disait, et qui est faux
+
+La documentation qualifiait le remplissage de **« projection euclidienne »**.
+C'est **inexact**, et c'est mesuré (P-3), à ensemble réalisable **identique** :
+
+| Candidat | Violations de bornes | D_ℓ² vers le brut |
+|---|---:|---:|
+| production | 0/19 | **0.557899555238** |
+| projection euclidienne (B) | 0/19 | **0.448261721813** |
+
+Écart max entre les deux vecteurs : **0.171402578288**. Une projection
+euclidienne minimise ℓ² **par définition** : la production ne peut donc pas en
+être une.
+
+### 13.4.2 — Fonction objectif réelle
+
+Par les conditions KKT sur `D_I(x‖w) = Σ_k [x_k·ln(x_k/w_k) − x_k + w_k]` :
+
+```
+∂/∂x_k [ D_I + ν(Σx − budget) − α_k(lo_k − x_k) + β_k(x_k − hi_k) ] = 0
+⇒ ln(x_k/w_k) + ν + α_k − β_k = 0
+⇒ x_k = w_k · e^(−ν)  hors saturation, puis x_k = clip(·, lo_k, hi_k)
+```
+
+Le multiplicateur est donc un **facteur exponentiel** `λ = e^(−ν)` — d'où la
+forme **multiplicative**. Une projection ℓ² donnerait au contraire un **décalage
+additif** `x_k = clip(w_k − μ, …)`.
+
+**Certificat mesuré (P-4).** Sur la sortie réelle, les rapports `x_k/w_k` des
+critères **non saturés** sont **constants** :
+
+| Groupe | λ mesuré | Critères libres | Dispersion relative max |
+|---|---:|---:|---:|
+| enrichi | 0.563916908020 | 3 | **3.347e-15** |
+| base | 0.606709638126 | 6 | **3.660e-16** |
+
+Reconstruction `x = clip(λ·w)` : écart max **1.665e-16** (enrichis),
+**1.110e-16** (base). Contre-épreuve sur le candidat euclidien : dispersion
+**8.299e-01** — un décalage additif ne produit pas de rapports constants.
+
+**χ² est également exclue, par mesure.** `D_χ²` préfère le vecteur
+proportionnel **non écrêté** (0.771489487066 contre 0.852807357083), c'est-à-dire
+un point qui **viole 12 bornes sur 19**. Une divergence qui préfère un point
+irréalisable n'est pas la fonctionnelle de cette projection. Comparaison
+**loyale** entre les deux seuls points réalisables : `D_I` production
+**0.554981664320** < euclidien **0.617482149181**.
+
+### 13.4.3 — Fixation des budgets, redistribution, rôle de λ
+
+1. **Clip** sur les 19 bornes individuelles (C2, C3, C5, C6) — local, sans
+   effet de bord.
+2. **Budget de groupe** (C4) : part enrichie = part courante **clampée** dans
+   `[0,18 ; 0,40]` ; budget de base = `1 − part`. Leur somme vaut 1 **par
+   construction** ⇒ C1 est **structurel**, non numérique.
+3. **λ par groupe** : racine de `λ ↦ Σ_k clip(λ·w_k, lo_k, hi_k) − budget`.
+   Fonction continue et **croissante**, donc strictement monotone dès qu'un
+   membre n'est pas saturé ⇒ racine **unique**. Existence garantie par
+   `Σ lo ≤ budget ≤ Σ hi` : **2002 budgets testés** (1001 parts × 2 groupes),
+   **0 infaisable** (P-1).
+4. **Redistribution** : uniquement entre critères **encore libres**, au prorata
+   de la marge non saturée. Un critère à sa borne ne bouge pas et ne peut pas
+   « voler » de poids à ses voisins.
+
+### 13.4.4 — Les trois mécanismes, explicitement distingués
+
+| Mécanisme | Forme | Satisfait les bornes | Ce que fait la production |
+|---|---|:---:|---|
+| Projection euclidienne **globale** | `x = clip(w − μ)` sur les 19 | oui | **NON** (écart 0.171402578288) |
+| Projection **par groupe** après fixation des budgets, pour `D_I` | `x = clip(λ_g·w)` | oui | **OUI** (certificat KKT ci-dessus) |
+| Remise à l'échelle **proportionnelle** | `x = budget·w/Σw` | **non** : **10** violations /19 | **NON** |
+
+La production est donc un **rake** (un pas de Sinkhorn–Knopp sous contrainte de
+boîte) appliqué **séparément aux deux groupes après fixation de leurs budgets**.
+Ce n'est ni une projection euclidienne globale, ni une remise à l'échelle
+proportionnelle.
+
+### 13.4.5 — Unicité et idempotence : ce qui est vrai, ce qui ne l'est pas
+
+- **Le vecteur est unique et déterministe** : 20 exécutions identiques
+  **bit-à-bit** (P-6).
+- **λ est déterminé** tant que la fonction de λ croît strictement. Sur la sortie
+  réelle c'est le cas : `Σ(λ=1) = 0.780185758514` → `Σ(λ=3) = 1.561434806882`
+  (6 critères de base libres).
+- **λ n'est PAS identifiable** sur un groupe dont **tous** les membres sont
+  saturés : la fonction y est constante. La sortie reste néanmoins déterminée par
+  les bornes seules. Il ne faut donc promettre l'unicité que du **vecteur**.
+- **Idempotence — condition, pas seulement constat** (P-7) : sur la sortie `x`,
+  `Σ_g clip(1·x) = Σ_g x = budget_g` à **0.000000000000** près, donc `λ = 1` est
+  racine et la correction résiduelle est nulle. Écart mesuré
+  `projeter(x) ↔ x = 0.000000000000`.
+
+**Nuance honnête.** La production **n'est pas exactement** le minimum de `D_I` :
+l'étage de correction résiduelle ajoute un déplacement de quelques ulp,
+proportionnel à la marge non saturée, pour tenir C1 à la précision machine. La
+formulation exacte est donc : **projection de `D_I` par groupe, corrigée d'un
+résidu de précision**.
+
+### 13.4.6 — Trois hypothèses de ma part, réfutées par la mesure
+
+Consignées parce qu'une hypothèse fausse non écrite est un piège pour le
+prochain lecteur. Toutes sont réfutées **chiffres en main** dans le harnais.
+
+| Hypothèse | Verdict | Mesure |
+|---|---|---|
+| « la production multiplie le vecteur **brut** » | **FAUX** | elle multiplie le vecteur **déjà clippé** ; ma réplique fausse donnait **0.051685516024**, la réplique fidèle **0.000000000000** |
+| « un brut tout à zéro donne la table des **planchers** » | **FAUX** | `part` se calcule sur les sommes **clippées** (0,28 > 0) ⇒ remultiplication ; écart **0.128571428571** |
+| « un brut tout au **plafond** donne la table des plafonds » | **FAUX** | idem ; écart **0.388709677419** |
+| « λ est indéterminé sur la sortie de `projeter()` » | **FAUX** | 6 critères de base libres ⇒ croissance **stricte** |
+
+## 13.5 — Non-régression définitive [MESURÉ]
+
+`flutter test -j 1` sur l'arbre définitif, sortie assainie de ses `\r` :
+
+| Indicateur | Valeur |
+|---|---|
+| Tests exécutés | **3800** |
+| Réussis | **3800** |
+| **Échecs** | **0** |
+| **Ignorés / exclus** | **0** (aucune balise `skip`, aucun `--exclude-tags`) |
+| **Bloqués** | **0** |
+| Durée | **11 min 02 s** |
+
+`flutter analyze lib/ test/` → **`No issues found!`**
+Aucun `ignore`, aucun `ignore_for_file` ajouté, aucun lint désactivé, aucun
+fichier exclu de l'analyse, `analysis_options.yaml` inchangé.
+
+**Un échec transitoire rencontré puis résolu, et sa raison :**
+`poids_projection_test.dart` / **P14** échouait sur
+`expect(…containsKey('gains'), isFalse)`. Cette assertion encodait l'**ancien**
+comportement — la **suppression** de la clé corrompue — que la politique D-3
+arbitrée **interdit**. Elle a été mise en conformité : la clé doit être
+**présente** et porter `defauts['gains'] = 0.13`. Ce n'était pas un test
+« contourné » : l'assertion mesurait une règle qui n'est plus la règle.
+
+## 13.6 — Fichiers modifiés depuis le rapport précédent
+
+| Fichier | Nature | Contenu |
+|---|---|---|
+| `lib/services/ia_memory_models.dart` | **corrigé** | (a) politique D-3 par discipline : remplacement par `defauts[k]` + trace complète, au lieu de suppression ; (b) **documentation seule** de la projection : « euclidienne » → projection de `D_I` par groupe (rake), avec certificat KKT, unicité, idempotence, et réfutations chiffrées. **Le mécanisme n'est pas touché.** |
+| `lib/services/ia_memory_service.dart` | **corrigé** | `_load()` : remise à zéro de `_poidsDeserialisesAvecAnomalies` en tête de bloc (trace périmée). Champ diagnostique, aucune décision affectée. |
+| `test/audit/mecanismes_actualisation_mesure_test.dart` | **corrigé** | M2-a : `heure` dérivée du même instant que `dateStr`. Aucune assertion changée. |
+| `test/audit/poids_projection_test.dart` | **corrigé** | P14 : assertion alignée sur la politique D-3 (remplacement, non suppression). |
+| `test/audit/poids_recuperation_load_test.dart` | **créé** | 6 tests D3-a…D3-e + garde D3-g sur le vrai `_load()`. |
+| `test/audit/poids_nature_projection_test.dart` | **créé** | 7 tests P-1…P-7 : nature mathématique de la projection. |
+| `test/audit/RAPPORT_DECISIONNEL_POIDS_IA.md` | **complété** | ce §13. |
+
+**Non modifiés, vérifié :** les 19 poids initiaux du constructeur
+(Σ = `1.260000000000`, écart `0.000000000000` sur 19/19 vs harnais), les 19
+planchers, les 19 plafonds, les contraintes collectives 0,18/0,40, le gradient
+descent et ses coefficients, le momentum, les formules des 19 critères, le
+calcul des scores, `_normaliserScores`, les seuils, la calibration, le TOP3
+Learning, les calculs ELO, les mécanismes financiers PMU. **Aucune sauvegarde
+originale touchée. Aucun recalcul historique. Aucun apprentissage rétroactif.
+Aucune réinitialisation. Aucune modification Android.**
+
+## 13.7 — Protections revérifiées depuis le dernier rapport
+
+Seules les protections **touchées par les changements ci-dessus** ont été
+revérifiées — les études antérieures concluantes ne sont pas rejouées.
+
+| Protection | Vérification |
+|---|---|
+| Compteur d'apprentissage non réinitialisé par une récupération | D3-a : `nbMisesAJour = 437` après chargement corrompu |
+| Aucun apprentissage déclenché par une lecture | D3-a : `journal` vide, `anomaliesProjection` vide |
+| Pronostics non détruits par une corruption de poids | D3-a **3/3**, D3-b `isNotEmpty` |
+| Seuils non détruits | D3-a : `sg 66.0` / `ti 41.0` / `qi 7.0`, tous distincts des défauts |
+| Archives non détruites | D3-d : `true` · 1 version relue |
+| Poids globaux non touchés par une corruption de discipline | D3-a : écart max `0.000000000000` |
+| Discipline intacte non touchée | D3-a : `plat` écart max `0.000000000000` |
+| Valeur authentique hors bornes **conservée** | D3-c : `0.900000000000`, 0 anomalie |
+| Cycle d'apprentissage complet inchangé | `poids_cycle_apprentissage_test.dart` F0–F7 : **8/8** |
+| Contraintes C1–C10 inchangées | `poids_contraintes_test.dart` **12/12** · `poids_projection_test.dart` **16/16** |
+| Projection non refondue | mécanisme **identique** : P-2 réplique fidèle à `0.000000000000` ; seule la **documentation** a changé |
+
+## 13.8 — État de clôture
+
+| Élément | Valeur |
+|---|---|
+| Branche | **`main` uniquement** |
+| Commit de référence GitHub | `b3a010760937a116fbcb871cf8a454da87bf7fd8` |
+| Commit local précédent | `c795f11949e08afefa0595f10a91078c0ad55412` |
+| Commit définitif | renseigné dans le message de clôture — **un hash ne peut pas figurer dans son propre contenu** |
+| Arbre de travail | **propre** après commit |
+| Worktree de mesure `/tmp/wt_ref` (`b3a0107`) | **supprimé** (`git worktree remove`) |
+| Push GitHub | **AUCUN** — autorisation en attente |
+| APK | **AUCUN** — aucune compilation Android lancée |
+| BLOC 2 | **suspendu** |
+| BLOC 3 | **non commencé** |
+| Anomalie du profil après réinstallation | **réservée à l'audit général** — non traitée, aucune modification Android |
+
+## 13.9 — Synthèse finale en trois catégories
+
+**[DÉMONTRÉ mathématiquement]** — la production est la projection de la
+divergence d'information `D_I` **par groupe**, à budget fixé, puis corrigée d'un
+résidu de précision ; `λ = e^(−ν)` en est le multiplicateur exponentiel ; le
+vecteur résultat est unique et déterministe ; l'idempotence est **conditionnée**
+par `λ = 1`, vérifiée. Elle n'est **pas** une projection euclidienne, **pas** une
+projection χ², **pas** une remise à l'échelle proportionnelle.
+
+**[MESURÉ]** — M2-a hérité, reproduit sur `b3a0107`, corrigé, 13/13 · D-3 prouvée
+sur le vrai `_load()` : remplacement du seul poids corrompu par sa valeur
+initiale, 18/18 + autres disciplines + globaux + compteur + pronostics + seuils +
+archives conservés à `0.000000000000`, trace complète · **3800/3800** tests verts,
+0 ignoré, 0 bloqué, 11 min 02 s · `flutter analyze` propre sur `lib/` et `test/`.
+
+**[À MESURER — hors périmètre, assumé]** — efficacité hippique réelle des
+pronostics ; convergence au-delà de 120 pas d'apprentissage ; comportement sur
+une configuration de bornes réellement infaisable ; anomalie du profil après
+réinstallation (audit général).
+
+**Le chantier des poids IA est clos. La validation hippique prospective reste
+entière et n'invalide pas cette clôture.**

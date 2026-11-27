@@ -711,34 +711,105 @@ class IaPoidsAdaptatifs {
   //    C9  déterminisme (aucun aléatoire, aucun ordre d'itération dépendant).
   //    C10 aucune dérive sans nouvel apprentissage (= conséquence de C7).
   //
-  //  MÉTHODE : « projection à budgets de groupe + remplissage par écumoire ».
-  //  Justification du choix, et pourquoi pas un simple « clip puis renormalise
-  //  en boucle » (qui ne converge pas toujours et dépend de l'ordre) :
+  //  MÉTHODE : « projection à budgets de groupe, remplissage MULTIPLICATIF
+  //  (rake / Sinkhorn–Knopp sous boîte) ». Justification du choix, et pourquoi
+  //  pas un simple « clip puis renormalise en boucle » (qui ne converge pas
+  //  toujours et dépend de l'ordre) :
   //   1. On CLIPPE d'abord (C2, C3, C5, C6) : opération locale, sans effet de
   //      bord, qui ne touche que les poids réellement hors bornes.
   //   2. On fixe le budget de chaque groupe (C4) : budget des enrichis = part
   //      courante ramenée dans [0,18 ; 0,40], budget de la base = 1 − part.
   //      Leur somme vaut 1 PAR CONSTRUCTION, donc C1 est structurel, pas
   //      numérique : il n'y a pas d'arrondi cumulé à corriger.
-  //   3. Sur chaque groupe, on cherche λ tel que
+  //   3. Sur chaque groupe, on cherche λ > 0 tel que
   //         Σ_k clip(λ · w_k, plancher_k, plafond_k) = budget
   //      La fonction λ ↦ Σ est continue et CROISSANTE (somme de fonctions
   //      croissantes), donc STRICTEMENT monotone dès qu'un poids n'est pas
   //      saturé : la solution est UNIQUE. Existence garantie dès que
   //         Σ planchers du groupe ≤ budget ≤ Σ plafonds du groupe
-  //      ce qui est vrai par construction des budgets. Recherche par
-  //      dichotomie : convergence linéaire, 200 itérations suffisent très
-  //      largement pour atteindre la précision machine.
-  //   4. Ce remplissage est la projection euclidienne du vecteur sur
-  //      l'intersection {bornes} ∩ {somme du groupe = budget} lorsque λ est
-  //      le multiplicateur de Lagrange : il MINIMISE Σ (w_k − w_k_brut)²
-  //      sous les contraintes. C'est ce qui donne la meilleure conservation
-  //      possible des évolutions proposées par le gradient, à contraintes
-  //      égales. C'est la métrique de conservation retenue : distance
-  //      euclidienne, et non un ratio arbitraire.
+  //      ce qui est vrai par construction des budgets — vérifié sur les 2002
+  //      budgets réalisables (1001 parts × 2 groupes, P-1 : 0 infaisable).
+  //      Recherche par dichotomie : convergence linéaire, 200 itérations
+  //      suffisent très largement pour atteindre la précision machine.
+  //   4. Ce remplissage est la PROJECTION, PAR GROUPE, du vecteur sur
+  //      {bornes} ∩ {somme du groupe = budget}, pour la DIVERGENCE
+  //      D'INFORMATION
+  //            D_I(x‖w) = Σ_k [ x_k·ln(x_k/w_k) − x_k + w_k ]
+  //      et NON pour la distance euclidienne.
+  //
+  //      ⚠️ CORRECTION DE TERMINOLOGIE (27/11/2026) — LA DOCUMENTATION
+  //      PRÉTENDAIT « PROJECTION EUCLIDIENNE », CE QUI EST FAUX, ET C'EST
+  //      MESURÉ (`test/audit/poids_nature_projection_test.dart`, P-3) :
+  //        • écart max entre la production et la projection euclidienne
+  //          calculée sur le MÊME ensemble réalisable : 0.171402578288 ;
+  //        • en norme ℓ², la projection euclidienne est PLUS PROCHE du brut
+  //          que la production : 0.448261721813 contre 0.557899555238.
+  //          Une projection euclidienne minimise ℓ² par définition : la
+  //          production ne peut donc pas en être une.
+  //
+  //      La forme réellement implémentée est MULTIPLICATIVE. Elle s'obtient
+  //      par les conditions KKT :
+  //         ∂/∂x_k [ D_I + ν(Σx − budget) − α_k(lo_k − x_k) + β_k(x_k − hi_k) ] = 0
+  //         ⇒ ln(x_k/w_k) + ν + α_k − β_k = 0
+  //         ⇒ x_k = w_k · e^(−ν) hors saturation, puis x_k = clip(·, lo_k, hi_k).
+  //      Le multiplicateur est donc un FACTEUR EXPONENTIEL λ = e^(−ν), d'où
+  //      x_k = clip(λ·w_k, lo_k, hi_k). Un décalage additif
+  //      x_k = clip(w_k − μ, …) serait la signature de ℓ² : c'est exactement
+  //      le candidat mesuré différent en P-3.
+  //
+  //      CERTIFICAT MESURÉ (P-4) : sur la sortie réelle, les rapports x_k/w_k
+  //      des critères NON SATURÉS sont CONSTANTS (dispersion relative max
+  //      3,35e-15 sur le groupe enrichi, 3,66e-16 sur la base), et
+  //      x = clip(λ·w) se reconstruit à 1,67e-16 près. Sur le candidat
+  //      euclidien, la même dispersion vaut 8,30e-01 : le décalage additif ne
+  //      produit pas de rapports constants. C'est la discrimination mesurable.
+  //
+  //      Pourquoi D_I et non χ² ? P-4 l'exclut aussi par mesure : χ² préfère
+  //      le vecteur proportionnel NON ÉCRÊTÉ (0,771489487066 contre
+  //      0,852807357083), c'est-à-dire un point qui VIOLE 12 bornes sur 19.
+  //      Une divergence qui préfère un point irréalisable n'est pas la
+  //      fonctionnelle de cette projection.
+  //
+  //      Conservation : D_I est la seule de ces distances à être une
+  //      divergence (nulle en x = w, positive sinon), donc à préserver
+  //      exactement le vecteur d'entrée quand il est déjà admissible — c'est
+  //      C8, mesuré à 1e-12 sur 500/500 tables conformes.
+  //
+  //      Vocabulaire exact : il s'agit d'un RAKE (raking), c'est-à-dire d'un
+  //      pas de Sinkhorn–Knopp sous contrainte de boîte, appliqué séparément
+  //      aux deux groupes après fixation de leurs budgets. Ce n'est ni une
+  //      projection euclidienne GLOBALE, ni une simple remise à l'échelle
+  //      proportionnelle.
+  //
   //   5. Un critère DÉJÀ à sa borne ne bouge pas, et ne peut pas « voler » de
   //      poids à ses voisins : il reste saturé, et le remplissage ne
   //      redistribue qu'entre les critères encore libres.
+  //
+  //  UNICITÉ — CE QUI EST VRAI, ET CE QUI NE L'EST PAS :
+  //    • Le VECTEUR résultat est unique et déterministe : 20 exécutions
+  //      identiques bit-à-bit (P-6), aucun aléatoire, ordre d'itération figé.
+  //    • Le multiplicateur λ est déterminé tant que la fonction
+  //      λ ↦ Σ_k clip(λ·w_k, lo_k, hi_k) est STRICTEMENT croissante, c'est-à-
+  //      dire tant qu'au moins un membre du groupe n'est pas saturé. Sur la
+  //      sortie réelle c'est le cas (6 critères de base libres, P-6 :
+  //      Σ(λ=1) = 0.780185758514 → Σ(λ=3) = 1.561434806882).
+  //    • λ N'EST PAS identifiable sur un groupe dont TOUS les membres sont
+  //      saturés : la fonction y est constante. Cela n'affecte pas la sortie,
+  //      qui reste déterminée par les bornes seules. Il ne faut donc pas
+  //      promettre l'unicité de λ, seulement celle du vecteur.
+  //
+  //  IDEMPOTENCE — CONDITION, PAS SEULEMENT CONSTAT (P-7) :
+  //    la sortie x vérifie Σ_g clip(1·x) = Σ_g x = budget_g à 1e-12 près,
+  //    donc λ = 1 est racine et la correction résiduelle y est nulle. Deux
+  //    applications valent une : écart mesuré 0.000000000000.
+  //
+  //  ⚠️ LA PRODUCTION N'EST PAS EXACTEMENT LE MINIMUM DE D_I : l'étage ③
+  //     (correction résiduelle) ajoute un déplacement infime, proportionnel à
+  //     la marge non saturée, pour que C1 soit tenu à la précision machine.
+  //     Ce déplacement est de l'ordre de quelques ulp (P-2 : réplique fidèle
+  //     à 0.000000000000 ; P-7 : condition Σ vérifiée à 0.000000000000). La
+  //     caractérisation « projection de D_I par groupe, corrigée d'un résidu
+  //     de précision » est donc la formulation honnête.
   //
   //  AUCUN BIAIS D'ORDRE : `normaliser()`, `clamp()` et `clampDiscipline()`
   //  n'utilisent plus de Map itérée pour décider quoi que ce soit. Les bornes
@@ -820,8 +891,14 @@ class IaPoidsAdaptatifs {
         'placeDepart':<double>[0.005, 0.07],
       };
 
-  /// Remplissage par écumoire : trouve λ tel que
-  /// `Σ_k clip(λ · w_k, lo_k, hi_k) = budget`, puis renvoie les w_k projetés.
+  /// Remplissage MULTIPLICATIF d'un groupe (rake / Sinkhorn–Knopp sous boîte) :
+  /// trouve λ > 0 tel que `Σ_k clip(λ · w_k, lo_k, hi_k) = budget`, puis
+  /// renvoie les w_k ainsi remplis, suivis d'une correction résiduelle exacte.
+  ///
+  /// C'est la projection de la divergence d'information D_I(x‖w), par groupe et
+  /// à budget fixé — voir la démonstration KKT complète en tête de classe.
+  /// `w` doit être la table DÉJÀ CLIPPÉE : c'est ce qui rend l'opération
+  /// idempotente (λ = 1 au second passage).
   ///
   /// Renvoie `null` si le budget est hors du domaine réalisable du groupe
   /// (cas qui ne peut survenir que si l'appelant passe un budget incohérent).
@@ -1282,9 +1359,36 @@ class IaPoidsAdaptatifs {
     final anomalies = <String>[];
 
     // ── Poids PAR DISCIPLINE : lecture tolérante, clé par clé ───────────────
-    //   AVANT : une seule valeur illisible faisait tomber toute l'entrée de
-    //   discipline (le `catch (_) {}` entourait la boucle entière). Désormais
-    //   seule la valeur fautive est écartée ; la discipline survit.
+    //
+    //  ★★ D-3 ARBITRÉ (27/11/2026) — CORRECTION D'UNE VIOLATION DE LA
+    //     POLITIQUE DE RÉCUPÉRATION.
+    //
+    //  MESURE AVANT CETTE CORRECTION (défaut réel, pas théorique) : une valeur
+    //  corrompue dans une table de discipline était **SUPPRIMÉE** de la table
+    //  et seulement TRACÉE. La clé disparaissait donc, et
+    //  `poidsEffectifsPourDiscipline` la comblait plus tard avec la valeur
+    //  **GLOBALE** du critère. Le consommateur recevait donc, pour un critère
+    //  corrompu d'une discipline, une valeur empruntée au GLOBAL — c'est-à-dire
+    //  **une valeur provenant d'un autre périmètre**, exactement ce que la
+    //  politique arbitrée interdit (« aucune récupération d'une valeur
+    //  appartenant à une autre discipline ou à un autre critère »).
+    //
+    //  POLITIQUE APPLIQUÉE MAINTENANT, pour chaque critère corrompu :
+    //    1. Aucune source secondaire fiable n'existe (arbitrage du 27/11/2026 :
+    //       `ia_journal_v2` n'en est pas une, aucune clé secondaire n'est
+    //       créée) ⇒ la priorité 1 est sans objet.
+    //    2. Repli sur la valeur INITIALE DU CONSTRUCTEUR de ce seul critère
+    //       (`defauts[k]`). Aucune valeur neutre arbitraire.
+    //    3. Toutes les autres valeurs de la discipline sont conservées
+    //       STRICTEMENT (lecture clé par clé, aucun autre accès en écriture).
+    //    4. La récupération est TRACÉE : critère, discipline, motif, valeur
+    //       de remplacement et origine de cette valeur.
+    //
+    //  ⚠️ Si le critère corrompu n'appartient pas aux 19 critères connus,
+    //     il n'existe aucune valeur initiale de constructeur pour lui : on ne
+    //     fabrique rien, la clé est retirée et le fait est tracé. C'est le seul
+    //     cas où une clé disparaît — et c'est le comportement correct, car
+    //     inventer une valeur pour un critère inconnu serait pire.
     final ppd = <String, Map<String, double>>{};
     final Object? rawPpd = j['poidsParDiscipline'];
     if (rawPpd is Map) {
@@ -1303,11 +1407,30 @@ class IaPoidsAdaptatifs {
           if (v is num) {
             final double d = v.toDouble();
             if (!d.isNaN && !d.isInfinite && d >= 0) {
-              table[k] = d;
+              table[k] = d;             // (c) valide  /  (h) hors bornes assumé
               continue;
             }
           }
-          anomalies.add('poidsParDiscipline[$disc][$k]: valeur « $v » ignorée');
+          // Valeur INEXPLOITABLE : on applique la politique de récupération.
+          final double? initiale = defauts[k];
+          final motif = (v is num)
+              ? (v.toDouble().isNaN
+                  ? 'valeur NaN'
+                  : v.toDouble().isInfinite
+                      ? 'valeur infinie (${v.toDouble()})'
+                      : 'valeur négative ($v)')
+              : 'type ${v.runtimeType} non numérique (« $v »)';
+          if (initiale != null) {
+            table[k] = initiale;
+            anomalies.add('poidsParDiscipline[$disc][$k]: $motif '
+                '→ repli sur la valeur initiale du constructeur $initiale '
+                '(seule cette pondération est remplacée ; les autres sont '
+                'conservées ; compteur d\'apprentissage inchangé)');
+          } else {
+            anomalies.add('poidsParDiscipline[$disc][$k]: $motif '
+                '→ critère hors des 19 connus, aucune valeur initiale '
+                'n\'existe : pondération retirée, aucune valeur inventée');
+          }
         }
         if (table.isNotEmpty) ppd[disc] = table;
       }

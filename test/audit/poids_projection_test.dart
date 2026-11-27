@@ -983,13 +983,34 @@ void main() {
       },
     });
     // ignore: avoid_print
-    print('P14d discipline « plat » : ${avecDisc.poidsParDiscipline['plat']} '
-        '(gains écarté, forme et record SURVIVENT) · '
+    print('P14d discipline « plat » : ${avecDisc.poidsParDiscipline['plat']} · '
         '« trot_attele » écarté = '
         '${!avecDisc.poidsParDiscipline.containsKey('trot_attele')}');
     expect(avecDisc.poidsParDiscipline['plat']!['forme'], closeTo(0.20, 1e-12));
     expect(avecDisc.poidsParDiscipline['plat']!['record'], closeTo(0.10, 1e-12));
-    expect(avecDisc.poidsParDiscipline['plat']!.containsKey('gains'), isFalse);
+
+    // ⚠️ ASSERTION CORRIGÉE (27/11/2026) — POLITIQUE D-3 ARBITRÉE.
+    //    Cette assertion exigeait `containsKey('gains') == false`, c'est-à-dire
+    //    la SUPPRESSION de la clé corrompue. L'arbitrage du 27/11/2026
+    //    l'interdit : « Remplacer uniquement la pondération corrompue », et
+    //    l'implémentation d'alors laissait ensuite `poidsEffectifsPourDiscipline`
+    //    combler le trou avec la valeur GLOBALE du même critère — une
+    //    récupération depuis un AUTRE périmètre, expressément prohibée.
+    //    La clé est désormais PRÉSENTE et porte la valeur INITIALE DU
+    //    CONSTRUCTEUR du critère. C'est cette politique-là qui est mesurée ici.
+    expect(avecDisc.poidsParDiscipline['plat']!.containsKey('gains'), isTrue,
+        reason: 'D-3 : la clé corrompue est REMPLACÉE, jamais supprimée — sa '
+            'suppression ferait retomber le consommateur sur la valeur GLOBALE');
+    expect(avecDisc.poidsParDiscipline['plat']!['gains'],
+        closeTo(IaPoidsAdaptatifs.defauts['gains']!, 1e-12),
+        reason: 'D-3 : la valeur de remplacement est la valeur INITIALE DU '
+            'CONSTRUCTEUR, seul périmètre autorisé à défaut d\'authentique');
+    // ignore: avoid_print
+    print('P14d « plat.gains » corrompu → remplacé par la valeur initiale '
+        '${_f(IaPoidsAdaptatifs.defauts['gains']!)} (et non supprimé) · '
+        'forme et record AUTHENTIQUES conservés : '
+        '${_f(avecDisc.poidsParDiscipline['plat']!['forme']!)} / '
+        '${_f(avecDisc.poidsParDiscipline['plat']!['record']!)}');
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

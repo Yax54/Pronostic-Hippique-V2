@@ -2328,6 +2328,22 @@ class IaMemoryService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
 
+      // ★★ D-3 (27/11/2026) — LA TRACE DES ANOMALIES DE RESTAURATION EST
+      //   REMISE À ZÉRO À CHAQUE CHARGEMENT.
+      //   MESURE AVANT : ce champ n'était affecté QUE dans les branches
+      //   « anomalies non vides » et « catch ». Aucune branche ne le vidait.
+      //   Conséquence mesurée : après un chargement corrompu (1 anomalie
+      //   tracée), tout chargement PROPRE suivant — `recharger()` ou
+      //   redémarrage — continuait d'exposer l'anomalie du chargement
+      //   précédent via `anomaliesRestaurationPoids`. La traçabilité mentait
+      //   donc dans le sens dangereux : elle signalait une récupération qui
+      //   n'avait PAS eu lieu sur les données réellement lues.
+      //   Mesure du défaut : harnais `poids_recuperation_load_test.dart`,
+      //   D3-e passe exécuté SEUL (0 anomalie, écart max 0.000000000000) et
+      //   échoue exécuté APRÈS D3-a/D3-b dans le même processus.
+      //   La remise à zéro n'influence aucune décision : le champ est
+      //   strictement diagnostique.
+      _poidsDeserialisesAvecAnomalies = <String>[];
       final poidsStr = prefs.getString(_poidsKey);
       if (poidsStr != null) {
         // ★★ BL1-A23 (27/11/2026) — D-3 : UN BLOB DE POIDS ILLISIBLE NE DOIT
