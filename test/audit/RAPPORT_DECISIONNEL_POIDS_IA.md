@@ -2114,10 +2114,14 @@ Reconstruction `x = clip(λ·w)` : écart max **1.665e-16** (enrichis),
 **1.110e-16** (base). Contre-épreuve sur le candidat euclidien : dispersion
 **8.299e-01** — un décalage additif ne produit pas de rapports constants.
 
-**χ² est également exclue, par mesure.** `D_χ²` préfère le vecteur
-proportionnel **non écrêté** (0.771489487066 contre 0.852807357083), c'est-à-dire
-un point qui **viole 12 bornes sur 19**. Une divergence qui préfère un point
-irréalisable n'est pas la fonctionnelle de cette projection. Comparaison
+**χ² est également exclue, par mesure.** `D_χ²` préfère le vecteur proportionnel
+calculé sur le brut **non clippé**, encore appelé ici « proportionnel hors
+bornes » (0.771489487066 contre 0.852807357083), c'est-à-dire un point qui
+**viole 12 bornes sur 19** — mesuré dans P-4 sur ce vecteur précis.
+(Le vecteur proportionnel calculé sur la table **déjà clippée**, mesuré en P-5,
+en viole **10** : les deux chiffres désignent deux vecteurs différents et ne se
+contredisent pas.) Une divergence qui préfère un point irréalisable n'est pas la
+fonctionnelle de cette projection. Comparaison
 **loyale** entre les deux seuls points réalisables : `D_I` production
 **0.554981664320** < euclidien **0.617482149181**.
 
@@ -2171,7 +2175,7 @@ proportionnel à la marge non saturée, pour tenir C1 à la précision machine. 
 formulation exacte est donc : **projection de `D_I` par groupe, corrigée d'un
 résidu de précision**.
 
-### 13.4.6 — Trois hypothèses de ma part, réfutées par la mesure
+### 13.4.6 — Quatre hypothèses de ma part, réfutées par la mesure
 
 Consignées parce qu'une hypothèse fausse non écrite est un piège pour le
 prochain lecteur. Toutes sont réfutées **chiffres en main** dans le harnais.
@@ -2194,7 +2198,7 @@ prochain lecteur. Toutes sont réfutées **chiffres en main** dans le harnais.
 | **Échecs** | **0** |
 | **Ignorés / exclus** | **0** (aucune balise `skip`, aucun `--exclude-tags`) |
 | **Bloqués** | **0** |
-| Durée | **11 min 02 s** |
+| Durée | **10 min 56 s** |
 
 `flutter analyze lib/ test/` → **`No issues found!`**
 Aucun `ignore`, aucun `ignore_for_file` ajouté, aucun lint désactivé, aucun
@@ -2219,6 +2223,24 @@ arbitrée **interdit**. Elle a été mise en conformité : la clé doit être
 | `test/audit/poids_recuperation_load_test.dart` | **créé** | 6 tests D3-a…D3-e + garde D3-g sur le vrai `_load()`. |
 | `test/audit/poids_nature_projection_test.dart` | **créé** | 7 tests P-1…P-7 : nature mathématique de la projection. |
 | `test/audit/RAPPORT_DECISIONNEL_POIDS_IA.md` | **complété** | ce §13. |
+
+### 13.6 bis — Corrections apportées à CE rapport, après contrôle chiffre par chiffre
+
+Le §13 a été relu en confrontant chaque valeur au journal d'exécution. Trois
+inexactitudes ont été trouvées **dans le rapport lui-même** et corrigées. Elles
+sont consignées ici parce qu'un rapport qui se corrige sans le dire vaut moins
+que le rapport corrigé.
+
+| Inexactitude | Ce qui était écrit | Ce qui est mesuré |
+|---|---|---|
+| Durée de la suite complète | « 11 min 02 s » | **10 min 56 s** (journal : `10:56 +3800: All tests passed!`) |
+| Nombre d'hypothèses réfutées | titre « **Trois** hypothèses » | le tableau en liste **quatre** |
+| Violations de bornes du proportionnel | « **12** bornes » sans préciser le vecteur | **12** sur le proportionnel calculé sur le **brut** (P-4) ; **10** sur le proportionnel calculé sur la table **clippée** (P-5). Deux vecteurs distincts, aucun désaccord |
+
+Aucune valeur de **mesure** n'a été modifiée : seules des erreurs de
+**transcription** et un intitulé ont été rectifiés. Les chiffres du code et des
+harnais sont inchangés, et la suite complète a été rejouée **après** la
+correction d'assertion P14 (voir §13.5).
 
 **Non modifiés, vérifié :** les 19 poids initiaux du constructeur
 (Σ = `1.260000000000`, écart `0.000000000000` sur 19/19 vs harnais), les 19
@@ -2255,7 +2277,8 @@ revérifiées — les études antérieures concluantes ne sont pas rejouées.
 | Branche | **`main` uniquement** |
 | Commit de référence GitHub | `b3a010760937a116fbcb871cf8a454da87bf7fd8` |
 | Commit local précédent | `c795f11949e08afefa0595f10a91078c0ad55412` |
-| Commit définitif | renseigné dans le message de clôture — **un hash ne peut pas figurer dans son propre contenu** |
+| **Commit de clôture technique** (code, preuves, §13) | **`928cf53ca17b889ef5f0efc88dec1205ab6f4ade`** |
+| Commit de correction de ce rapport | renseigné dans le message de clôture — **un hash ne peut pas figurer dans son propre contenu** |
 | Arbre de travail | **propre** après commit |
 | Worktree de mesure `/tmp/wt_ref` (`b3a0107`) | **supprimé** (`git worktree remove`) |
 | Push GitHub | **AUCUN** — autorisation en attente |
