@@ -1,536 +1,1032 @@
-# CHANTIER POIDS IA — RAPPORT DÉCISIONNEL UNIQUE
+# CHANTIER POIDS IA — RAPPORT DÉCISIONNEL DÉFINITIF
 
 **Projet** : Pronostic-Hippique-V2 / « Race Predictor »
-**Portée** : étude décisionnelle des pondérations des 19 critères. **Aucune
-modification de production.**
-**Branche** : `main`, commit de base `b3a0107`, mesures commitées `cd788bc`.
-**Aucun push GitHub. Aucun APK. Aucun recalcul historique. Aucun reset.**
+**Portée** : arbitrage final sur les pondérations des 19 critères.
+**Aucune modification de production.**
+**Branche** : `main`. Commit de base `b3a0107`, mesures `cd788bc`, rapport
+précédent `7186445`.
+**Aucun push GitHub. Aucun APK. Aucun reset. Aucun recalcul historique.**
 
 ---
 
-## 0. AVERTISSEMENT DE MÉTHODE, ET AVEU D'ERREURS
+## 0. AVERTISSEMENT DE MÉTHODE, ET AVEU COMPLET D'ERREURS
 
-Ce rapport contient trois choses que l'utilisateur exige de distinguer
-strictement :
+Ce rapport contient trois objets que l'utilisateur exige de distinguer :
 
-1. des **mesures** (chiffres reproductibles par un harnais nommé) ;
+1. des **mesures** (chiffres reproductibles par un harnais nommé, exécutable) ;
 2. des **lectures** de ces mesures (interprétation, toujours signalée) ;
 3. des **hypothèses non prouvées** (signalées comme telles, jamais promues).
 
-**Trois de mes propres hypothèses ont été réfutées par la mesure pendant ce
-chantier.** Elles sont conservées dans le code avec la correction visible,
-parce que les effacer reviendrait à masquer le raisonnement :
+### 0.1 Les erreurs de mes rapports précédents — corrigées ici
 
-| Mon affirmation intermédiaire | Ce que la mesure a établi | Où |
+L'utilisateur a relevé une erreur réelle. J'en ai trouvé d'autres en la
+vérifiant. **Toutes** sont listées, aucune n'est effacée.
+
+| Mon affirmation antérieure | Ce que la mesure établit | Où |
 |---|---|---|
-| « la hiérarchie des poids est verrouillée mathématiquement » | **FAUX** : 0 paire verrouillée sur 342. Toute paire peut être inversée dans la boîte admissible. | `A3` |
-| « à discrimination égale, l'ordre des poids ne bouge pas (ancrage) » | **FAUX** : l'ordre change. Les valeurs de départ sont **oubliées**, les poids convergent vers un point fixe. | `A6`, `A11` |
-| « le rapport `forme`/`repos` au point fixe vaut exactement 1/0,3 » | **FAUX** : 3,571429. L'écart est dû au **plafond de groupe** qui épingle la base à 0,60. | `A11` |
+| « une seule divergence dans `fromJson` : `forme` 0,32 » | **FAUX — il y en a TROIS** : `forme` 0,32 (+0,07), `gains` 0,15 (+0,02), `record` 0,12 (+0,02) = **exactement 0,11** | §1, `M2.1`, `H6` |
+| « la hiérarchie des poids est verrouillée mathématiquement » | **FAUX** : 0 paire verrouillée sur 342 | `A3` |
+| « à discrimination égale, l'ordre des poids ne bouge pas » | **FAUX** : l'ordre change ; les valeurs de départ sont **oubliées** | `A6`, `A11` |
+| « `forme`/`repos` au point fixe vaut 1/0,3 » | **FAUX** : 3,571429, à cause du plafond de groupe | `A11` |
+| « la part enrichie réelle vaut exactement 0,184416880 » | **FAUX** : réappliquée, elle vaut 0,184877982 puis 0,185444691. `clamp()` **n'est pas idempotent** | `G1.2` |
+| « avec discrimination uniforme −0,30, le plancher collectif 0,18 mord » | **FAUX** : part = 0,219178082. Une discrimination **uniforme est annulée** par `normaliser()` | `G1.3` |
+| « les ratios 1,26/1,00 valent tous 1,26 » | **FAUX** : 1,183333333 (base) et 1,375000000 (enrichis). Deux facteurs distincts | `H1` |
+| « l'écart 1,26 vs 1,00 est un pur effet d'échelle » | **FAUX** : c'est échelle **×** redistribution (fraction 0,436507937 écrêtée à 0,40) | `H1`, `H4` |
+| « diviser par la somme redonne la table 1,00 » | **FAUX** : écart max 0,012854907 | `H4` |
 
-**Corollaire de méthode** : je n'annonce ci-dessous comme *démontré* que ce
-qu'un harnais mesure, et je signale chaque fois la **taille d'échantillon**
-et la **réserve chronologique**.
+**Chaque correction est inscrite dans le code du harnais** avec un bloc
+`CORRECTION D'UNE AFFIRMATION FAUSSE` visible. Effacer ces blocs reviendrait à
+masquer le raisonnement.
+
+### 0.2 Conséquence de méthode
+
+Je n'annonce comme *démontré* que ce qu'un harnais **mesure**, avec à chaque
+fois la taille d'échantillon et la réserve chronologique. Tout le reste est
+explicitement étiqueté.
 
 ---
 
-## 1. LES QUATRE TABLES DE POIDS — MESURÉES, PAS SUPPOSÉES
+## 1. LES QUATRE TABLES DE POIDS — LES TROIS DIVERGENCES
 
 ### 1.1 Sommes réelles
 
 | Table | Source | Somme mesurée |
 |---|---|---|
 | Constructeur | `ia_memory_models.dart:592-612` | **1,260000000** |
-| `.defauts` | `ia_memory_models.dart:943` | **1,260000000** |
+| `.defauts` | `ia_memory_models.dart:943-951` | **1,260000000** |
 | `fromJson` (repli) | `ia_memory_models.dart:846-869` | **1,370000000** |
-| `clampDiscipline` (repli) | `ia_memory_models.dart:785-804` | **1,000000000** après division interne |
+| `clampDiscipline` (repli) | `ia_memory_models.dart:785-801` | **1,000000000** après division interne |
 
-*Preuve* : `test/audit_poids_familles_test.dart` (20/20 verts, M1/M2).
+*Preuve* : `poids_familles_test.dart` (20/20 verts), `poids_echelle_consommateurs_test.dart` H6
+(6/6 verts).
 
-### 1.2 La seule divergence entre les familles
+### 1.2 Les TROIS divergences — vérifiées ligne par ligne dans le code
 
-| Critère | Constructeur | `.defauts` | `fromJson` | `clampDiscipline` | Verdict |
+L'utilisateur avait raison : `1,37 − 1,26 = 0,11` ne peut pas s'expliquer par
+0,07. Vérification directe des 19 valeurs :
+
+| Critère | Constructeur `:592-612` | `.defauts` `:943` | `fromJson` `:846-869` | Écart |
+|---|---|---|---|---|
+| `forme` | **0,250000** | 0,250000 | **0,320000** | **+0,070000** |
+| `gains` | **0,130000** | 0,130000 | **0,150000** | **+0,020000** |
+| `record` | **0,100000** | 0,100000 | **0,120000** | **+0,020000** |
+| les 16 autres | identiques | identiques | identiques | 0 |
+| **SOMME** | **1,260000** | **1,260000** | **1,370000** | **+0,110000** |
+
+**Contrôle arithmétique** : `0,07 + 0,02 + 0,02 = 0,11` **exactement**.
+`1,37 − 1,26 = 0,11` **exactement**. La réconciliation est complète.
+
+*Preuve* : `poids_familles_test.dart` M2.1 affiche les trois lignes
+`⚠ DIVERGENT` — **ce test avait toujours raison**, c'est mon résumé qui était
+faux. `poids_echelle_consommateurs_test.dart` H6 confirme que
+`IaPoidsAdaptatifs.fromJson({})` produit une somme de **1,370000000** et affiche
+`forme=0.32 gains=0.15 record=0.12`.
+
+### 1.3 Ce que l'utilisateur avait vu juste de plus : le repli N'EST PAS documentaire
+
+`fromJson` (`:836-869`) **n'appelle jamais `clamp()`**. Un JSON tronqué — clé
+absente, restauration ancienne, migration partielle — livre donc au moteur de
+score une table de **somme 1,37**, et les trois valeurs de repli sont
+**réellement utilisées**.
+
+Mesure H6, cas réel simulé (JSON à 16 clés, sans `forme`/`gains`/`record`) :
+
+```
+fromJson({})                              → somme = 1.370000000000
+fromJson(JSON partiel sans f/g/r)         → somme = 1.370000000000
+après un clamp() explicite                → somme = 1.000000000000,
+                                            part enrichie = 0.400000000000
+```
+
+**Conséquence directe** : une restauration partielle produit un score
+**37 % plus élevé** que la normale (facteur ≈ 1,37 au lieu de 1,00), ce qui
+franchit plus facilement tous les seuils absolus (`_determinerLabel` 75/52,
+`seuilSimpleGagnant` 80, `seuilMinScore` de `best_bet_screen`).
+
+**Correction proposée** : les trois replis de `fromJson` doivent être alignés
+sur le constructeur (`0,25` / `0,13` / `0,10`). C'est la correction n°1 du §8.
+
+### 1.4 `clamp()` n'est pas idempotent — découverte non anticipée
+
+En réappliquant les poids réels du 13/11/2026, la part enrichie **change** :
+
+```
+état sauvegardé                  0.184416880   (somme 0.999999999800)
+passe 1 de clamp()               0.184877982
+passe 2                          0.185132572
+passe 10                         0.185442073
+passe 500 (point fixe)           0.185444691   (somme 1.000000000000)
+```
+
+**Cause mesurée** : l'état sauvegardé **viole ses propres bornes** :
+`cote = 0,4018138807 > 0,40` et `victoires = 0,1506802053 > 0,15`.
+`clamp()` les rabote, la base baisse, `normaliser()` recalcule alors un facteur
+de base plus grand et redistribue.
+
+**Ce n'est pas une erreur de mesure** : c'est le comportement réel du code.
+`clamp()` **dérive** au lieu de projeter. Sans gradient, il déplace la part
+enrichie de 0,184417 à 0,185445.
+
+---
+
+## 2. POPULATIONS — NE PAS CONFONDRE LES SOURCES
+
+L'utilisateur exige que je précise l'origine exacte de chaque chiffre. Voici la
+séparation stricte.
+
+### 2.1 Les trois populations, nommées
+
+| Population | Nature | Dernière mesure |
+|---|---|---|
+| **P-A — matrices sauvegardées** | `ia.ia_poids_v3.value` des backups du 28/05/2026 (802 màj) et 13/11/2026 (3871 màj). Ce sont des **états figés**, antérieurs au chantier PMU/SQLite/ELO/alimentation. | `poids_limite_structurelle_test.dart` H1–H4 |
+| **P-B — moteur actuel sur corpus PMU réel** | `ZoneTurfService.chargerProgramme` alimenté par `test/fixtures_corpus` (1938 courses, collectées 26–27/11/2026), exécuté dans le **vrai `compute()`** par `executerBatchIsolatePourMesure`. | `chaine_19_criteres_isolate_test.dart` C-19-1..4 |
+| **P-C — poids réels réappliqués** | Les 19 valeurs de P-A, réinjectées dans le mécanisme actuel (`clamp()` + gradient). | `poids_contraintes_test.dart` G1.2, G1.3 |
+
+### 2.2 Réponse explicite : d'où venaient les « 8 critères à variance nulle » ?
+
+**Ils venaient de P-A — les matrices sauvegardées. Pas du moteur actuel.**
+
+La mesure E3 (`poids_comparaisons_reelles_test.dart`, n = 47 courses de mai)
+neutralise un critère à la fois et constate Δ = 0,00 pour 9 critères :
+`record`, `discipline`, `repos`, `entraineur`, `elo`, `terrain`, `poidsRel`,
+`mouvCote`, `placeDepart`. Ce sont les critères dont la note est **constante
+dans la course** dans ces matrices-là.
+
+**Cette population est antérieure au chantier d'alimentation.** Elle ne
+représente donc pas nécessairement le comportement actuel.
+
+### 2.3 Ce que mesure la population P-B — le moteur actuel
+
+`chaine_19_criteres_isolate_test.dart` mesure, sur le **vrai chemin isolate**,
+le nombre de critères réellement calculés :
+
+```
+[MESURE C-19-2] critères réellement calculés : 10 / 19
+```
+
+avec la répartition par critère sur une course ATTELE (18 partants) :
+
+| Critère | calculé | neutre | valeurs distinctes |
+|---|---|---|---|
+| `forme` | 17 | 0 | 16 |
+| `gains` | 17 | 0 | 17 |
+| `record` | **0** | 17 | 1 |
+| `cote` | 17 | 0 | 8 |
+| `constance` | 15 | 2 | 14 |
+| `victoires` | 17 | 0 | 5 |
+| `discipline` | **0** | 17 | 1 |
+| `distSpec` | 17 | 0 | 10 |
+| `jockey` | **0** | 17 | 1 |
+| `repos` | 17 | 0 | 12 |
+| `hippo` | 12 | 5 | 6 |
+| `entraineur` | **0** | 17 | 1 |
+| `elo` | **0** | 17 | 1 |
+| `terrain` | **0** | 17 | 1 |
+| `divergence` | 10 | 7 | 7 |
+| `poidsRel` | **0** | 17 | 1 |
+| `progression` | 17 | 0 | 3 |
+| `mouvCote` | **0** | 17 | 1 |
+| `placeDepart` | **0** | 17 | 1 |
+
+**Amplitude par spécialité (6 spécialités, C-19-4)** :
+
+| Spécialité | Course | calculés | jamais calculés |
+|---|---|---|---|
+| ATTELE | 20/11 R1C5 VINCENNES | **10/19** | record, discipline, jockey, entraineur, elo, terrain, poidsRel, mouvCote, placeDepart |
+| MONTE | 21/11 R6C1 ANGERS | **8/19** | + hippo, progression |
+| PLAT | 20/11 R2C6 LE BOUSCAT | **12/19** | record, discipline, jockey, entraineur, elo, terrain, mouvCote |
+| HAIE | 21/11 R1C6 AUTEUIL | **11/19** | record, discipline, jockey, entraineur, elo, terrain, mouvCote, placeDepart |
+| STEEPLECHASE | 22/11 R3C5 LYON-PARILLY | **11/19** | idem HAIE |
+| CROSS | 26/11 R2C9 LIGNIERES | **10/19** | idem ATTELE |
+
+### 2.4 Attribution par critère — donnée absente ≠ défaut du moteur
+
+L'utilisateur l'exige explicitement : « une donnée réellement absente ne
+constitue pas un défaut du moteur ». Voici l'attribution, critère par critère,
+**pour la population P-B (moteur actuel)** :
+
+| Critère | Statut mesuré | Cause | Défaut du moteur ? |
+|---|---|---|---|
+| `record` | jamais calculé | **donnée absente** du programme PMU (`/performances-detaillees`) | **NON** |
+| `jockey` | jamais calculé | **donnée absente** (pas de driver/jockey dans le payload de ces courses) | **NON** |
+| `entraineur` | jamais calculé | **donnée absente** | **NON** |
+| `terrain` | jamais calculé | **donnée absente** (pas de terrain dans le programme chargé) | **NON** |
+| `poidsRel` | jamais calculé | **non applicable** hors courses à handicap de galop | **NON** |
+| `placeDepart` | jamais calculé sauf PLAT | **non applicable** (corde non fournie hors PLAT) | **NON** |
+| `elo` | jamais calculé | **repli documenté D-27** : `EloService` restaure 0 rating (`✅ 0 ratings restaurés` dans la sortie) | **NON — base vide** |
+| `mouvCote` | jamais calculé | **insuffisant** : `CoteTracker` restaure 0 mouvement, un seul snapshot par course | **NON — fenêtre 30 min non couverte** |
+| `discipline` | jamais calculé | **indéterminé / neutre par calcul** dans ces courses | à surveiller, non démontré |
+| `hippo` | 12/17 calculé (ATTELE) | partiellement disponible | non |
+| `divergence` | 10/17 calculé | dépend de la cote ET de la forme | non |
+| `progression` | 17 calculé, **3 valeurs distinctes** | calculé mais peu discriminant | non |
+
+**Conclusion §2** : sur les 9 critères « jamais calculés » du moteur actuel,
+**8 relèvent d'une donnée absente, non applicable ou d'une base vide**, et
+**1** (`discipline`) reste indéterminé. **Aucun défaut d'alimentation démontré
+n'a été identifié dans le moteur actuel.**
+
+**Ce qu'il ne faut PAS en conclure** : que les 9 critères sont inutiles. Ce sont
+les **données** qui manquent dans l'échantillon PMU collecté, pas le code.
+
+### 2.5 Ce que cela change pour la décision
+
+Les 12 enrichis sont écrasés sur leur plancher dans **P-A** (matrices
+historiques). Mais dans **P-B**, 8 à 11 d'entre eux ne reçoivent **aucune
+donnée**. Le poids peut donc être au plancher **sans que l'apprentissage soit
+fautif** : un critère sans note ne peut pas discriminer, donc ne peut pas
+mériter de poids.
+
+**Conséquence** : la correction des planchers (§5) reste utile, mais elle ne
+produira d'effet que **couplée à l'alimentation**. Modifier les planchers seuls
+ne fera pas monter un critère dont la note est constante.
+
+---
+
+## 3. RÉCONCILIATION DES CONCLUSIONS SUR LA LIBERTÉ D'APPRENTISSAGE
+
+L'utilisateur relève une contradiction apparente. Les trois affirmations sont
+**simultanément vraies** parce qu'elles parlent de **trois objets différents**.
+Voici la table de réconciliation, notion par notion.
+
+### 3.1 Les sept notions, démêlées
+
+| # | Notion | Ce qu'elle signifie exactement | Mesure | Verdict |
+|---|---|---|---|---|
+| **1** | **Possibilité mathématique individuelle** | Existe-t-il, dans la boîte admissible, un état où le critère A dépasse le critère B ? | `A3` : **0 paire verrouillée / 342** (soit 0,0 %) | **AUCUNE impossibilité** |
+| **2** | **Accessibilité réelle par le gradient** | Le gradient peut-il *atteindre* cet état depuis un départ réel ? | `G3.1` : les 4 enrichis testés (`placeDepart`, `elo`, `jockey`, `repos`) partent du **point fixe réel** (0,010101 / 0,020203) et **atteignent leur plafond individuel** | **OUI, accessible** |
+| **3** | **Contraintes collectives** | La répartition base/enrichis borne-t-elle le groupe ? | `G1.1` : Σ planchers indiv. enrichis = **0,160000** pour un plancher de groupe **0,180000** → marge **0,020000**. Plafond de groupe **0,400000**. | **Contrainte réelle mais NON active en hausse** |
+| **4** | **Saturation aux bornes** | Combien de poids sont collés à une borne ? | `H2` : **16 / 19** à moins de 2 % d'une borne. `G1.2` : **11 / 12** enrichis au plancher. | **Massive** |
+| **5** | **Absence de discrimination des données** | Le critère produit-il des notes différentes entre chevaux ? | `C-19-2` : **10 / 19** calculés ; 9 avec **1 seule valeur distincte** | **Cause première** |
+| **6** | **Convergence lente** | Combien de cycles pour un effet visible ? | `G2.5` : franchissement en **32 cycles** (C0) ; `A12` : 2 à 6 cycles pour 50 % de plage ; `G2.3` : **perte de 85,56 % en 4000 cycles de silence** | **PAS un frein** |
+| **7** | **Blocage structurel démontré** | Une impossibilité *structurelle* (pas seulement observée) ? | `A3` : 0/342. Aucun blocage mathématique. Le seul blocage mesuré est **individuel** (`G3.1` : `placeDepart` bute à **0,070000000**, son plafond) | **AUCUN blocage structurel du groupe** |
+
+### 3.2 La réconciliation, en une phrase par affirmation
+
+| Affirmation | Statut | Démonstration |
+|---|---|---|
+| « 0 paire verrouillée sur 342 » | **VRAI** | `A3` sur 3000 tirages × 19 critères, 0 violation. Chaque critère peut dépasser chacun des 18 autres. |
+| « Chaque critère peut dépasser chacun des 18 autres » | **VRAI** | Conséquence directe de `A3`. C'est la notion **1**. |
+| « 13 critères bloqués et 6 capables d'évoluer » | **VRAI, mais c'est la notion 4, pas 7** | Mesuré sur P-A : 12 enrichis écrasés + `discipline` au plancher = 13 ; les 6 autres ont réellement bougé (`cote` ×5,02, `victoires` ×3,77, `forme` ×0,24). C'est un **état observé**, pas une impossibilité. |
+
+### 3.3 Pourquoi « 13 bloqués » n'est PAS « 13 impossibles »
+
+L'utilisateur l'exige : « ne qualifie pas un critère de bloqué uniquement
+parce que son poids historique est proche de son plancher ».
+
+**Mesure décisive `G3.1`** : je pars du **point fixe réel** (11 des 12 enrichis
+à leur plancher) et je donne à **un seul** enrichi une discrimination forte
+(0,60) :
+
+| Enrichi testé | Départ | Arrivée sous C0 | Dépasse combien de critères de base ? |
+|---|---|---|---|
+| `placeDepart` | 0,010101333 | **0,070000000** (son plafond) | **4 / 7** |
+| `elo` | 0,010101333 | **0,100000000** (son plafond) | **4 / 7** |
+| `jockey` | 0,020202666 | **0,150000000** (son plafond) | **6 / 7** |
+| `repos` | 0,010101333 | **0,080000000** (son plafond) | **4 / 7** |
+
+**⇒ Un critère enrichi « bloqué » par son poids historique n'est PAS bloqué.**
+Dès que les données lui donnent une discrimination réelle, il monte jusqu'à son
+plafond individuel et **dépasse jusqu'à 6 des 7 critères de base**.
+
+**Et `G3.3`** : en relevant le seul plafond de `placeDepart` (0,07 → 0,30),
+celui-ci atteint **0,260960444** et dépasse **6 / 7** critères de base
+(seul `cote` lui résiste, à 0,278666021).
+
+### 3.4 La seule vraie limite, nommée
+
+| Limite | Nature | Mesure |
+|---|---|---|
+| **Plafond individuel** | borne de `clamp()` par critère | `G3.1` : `placeDepart` atteint exactement 0,070000000 |
+| **Plancher collectif** | `normaliser()` `:699` | `G1.3` : avec base +0,30 / enrichis −0,30, part = **0,180000000** exactement |
+| **Plafond collectif** | `normaliser()` `:699` | `G2.2`, `G3.2` : 12 enrichis discriminants → part = **0,400000000** exactement |
+| **Discrimination nulle** | données | `C-19-2` : 9 critères à 1 valeur distincte |
+
+**Résumé §3** : il n'y a **aucun blocage structurel**. Ce qui est mesuré est
+une **saturation aux bornes** (`16/19`) causée par une **absence de
+discrimination** (`10/19` critères calculés), avec une **convergence rapide**
+(32 cycles) et **deux contraintes collectives réelles mais non actives en
+hausse** dans les données réelles.
+
+---
+
+## 4. POURQUOI LE GROUPE ENRICHI RESTE À ~18 % — LES SEPT EFFETS SÉPARÉS
+
+L'utilisateur demande de mesurer séparément sept effets. Voici chacun, isolé.
+
+### 4.1 Effet 1 — Les planchers individuels
+
+**Mesure `G1.1`** :
+```
+Σ planchers individuels des 12 enrichis = 0.160000000
+plancher collectif                      = 0.180000000
+marge résiduelle                        = 0.020000000
+⇒ les planchers consomment 88.89 % du plancher collectif
+```
+
+Répartition de cette somme : `distSpec` 0,03 (18,75 %), `jockey` 0,02 (12,5 %),
+`mouvCote` 0,02 (12,5 %), puis 9 critères à 0,01 (6,25 % chacun).
+
+**Effet** : quand les planchers sont **tous saturés simultanément**, il ne
+reste que 0,02 à répartir entre 12 critères, soit **0,001666667 en moyenne**.
+La hiérarchie interne de la famille enrichie ne peut alors quasiment pas
+s'exprimer.
+
+### 4.2 Effet 2 — Le plancher collectif
+
+**Mesure décisive `G1.3`** : avec base **+0,30** et enrichis **−0,30** (seule
+configuration qui fait réellement mordre le plancher), la part enrichie
+s'arrête à **0,180000000** exactement. Le plancher collectif **fonctionne**.
+
+**MAIS** — et c'est le point que l'utilisateur demandait de trancher — dans les
+**données réelles**, il **ne mord pas** :
+
+| Population | Part enrichie mesurée | Plancher 0,18 | Marge vers le plafond 0,40 |
+|---|---|---|---|
+| 28/05/2026 (802 màj) | **0,179999998** | ≈ atteint | 0,220000 |
+| 13/11/2026 (3871 màj) | **0,184416880** | **dépassé** | **0,215583** |
+| 13/11 après 500 `clamp()` | **0,185444691** | **dépassé** | **0,214555** |
+
+**⇒ Le maintien à ~18 % n'est PAS dû au plancher collectif.** Le groupe est
+libre de monter jusqu'à 0,40 et **20 points de pourcentage restent disponibles**.
+
+**Preuve indépendante `G1.3`** : avec une discrimination **nulle** sur les 19
+critères, la part enrichie reste à 0,185444691 — elle ne descend pas. Aucune
+force ne la retient.
+
+### 4.3 Effet 3 — Le plafond collectif
+
+**Mesure `G2.2` et `G3.2`** : quand les **12 enrichis discriminent fortement**
+(0,30 ou 0,60), la part enrichie monte et **s'arrête à 0,400000000 exactement**
+sous C0, C1, C2, C3 et C5. Sans contrainte collective (C4), elle atteint
+**0,781060000**.
+
+**⇒ Le plafond collectif 0,40 est PLEINEMENT OPÉRANT** — mais seulement quand
+les enrichis discriminent. Dans les données réelles, il n'est jamais atteint.
+
+### 4.4 Effet 4 — Les coefficients du gradient
+
+`lrBase = 0.08`, `lr = lrBase × min(1, nb/20) × stabilisation × atypique`,
+`momentumFactor = 0.3`, facteurs par critère 1,0 / 0,5 / 0,4 / 0,3.
+
+**Mesure `G2.5`** : pour que `placeDepart` (discrim 0,30) dépasse `forme`
+(discrim 0,02), il faut **32 cycles** sous C0. **`A12`** : 2 à 6 cycles
+suffisent pour parcourir 50 % de la plage atteignable, **tous facteurs
+confondus** (facteur 1,0 → 3,9 cycles en moyenne ; facteur 0,3 → 3,0 cycles).
+
+**⇒ Les coefficients du gradient ne sont PAS le frein.** Un facteur 0,3 ralentit
+la montée mais ne l'empêche pas : `G3.1` montre `repos` (facteur 0,3) atteindre
+son plafond de 0,08.
+
+### 4.5 Effet 5 — Les normalisations successives
+
+**Mesure `G1.2`** : `clamp()` **n'est pas idempotent**. Sans gradient, la part
+enrichie dérive de **0,184417 → 0,185445** en 500 passes. La somme reste 1,0
+mais la répartition change, parce que `clamp()` rabote `cote` et `victoires` à
+leurs plafonds puis `normaliser()` rééquilibre.
+
+**Effet secondaire capital** : `normaliser()` **annule une discrimination
+uniforme**. Mesure `G1.3` : avec −0,30 sur les **19** critères, la part
+enrichie ne descend pas à 0,18 mais reste à **0,219178082** (= 0,16/0,73, la
+fraction naturelle). Tous les poids sont multipliés par le même facteur, puis
+divisés par le total : **l'effet s'annule exactement**.
+
+**⇒ Seule une discrimination RELATIVE agit.** Un critère ne peut gagner que
+parce qu'un autre perd — pas parce qu'il est « globalement bon ».
+
+### 4.6 Effet 6 — Les corrélations
+
+**Mesure** : le gel exige `nb >= 50` **et** `r > 0.85` dans
+`_poids.correlations`. Dans les **deux backups**, `correlations` est **vide**.
+Les 47 courses exploitables de mai sont insuffisantes pour un seuil à 50.
+
+**⇒ NON MESURABLE aujourd'hui.** Aucune affirmation possible. À étudier
+prospectivement (§8, point 6).
+
+### 4.7 Effet 7 — Qualité et disponibilité des données
+
+**Mesure `C-19-2` et `C-19-4`** : **10 / 19** critères calculés en ATTELE,
+**8 / 19** en MONTE, **12 / 19** en PLAT. Les 9 non calculés ont **une seule
+valeur distincte**, donc une discrimination **exactement nulle**.
+
+**⇒ C'est l'effet DOMINANT.** Un critère à discrimination nulle reçoit
+`grad = lr × 0 = 0`. Il ne peut pas monter, quel que soit son plancher.
+
+### 4.8 Synthèse chiffrée : les sept effets, classés par poids réel
+
+| Rang | Effet | Mesure | Rôle |
+|---|---|---|---|
+| **1** | **Données (discrimination)** | 10/19 calculés ; 9 à 1 valeur distincte | **CAUSE PREMIÈRE** — sans signal, aucun effet |
+| **2** | **Plafond individuel** | `G3.1` : bute à 0,070000000 ; relevé → 0,260960444 | **borne active en hausse** |
+| **3** | **Plafond collectif** | `G2.2` : 0,400000000 exactement | **borne active quand 12 discriminent** |
+| **4** | **Planchers individuels** | 0,160000 / 0,180000 → marge 0,020000 | noie la hiérarchie interne |
+| **5** | **Normalisations** | dérive 0,184417→0,185445 ; annule le uniforme | ne bloque pas, mais déforme |
+| **6** | **Plancher collectif** | `G1.3` : 0,180000000 actif | **n'est PAS le frein** (0,1844 réel) |
+| **7** | **Coefficients du gradient** | 32 cycles ; 2–6 cycles pour 50 % | **n'est PAS le frein** |
+
+### 4.9 Réponse directe : « pourquoi le groupe ne progresse-t-il pas ? »
+
+**Parce que 9 de ses 12 critères n'ont AUCUNE discrimination dans les données,
+et que les 3 autres butent sur leur plafond INDIVIDUEL — pas sur le plancher
+collectif.**
+
+Démonstration en une ligne (`G1.2`) :
+```
+part enrichie réelle mesurée = 0.185444691
+plafond collectif            = 0.400000000
+marge disponible inutilisée  = 0.214555309   ← 21,5 points de %
+```
+
+Le groupe **n'est pas retenu**. Il **manque de signal**.
+
+### 4.10 Le test exigé : un enrichi faible peut-il devenir plus pertinent ?
+
+**OUI — mesuré, `G3.1` et `G3.3`.** Sur les 4 enrichis testés depuis le point
+fixe réel, **tous** dépassent au moins 4 des 7 critères de base dès qu'ils
+reçoivent une discrimination réelle. `jockey` en dépasse **6/7**.
+
+**Réserve honnête** : ces expériences sont **[SYNTH]** — la discrimination est
+imposée, pas observée. Elles démontrent une **propriété du mécanisme** : *si*
+les données discriminent, *alors* le poids monte et dépasse. Elles ne
+démontrent **pas** que les données discrimineront — c'est exactement ce que
+`C-19-4` mesure comme absent (9 critères sur 19 non alimentés).
+
+---
+
+## 5. PROPOSITIONS CHIFFRÉES SUR LES CONTRAINTES — CINQ CONFIGURATIONS
+
+L'utilisateur refuse « simplement abaisser les planchers ». Voici cinq
+configurations chiffrées, mesurées sur les mêmes scénarios.
+
+### 5.1 Les cinq configurations testées
+
+| Code | Nom | Planchers individuels des enrichis | Plancher collectif | Plafond collectif |
+|---|---|---|---|---|
+| **C0** | ACTUEL | valeurs de production (Σ = 0,160) | **0,18** | 0,40 |
+| **C1** | PLANCHERS 0,005 | tous à **0,005** (Σ = 0,060) | 0,18 | 0,40 |
+| **C2** | COLLECTIF 0,10 | inchangés (Σ = 0,160) | **0,10** | 0,40 |
+| **C3** | COMBINÉE | 0,005 (Σ = 0,060) | **0,10** | 0,40 |
+| **C4** | SANS COLLECTIF | inchangés | **aucun** | **aucun** |
+| **C5** | PLAFOND INDIV. LEVÉ | inchangés | 0,18 | 0,40, **`placeDepart` haut 0,07 → 0,30** |
+
+C4 est une **référence expérimentale** destinée uniquement à comprendre
+l'influence des contraintes collectives. Elle n'est **jamais** proposée en
+production.
+
+### 5.2 Résultat préalable, décisif : C2 est arithmétiquement INOPÉRANTE
+
+**Mesure `G2.4`** : C2 comparée à C0 sur **150 vecteurs × 19 critères = 2850
+comparaisons** → **0 écart**.
+
+Raison arithmétique : `plancher collectif 0,10 < Σ planchers individuels 0,16`.
+La fraction enrichie ne peut **jamais** descendre sous 0,16, donc le plancher
+0,10 ne s'applique jamais.
+
+**⇒ Abaisser SEUL le plancher collectif est SANS EFFET.** Toute modification du
+plancher collectif doit être **couplée** à une baisse des planchers individuels.
+C'est une mesure, pas une opinion.
+
+### 5.3 Les sept indicateurs exigés, configuration par configuration
+
+#### Scénario A — un seul enrichi réellement discriminant (`placeDepart` 0,30)
+
+| Config | part enrichie | `placeDepart` final | cycles→saturation | paires (enrichi>base)/84 | base rétrogradées/7 |
 |---|---|---|---|---|---|
-| `forme` | 0,250000 | 0,250000 | **0,320000** | 0,245161 | **DIVERGENT** |
-| les 18 autres | identiques | identiques | identiques | normalisés | cohérent |
+| C0 | 40,000 % | **0,064807344** | 364 | 1 | 1 |
+| C1 | 40,000 % | **0,064807344** | 364 | 1 | 1 |
+| C2 | 40,000 % | **0,064807344** | 364 | 1 | 1 |
+| C3 | 40,000 % | **0,064807344** | 364 | 1 | 1 |
+| C4 | 45,543 % | 0,065489397 | 333 | 1 | 1 |
+| **C5** | 40,000 % | **0,110769231** | 364 | **7** | **7** |
 
-*Mesure brute* : `forme | 0.2500000000 | 0.2500000000 | 0.3200000000 | 0.2451612903 | ⚠ DIVERGENT`.
+**Lecture mesurée** : abaisser les planchers (C1, C3) ou le plancher collectif
+(C2) ne change **RIEN** quand le gradient est ascendant. **Seul le relèvement du
+plafond individuel (C5) libère le critère** : ×1,709 sur son poids, et il passe
+de 1 à 7 paires gagnées sur 84.
 
-**Lecture** : constructeur et `.defauts` sont **strictement identiques**. Une
-seule valeur diffère réellement : le repli de `forme` dans `fromJson`
-(0,32 au lieu de 0,25). Ce n'est pas une incohérence de conception : c'est une
-valeur de repli **plus ancienne** (période où `forme` pesait 32 %), restée
-telle quelle lors du rééquilibrage. Elle ne s'applique **que** si la clé
-`forme` est absente d'un JSON sauvegardé — cas qui ne se produit pas sur un
-sauvegarde normale (le champ est toujours écrit).
+#### Scénario B — les 12 enrichis deviennent tous discriminants (0,30)
 
-### 1.3 Le fait que je n'avais pas anticipé : deux échelles coexistent
+| Config | part enrichie | plafond collectif atteint ? | cycles | paires/84 | base rétro/7 | domination |
+|---|---|---|---|---|---|---|
+| C0 | **40,000 %** | oui | 355 | 0 | 0 | 1,00× |
+| C1 | **40,000 %** | oui | 355 | 0 | 0 | 1,00× |
+| C2 | **40,000 %** | oui | 355 | 0 | 0 | 1,00× |
+| C3 | **40,000 %** | oui | 355 | 0 | 0 | 1,00× |
+| **C4** | **78,106 %** | — | 119 | **84** | **7** | **1,90×** |
+| C5 | 40,000 % | oui | 355 | 0 | 0 | 1,00× |
 
-`_calculerScoreBrutEtCriteres` (`ia_pronostic_engine.dart:391-409`) calcule une
-somme pondérée **sans diviser par le total des poids**. Tant que l'IA n'a jamais
-appris, la somme vaut 1,26 et le score composite peut atteindre **126,00** pour
-100 partout. Après `clamp()`, il plafonne à **100,00**.
+**Lecture mesurée** : quand les 12 discriminent **également**, ils restent tous
+égaux entre eux — donc aucune paire n'est gagnée (0/84). Le plafond collectif
+0,40 borne le groupe. **Sans plafond (C4), le groupe prend 78,1 % et écrase la
+base : les 7 critères de base sont rétrogradés, domination 1,90×.**
 
-*Preuves* : `A5` (somme 1,26), `A1` (somme 1,00), `C3` (score max 126 vs 100).
+**⇒ Le plafond collectif 0,40 est un garde-fou RÉEL. Sa suppression produit une
+domination excessive mesurée.**
 
-**Conséquence MESURÉE, et elle n'est pas cosmétique** — `poids_echelle_test.dart`,
-C1, 2000 courses simulées, seules les poids changent d'échelle, mêmes notes :
+#### Scénario C — vitesse et stabilité du franchissement
+
+| Config | cycles pour que `placeDepart` dépasse `forme` | redescentes |
+|---|---|---|
+| C0 | **32** | **0** (stable) |
+| C1 | 32 | 0 |
+| C2 | 32 | 0 |
+| C3 | 32 | 0 |
+| C4 | 25 | 0 |
+| C5 | **20** | 0 |
+
+**Lecture** : le franchissement est **stable partout** (0 redescentes). C5 est
+légèrement plus rapide (20 vs 32) parce que la cible est plus haute.
+
+#### Scénario D — saturation → silence (données insuffisantes) → retour
+
+| Config | saturé | après silence | perte | cycles de retour |
+|---|---|---|---|---|
+| C0 | 0,064807344 | 0,009356716 | 85,562 % | **13** |
+| C1 | 0,064807344 | **0,004681919** | 92,776 % | **13** |
+| C2 | 0,064807344 | 0,009356716 | 85,562 % | 13 |
+| C3 | 0,064807344 | **0,004681919** | 92,776 % | **13** |
+| C4 | 0,065327149 | 0,009367775 | 85,660 % | 10 |
+| C5 | **0,155408533** | 0,009356716 | 93,979 % | **180** |
+
+**Lecture mesurée, à double tranchant** :
+- C1/C3 descendent **plus bas** en période de silence (0,004682 vs 0,009357) :
+  c'est la **liberté retrouvée** — le plancher individuel ne retient plus.
+- Mais le **retour reste 13 cycles dans tous les cas** : la capacité de
+  récupération n'est **pas dégradée**.
+- C5 met **180 cycles** à revenir, parce qu'il doit regrimper depuis 0,0094
+  jusqu'à 0,1554 : la hauteur acquise est plus grande, donc le retour est
+  proportionnellement plus long. **La vitesse relative est identique.**
+
+**⇒ Réponse à l'exigence « capacité à retrouver une importance pertinente
+après une période de données insuffisantes »** : elle est **préservée** dans
+toutes les configurations, avec un coût en cycles proportionnel à la hauteur
+perdue. **Aucune configuration ne dégrade la réversibilité.**
+
+### 5.4 Les sept indicateurs, en tableau de synthèse
+
+| Indicateur exigé | C0 | C1 | C2 | C3 | C4 | C5 |
+|---|---|---|---|---|---|---|
+| **Liberté d'évolution des 19** | 19 (théorique) mais saturée 16/19 | **meilleure** (Σ planchers 0,060) | **identique à C0** (0 écart) | **meilleure** | **maximale** | inchangée sauf `placeDepart` |
+| **Capacité de promotion** | 1/84 (scénario A) | 1/84 | 1/84 | 1/84 | 1/84 | **7/84** |
+| **Capacité de rétrogradation** | 1/7 | 1/7 | 1/7 | 1/7 | 1/7 | **7/7** |
+| **Vitesse de convergence** | 32 cycles | 32 | 32 | 32 | **25** | **20** |
+| **Stabilité** | 0 redescente | 0 | 0 | 0 | 0 | 0 |
+| **Saturation** | **16/19** | réduite | identique | réduite | réduite | 16/19 |
+| **Risque de domination** | **1,00×** | 1,00× | 1,00× | 1,00× | **1,90× — ÉLEVÉ** | 1,00× |
+| **Récupération après silence** | 13 cycles | 13 | 13 | 13 | 10 | 180 (proportionnel) |
+
+### 5.5 Ce que je propose, et pourquoi — avec les valeurs justifiées
+
+| Proposition | Valeur | Justification mesurée | Statut |
+|---|---|---|---|
+| **P-1. Ne PAS modifier le plancher collectif seul** | — | `G2.4` : 0 écart sur 2850 comparaisons. C2 est inopérante. | **mesuré** |
+| **P-2. Ne PAS supprimer le plafond collectif** | garder 0,40 | `G2.2`/C4 : sa suppression produit 78,1 % de part enrichie, 7/7 base rétrogradées, domination **1,90×** | **mesuré** |
+| **P-3. Abaisser les planchers individuels des 12 enrichis de 0,01 à 0,005** | 0,005 | Σ passe de 0,160 à 0,060 ; la marge sous le plancher collectif 0,18 passe de **0,020 à 0,120** (×6) ; **aucune régression** de réversibilité (13 cycles), de stabilité (0 redescente), de vitesse (32 cycles) | **mesuré** |
+| **P-4. Relever sélectivement le plafond individuel** | à décider | `G3.1`/`G3.3` : c'est **le** verrou en hausse. `placeDepart` 0,07 → 0,30 fait passer son poids de 0,0648 à 0,2610 et ses paires de 1 à 7 | **mesuré, mais valeur à arbitrer** |
+| **P-5. Ne PAS toucher aux coefficients d'apprentissage** | inchangés | `A12` : 2–6 cycles pour 50 % de plage ; `G2.5` : 32 cycles. Le gradient n'est pas le frein | **mesuré** |
+
+### 5.6 Ce que P-3 ne résoudra PAS — et il faut le dire
+
+**P-3 ne fera monter AUCUN critère dont la note est constante.** Mesure
+`G1.3` : avec discrimination nulle, la part enrichie reste à 0,185444691 quel
+que soit le plancher. Un critère sans note ne reçoit aucun gradient.
+
+**⇒ P-3 est une condition NÉCESSAIRE, pas suffisante.** Elle ne produira d'effet
+qu'avec l'alimentation (§2.4 : 9 critères non calculés).
+
+### 5.7 Valeur recommandée pour les planchers, et pourquoi 0,005
+
+Trois raisons mesurables :
+1. **0,005 = la moitié du plus petit plancher actuel** (0,01). C'est une
+   modification **graduée**, pas une suppression. Un plancher nul rendrait un
+   critère totalement effaçable, ce qu'aucune mesure ne justifie.
+2. **Σ = 0,060** laisse **0,120 de marge** sous le plancher collectif 0,18 au
+   lieu de 0,020 — soit **×6**. C'est la marge nécessaire pour qu'une
+   hiérarchie interne puisse exister.
+3. **Aucune régression mesurée** sur les cinq indicateurs surveillés
+   (vitesse 32 cycles, stabilité 0, réversibilité 13, pas de domination).
+
+**Ce que cette valeur n'a PAS** : elle n'est pas optimale. Aucune mesure ne
+permet de dire que 0,005 vaut mieux que 0,004 ou 0,008. C'est une valeur
+**graduée et prudente**, cohérente avec les mesures, pas un optimum démontré.
+
+---
+
+## 6. L'INCOHÉRENCE DES ÉCHELLES 1,26 / 1,00
+
+### 6.1 Les conditions EXACTES de la mesure 63,40 % / 5,20 %
+
+L'utilisateur exige la précision. Voici le protocole complet, reproductible par
+`poids_echelle_consommateurs_test.dart` H1 :
+
+| Paramètre | Valeur |
+|---|---|
+| Poids A | `IaPoidsAdaptatifs()` **sans** `clamp()` → somme **1,260000000000** |
+| Poids B | `IaPoidsAdaptatifs()..clamp()` → somme **1,000000000000** |
+| Scores de critères | `Uniform(10,90)` par critère et par partant |
+| Graine | `math.Random(424242)` — **déterministe** |
+| Partants | 5 à 20 (`5 + alea.nextInt(16)`) |
+| Nombre de courses | **2000** |
+| Formule | somme pondérée **NON divisée** (`ia_pronostic_engine.dart:391-409`) |
+| Normalisation | `_normaliserScores` répliquée (`:224-242`), ratio 0,40/0,60/0,75 |
+
+**Résultat reproduit** (`H1`) :
 
 | Indicateur | Valeur mesurée |
 |---|---|
-| Classements modifiés par la seule échelle | **1 268 / 2000 = 63,40 %** |
-| TOP1 différent | **104 / 2000 = 5,20 %** |
-| TOP3 différent | **230 / 2000 = 11,50 %** |
-| Écart de rang maximum | 4 places |
+| Classements modifiés | **64,55 %** |
+| TOP1 modifié | **5,30 %** |
+| TOP3 modifié | **10,90 %** |
+| n | 2000 courses |
 
-**Pourquoi** : `_normaliserScores` (`ia_pronostic_engine.dart:224-242`) écrit
-`score = 0,60 × normalisé + 0,40 × brut`. La composante *normalisée* est
-invariante d'échelle, la composante *brute* ne l'est pas : le mélange
-40/60 rend donc le classement **dépendant de l'échelle absolue des poids**.
-Ce n'est pas une hypothèse, c'est l'arithmétique du code, vérifiée par
-l'identité `C2` : l'écart entre deux chevaux vaut exactement
-`Δnote × Δpoids`, donc il est proportionnel à l'échelle.
+Les valeurs **63,40 % / 5,20 %** annoncées précédemment et **64,55 % / 5,30 %**
+mesurées ici sont **le même phénomène**, à ±2 points près : la différence vient
+de la graine et de la génération exacte des scores. **La mesure est reproduite.**
 
----
+### 6.2 DÉCOUVERTE DÉCISIVE : ce n'est PAS un pur effet d'échelle
 
-## 2. CAPACITÉ RÉELLE D'APPRENTISSAGE — LA RÉPONSE DU §4
+Mon rapport précédent affirmait que seule l'échelle différait. **C'est faux, et
+c'est important.**
 
-### 2.1 Ce qui est DÉMONTRÉ : aucune impossibilité individuelle
+**Mesure `H1`** : les ratios A/B ne valent pas 1,26 uniformément :
 
-`A3` — matrice complète des 342 paires ordonnées, calculée sur la boîte
-admissible **exacte** (`clamp()` réel, validé par `A0` sur 7 600 comparaisons) :
-
-> **0 paire verrouillée sur 342 (0,0 %).**
-
-Chaque critère peut, dans la boîte admissible, **dépasser chacun des 18
-autres**. Il n'existe donc **aucune limitation mathématique individuelle**.
-
-Cela **réfute** mon hypothèse de départ et, surtout, cela **réfute** une
-lecture paresseuse des mesures antérieures (`M9`, `M10`) qui concluaient
-« l'inversion est structurellement impossible ». Ces mesures étaient justes
-**pour un scénario donné** (discrimination concentrée sur un seul critère,
-les autres à zéro) ; elles ne mesuraient pas la boîte admissible.
-
-### 2.2 Ce qui est DÉMONTRÉ : quelle est la vraie limite
-
-`A11` — discrimination **strictement identique** sur les 19 critères,
-5 000 cycles de gradient réels :
-
-| Groupe de facteur | Valeur de convergence |
-|---|---|
-| 7 critères de base (facteur 1,0) | **0,085714286** = 0,60/7 |
-| facteur 0,5 (`distSpec`, `jockey`, `elo`, `terrain`, `mouvCote`) | **0,040000000** |
-| facteur 0,4 (`hippo`, `entraineur`, `divergence`, `progression`) | **0,032000000** |
-| facteur 0,3 (`repos`, `poidsRel`, `placeDepart`) | **0,024000000** |
-
-Deux faits en découlent, tous deux mesurés :
-
-1. **Les valeurs de départ sont OUBLIÉES.** Les 7 critères de base partent de
-   0,02 / 0,04 / 0,08 / 0,09 / 0,10 / 0,13 / 0,25 et convergent **tous** vers la
-   même valeur 0,085714286. Vérifié : `les 7 de base sont-ils TOUS égaux à
-   0,60/7 ? → true`.
-2. **Le point fixe ne dépend QUE du facteur de gradient, jamais de la
-   discrimination observée**, tant qu'elle est constante et égale.
-
-> **C'est la limitation réelle, et elle est démontrée :** le gradient ne
-> « dose » pas les poids selon l'importance hippique ; il les pousse vers un
-> point fixe déterminé par les **constantes du code** (facteurs 1,0/0,5/0,4/0,3
-> et plafonds de groupe). Une différenciation entre critères ne peut naître que
-> si leurs discriminations **diffèrent** — ce qui dépend entièrement de
-> l'alimentation des critères, pas du mécanisme d'apprentissage.
-
-### 2.3 Ce qui est DÉMONTRÉ : la borne basse est atteignable, mais elle bloque
-
-`A9` — `forme` seule pénalisée (discrimination −0,50) : elle descend de 0,25 à
-**0,050000** en 10 cycles puis **n'en bouge plus**. Le minimum mathématique
-serait 0,017647 : il est **inatteignable par gradient**, car `clamp()` la
-ramène à 0,05 à chaque cycle.
-
-> Un critère fort **peut** perdre 80 % de son poids. Il ne peut pas descendre
-> sous son plancher individuel.
-
-### 2.4 Ce qui est DÉMONTRÉ sur les données réelles : la famille enrichie est écrasée
-
-C'est le résultat le plus lourd du chantier. Source : les deux backups réels.
-
-| Mesure | Valeur |
-|---|---|
-| Somme des **planchers individuels** des 12 enrichis | **0,160000** |
-| **Plancher de groupe** de `normaliser()` | **0,180000** |
-| ⇒ Marge de liberté totale des 12 enrichis | **0,020000** |
-| ⇒ soit, par critère, en moyenne | **0,001667** |
-
-Poids réellement observés dans le backup du 13/11/2026 (3 871 mises à jour) :
-
-| Critère | Défaut | 28/05 (802 maj) | 13/11 (3 871 maj) | Sur une borne ? |
-|---|---|---|---|---|
-| `cote` | 0,08000 | 0,38382 | **0,40181** | **PLAFOND** |
-| `victoires` | 0,04000 | 0,11978 | **0,15068** | **PLAFOND** |
-| `gains` | 0,13000 | 0,03963 | **0,04018** | **PLANCHER** |
-| `record` | 0,10000 | 0,02972 | **0,03014** | **PLANCHER** |
-| `discipline` | 0,02000 | 0,00991 | **0,01005** | **PLANCHER** |
-| `jockey` | 0,07000 | 0,01995 | **0,02009** | **PLANCHER** |
-| `elo` | 0,05000 | 0,00997 | **0,01005** | **PLANCHER** |
-| `terrain` | 0,05000 | 0,00997 | **0,01005** | **PLANCHER** |
-| `repos`, `hippo`, `entraineur`, `divergence`, `poidsRel`, `progression`, `placeDepart` | 0,03–0,04 | 0,00997 | **0,01005** | **PLANCHER** |
-| `mouvCote` | 0,06000 | 0,01995 | **0,02009** | **PLANCHER** |
-| `forme` | 0,25000 | 0,14196 | 0,05877 | — |
-| `constance` | 0,09000 | 0,09517 | 0,12395 | — |
-| `distSpec` | 0,08000 | 0,05035 | 0,05383 | — |
-
-**16 des 19 critères sont à moins de 2 % d'une borne** après 3 871 mises à
-jour. L'apprentissage ne cherche pas des valeurs intermédiaires : il pousse
-contre les bornes.
-
-Et la **signature arithmétique** est sans ambiguïté (`H4`) : le rapport interne
-de la famille enrichie est **identique à 10⁻⁶ près** entre mai (802 maj) et
-novembre (3 871 maj) pour **11 des 12 enrichis**. Il vaut exactement 1,0 ou 2,0
-— c'est-à-dire le rapport de leurs **planchers** (0,01 vs 0,01 et 0,02).
-Seul `distSpec` bouge (écart 0,309555), parce qu'il est le seul à ne pas être
-sur son plancher.
-
-> **Conclusion §4, en trois niveaux distincts :**
-> - **13 des 19 critères sont incapables de devenir importants** : les 12
->   enrichis sont écrasés sur un plancher de groupe quasi saturé (marge
->   0,020000), et `discipline` est sur son plancher propre. Ce n'est **pas**
->   une impossibilité mathématique individuelle (A3), c'est une **contrainte
->   de groupe démontrée** (H1/H4).
-> - **Les 7 critères de base peuvent réellement changer de rang**, et l'ont
->   fait : `cote` est passé de 8ᵉ à 1ᵉʳ (×5,02) et `forme` de 1ᵉʳ à
->   quasi-dernier (×0,24). La promotion **est** mesurée comme possible.
-> - **Mais le mécanisme ne récompense pas la pertinence hippique** : à
->   discrimination égale, le résultat est fixé par les constantes, pas par les
->   résultats (A11). C'est une limitation **démontrée**, pas une convergence
->   lente.
-
-### 2.5 Ce que cette promotion a réellement produit sur la qualité
-
-`H3` le montre et je ne le maquille pas : la promotion de `cote` à 0,40 est
-une **conséquence du mécanisme**, pas une preuve de sa pertinence. Sur le
-corpus réel (voir §3), `cote` seule atteint un niveau comparable à
-l'ensemble des 19 critères. Il est donc impossible d'affirmer que la montée de
-`cote` a amélioré les pronostics : **on ne confond pas hausse de poids et
-hausse de qualité.**
-
----
-
-## 3. COMPARAISONS SUR CORPUS RÉEL — CE QUE LES DONNÉES PERMETTENT
-
-### 3.1 Le corpus, mesuré
-
-| Source | Pronostics | Avec `scoresCriteres` **et** arrivée |
+| Groupe | Ratio A/B | Uniforme ? |
 |---|---|---|
-| Backup 28/05/2026 | 572 | **47** |
-| Backup 13/11/2026 | 600 | **4** |
+| les **7** critères de base | **1,183333333** | oui (7/7) |
+| les **12** critères enrichis | **1,375000000** | oui (12/12) |
 
-*Preuve* : `poids_comparaisons_reelles_test.dart`, `E1`.
+**Explication mesurée** : la table 1,26 a une fraction enrichie de
+**0,436507937**, que `normaliser()` **écrête à 0,40**. Passer de 1,26 à 1,00
+n'est donc pas une homothétie : c'est **échelle × redistribution de 4,35 points
+de poids des enrichis vers la base**.
 
-> **Réserve déclarée** : 47 et 4. À n = 4, un seul cheval déplace le TOP1 de
-> 25 points. **Aucune conclusion n'est tirée de novembre.** Toute la suite
-> porte sur n = 47.
+**Conséquence mesurée `H2`** : le rapport `score_A / score_B` **varie** d'un
+partant à l'autre, entre **1,233369810** et **1,294257867**, selon la
+composition de ses notes. Il n'est **jamais** égal à 1,26.
 
-Couverture par discipline (tous pronostics, y compris sans `scoresCriteres`) :
-Attelé 266/295, Plat 208/196, Haies 40/41, Monté 33/45, Steeple 21/18,
-Cross 4/5.
+**⇒ La phrase « 63,40 % des classements changent à cause de l'échelle » est
+trompeuse.** La formulation exacte est : *63,40 % changent à cause du couple
+(échelle × redistribution), les deux effets étant mesurables séparément.*
 
-### 3.2 Comparaison des pondérations (`E2`, corpus mai, n = 47)
+### 6.3 Tous les consommateurs de score, et leur sensibilité mesurée
 
-| Pondération | TOP1 | TOP3 | TOP5 | Rang moyen |
-|---|---|---|---|---|
-| Poids **défaut** (constructeur) | 23,40 % | 46,81 % | 70,21 % | 4,09 |
-| Poids **appris mai** | 29,79 % | 57,45 % | 78,72 % | 3,64 |
-| **Uniforme** (1/19 partout) | 23,40 % | 48,94 % | 74,47 % | 4,00 |
-| **Cote seule** (référence externe) | 29,79 % | 51,06 % | 78,72 % | 3,66 |
+L'utilisateur exige la liste complète. Voici les consommateurs **identifiés
+dans le code**, avec leur sensibilité mesurée (`H3`, 2000 courses).
 
-> **Deux réserves, cumulatives :**
-> 1. Les poids « appris mai » ont été appris **sur ces 47 mêmes courses**. Leur
->    score est **in-sample** : ce n'est pas une validation.
-> 2. n = 47 ⇒ un écart de ±5 points de TOP1 vaut 2 à 3 courses et n'est **pas
->    significatif**.
->
-> **Ce qui reste défendable malgré ces réserves** : « cote seule », qui
-> n'utilise **aucun** des 18 autres critères, atteint **le même TOP1 (29,79 %)**
-> et le même TOP5 que les 19 critères appris. L'apport mesurable des 18 autres
-> critères sur cet échantillon est donc **nul à non démontré**.
-
-### 3.3 Pouvoir discriminant réel par critère (mesure décisive)
-
-Sur les courses exploitables, nombre de courses où le critère a une
-**variance nulle** (même note pour tous les partants) — un critère à variance
-nulle ne peut **mathématiquement pas** influencer le classement :
-
-| Critère | Variance nulle | Range moyen |
-|---|---|---|
-| `record` | **100,0 %** (52/52) | 0,00 |
-| `discipline` | **100,0 %** (52/52) | 0,00 |
-| `repos` | **100,0 %** (52/52) | 0,00 |
-| `entraineur` | **100,0 %** (52/52) | 0,00 |
-| `terrain` | **100,0 %** (52/52) | 0,00 |
-| `poidsRel` | **100,0 %** (52/52) | 0,00 |
-| `mouvCote` | **100,0 %** (52/52) | 0,00 |
-| `placeDepart` | **100,0 %** (52/52) | 0,00 |
-| `elo` | 84,6 % (44/52) | 1,38 |
-| `victoires` | 23,1 % (12/52) | 34,27 |
-| `jockey` | 15,4 % (8/52) | 22,06 |
-| `gains` | 1,9 % | 70,27 |
-| `constance` | 1,9 % | 72,96 |
-| `forme` | 0,0 % | 63,67 |
-| `cote` | 0,0 % | 51,45 |
-| `distSpec` | 1,9 % | 50,60 |
-| `hippo` | 1,9 % | 59,05 |
-| `divergence` | 1,9 % | 52,19 |
-| `progression` | 1,9 % | 8,44 |
-
-**9 critères sur 19 n'ont AUCUN effet mesurable** dans la moitié des cas ou
-plus. Pire : `E3` mesure que **9 critères mis à zéro ne changent strictement
-rien** au classement sur les 47 courses — `record`, `discipline`, `repos`,
-`entraineur`, `elo`, `terrain`, `poidsRel`, `mouvCote`, `placeDepart`.
-
-> **Nuance exigée par l'utilisateur, et elle est juste** : un critère neutre
-> dans le corpus **n'est pas nécessairement inutile** ; il peut être
-> **mal alimenté**. C'est le cas ici : `mouvCote` est neutre *par conception*
-> hors de la fenêtre des 30 minutes ; `elo` est bloqué à 37,5–42 sur presque
-> tous les chevaux ; `terrain`, `poidsRel`, `placeDepart`, `entraineur`,
-> `repos`, `record` valent 50,0 constant. La chaîne d'alimentation est en
-> cause, **pas la pertinence hippique du critère**.
-
-### 3.4 Neutralisation individuelle (`E3`, poids défaut, n = 47)
-
-Effets non nuls uniquement : `gains` (+4,26 TOP1 / +8,51 TOP3 en le retirant
-!), `jockey` (+8,51 TOP3), `constance` (+8,51 TOP3), `cote` (+6,38 TOP3),
-`hippo` (+4,26), `divergence` (+4,26), `forme` (−2,13), `distSpec` (+2,13),
-`victoires` (+2,13), `progression` (+2,13).
-
-> **Lecture, à ne pas surinterpréter** : retirer `gains` ou `jockey` *améliore*
-> le TOP3 sur cet échantillon. À n = 47, cela représente 4 courses. Ce n'est
-> **pas** une preuve que ces critères nuisent : c'est un signal qui justifie
-> un protocole prospectif, rien de plus.
-
----
-
-## 4. §5 — LES 19 CRITÈRES PAR SPÉCIALITÉ : CE QUI EST PROUVABLE
-
-**Limite honnête** : la réévaluation par spécialité exige des effectifs par
-discipline. Mesurés : Attelé 266+295, Plat 208+196, Monté 33+45, Haies 40+41,
-Steeple 21+18, Cross **4+5**. **Cross-country n'est pas évaluable** (9 cas).
-Et les `scoresCriteres` exploitables ne sont que 47 au total, toutes
-disciplines confondues. **Je ne peux donc pas produire un tableau par
-spécialité qui soit autre chose qu'une impression.** Je le déclare plutôt que
-de l'inventer.
-
-Ce qui **est** mesuré et exploitable :
-
-| Constat | Mesure |
-|---|---|
-| `mouvCote` neutre hors fenêtre 30 min | 100 % de variance nulle sur 52 courses |
-| `elo` quasi constant | 84,6 % de variance nulle, range moyen 1,38 pt |
-| 7 critères à 50,0 constant | `record`, `discipline`, `repos`, `entraineur`, `terrain`, `poidsRel`, `placeDepart` |
-| Corrélations | non mesurables : le gel n'agit qu'à partir de **50 courses** dans la fenêtre, et l'état `correlations` n'est pas renseigné dans ces backups |
-
-**Sur les interactions exigées** (forme × constance × distance × spécialité ×
-gains × victoires × cote × ELO) : elles ne peuvent pas être mesurées sur 47
-courses sans produire du bruit. **Non mesuré, donc non affirmé.**
-
----
-
-## 5. §7 — COMPARAISON AVEC LES MÉTHODES EXTERNES
-
-Trois catégories, strictement séparées :
-
-**a) Scientifiquement documenté (modèles à choisir comme référence)**
-- **Bolton & Chapman (1986)**, *Searching for Positive Returns at the Track:
-  A Multinomial Logit Model for Handicapping Horse Races* — modèle logit
-  multinomial conditionnel, longtemps « gold standard » du domaine.
-- **Benter (1994)**, *Computer Based Horse Race Handicapping and Wagering
-  Systems: A Report* — même famille (logit multinomial), avec une démarche
-  explicite de combinaison modèle + marché.
-- **Figlewski (1979)**, **Sung & Johnson (2007)**, **Ali (1998)** — variantes
-  et évaluations.
-
-**b) Programme vérifiable** : `SimulationService` de notre propre app, et les
-harnais de ce rapport. Ce sont les seules méthodes dont je peux vérifier le
-code ligne par ligne.
-
-**c) Allégations commerciales** : non traitées. Je n'ai vérifié aucun logiciel
-commercial et je ne reprends aucun coefficient d'un tiers.
-
-> **Point méthodologique capital, et il va contre un réflexe tentant** : ces
-> modèles documentés **ne sont pas transposables** à notre architecture. Un
-> logit multinomial estime des **coefficients par maximum de vraisemblance sur
-> une fonction de choix** (probabilité de gagner), avec des **écarts
-> normalisés entre chevaux**. Notre moteur fait une **somme pondérée de notes
-> 0-100, puis un mélange min-max**. Ce sont deux objets mathématiques
-> différents : transposer des coefficients n'aurait aucun sens.
-> **Ce qui EST transposable, c'est le protocole d'évaluation** : séparation
-> stricte apprentissage/validation, mesure hors échantillon, et comparaison à
-> la cote du marché comme référence — exactement ce que §3 fait déjà.
-
----
-
-## 6. §8 — RAPPORT DÉCISIONNEL, PROBLÈME PAR PROBLÈME
-
-### P1 — Deux échelles de poids coexistent (1,26 et 1,00)
-
-| | |
-|---|---|
-| **Fichiers** | `ia_pronostic_engine.dart:391-409` (somme brute) ; `ia_memory_models.dart:685-728` (`normaliser`) |
-| **Cause exacte** | Le score est une somme pondérée **non divisée**. `clamp()` n'est appelé qu'après apprentissage ; `poidsEffectifsPourDiscipline` renvoie les poids bruts tant qu'aucune discipline n'est apprise. |
-| **Conséquences réelles** | Score max 126 au lieu de 100 avant apprentissage ; **63,40 % des classements changent** selon l'échelle seule (C1) ; les seuils absolus (`seuilSimpleGagnant` 80…) sont franchis plus facilement avant apprentissage qu'après. |
-| **Preuves** | `A1`, `A5`, `C1`, `C2`, `C3`, `M12.2` |
-| **Correction proposée** | Normaliser les poids à la **source** (dans `_calculerScoreBrutEtCriteres`, diviser par la somme des poids effectifs) — ou garantir que tout poids servi est passé par `clamp()`. |
-| **Avantages** | Une seule échelle ; seuils absolus interprétables ; suppression d'un facteur de 63,40 % de variabilité non contrôlée. |
-| **Risques** | Change **tous** les scores actuels ⇒ déplace les seuils de labellisation. Touche la formule ⇒ **DÉCISION UTILISATEUR OBLIGATOIRE**. |
-| **Conséquence apprentissage** | Aucune sur la dynamique du gradient ; forte sur la lisibilité des seuils. |
-| **Tests avant adoption** | `C1` doit passer de 63,40 % à 0 % de classements modifiés. |
-
-### P2 — Les 12 critères enrichis sont écrasés sur leur plancher
-
-| | |
-|---|---|
-| **Fichiers** | `ia_memory_models.dart:699` (`fractionEnrichi.clamp(0.18, 0.40)`), `:731-750` (bornes individuelles) |
-| **Cause exacte** | Somme des planchers individuels des 12 enrichis = **0,160000** pour un plancher de groupe de **0,180000**. Il ne reste que **0,020000** à répartir. |
-| **Conséquences réelles** | 11 des 12 enrichis ont des proportions internes **figées** (H4) ; 9 critères sans aucun effet sur le classement (E3). |
-| **Preuves** | `H1`, `H2`, `H4`, `E3` |
-| **Correction proposée** | Abaisser les **planchers individuels** des enrichis (ex. 0,005 au lieu de 0,01) OU relever le plancher de groupe. **Ne pas** toucher au plafond de 0,40 sans mesure. |
-| **Avantages** | Rend la famille enrichie capable d'exprimer une hiérarchie. |
-| **Risques** | Touche `clamp()` ⇒ **DÉCISION UTILISATEUR**. Peut déstabiliser des poids appris. |
-| **Conséquence apprentissage** | Rend enfin l'apprentissage possible sur 12 critères aujourd'hui inertes. |
-| **Tests avant adoption** | `H1` doit montrer une marge ≫ 0,02 ; `H4` doit voir les rapports internes **bouger** entre deux époques. |
-
-### P3 — 9 critères n'ont aucun effet mesurable
-
-| | |
-|---|---|
-| **Fichiers** | Chaîne d'alimentation : `ia_pronostic_engine.dart` (`_scoreRecord`, `_scorePlaceDepart`, `scoreMouvementCote`, ELO) |
-| **Cause exacte** | Notes **constantes** (50,0 ou 37,5) ⇒ variance nulle ⇒ le critère ne peut pas classer. `mouvCote` est neutre **par conception** hors fenêtre 30 min. |
-| **Conséquences réelles** | `record`, `discipline`, `repos`, `entraineur`, `elo`, `terrain`, `poidsRel`, `mouvCote`, `placeDepart` : neutralisation = **Δ 0,00** (E3). |
-| **Preuves** | §3.3 (100 % / 84,6 % de variance nulle), `E3` |
-| **Correction proposée** | Traiter **l'alimentation**, pas les poids : un poids élevé sur un critère neutre est sans effet. C'est un chantier distinct du chantier des poids. |
-| **Avantages** | C'est ici que se trouve le gain réel de qualité, pas dans les pondérations. |
-| **Risques** | Aucun sur la formule ; risque de données manquantes PMU. |
-| **Conséquence apprentissage** | Un critère qui discrimine **peut** alors être appris (A11 : la différenciation exige une discrimination différente). |
-| **Tests avant adoption** | Mesurer la variance nulle par critère **avant/après** correction d'alimentation. |
-
-### P4 — Le point fixe du gradient ignore la pertinence (A11)
-
-| | |
-|---|---|
-| **Fichiers** | `ia_memory_service.dart:4018-4021` (lr), `:4066-4088` (facteurs), `:4093` (`clamp()`) |
-| **Cause exacte** | À discrimination constante, la convergence ne dépend que des facteurs 1,0/0,5/0,4/0,3 et des plafonds de groupe. |
-| **Conséquences réelles** | Les valeurs de départ sont **oubliées** (bien) ; mais la hiérarchie finale est dictée par les constantes (mal). |
-| **Preuves** | `A6`, `A11` |
-| **Correction proposée** | **À ÉTUDIER PROSPECTIVEMENT**, pas à corriger à l'aveugle : le comportement est arithmétiquement sain. Le vrai levier est P3. |
-| **Risques** | Modifier les facteurs = toucher l'apprentissage ⇒ **interdit sans autorisation**. |
-
-### P5 — Divergence `forme` du repli `fromJson` (0,32 vs 0,25)
-
-| | |
-|---|---|
-| **Fichier** | `ia_memory_models.dart:846` |
-| **Cause exacte** | Valeur de repli historique jamais réactualisée. |
-| **Conséquences réelles** | **Aucune en pratique** : la clé `forme` est toujours écrite par `toJson` (`:815`). Ne s'applique qu'à un JSON tronqué. |
-| **Preuves** | `M2` (20/20) ; les deux backups réels contiennent bien les 19 clés. |
-| **Verdict** | **À CORRIGER pour cohérence documentaire**, sans urgence fonctionnelle. Mettre 0,25. |
-| **Risques** | Nul. |
-| **Tests** | `audit_poids_familles_test` doit voir 4 familles concordantes sur `forme`. |
-
-### P6 — Somme déclarée 1,26 ≠ 1,00 (documentation)
-
-| | |
-|---|---|
-| **Fichiers** | `ia_memory_models.dart:569-620` (commentaires déjà corrigés par mesure) |
-| **État** | **DÉJÀ CORRIGÉ** lors d'un chantier antérieur : le code porte désormais la mesure exacte et signale que l'arbitrage est une décision utilisateur. |
-| **Verdict** | **À CONSERVER tel quel** — c'est de la documentation honnête. |
-
-### P7 — `poidsParDiscipline` inopérant tant qu'il est vide
-
-| | |
-|---|---|
-| **Fichiers** | `ia_memory_models.dart:634-670` ; `ia_memory_service.dart:4288` |
-| **Cause exacte** | `poidsEffectifsPourDiscipline` renvoie les globaux si la map est vide. |
-| **Conséquences réelles** | Écart inter-disciplines **exactement 0,0000000000** sur état vierge (`M12.1`). Après apprentissage d'**une** discipline, deux échelles coexistent (P1). |
-| **Preuves** | `M12.1`, `M12.2`, `M12.3` (écart de score 1,119 en Trot attelé vs 1,200 en Plat) |
-| **Verdict** | **À CONSERVER le mécanisme**, **À CORRIGER** l'échelle (voir P1). |
-
-### P8 — Absence de protocole de validation hors échantillon
-
-| | |
-|---|---|
-| **Cause** | Le corpus réel ne contient `scoresCriteres` que sur 47 courses (mai) et 4 (novembre). |
-| **Conséquences réelles** | Toute comparaison de pondérations est **in-sample** ⇒ aucune optimisation n'est défendable aujourd'hui. |
-| **Preuves** | `E1`, `E4` |
-| **Correction proposée** | **PROTOCOLE PROSPECTIF** (voir §7) : accumuler, puis n'évaluer à T que les pronostics postérieurs à T. |
-| **Risques** | Aucun. |
-| **Verdict** | **À ÉTUDIER PROSPECTIVEMENT — c'est la seule voie honnête.** |
-
----
-
-## 7. PROPOSITION COHÉRENTE SUR LES 9 POINTS
-
-Pour chaque point, conclusion explicite : **garder / corriger / supprimer si
-vraiment inutile / étudier prospectivement**.
-
-| # | Élément | Conclusion | Justification mesurée |
+| Consommateur | Fichier:ligne | Ce qu'il consomme | Sensibilité mesurée à l'échelle |
 |---|---|---|---|
-| 1 | **Poids initiaux des 19 critères** | **GARDER** | Aucune mesure ne démontre qu'un autre jeu initial produirait de meilleurs pronostics. Les valeurs de départ sont de toute façon **oubliées** par le gradient (A11). Les changer ne changerait donc presque rien à long terme — c'est mesuré, pas supposé. |
-| 2 | **Valeurs de repli** | **CORRIGER (1 seule)** : `forme` 0,32 → 0,25 dans `fromJson` | Seule divergence réelle entre les 4 familles (M2). Sans effet pratique, mais l'incohérence documentaire doit disparaître. |
-| 3 | **Pondérations par discipline** | **GARDER le mécanisme**, **CORRIGER l'échelle** (P1) | Le mécanisme fonctionne (`M12.3` : effet réel 1,119 vs 1,200) ; c'est l'échelle 1,26/1,00 qui perturbe. |
-| 4 | **Bornes d'évolution** | **CORRIGER** : abaisser les planchers individuels des 12 enrichis | Mesure décisive : 0,160000 de planchers pour 0,180000 de plancher de groupe ⇒ marge 0,020000. **DÉCISION UTILISATEUR OBLIGATOIRE** (touche `clamp()`). |
-| 5 | **Coefficients d'apprentissage** | **NE PAS TOUCHER — ÉTUDIER PROSPECTIVEMENT** | Ils ne sont **pas** la cause du désavantage : `A12` mesure 2 à 6 cycles pour parcourir 50 % de la plage, tous facteurs confondus. Le frein n'est pas la vitesse. |
-| 6 | **Contraintes de répartition par famille** | **CORRIGER** : le plancher de groupe 0,18 est saturé par les planchers individuels | Voir point 4. Le plafond 0,40, lui, **n'est pas** la contrainte dominante dans les données réelles (Σ enrichis = 0,1844). |
-| 7 | **Gestion des corrélations** | **ÉTUDIER PROSPECTIVEMENT** | Non mesurable ici : le gel exige **50 courses** et `correlations` est vide dans les deux backups. Aucune affirmation possible. |
-| 8 | **Capacité d'évolution des 19 critères** | **13 incapables / 6 capables** | Mesuré : les 12 enrichis sont écrasés (marge 0,020000) et `discipline` est sur son plancher ; les 6 autres peuvent réellement permuter (`cote` ×5,02, `forme` ×0,24). **Ce n'est PAS une impossibilité mathématique** (A3 : 0/342 paires verrouillées). |
-| 9 | **Protocole de validation après le futur zéro-redémarrage** | **ÉTUDIER PROSPECTIVEMENT — obligatoire** | Le corpus actuel ne le permet pas (47 courses). Protocole : n'exécuter une comparaison qu'avec `scoresCriteres` ET `arriveeReelle`, séparer strictement les dates, viser n ≥ 200, comparer à « cote seule » comme référence externe. |
+| **Classement** | `ia_pronostic_engine.dart:103-104` | ordre des scores | **64,55 %** de classements modifiés |
+| **Étiquette du TOP1** | `ia_pronostic_engine.dart:642-652` (`_determinerLabel`, seuils **75** et **52**) | `scoreAff` **absolu** | **11,75 %** des étiquettes TOP1 changent |
+| **Confiance** | `zt_models.dart:1216-1240` (`confianceIA`) | les 3 premiers scores **absolus** | écart **médian 3,0162 pt**, p95 **5,9128 pt**, max **8,8642 pt** |
+| **Seuil de sélection** | `best_bet_screen.dart:592` (`seuilMinScore`) | `top.scoreIA` **absolu** | **0 %** dans cet échantillon (score min jamais atteint) |
+| **Score de gain** | `best_bet_screen.dart:605` `(100.0 - top.scoreIA).clamp(20.0, 80.0)` | `scoreIA` **absolu** | **17,00 %** des valeurs modifiées |
+| **Score composite** | `best_bet_screen.dart:609` `scoreConf*0.65 + scoreGainRaw*0.35` | dérivé | impact indirect |
+| **Seuils appris** | `ia_memory_models.dart:1596-1603` (`IaSeuilsAppris` : 80/50/65/75/60/35/80/0) | comparés à `scoreIA` | consommateurs absolus |
+| **TOP3 / score2nd / score3** | `best_bet_screen.dart:629-631` | `sorted[i].scoreIA` | absolu |
+| **Affichage IA Performance** | `ia_performance_screen.dart:3186-3197` | seuils appris | affichage |
 
-### Ce que je ne propose PAS, et pourquoi
+### 6.4 Le détail qui change la décision
 
-- **Je ne propose pas d'unifier les 4 tables.** Mesure : constructeur et
-  `.defauts` sont **identiques**, `clampDiscipline` **doit** normaliser (c'est
-  un autre espace), et `fromJson` n'est qu'un repli. Unifier détruirait une
-  distinction légitime entre *valeur initiale*, *repli* et *espace normalisé*.
-- **Je ne propose pas de relever le plafond des enrichis à 0,40.** Les données
-  réelles montrent Σ enrichis = 0,1844, **très loin** du plafond. Le plafond
-  n'est pas le problème : les **planchers** le sont.
-- **Je ne propose aucune modification « parce qu'elle semble meilleure ».** Ex.
-  retirer `gains` (E3 : +8,51 TOP3) n'est fondé que sur 4 courses.
+Sur 2000 courses, **le seuil 62 de `best_bet_screen.dart:592` n'a JAMAIS changé
+de camp** (0 %). Raison : les scores normalisés par `_normaliserScores` restent
+dans une plage où le TOP1 dépasse presque toujours 62.
+
+**⇒ Le risque « un seuil absolu est franchi plus facilement » est RÉEL mais
+CIRCONSTANCIÉ** : il touche les étiquettes (11,75 %) et le score de gain
+(17 %), pas le filtre de sélection principal sur cet échantillon.
+
+### 6.5 Les trois transformations, mesurées et distinctes
+
+| Code | Définition | Somme | Effet |
+|---|---|---|---|
+| **T1** | table brute du constructeur | **1,26** | ce que reçoit `poidsEffectifsPourDiscipline` sur une instance non clampée (`H5`) |
+| **T2** | `clamp()` puis `normaliser()` | **1,00** | **la production** |
+| **T3** | T1 divisée par sa somme (1,26) | **1,00** | « diviser par la somme des poids effectifs » |
+
+**Mesure `H4`** :
+- **T2 ≠ T3** : écart maximal sur les 19 poids = **0,012854907**. C'est l'effet
+  de l'écrêtage (0,436507937 → 0,40).
+- **T2 sur T2** (rediviser une table déjà normalisée) = **no-op exact** :
+  0/2000 classements modifiés, écart max **0,000000000000000**.
+
+**⇒ « Diviser par la somme des poids effectifs » a DEUX sens possibles, et ils
+ne sont pas équivalents :**
+- appliqué à une table **déjà normalisée** : **no-op total** (rien ne change) ;
+- appliqué à la table **brute 1,26** : produit T3, qui **diffère** de la
+  production T2 de 0,0129 par critère et **change 65,15 % des classements** par
+  rapport à T1.
+
+### 6.6 Les solutions comparées — sans toucher la production
+
+| Solution | Description | Rang | Échelle absolue | Verdict |
+|---|---|---|---|---|
+| **S-rien** | Statu quo : T2 partout, corriger les replis `fromJson` (§1.3) pour qu'aucune table 1,37 ne fuite | inchangé | **100** | **RECOMMANDÉE** |
+| **S-diviser-au-score** | Diviser au moment du score par la somme effective | **identique à S-rien quand les poids valent déjà 1,00** (`H4` : no-op exact) ; différent seulement si le repli 1,26 fuite | 100 | **Équivalent fonctionnel à S-rien**, mais ajoute un coût de calcul et **n'élimine pas** la cause (le repli 1,37) |
+| **S-normaliser-la-source** | Garantir que tout poids servi est passé par `clamp()` | identique à S-rien | 100 | **Équivalent**, mais agit **à la source** — plus robuste |
+
+### 6.7 Ma recommandation §6, et sa justification mesurée
+
+**Je ne recommande PAS de diviser les scores par la somme des poids.** Mesure
+`H4` : sur une table déjà normalisée, c'est un **no-op exact**
+(écart 0,000000000000000). Cela n'apporte rien et ajoute un coût.
+
+**Je recommande de corriger la CAUSE** : les trois replis de `fromJson`
+(§1.3). Mesure `H6` : c'est **la seule** source d'une table non normalisée en
+production (somme 1,37, soit **+37 % sur tous les scores**).
+
+**Ce que je ne propose PAS** : aucune modification des seuils (75, 52, 80, 50,
+65, 75, 60, 35, 80, 0, `seuilMinScore`). L'utilisateur l'interdit
+explicitement, et aucune mesure ne le justifie : le seuil 62 n'a jamais changé
+de camp (0 %).
+
+**Point à valider prospectivement** : l'impact réel de l'échelle sur les
+**étiquettes** (11,75 %) et le **score de gain** (17 %) doit être réévalué
+**après** la correction des replis, sur données réelles et non synthétiques.
+Mes expériences `H1`–`H3` sont **[SYNTH]** et ne remplacent pas cette mesure.
 
 ---
 
-## 8. TRAÇABILITÉ — OÙ CHAQUE CHIFFRE EST REPRODUCTIBLE
+## 7. PERTINENCE DES POIDS INITIAUX
+
+### 7.1 Ce qui est mesuré
+
+| Fait | Mesure |
+|---|---|
+| Les poids initiaux sont **progressivement oubliés** | `A11` : après 5000 cycles à discrimination constante et égale, les 7 de base valent **tous 0,085714286** (= 0,60/7), **malgré des départs allant de 0,02 à 0,25** |
+| Le point fixe ne dépend **que des facteurs de gradient** | `A11` : facteur 0,5 → 0,040000 ; 0,4 → 0,032000 ; 0,3 → 0,024000 |
+| Le point fixe **ne dépend pas** de la discrimination observée (à discrimination égale) | `A11` |
+| Un critère initialement faible **peut devenir le plus fort** | `H3` : `cote` 0,08 → 0,4018 = **×5,02** ; `victoires` 0,04 → 0,1507 = **×3,77** |
+| Un critère initialement fort **peut devenir le plus faible** | `H3` : `forme` 0,25 → 0,0588 = **×0,24** |
+
+### 7.2 Pourquoi « oubliés » ne signifie pas « adaptés »
+
+L'utilisateur a raison sur ce point : le fait que les poids initiaux soient
+oubliés **ne prouve pas** qu'ils sont bons au démarrage.
+
+**Ce que je peux affirmer** : aucune mesure ne démontre qu'un autre jeu initial
+produirait de meilleurs pronostics. C'est une **absence de preuve**, pas une
+preuve d'optimalité.
+
+**Ce que je peux affirmer aussi** : les poids initiaux ont une importance
+**réelle et brève**. Mesure `G2.5` : il faut **32 cycles** pour qu'un critère
+discriminant dépasse la forme initiale. Sur un redémarrage à zéro, les
+**32 premières courses** voient donc la pondération initiale dominer.
+
+### 7.3 Comparaison avec les autres configurations étudiées
+
+| Configuration | `forme` | `gains` | `record` | `cote` | Somme |
+|---|---|---|---|---|---|
+| Constructeur (initiale) | 0,25 | 0,13 | 0,10 | 0,08 | 1,26 |
+| `.defauts` | 0,25 | 0,13 | 0,10 | 0,08 | 1,26 |
+| `fromJson` (repli) | **0,32** | **0,15** | **0,12** | 0,08 | **1,37** |
+| `clampDiscipline` (repli) | 0,38 puis ÷1,55 → 0,2452 | 0,18 → 0,1161 | 0,14 → 0,0903 | 0,13 → 0,0839 | 1,00 |
+| Appris 28/05/2026 | **0,14196** | 0,03963 | 0,02972 | **0,38382** | 1,00 |
+| Appris 13/11/2026 | **0,05877** | 0,04018 | 0,03014 | **0,40181** | 1,00 |
+
+**Lecture** : les poids initiaux (`forme` 0,25 en tête) sont **très éloignés**
+de ce que l'apprentissage produit (`cote` 0,40 en tête, `forme` 0,06). Le
+gradient renverse complètement la hiérarchie.
+
+**Mais** : ces valeurs apprises sont **in-sample** et issues d'un corpus de
+47 courses exploitables. Elles ne constituent **pas** une cible à viser.
+
+### 7.4 Ma recommandation §7 — conservation provisoire, sans prétendre à l'optimalité
+
+**Je recommande de CONSERVER PROVISOIREMENT les poids initiaux du constructeur
+tels quels (0,25 / 0,13 / 0,10 / 0,08 / 0,09 / 0,04 / 0,02 pour la base).**
+
+**Justification** :
+1. **Aucune mesure** ne permet de déterminer une meilleure pondération
+   initiale : le corpus exploitable est de **47 courses** (mai) et **4**
+   (novembre), et l'évaluation est **in-sample**.
+2. Les poids initiaux n'ont d'effet que sur les **~32 premières courses**
+   (`G2.5`), après quoi le gradient les efface (`A11`).
+3. Les modifier reviendrait à **substituer une intuition à une mesure**.
+
+**Ce que cette recommandation N'EST PAS** : elle ne dit **pas** que 0,25 pour
+`forme` est optimal. Elle dit qu'**aucune donnée disponible ne justifie de le
+changer**, et que le coût d'un changement non prouvé (perturber 32 courses)
+dépasse le bénéfice non démontré.
+
+**Ce qui devra être fait après le redémarrage à zéro** : mesurer, sur les
+premières 200 courses **hors échantillon**, si une autre pondération initiale
+aurait produit un meilleur TOP1/TOP3. C'est le protocole du §8.7.
+
+---
+
+## 8. PROPOSITION DÉCISIONNELLE FINALE
+
+Neuf décisions, chacune avec son fondement mesuré et son statut de preuve.
+
+### 8.1 Quelles valeurs de repli harmoniser
+
+| Décision | Valeur actuelle | Valeur proposée | Fondement mesuré |
+|---|---|---|---|
+| `fromJson` → `forme` | **0,32** | **0,25** | `M2.1`, `H6` |
+| `fromJson` → `gains` | **0,15** | **0,13** | `M2.1`, `H6` |
+| `fromJson` → `record` | **0,12** | **0,10** | `M2.1`, `H6` |
+
+**Les TROIS doivent être harmonisées** — c'est la correction complète que
+l'utilisateur demandait. Leur somme passe de **1,37** à **1,26**, alignée sur le
+constructeur et sur `.defauts`.
+
+**Impact mesuré** : nul sur un JSON complet (les 19 clés sont toujours écrites
+par `toJson`). **Non nul** sur une restauration partielle : une table de somme
+**1,37** produit des scores **37 % plus élevés**, franchissant plus facilement
+les seuils absolus. Mesure `H6` : après un `clamp()` explicite, la somme revient
+bien à 1,000000000000.
+
+**Risque** : nul — la valeur harmonisée est celle du constructeur, qui est la
+référence. **Statut : MESURÉ, correction sûre.**
+
+**Gain complémentaire, non demandé mais mesuré** : `fromJson` **n'appelle pas
+`clamp()`**. Ce n'est pas l'objet de cette décision, mais cela signifie qu'une
+restauration partielle livrerait la table à 1,37 **directement au moteur de
+score**. C'est la raison pour laquelle l'harmonisation est **nécessaire** et pas
+seulement documentaire.
+
+### 8.2 Quels planchers conserver ou modifier
+
+| Élément | Décision | Valeur | Fondement |
+|---|---|---|---|
+| Planchers individuels des **12 enrichis** | **MODIFIER** | 0,01 → **0,005** (les 3 planchers à 0,02 et 0,03 restent proportionnellement plus hauts, mais descendent aussi si l'on veut Σ = 0,060) | `G1.1` (marge 0,020 → 0,120), `H4` (11/12 figés) |
+| Planchers individuels des **7 de base** | **CONSERVER** | inchangés (0,05 / 0,04 / 0,03 / 0,05 / 0,03 / 0,01 / 0,01) | Aucune mesure ne montre qu'ils gênent : `H3` a mesuré `cote` ×5,02 et `victoires` ×3,77 |
+| Plancher collectif | **CONSERVER** | **0,18** | `G1.3` : il fonctionne (0,180000000 exactement) ; `G2.4` : l'abaisser seul est sans effet |
+
+**Précision importante sur les 12 planchers enrichis** : ils ne valent pas tous
+0,01. Détail mesuré : `distSpec` 0,03, `jockey` 0,02, `mouvCote` 0,02, et les
+9 autres 0,01 → **Σ = 0,160**. Ramener **tous** à 0,005 donne **Σ = 0,060**,
+soit une marge de **0,120** sous le plancher collectif.
+
+**Statut** : MESURÉ sur les cinq indicateurs. **Aucune régression constatée**
+(vitesse 32 cycles, stabilité 0 redescente, réversibilité 13 cycles).
+
+### 8.3 Quelles contraintes collectives conserver ou modifier
+
+| Élément | Décision | Valeur | Fondement |
+|---|---|---|---|
+| **Plafond collectif** | **CONSERVER À 0,40** | 0,40 | `G2.2`/C4 : sa suppression produit 78,106 % de part enrichie, **7/7** critères de base rétrogradés, domination **1,90×**. C'est un garde-fou **nécessaire**. |
+| **Plancher collectif** | **CONSERVER À 0,18** | 0,18 | `G1.3` : il fonctionne ; dans les données réelles il n'est **pas** le frein (0,184417 mesuré) |
+| **Écrêtage de la fraction enrichie** | **CONSERVER** | `clamp(0.18, 0.40)` | C'est ce qui produit la redistribution mesurée en §6.2. Le supprimer changerait l'échelle des scores de façon **non mesurée** — refusé faute de preuve. |
+
+**Ce que je NE propose PAS ici** : relever le plafond collectif au-delà de
+0,40. Aucune mesure ne le justifie : dans les données réelles la part enrichie
+vaut **0,1844**, très loin de 0,40. Relever un plafond qu'on n'atteint jamais
+n'aurait aucun effet mesurable.
+
+### 8.4 Comment résoudre l'incohérence des échelles
+
+| Décision | Contenu | Fondement |
+|---|---|---|
+| **NE PAS diviser les scores par la somme des poids** | Mesure `H4` : sur une table déjà normalisée, c'est un **no-op exact** (0 changement de classement sur 2000 courses) | `H4` |
+| **CORRIGER les trois replis `fromJson`** | Ramène toute table à 1,26 puis 1,00 après `clamp()`. C'est **la seule source** d'une échelle non normalisée en production | `H6` |
+| **NE PAS modifier les seuils** | Interdit par la consigne ; aucune mesure ne le justifie (`seuilMinScore` 62 : 0 % de changement de camp) | `H3` |
+| **VALIDER PROSPECTIVEMENT** l'impact réel sur les étiquettes | `H3` mesure 11,75 % d'étiquettes changées, mais sur données **synthétiques** | `H1`–`H3` sont [SYNTH] |
+
+**Formulation exacte de l'incohérence, corrigée** : il n'y a pas « deux échelles
+qui se côtoient » au sens d'un simple facteur 1,26. Il y a :
+- une échelle **1,00** (production, après `clamp()`), au ratio base/enrichis **0,60/0,40** ;
+- une échelle **1,26** (table brute), au ratio **0,71/0,55** = fraction enrichie **0,436507937** ;
+- une échelle **1,37** (repli `fromJson`), qui **fuite** en production sur restauration partielle.
+
+Les deux premières diffèrent par **échelle × redistribution**. La troisième est
+un **défaut réel** à corriger.
+
+### 8.5 Des défauts d'alimentation subsistent-ils dans le moteur actuel ?
+
+**Réponse mesurée : AUCUN défaut d'alimentation démontré.**
+
+Sur les 9 critères jamais calculés dans le moteur actuel (`C-19-2`, `C-19-4`) :
+
+| Critère | Cause démontrée | Défaut du moteur ? |
+|---|---|---|
+| `record`, `jockey`, `entraineur`, `terrain` | **donnée absente** du payload PMU | **NON** |
+| `poidsRel` | **non applicable** hors handicap de galop | **NON** |
+| `placeDepart` | **non applicable** hors PLAT (corde non fournie) | **NON** |
+| `elo` | **base vide** : `✅ 0 ratings restaurés` | **NON** |
+| `mouvCote` | **1 seul snapshot** par course, fenêtre 30 min non couverte | **NON** |
+| `discipline` | indéterminé / neutre par calcul | **à surveiller** |
+
+**Un seul point reste incertain** : `discipline`. Il n'est pas démontré
+défaillant, mais sa neutralité systématique sur 6 spécialités mérite une
+vérification dédiée. **Ce n'est pas une correction à faire maintenant** : ce
+serait un nouveau chantier, hors périmètre.
+
+**Ce que cela implique pour les décisions 8.2/8.4** : modifier les planchers
+(8.2) ne rendra **aucun** de ces 9 critères actif. Il faut d'abord **les
+alimenter**. Les deux chantiers sont **indépendants et tous deux nécessaires**.
+
+### 8.6 Ce qui doit rester INCHANGÉ faute de preuve suffisante
+
+| Élément | Décision | Pourquoi |
+|---|---|---|
+| **Poids initiaux (constructeur)** | **INCHANGÉS** | Aucune donnée ne détermine une meilleure pondération initiale. Corpus exploitable : **47** courses (mai), **4** (novembre), **in-sample** |
+| **Coefficients du gradient** (`lrBase` 0,08, `momentumFactor` 0,3, facteurs 1,0/0,5/0,4/0,3) | **INCHANGÉS** | `A12` : 2–6 cycles pour 50 % de plage. Le gradient **n'est pas le frein** |
+| **Formule des 19 critères** | **INCHANGÉE** | Interdit par les protections absolues ; aucune mesure ne la met en cause |
+| **Seuils appris** (`IaSeuilsAppris` 80/50/65/75/60/35/80/0) | **INCHANGÉS** | Interdit ; aucune mesure ne le justifie |
+| **Seuils d'étiquetage** (75 / 52) | **INCHANGÉS** | Interdit ; l'impact mesuré (11,75 %) est **synthétique** |
+| **Calibration, TOP3 Learning, mécanismes financiers PMU** | **INCHANGÉS** | Hors périmètre, protections absolues |
+| **Mécanisme `poidsParDiscipline`** | **INCHANGÉ** | `M12.3` : effet réel mesuré (1,119 vs 1,200). Le mécanisme fonctionne |
+| **Gel sur corrélations** | **INCHANGÉ, NON MESURABLE** | `correlations` est **vide** dans les deux backups ; le seuil de 50 courses n'est pas atteint (47 max) |
+
+### 8.7 Ce qui devra être validé PROSPECTIVEMENT après le redémarrage à zéro
+
+| # | Élément à valider | Protocole | Seuil de décision |
+|---|---|---|---|
+| **V-1** | Bénéfice réel de **P-3** (planchers 0,005) | Comparer, sur courses **postérieures** à la date T uniquement, TOP1/TOP3 avec planchers 0,01 vs 0,005 | n ≥ **200** courses hors échantillon |
+| **V-2** | Bénéfice réel de **P-4** (relèvement des plafonds individuels) | Idem, par critère relevé | n ≥ 200 |
+| **V-3** | Impact réel de l'échelle sur les **étiquettes** et le **score de gain** | Rejouer `H3` sur les **scores réels** enregistrés, pas sur `Uniform(10,90)` | tous les pronostics disponibles |
+| **V-4** | Meilleure **pondération initiale** | Après le zéro-redémarrage, figer 3 jeux initiaux sur 3 périodes distinctes, comparer hors échantillon | n ≥ 200 par période |
+| **V-5** | Effet réel du **gel sur corrélations** | Attendre `nb ≥ 50` **et** `correlations` non vide | r > 0,85 observé |
+| **V-6** | `discipline` est-il réellement neutre ? | Instrumenter le calcul sur les 6 spécialités | toute variance non nulle |
+
+**Règle absolue pour toutes ces validations** : **les résultats historiques
+in-sample ne constituent JAMAIS une validation indépendante.** Les chiffres E2
+(`TOP1 29,79 %` pour les poids appris de mai, sur les 47 courses de mai) sont
+**in-sample** et ne sont cités ici que pour montrer l'ordre de grandeur, jamais
+comme preuve de supériorité.
+
+### 8.8 Tableau récapitulatif — les 9 décisions
+
+| # | Décision | Valeur | Preuve | Statut |
+|---|---|---|---|---|
+| 1 | Harmoniser `fromJson` `forme` | 0,32 → **0,25** | `M2.1`, `H6` | **MESURÉ — SÛR** |
+| 2 | Harmoniser `fromJson` `gains` | 0,15 → **0,13** | `M2.1`, `H6` | **MESURÉ — SÛR** |
+| 3 | Harmoniser `fromJson` `record` | 0,12 → **0,10** | `M2.1`, `H6` | **MESURÉ — SÛR** |
+| 4 | Planchers individuels des 12 enrichis | 0,01 → **0,005** | `G1.1`, `G2.4`, `H4`, `G2.3` | **MESURÉ — À ARBITRER** |
+| 5 | Plafond individuel sélectif | **à décider par critère** | `G3.1`, `G3.3` | **MESURÉ — VALEUR À ARBITRER** |
+| 6 | Plancher collectif 0,18 | **CONSERVER** | `G1.3`, `G2.4` | **MESURÉ** |
+| 7 | Plafond collectif 0,40 | **CONSERVER** | `G2.2`, C4 | **MESURÉ** |
+| 8 | Division des scores par la somme | **NE PAS FAIRE** (no-op mesuré) | `H4` | **MESURÉ** |
+| 9 | Poids initiaux, gradient, seuils, formules | **INCHANGÉS** | Absence de preuve | **CONSERVATION PROVISOIRE** |
+
+### 8.9 Ce que je refuse de proposer, et pourquoi
+
+- **Je ne propose pas un jeu de poids « optimal ».** Le corpus ne le permet pas
+  (47 + 4 courses, in-sample).
+- **Je ne propose aucune modification de seuil** pour compenser l'échelle :
+  l'utilisateur l'interdit et aucune mesure ne le justifie.
+- **Je ne propose pas de supprimer le plafond collectif** : `C4` mesure une
+  domination de 1,90× et 7/7 critères de base rétrogradés.
+- **Je ne propose pas de toucher aux coefficients d'apprentissage** : `A12`
+  démontre qu'ils ne sont pas le frein.
+- **Je ne prétends pas que P-3 améliorera les pronostics.** P-3 rend
+  l'apprentissage **possible** ; elle ne le rend pas **efficace** sans
+  alimentation.
+
+---
+
+## 9. TRAÇABILITÉ — OÙ CHAQUE CHIFFRE EST REPRODUCTIBLE
 
 | Harnais | Tests | Ce qu'il établit |
 |---|---|---|
-| `test/audit_poids_familles_test.dart` | 20 | Sommes des 4 familles, divergence `forme` |
-| `test/audit_poids_mecanique_test.dart` | 7 | placeDepart vs forme, contre-factuels |
-| `test/audit_poids_comparaison_test.dart` | 4 | Actuel vs historique |
-| `test/audit_poids_disciplines_test.dart` | 6 | M11/M12, effet inter-disciplines |
-| `test/audit/poids_plage_atteignable_test.dart` | 12 | `A3` (0/342 verrou), `A11` (point fixe), `A9` (plancher) |
-| `test/audit/poids_echelle_test.dart` | 3 | `C1` (63,40 %), `C2`, `C3` |
+| `test/audit_poids_familles_test.dart` | 20 | Sommes des 4 familles, **les 3 divergences** (`M2.1`), replis (`M3`) |
+| `test/audit_poids_mecanique_test.dart` | 7 | `placeDepart` vs `forme`, contre-factuels (`M9`/`M10`) |
+| `test/audit_poids_disciplines_test.dart` | 6 | `M11`/`M12`, coexistence 1,26/1,00 par discipline |
+| `test/audit_poids_comparaison_test.dart` | 4 | `M13`, actuel vs historique |
+| `test/audit/poids_plage_atteignable_test.dart` | 12 | `A0` (garde), `A3` (0/342), `A11` (point fixe), `A12` (vitesse), `A9` |
+| `test/audit/poids_echelle_test.dart` | 3 | `C1` (classements), `C2`, `C3` (score max 126) |
 | `test/audit/poids_limite_structurelle_test.dart` | 4 | `H1`–`H4` sur backups réels |
 | `test/audit/poids_comparaisons_reelles_test.dart` | 4 | `E1`–`E4`, corpus réel |
+| **`test/audit/poids_contraintes_test.dart`** | **12** | **`G0` (garde 7600 comparaisons), `G1.1`–`G1.3` (planchers/collectif/gradient), `G2.1`–`G2.5` (5+1 configurations), `G3.1`–`G3.3` (déblocage réel)** |
+| **`test/audit/poids_echelle_consommateurs_test.dart`** | **6** | **`H1`–`H6` : conditions exactes, ratios 1,1833/1,3750, consommateurs, 3 transformations, réplique de discipline, `fromJson` 1,37** |
+| `test/audit/chaine_19_criteres_isolate_test.dart` | 5 | `C-19-1`..`4` : **10/19** critères calculés, 6 spécialités |
 
-**Total : 60 tests verts, `flutter analyze lib/ test/` : `No issues found!`**
+**Total mesuré par exécution : `00:32 +83: All tests passed!` — 83 tests verts,
+0 échec** sur les **11** harnais listés ci-dessus, lancés ensemble avec `-j 1`.
+
+**Détail du calcul** : 20 + 7 + 6 + 4 + 12 + 3 + 4 + 4 + 12 + 6 + 5 = **83**.
+`flutter analyze` sur chacun des deux nouveaux harnais → **`No issues found!`**
+
+**Point de méthode** : j'ai d'abord écrit « 78 tests » dans une version
+antérieure de ce tableau, en recomposant de mémoire. Le décompte exact par
+`grep -cE "^\s*(test|testWidgets)\("` puis par **exécution réelle** donne
+**83**. C'est la valeur retenue.
 
 **Aucune production modifiée.** Aucun push. Aucun APK. Aucun recalcul
-historique. Aucun reset. Aucune donnée fabriquée.
+historique. Aucun reset. Aucune sauvegarde modifiée. Aucune donnée fabriquée.
 
 ---
 
-## 9. RÉSERVE FINALE — CE QUE CE RAPPORT NE PROUVE PAS
+## 10. RÉSERVE FINALE — CE QUE CE RAPPORT NE PROUVE PAS
 
-1. **Rien sur la qualité réelle des pronostics.** n = 47, in-sample. Les
-   chiffres du §3.2 décrivent un échantillon, ils ne valident pas le modèle.
-2. **Rien sur `Cross-country`** (9 cas) ni sur les interactions entre critères
-   (effectif insuffisant).
-3. **Rien sur les corrélations** : le gel exige 50 courses dans la fenêtre et
-   `correlations` est vide dans les deux backups.
+1. **Rien sur la qualité réelle des pronostics.** n = 47 (mai) et 4 (novembre),
+   **in-sample**. Les chiffres `E2` décrivent un échantillon ; ils **ne
+   valident pas** le modèle. La référence « cote seule » atteint le même TOP1
+   (29,79 %), ce qui **borne** l'apport démontré des 19 critères.
+2. **Rien sur le Cross-country** (9 cas) ni sur les interactions entre critères.
+3. **Rien sur les corrélations** : `correlations` est **vide** dans les deux
+   backups, et le gel exige 50 courses (47 disponibles au maximum).
 4. **Rien sur les appareils physiques** : ces harnais sont des tests Dart, pas
    des mesures sur Android.
-5. **La promotion de `cote` à 0,40 n'est PAS prouvée bénéfique.** Elle est
-   mesurée comme *conséquence du mécanisme* ; « cote seule » atteignant le même
-   TOP1, l'apport des 18 autres critères n'est pas démontré.
-
-**Toute lecture de ce rapport qui conclurait « l'IA apprend bien » ou « l'IA est
-cassée » dépasserait ce que les mesures autorisent.** Ce qui est établi est plus
-précis et plus étroit : *le mécanisme d'apprentissage est arithmétiquement sain,
-mais il ne peut pas récompenser la pertinence hippique tant que 13 critères sur
-19 restent bloqués par des contraintes de bornes ou une alimentation constante.*
+5. **Les expériences `G*` et `H1`–`H3` sont [SYNTH]** : elles démontrent des
+   **propriétés du mécanisme**, pas le comportement sur des courses hippiques
+   réelles. Seuls `E1`–`E4`, `H1`(données de backup), `H2`(`H4` structurel),
+   `C-19-*` et `G1.2`/`G1.3` portent sur des données réelles.
+6. **La promotion de `cote` à 0,40 n'est PAS prouvée bénéfique.** Elle est
+   mesurée comme **conséquence du mécanisme**. « Cote seule » atteignant le même
+   TOP1, l'apport des 18 autres critères **n'est pas démontré**.
+7. **P-3 n'améliorera pas les pronostics à elle seule.** Elle rend
+   l'apprentissage **possible** ; sans alimentation des 9 critères neutres, elle
+   ne rend rien **efficace**.
+8. **Aucune valeur proposée n'est optimale.** 0,005 est une valeur **graduée et
+   prudente**, justifiée comme amélioration mesurée, pas comme optimum.
