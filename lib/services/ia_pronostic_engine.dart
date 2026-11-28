@@ -248,6 +248,16 @@ class IaPronosticEngine {
       ZtPartant p, ZtCourse course,
       {IaPoidsAdaptatifs? poids, Map<String, double>? poidsEffectifs}) {
 
+    // ★ CONDITION DE CONSERVATION (28/11/2026) — CE REPLI CONSERVE `defaut()`.
+    //   `defaut()` est ici la RÉFÉRENCE BRUTE (Σ = 1,26), et elle est conservée
+    //   telle quelle : ce site n'est PAS un chemin de création d'une nouvelle
+    //   table effective, c'est un repli de calcul interne.
+    //   CONDITION MESURÉE : ce repli n'est atteint que si `poids == null`. Les
+    //   TROIS producteurs de cette classe passent tous `poids: poidsGlobaux`
+    //   (l.94-95, l.131-132, l.187-188 — mesuré : 3 / 3 occurrences de
+    //   `poids: poidsGlobaux`), donc `w` n'est JAMAIS `defaut()` en production.
+    //   Si un futur appelant omettait `poids`, il recevrait la table brute :
+    //   c'est assumé et documenté ici, sans intervention supplémentaire.
     final w  = poids ?? IaPoidsAdaptatifs.defaut();
     final pe = poidsEffectifs ?? {
       'forme': w.forme, 'gains': w.gains, 'record': w.record,

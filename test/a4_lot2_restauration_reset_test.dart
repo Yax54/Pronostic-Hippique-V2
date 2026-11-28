@@ -356,12 +356,28 @@ const List<String> _clesToutes = <String>[
 
 // ───────────────────────────────────────────────────────────────────────────
 //  Valeurs d'usine, lues à la source et non recopiées à la main :
-//    • poids      → `IaPoidsAdaptatifs.defaut()`  (ia_memory_models.dart:854)
+//    • poids      → `IaPoidsAdaptatifs.defaut()`   (référence BRUTE, Σ = 1,26)
+//    • poids      → `IaPoidsAdaptatifs.effectif()` (table EFFECTIVE, Σ = 1,00)
 //    • seuils     → `SeuilsConfianceAdaptatifs()` (ia_memory_service.dart:7500)
 //    • calibration→ 50.0 puis `clamp(10, 90)`
 //  On les matérialise une fois pour que les assertions comparent des SNAPSHOTS.
+//
+//  ⚠️ DEPUIS LA CLÔTURE DU CHANTIER (28/11/2026), le service n'initialise PLUS
+//     ses tables avec `defaut()` : les quatre chemins de création posent
+//     `effectif()` (= `defaut()` passée par la projection existante). Les deux
+//     constantes coexistent donc volontairement :
+//       • `_poidsUsine`        = table BRUTE, utilisée comme TÉMOIN NÉGATIF
+//                                (« les poids ne sont pas ceux d'usine ») ;
+//       • `_poidsEffectifUsine`= table EFFECTIVE, utilisée pour vérifier ce que
+//                                le service DOIT servir après un reset.
 // ───────────────────────────────────────────────────────────────────────────
 Map<String, dynamic> get _poidsUsine => IaPoidsAdaptatifs.defaut().toJson();
+
+/// Table EFFECTIVE d'usine : Σ = 1,00, c'est l'état RÉELLEMENT servi par le
+/// service après une initialisation ou un reset (cf. `IaPoidsAdaptatifs
+/// .effectif()` dans `ia_memory_models.dart`).
+Map<String, dynamic> get _poidsEffectifUsine =>
+    IaPoidsAdaptatifs.effectif().toJson();
 
 Map<String, dynamic> get _seuilsUsine => SeuilsConfianceAdaptatifs().toJson();
 
@@ -1371,12 +1387,19 @@ void main() {
     expect(IaMemoryService.instance.rapports, isEmpty,
         reason: 'T7-A : rapports vides après rechargement');
     expect(IaMemoryService.instance.poids.nbMisesAJour, 0,
-        reason: 'T7-A : `ia_poids_v3` absente → `IaPoidsAdaptatifs` par défaut '
-            'via le constructeur (ia_memory_service.dart:2225-2229 ne fait '
-            'rien si la clé est absente, le champ garde `defaut()`)');
-    expect(_enc(IaMemoryService.instance.poids.toJson()), _enc(_poidsUsine),
-        reason: 'T7-A : les poids reviennent aux valeurs d\'usine APRÈS '
-            'rechargement (conséquence du disque effacé, pas d\'un calcul)');
+        reason: 'T7-A : `ia_poids_v3` absente → le champ garde la table posée '
+            'par `recharger()` (ia_memory_service.dart:2311-2315), soit '
+            '`IaPoidsAdaptatifs.effectif()`');
+    expect(_enc(IaMemoryService.instance.poids.toJson()),
+        _enc(_poidsEffectifUsine),
+        reason: 'T7-A : les poids reviennent aux valeurs d\'usine EFFECTIVES '
+            'APRÈS rechargement (conséquence du disque effacé, pas d\'un '
+            'calcul)');
+    expect(_enc(IaMemoryService.instance.poids.toJson()),
+        isNot(_enc(_poidsUsine)),
+        reason: 'TÉMOIN : la table servie n\'est PAS la table brute — sinon '
+            'l\'assertion précédente serait indiscernable d\'une absence de '
+            'projection');
     expect(_enc(IaMemoryService.instance.seuilsConfiance.toJson()),
         _enc(_seuilsUsine),
         reason: 'T7-A : seuils d\'usine après rechargement');
@@ -1645,9 +1668,11 @@ void main() {
             'restants : $cachesRestants');
 
     // ── ③ Poids, seuils et calibration reviennent aux VALEURS D'USINE ────
-    expect(_enc(svc.poids.toJson()), _enc(_poidsUsine),
-        reason: 'T7-B : `_poids = IaPoidsAdaptatifs.defaut()` (l.2107) — '
-            'valeurs d\'usine exactes en RAM');
+    expect(_enc(svc.poids.toJson()), _enc(_poidsEffectifUsine),
+        reason: 'T7-B : `_poids = IaPoidsAdaptatifs.effectif()` (étape 5 du '
+            'reset) — valeurs d\'usine EFFECTIVES exactes en RAM');
+    expect(_enc(svc.poids.toJson()), isNot(_enc(_poidsUsine)),
+        reason: 'TÉMOIN : la table servie n\'est PAS la table brute');
     expect(svc.poids.nbMisesAJour, 0,
         reason: 'T7-B : compteur de mises à jour remis à 0');
     expect(svc.poids.calibrationScore, 50.0,
@@ -1721,8 +1746,10 @@ void main() {
         reason: 'T7-B : après un reset RÉUSSI, un rechargement ne doit rien '
             'changer (RAM et disque sont déjà cohérents) — écarts : '
             '${apresReset.rapport("T7-B/rechargement", apresRechargement)}');
-    expect(_enc(IaMemoryService.instance.poids.toJson()), _enc(_poidsUsine),
-        reason: 'T7-B : les poids restent d\'usine après rechargement');
+    expect(_enc(IaMemoryService.instance.poids.toJson()),
+        _enc(_poidsEffectifUsine),
+        reason: 'T7-B : les poids restent à la table EFFECTIVE d\'usine après '
+            'rechargement');
     expect(IaCalibrationRegistry.value, 50.0,
         reason: 'T7-B : registre stable à 50.0 après rechargement');
     // Aucune clé IA n'a été RECRÉÉE par le rechargement : le garde

@@ -460,18 +460,38 @@ void main() {
     if (anomalies.isNotEmpty) {
       expect(anomalies.first.contains('illisible'), isTrue,
           reason: 'un blob non décodable doit être signalé comme illisible');
-      // La table par défaut est utilisée : les 19 poids initiaux.
+      // La table par défaut est utilisée. ⚠️ DEPUIS LA CLÔTURE (28/11/2026),
+      //   le repli de `_load()` n'est PLUS la table BRUTE `defaut()` : le champ
+      //   est initialisé à `IaPoidsAdaptatifs.effectif()` (table EFFECTIVE,
+      //   Σ = 1,00) et il est CONSERVÉ tel quel quand le blob est illisible.
+      //   La référence attendue est donc `effectif()`, et non `defauts` (qui
+      //   reste la table brute de référence, Σ = 1,26).
       var ecartInit = 0.0;
+      final effectif = IaPoidsAdaptatifs.effectif();
       for (final k in kCles) {
-        final d =
-            (mem.poids.getPoids(k) - IaPoidsAdaptatifs.defauts[k]!).abs();
+        final d = (mem.poids.getPoids(k) - effectif.getPoids(k)).abs();
         if (d > ecartInit) ecartInit = d;
       }
       // ignore: avoid_print
-      print('D3-b blob illisible → table par défaut, écart aux poids initiaux '
-          '= ${_f(ecartInit)}');
+      print('D3-b blob illisible → table EFFECTIVE d\'usine conservée, écart '
+          'à effectif() = ${_f(ecartInit)}');
       expect(ecartInit, lessThanOrEqualTo(1e-12),
-          reason: 'blob illisible → table par défaut complète, jamais partielle');
+          reason: 'blob illisible → table EFFECTIVE d\'usine complète, jamais '
+              'partielle');
+      // TÉMOIN : la table servie n'est pas la table BRUTE — sans quoi
+      // l'assertion précédente serait indiscernable d'une absence de projection.
+      var ecartBrut = 0.0;
+      for (final k in kCles) {
+        final d =
+            (mem.poids.getPoids(k) - IaPoidsAdaptatifs.defauts[k]!).abs();
+        if (d > ecartBrut) ecartBrut = d;
+      }
+      // ignore: avoid_print
+      print('D3-b écart à la table BRUTE (`defauts`) = ${_f(ecartBrut)} '
+          '(doit être ≠ 0 : la table servie est projetée)');
+      expect(ecartBrut, greaterThan(1e-6),
+          reason: 'TÉMOIN : la table servie est bien la table EFFECTIVE, pas '
+              'la table brute — `defauts` reste la référence brute');
       // Et les pronostics restent chargés : l\'échec est CONFINÉ aux poids.
       expect(mem.pronostics, isNotEmpty,
           reason: 'un blob de poids illisible ne doit pas faire perdre les '

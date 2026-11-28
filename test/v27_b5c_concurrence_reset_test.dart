@@ -583,8 +583,10 @@ void main() {
     expect(mem.pronostics, isEmpty,
         reason: 'le chargement ne doit pas repeupler la RAM APRÈS le vidage : '
             'sans l\'attente de l\'étape 3, ces pronostics réapparaîtraient');
-    expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson(),
-        reason: 'les poids doivent rester aux valeurs d\'usine');
+    // Le service pose la table EFFECTIVE d'usine (`effectif()`, Σ = 1,00) :
+    // contrat d'INITIALISATION du service, pas la référence brute.
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
+        reason: 'les poids doivent rester aux valeurs d\'usine EFFECTIVES');
 
     // ── Le disque ne contient plus le poison non plus ────────────────────
     expect(store.contient(kPronostics), isFalse,
@@ -649,7 +651,7 @@ void main() {
             '(mutation : sans lui, un getAll a lieu)');
 
     // ── Et la RAM n\'a pas été repeuplée par le poison ───────────────────
-    expect(formePendantReset, IaPoidsAdaptatifs.defaut().forme,
+    expect(formePendantReset, IaPoidsAdaptatifs.effectif().forme,
         reason: 'aucun chargement n\'a eu lieu : `forme` n\'est pas passée '
             'à la valeur poison 0.77 — on contrôle l\'effet en RAM, pas '
             'seulement le nombre d\'appels');
@@ -659,7 +661,7 @@ void main() {
 
     // ── État final cohérent ──────────────────────────────────────────────
     expect(mem.pronostics, isEmpty);
-    expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson());
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson());
     expect(mem.nbEcrituresEnCours, 0);
   });
 
@@ -773,7 +775,7 @@ void main() {
 
     // ── La RAM est aux valeurs d'usine (échec disque, pas RAM) ───────────
     expect(mem.pronostics, isEmpty);
-    expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson());
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson());
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -822,13 +824,18 @@ void main() {
 
     debugPrint('V27-7 erreur1=$erreur1 erreur2=$erreur2 '
         'pronostics=${mem.pronostics.length} '
-        'poidsUsine=${jsonEncode(mem.poids.toJson()) == jsonEncode(IaPoidsAdaptatifs.defaut().toJson())} '
+        // ⚠️ Le diagnostic est aligné sur l'assertion qui suit : la table
+        //    d'usine servie est la table EFFECTIVE (`effectif()`), pas la
+        //    table BRUTE (`defaut()`). Comparer ici à `defaut()` afficherait
+        //    un « false » trompeur alors que l'état est correct.
+        'poidsUsine=${jsonEncode(mem.poids.toJson()) == jsonEncode(IaPoidsAdaptatifs.effectif().toJson())} '
         'enCours=${mem.nbEcrituresEnCours} archives=${store.clesArchive}');
 
     // ── Aucune corruption : état final déterministe ──────────────────────
     expect(mem.pronostics, isEmpty, reason: 'RAM vide après les deux resets');
-    expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson(),
-        reason: 'poids aux valeurs d\'usine, pas dans un état intermédiaire');
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
+        reason: 'poids aux valeurs d\'usine EFFECTIVES, pas dans un état '
+            'intermédiaire');
     expect(mem.nbEcrituresEnCours, 0, reason: 'aucun Future orphelin');
     expect(store.contient(kPremiumDuJour), isFalse,
         reason: 'aucune clé réécrite entre les deux effacements');
@@ -961,8 +968,8 @@ void main() {
         reason: 'TÉMOIN : l\'effacement disque a bien eu lieu');
     expect(mem.pronostics, isEmpty,
         reason: 'TÉMOIN : la RAM a bien été vidée par le reset');
-    expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson(),
-        reason: 'TÉMOIN : les poids sont revenus aux valeurs d\'usine');
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
+        reason: 'TÉMOIN : les poids sont revenus aux valeurs d\'usine EFFECTIVES');
 
     // ── F : réveil de l'écriture (plus aucun reset en cours) ──────────────
     verrou.complete();

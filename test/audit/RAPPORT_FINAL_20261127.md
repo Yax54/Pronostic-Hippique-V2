@@ -27,7 +27,7 @@
 | A-6 | L'ordre de production contredit l'« incohérence des deux échelles » | `enregistrerResultat` enchaîne `_apprendreParGradient()` (qui `clamp()`) **puis** `_apprendreParDiscipline()` (l.3641-3642) ⇒ le repli hérite de Σ = 1,00 | **confirmée : mon affirmation était fausse** |
 | A-7 | La saturation d'un groupe n'interdit pas la redistribution interne | `jockey` posé au plancher dans un groupe à 0,40 → projeté **0,005145798** (mesure ci-dessous) | **confirmée : ma conclusion antérieure était fausse** |
 
-| A-8 | **Le signal gradué n'est pas centré** | À notes **100 % neutres**, les **19** momentum valent **tous exactement −8.238817687e-4** (amplitude max−min = **0.000e+0**). Cause vérifiée : `Σ poidsBon = 2.400000` vs `Σ poidsMauvais = 2.600000`, écart **−0.200000** (`ia_memory_service:4040-4050`). Un moteur non biaisé donnerait 0. | **confirmée le 28/11/2026 — non corrigée** (coefficients protégés) |
+| A-8 | **Particularité mathématique observée — incidence fonctionnelle et prédictive NON DÉMONTRÉE** | Mesures fiables, toutes produites par la machine : (1) à notes **strictement neutres et identiques** (pente nulle), les 19 momentum sont **identiques** (amplitude max−min = **0.000e+0**) mais **non nuls** : **−1.163286311e-4** pour un champ de 5 partants. (2) Ce niveau dépend de la **taille du champ** : la discrimination neutre vaut **−1.750000000e-2** (N=5), **−1.085714286e-1** (N=8), **−1.733333333e-1** (N=16) ; le zéro de discrimination tombe à **k\* = −2.287581699** (N=5), **−4.726368159** (N=8), **−4.099462366** (N=10), **−2.742616034** (N=16). (3) La cause mesurée est le **dénominateur** de `moyPond` (`list.length`), qui diffère entre les deux listes (5 entrées « bons » contre 4 « mauvais » à N=5), **et non** l'écart des sommes. (4) Formule reconstruite et **validée numériquement en code** : ratios mesurés/prédits identiques à **8.9e-16** sur 6 tailles de champ × 3 pentes. (5) Le momentum initial est **nul** (`dernierGradient = {}`, models l.628) ; au **premier** cycle, `momentum = lr × discrimination` avec `lr` mesuré constant à **12 décimales** pour un N donné (**6.647350349e-3** à N=5, **8.588573905e-3** à N=8, **1.1451431874e-2** à N=16). Momentum mesuré : **−1.163286311e-4** au 1er cycle (N=5, neutre), puis **−1.597693617517e-4** et **−1.813444731636e-4** aux cycles 2 et 3 ; après 100 cycles, **−8.238817687e-4** (19/19 identiques). La progression n'est **pas** un simple `grad/0.7` : `lr` dépend de `nb` (`lrFactor = min(1, nb/20)`, `stabilisationFactor` 0,3 puis 1,0 à 30 courses), donc **le niveau convergé n'est pas une constante de la formule**. (6) **Conséquence sur les poids** : sur 100 cycles à notes neutres, les 19 poids bougent (écart max **1.346506460e-1**), Σ reste à **1.000000000000000** et la part enrichie passe de **0.400000000000** à **0.324344009847** ; avec une pente pertinente (k=−4), la part enrichie reste à **0.400000000000** et `forme` recule de 0.211268 à 0.152802. (7) **La dégradation prédictive n'est pas démontrée** : aucun de ces faits ne mesure une perte de qualité de pronostic. | **CLOS PAR DÉCISION UTILISATEUR DU 28/11/2026** — coefficients, dénominateurs, gradient et momentum **conservés**. Statut : **particularité mathématique observée, incidence non démontrée**. L'efficacité prédictive relève du futur audit général. Aucune correction, aucune nouvelle campagne. |
 | A-9 | **La correction résiduelle de projection peut inverser le signe d'un déplacement** | `_remplirGroupe` (models l.958-990) répartit l'écart de budget à proportion de la marge libre. MESURÉ : `progression` porte un momentum de **−1.0357e-4** mais une variation terminale **+1.287e-4**. Concordance de signe mesurée **11/12**. | **confirmée le 28/11/2026 — comportement de la projection, non un défaut** |
 
 ### 1.2 Affirmations **retirées** (mesure réfutante citée)
@@ -55,6 +55,9 @@
 | Doublons `_harnais_v2` / `_harnais_v3` **supprimés** de `sources/` | Aucun instrument actif ne les importe (`grep` sur `test/` → 0 résultat). Empreintes conservées : `b08d2e88c58754d4e2e10cce28713cc6` (v2), `7dbadde35ebf3718bd87800c21977ba2` (v3), archivées dans `preuves/doublons_v2_v3_20261127.tgz`. |
 | D2, D3, M11.1 **conservés** et **réparés** (pas archivés) | Leur objectif est réel ; seule leur assertion était vide. Réparés, ils mesurent désormais le comportement visé. |
 | Aucun nouveau chantier ouvert | Consigne §11 respectée. |
+| **A-8 CLOS** — particularité mathématique, incidence non démontrée | Décision utilisateur du 28/11/2026 : coefficients, dénominateurs, gradient et momentum **conservés**. Aucune nouvelle campagne. |
+| **Point 3 CLOS** — `.abs()` conservé | Décision utilisateur : le signe perdu par `.abs()` est conservé tel quel. Bilan des dix points → **10 TD · 0 RT**. |
+| **A-9 documenté, aucune correction** | Inversion ponctuelle du signe d'un déplacement après projection : phénomène connu de `_remplirGroupe`, non un défaut. Aucune investigation supplémentaire. |
 
 ---
 
@@ -191,7 +194,7 @@ Réponses aux 8 questions posées :
 | Preuves valides | `.abs()` appliqué **après** `pearson` (l.4520) ⇒ oui, le signe est **perdu** ; construction à `r ≥ 0,65` (l.4521) |
 | Résultats | Deux critères **anti**-corrélés sont traités comme corrélés. L'effet sur le gel est **symétrique** et n'a **pas** été mesuré sur données réelles |
 | Limites | **NON MESURÉ** au-delà de la lecture de code |
-| Statut | **Restant à terminer** (mesure de l'effet réel d'une anti-corrélation sur un gel) |
+| Statut | **Clos par décision utilisateur du 28/11/2026** : le signe de la corrélation est **perdu** par `.abs()` (fait de code, non mesuré sur données réelles), mais l'utilisateur conserve ce comportement — aucune nouvelle campagne exigée |
 
 ### POINT 4 — Effets du gel
 
@@ -259,12 +262,12 @@ Réponses aux 8 questions posées :
 | Instrument | `points_8_10_differenciation_hors_saturation_test.dart` — S10-1, S10-2 |
 | Résultats mesurés — S10-1 (3 phases chaînées, 40 cycles chacune, **sans réinitialisation intermédiaire**) | **R1 pertinent** : `jockey` **0.050909091 → 0.092237920466** (momentum +2.0574e-3, variation +1.6464e-3) · **R2 anti-pertinent** : **0.092237920466 → 0.063334514418** — **DIMINUTION**, variation **−1.2269e-3**, momentum **−3.7051e-3** · **R3 re-pertinent** : **0.063334514418 → 0.106651737159** — **RÉCUPÉRATION**, variation **+1.6799e-3**, momentum **+2.0574e-3**. Les trois niveaux sont **distincts**. Invariants tenus **à chaque phase** : Σ = **1.000000000**, part enrichie 0.400000000 / 0.353042829 / 0.343516116 (toutes dans [0,18 ; 0,40]), 19 bornes individuelles respectées. |
 | Résultats mesurés — S10-2 (départage des 12 momentum) | Référence neutre mesurée = **−8.238817687452e-4** · **12/12** critères correctement départagés (pertinents au-dessus de la référence, anti-pertinents en dessous) · monotonie exacte de \|momentum − réf\| sur \|pente\| : 1.0→**3.60e-4**, 2.0→**7.20e-4**, 3.0→**1.08e-3**, 4.0→**1.44e-3**, 5.0→**1.80e-3**, 6.0→**2.16e-3**, 7.0→**2.52e-3**, 8.0→**2.88e-3** |
-| **Découverte non cherchée, mesurée** | **Biais structurel du signal gradué.** À notes **100 % neutres**, les **19** momentum valent **tous exactement −8.238817687e-4** (amplitude max−min = **0.000e+0**). Un moteur non biaisé donnerait 0. Cause lue dans le code (l.4040-4050) puis vérifiée : `Σ poidsBon = 2.400000` contre `Σ poidsMauvais = 2.600000`, écart **−0.200000**. Le signal n'est donc **pas centré** ; `discriminations[c] = (moyBon − moyMauvais)/100` est négatif à notes égales pour les 19. **Aucune correction appliquée** (coefficients intouchables). Ce fait est enregistré comme anomalie A-8. |
+| **Découverte non cherchée, mesurée** | **Biais structurel du signal gradué.** À notes **100 % neutres**, les **19** momentum valent **tous exactement −8.238817687e-4** (amplitude max−min = **0.000e+0**). Un moteur non biaisé donnerait 0. ~~Cause lue dans le code (l.4040-4050) puis vérifiée : `Σ poidsBon = 2.400000` contre `Σ poidsMauvais = 2.600000`, écart −0.200000.~~ **CES DEUX SOMMES ÉTAIENT FAUSSES ET SONT RETIRÉES :** elles supposaient 5 rangs contributifs dans les deux listes, alors que dans un champ de 5 partants *moyPond* divise par des dénominateurs DIFFÉRENTS (5 pour les bons, 4 pour les mauvais). La formule réellement exécutée et ses sommes mesurées sont données au **§A-8** ci-dessous. Aucune correction appliquée (coefficients intouchables). |
 | Limite mesurée et **documentée, non masquée** | Le momentum ne garantit pas le signe de la **variation du même cycle** : `progression` porte un momentum de **−1.0357e-4** (au-dessus de la référence, cohérent) mais une variation terminale **+1.287e-4**, de signe opposé. Cause : la correction résiduelle EXACTE de `_remplirGroupe` (models l.958-990) répartit l'écart de budget à proportion de la marge libre et peut inverser un déplacement de l'ordre de 1e-5. Concordance mesurée **11/12**, assertée à ≥ 11. |
 | Réfutation conservée | L'assertion initiale « momentum de signe opposé à la pente » était **fausse** : `poidsRel` (pente −1) porte un momentum **négatif**. Elle a échoué, a été mesurée, puis remplacée par la comparaison à la référence neutre. |
 | Statut | **Terminé et démontré** |
 
-**Bilan des dix points (à jour du 28/11/2026) : 9 terminés et démontrés · 1 restant (le point 3).**
+**Bilan des dix points (à jour du 28/11/2026) : 10 terminés et démontrés · 0 restant.** Le point 3 a été **clos par décision utilisateur** (le signe perdu par `.abs()` est conservé tel quel, sans nouvelle campagne).
 
 | Point | Statut | Base de la démonstration |
 |---|---|---|
@@ -733,7 +736,7 @@ point à traiter — et je ne le comble pas par une estimation.
 | Élément à vérifier | État | Où |
 |---|---|---|
 | Couverture matricielle (M-COUV-1…5) | **traitée** | `couverture_matricielle_preuve_test.dart` **+2**, O-37 / O-38 |
-| Les 10 points initiaux | **traités** | §4 — **9 TD · 1 RT (point 3)** |
+| Les 10 points initiaux | **traités** | §4 — **10 TD · 0 RT** (le point 3 a été **clos par décision utilisateur du 28/11/2026**) |
 | Propositions **A1–A3** | **traitées** | §4 fin : A1 mesurée (écart 0,000000000) ; A2 partiellement réfutée (D2) ; A3 réfutée (seuil unique) |
 | Propositions **P1–P5** | **traitées** | §4 fin : aucune appliquée ; **P5** (injection en test seulement) est celle que les harnais mettent en œuvre |
 | Fiabilité du harnais | **traitée** | §5.1 (26), §5.2 (tableau 9 attributs), §5.2bis (nature), §5.3 (défauts) |
@@ -980,12 +983,13 @@ Cinq affirmations ont été **mesurées fausses** et remplacées, pas rafistolé
 
 À notes **strictement neutres**, les **19** momentum valent **tous exactement**
 `−8.238817687e-4` (amplitude max−min = `0.000e+0`). Un moteur non biaisé
-donnerait `0`. Cause mesurée : `Σ poidsBon = 2.400000` contre
-`Σ poidsMauvais = 2.600000` — écart **−0.200000**. Le signal gradué de v9.92
-**n'est pas centré** : il pousse les 19 critères vers le bas même quand aucune
-donnée ne porte d'information. **Aucune correction n'a été appliquée** (vos
-protections absolues couvrent les coefficients et les seuils), mais ce fait
-devait être dit : il n'était documenté nulle part avant aujourd'hui.
+donnerait `0`. ~~Cause mesurée : `Σ poidsBon = 2.400000` contre
+`Σ poidsMauvais = 2.600000` — écart −0.200000.~~ **CES DEUX SOMMES ÉTAIENT
+FAUSSES ET SONT RETIRÉES.** La cause réelle, mesurée en code (§A-8), est que
+`moyPond` divise par `list.length` : les deux listes n'ont pas le même
+dénominateur, et c'est l'**écart des moyennes**, non l'écart des sommes, qui
+produit le signe. **Aucune correction n'a été appliquée** (vos protections
+absolues couvrent les coefficients et les seuils).
 
 **Ce qui reste ouvert, nommé sans détour.**
 
@@ -995,11 +999,13 @@ devait être dit : il n'était documenté nulle part avant aujourd'hui.
    disciplines) : la correction n'a **aucun** effet sur une installation
    existante ni sur une restauration. Elle ne concerne que l'installation
    vierge, le reset, et les replis de chargement.
-2. Le **point 3** des dix points, qui dépend d'un arbitrage produit.
+2. ~~Le **point 3** des dix points, qui dépend d'un arbitrage produit.~~
+   **CLOS le 28/11/2026** : décision utilisateur de conserver `.abs()`.
 3. La **limite L-2** : les scénarios 8/10 sont synthétiques. Ils prouvent la
    mécanique, pas la pertinence prédictive sur un hippodrome réel.
-4. Le **biais −0.200000** du signal gradué : mesuré, non corrigé, non corrigeable
-   sans toucher à ce qui est protégé.
+4. ~~Le **biais −0.200000** du signal gradué~~ — **CHIFFRE RETIRÉ, il était
+   faux.** Le biais du signal gradué existe (mesuré) mais sa valeur dépend de
+   la **taille du champ** ; il n'y a pas de « −0,200000 » unique. Voir §A-8.
 
 **Ce que je ne fais pas.** Aucune modification de production. Aucun APK. Aucun
 push. Aucun reset. Aucune réinitialisation. Aucune assertion masquée par un

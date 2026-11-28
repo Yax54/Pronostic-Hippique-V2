@@ -1495,6 +1495,25 @@ class IaPoidsAdaptatifs {
 
   factory IaPoidsAdaptatifs.defaut() => IaPoidsAdaptatifs();
 
+  /// Table EFFECTIVE d'initialisation d'une NOUVELLE table de poids.
+  ///
+  /// Contrat :
+  ///   • part de `defaut()` — les 19 valeurs de référence ne sont PAS recopiées ;
+  ///   • applique la projection EXISTANTE (`clamp()` → `normaliser()` →
+  ///     `projeter()`), aucune formule nouvelle ;
+  ///   • produit Σ = 1,00, part enrichie dans [0,18 ; 0,40], bornes
+  ///     individuelles respectées ;
+  ///   • ne sert JAMAIS à restituer une table historique : `fromJson` reste
+  ///     le seul chemin de chargement et ne projette pas.
+  ///
+  /// `defaut()` reste la référence BRUTE (Σ = 1,26) : elle n'est ni déplacée
+  /// ni modifiée.
+  factory IaPoidsAdaptatifs.effectif() {
+    final p = IaPoidsAdaptatifs.defaut();
+    p.clamp();
+    return p;
+  }
+
   // Poids par défaut pour comparaison
   //
   // ★ BLOC 1 — MESURE HONNÊTE DE LA SOMME (BL1-A04 / BL1-A06).

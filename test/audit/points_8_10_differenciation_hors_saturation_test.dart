@@ -231,14 +231,23 @@ void main() {
     // ⚠️ CE N'EST PAS LE CAS, ET C'EST UN FAIT MESURÉ, PAS UNE HYPOTHÈSE.
     // MESURE : les 19 momentum valent TOUS exactement −8.238817687e-4
     // (amplitude max−min = 0.000e+0, identiques à 1e-15).
-    // CAUSE, lue dans le code (ia_memory_service:4040-4050) puis vérifiée
-    // arithmétiquement : le signal gradué n'est pas équilibré.
-    //     Σ poidsBon     = 1.0 + 0.6 + 0.5 + 0.3 + 0.0 = 2.400000
-    //     Σ poidsMauvais = 0.0 + 0.4 + 0.5 + 0.7 + 1.0 = 2.600000
-    //     écart = −0.200000                                        (MESURÉ)
-    // `discriminations[c] = (moyBon − moyMauvais)/100` : à notes égales,
-    // moyBon = moyMauvais × (2.4/2.6) < moyMauvais, donc discrimination
-    // NÉGATIVE CONSTANTE pour les 19 critères.
+    // CAUSE — FORMULE RÉELLEMENT EXÉCUTÉE, MESURÉE LE 28/11/2026.
+    // ⚠️ LES DEUX SOMMES QUE J'AVAIS ÉCRITES ICI (2,400000 / 2,600000) ÉTAIENT
+    //    FAUSSES ET SONT RETIRÉES. Elles supposaient 5 rangs contributifs dans
+    //    les DEUX listes. Or dans un champ de 5 partants, les poids sont
+    //    1.0/0.6/0.5/0.3/0.0 (bons) et 0.0/0.4/0.5/0.7/1.0 (mauvais) : les
+    //    entrées à poids NUL ne sont PAS ajoutées (guard `if (poidsBon > 0)`),
+    //    donc `lenBons = 5` mais `lenMauvais = 4`, et `moyPond` divise par
+    //    `list.length`. DÉNOMINATEURS DIFFÉRENTS ⇒ l'écart des SOMMES (−0,2)
+    //    ne détermine pas le signe de l'écart des MOYENNES.
+    //    MESURES (champ de 5, notes neutres) : Σbons = 135.000000 (÷5),
+    //    Σmauvais = 115.000000 (÷4) ⇒ moyBon = 27.0 < moyMauvais = 28.75
+    //    ⇒ discrimination = −1.750000000e-2. Signe NÉGATIF, mais dû à un
+    //    rapport de dénominateurs (5/4), pas à la somme.
+    //    Ce nombre N'EST PAS INTRINSÈQUE : mesuré k* = −2.287581695 pour N=5,
+    //    +4.938271606 pour N=4, −4.687500001 pour N=6, −4.726368161 pour N=8,
+    //    −4.099462366 pour N=10, −2.742616029 pour N=16. La référence neutre
+    //    dépend donc de la TAILLE DU CHAMP.
     //
     // CETTE GARDE NE CORRIGE RIEN : elle CONSTATE. Le biais n'est pas modifié
     // (interdiction absolue de toucher aux coefficients ou seuils). Mais il

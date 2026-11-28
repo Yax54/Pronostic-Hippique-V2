@@ -191,7 +191,7 @@ class IaMemoryService extends ChangeNotifier {
   final Map<String, StatsParLabel> _statsLabels = {};
   // ★ Seuils de confiance adaptatifs (l'IA les ajuste elle-même après chaque analyse)
   SeuilsConfianceAdaptatifs _seuils = SeuilsConfianceAdaptatifs();
-  IaPoidsAdaptatifs _poids = IaPoidsAdaptatifs.defaut();
+  IaPoidsAdaptatifs _poids = IaPoidsAdaptatifs.effectif();
   // ★★ BL1-A23 (27/11/2026) — D-3 : trace des anomalies rencontrées lors de la
   //    restauration des poids. Vide si aucune. N'influence AUCUNE décision :
   //    elle sert uniquement à rendre une récupération partielle observable
@@ -2206,11 +2206,14 @@ class IaMemoryService extends ChangeNotifier {
       _arriveeCache.clear();
       _arriveeEnCours.clear();
 
-      // 5. D1 option A — retour aux valeurs d'usine, SANS recalcul.
-      //    `IaPoidsAdaptatifs.defaut()` est strictement identique à
-      //    `IaPoidsAdaptatifs()` (ia_memory_models.dart:854) ; les seuils
-      //    reprennent les constantes de classe (ia_memory_service.dart:5891).
-      _poids = IaPoidsAdaptatifs.defaut();
+      // 5. D1 option A — table EFFECTIVE d'usine, SANS recalcul.
+      //    `IaPoidsAdaptatifs.effectif()` = `defaut()` (19 valeurs de référence
+      //    brutes, Σ = 1,26) passée par la projection EXISTANTE
+      //    (`clamp()` → `normaliser()` → `projeter()`), soit Σ = 1,00 et une
+      //    part enrichie de 0,40. Aucune formule nouvelle, aucune valeur
+      //    recopiée. Les seuils reprennent les constantes de classe
+      //    (ia_memory_service.dart:5891).
+      _poids = IaPoidsAdaptatifs.effectif();
       _seuils = SeuilsConfianceAdaptatifs();
 
       // 6. R-32 — resynchronisation du registre statique. Sans elle, la
@@ -2305,7 +2308,11 @@ class IaMemoryService extends ChangeNotifier {
     _statsLabels.clear();    // ✅ Fix audit : doublon supprimé (était appelé 2× inutilement)
     _precisionParType.clear();
     _seuils = SeuilsConfianceAdaptatifs();
-    _poids = IaPoidsAdaptatifs.defaut();
+    // Table EFFECTIVE d'usine (Σ = 1,00) — cf. `IaPoidsAdaptatifs.effectif()`.
+    // Si `_load()` trouve un blob `ia_poids_v3`, il ÉCRASE le champ via
+    // `fromJson`, qui ne projette pas : les poids historiques sont restitués
+    // tels quels. Ce repli ne sert donc QUE lorsqu'aucune table n'existe.
+    _poids = IaPoidsAdaptatifs.effectif();
     await _load();
     notifyListeners();
   }
@@ -6691,7 +6698,8 @@ class IaMemoryService extends ChangeNotifier {
   ///   différents et ne décrivent pas le même défaut.
   Future<void> resetPoids() async {
     await _load();
-    _poids = IaPoidsAdaptatifs();
+    // Table EFFECTIVE d'usine (Σ = 1,00), projection existante réutilisée.
+    _poids = IaPoidsAdaptatifs.effectif();
     // Raccordement du registre statique : sans lui, la confiance affichée
     // resterait pondérée par l'ancienne calibration (BL1-A05).
     IaCalibrationRegistry.update(_poids.calibrationScore);

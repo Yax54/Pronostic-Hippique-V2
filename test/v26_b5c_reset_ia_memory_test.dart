@@ -321,8 +321,13 @@ void main() {
         'cote=${mem.poids.cote} '
         'seuilSG=${mem.seuilsConfiance.seuilSimpleGagnant} '
         'calibration=${IaCalibrationRegistry.value}');
-    final attendu = IaPoidsAdaptatifs.defaut();
-    expect(mem.poids.forme, isNot(attendu.forme),
+    // TÉMOIN 2 : la valeur altérée diffère de la valeur d'usine.
+    //   On la compare à la table d'usine BRUTE (`defaut()`, forme = 0,25) :
+    //   c'est la comparaison la plus exigeante, et elle reste valide puisque le
+    //   reset sert désormais la table EFFECTIVE (`effectif()`, forme
+    //   0,21126760563380267) — 0,99 diffère des deux.
+    final brut = IaPoidsAdaptatifs.defaut();
+    expect(mem.poids.forme, isNot(brut.forme),
         reason: 'TÉMOIN : la valeur altérée diffère de la valeur d\'usine');
     expect(IaCalibrationRegistry.value, 88.0,
         reason: 'TÉMOIN : registre altéré');
@@ -342,8 +347,13 @@ void main() {
         'seuilSG=${mem.seuilsConfiance.seuilSimpleGagnant} '
         'registre=${IaCalibrationRegistry.value}');
 
-    expect(mem.poids.toJson(), attendu.toJson(),
-        reason: 'TOUS les poids remis aux valeurs d\'usine');
+    // Le contrat vérifié ici est celui du SERVICE : après un reset, il sert la
+    // table EFFECTIVE d'usine (`effectif()` — `defaut()` passé par la
+    // projection existante, Σ = 1,00), et non la table BRUTE (`defaut()`,
+    // Σ = 1,26). `defaut()` reste la référence brute, opposée au témoin
+    // ci-dessus ; c'est bien `effectif()` que le service doit poser.
+    expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
+        reason: 'TOUS les poids remis aux valeurs d\'usine EFFECTIVES (Σ = 1,00)');
     expect(mem.seuilsConfiance.toJson(), seuilsAttendus.toJson(),
         reason: 'seuils remis aux constantes de classe');
     expect(IaCalibrationRegistry.value, 50.0,
@@ -427,8 +437,16 @@ void main() {
         'registre=${IaCalibrationRegistry.value} '
         'pronostics=${mem.pronostics.length} '
         'ecrituresEnCours=${mem.nbEcrituresEnCours}');
-    expect(mem.poids.forme, IaPoidsAdaptatifs.defaut().forme,
-        reason: 'RAM aux valeurs d\'usine');
+    // L'étape 5 du reset pose `IaPoidsAdaptatifs.effectif()` (table EFFECTIVE,
+    // Σ = 1,00). La valeur attendue est donc celle de `effectif()`, et non la
+    // valeur BRUTE de `defaut()` (0,25) — celle-ci reste la référence opposée
+    // au témoin de V26-2.
+    expect(mem.poids.forme, IaPoidsAdaptatifs.effectif().forme,
+        reason: 'RAM aux valeurs d\'usine EFFECTIVES (forme = 0,21126760563380267)');
+    expect(mem.poids.forme, isNot(IaPoidsAdaptatifs.defaut().forme),
+        reason: 'TÉMOIN : la table servie n\'est PAS la table brute — sans '
+            'cette distinction, l\'assertion précédente serait indiscernable '
+            'd\'une absence de projection');
     expect(IaCalibrationRegistry.value, 50.0, reason: 'registre resynchronisé');
     expect(mem.nbEcrituresEnCours, 0, reason: 'aucun Future orphelin');
   });
@@ -789,7 +807,8 @@ void main() {
       //    `notifyListeners()` est APRÈS le try/finally : en cas d'exception
       //    il n'est jamais atteint. Conséquence observable : la RAM reste
       //    dans son état d'échec, cohérente avec un disque partiellement vidé.
-      expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson(),
+      //    La table posée est la table EFFECTIVE (étape 5 = `effectif()`).
+      expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
           reason: 'les étapes RAM internes au reset ont bien eu lieu — '
               'l\'échec est disque, pas RAM');
 
@@ -936,8 +955,9 @@ void main() {
       expect(store.contient(cible), isTrue,
           reason: 'exception ⇒ aucune suppression effective sur le disque');
 
-      // L'état RAM est quand même réinitialisé en interne (étapes 4-6).
-      expect(mem.poids.toJson(), IaPoidsAdaptatifs.defaut().toJson(),
+      // L'état RAM est quand même réinitialisé en interne (étapes 4-6), donc
+      // sur la table EFFECTIVE d'usine (`effectif()`, Σ = 1,00).
+      expect(mem.poids.toJson(), IaPoidsAdaptatifs.effectif().toJson(),
           reason: 'l\'échec est disque, pas RAM');
       // Barrières libérées.
       final refuseesAvant = mem.nbEcrituresRefuseesParReset;
