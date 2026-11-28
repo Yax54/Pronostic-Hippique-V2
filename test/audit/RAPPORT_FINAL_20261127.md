@@ -27,6 +27,9 @@
 | A-6 | L'ordre de production contredit l'« incohérence des deux échelles » | `enregistrerResultat` enchaîne `_apprendreParGradient()` (qui `clamp()`) **puis** `_apprendreParDiscipline()` (l.3641-3642) ⇒ le repli hérite de Σ = 1,00 | **confirmée : mon affirmation était fausse** |
 | A-7 | La saturation d'un groupe n'interdit pas la redistribution interne | `jockey` posé au plancher dans un groupe à 0,40 → projeté **0,005145798** (mesure ci-dessous) | **confirmée : ma conclusion antérieure était fausse** |
 
+| A-8 | **Le signal gradué n'est pas centré** | À notes **100 % neutres**, les **19** momentum valent **tous exactement −8.238817687e-4** (amplitude max−min = **0.000e+0**). Cause vérifiée : `Σ poidsBon = 2.400000` vs `Σ poidsMauvais = 2.600000`, écart **−0.200000** (`ia_memory_service:4040-4050`). Un moteur non biaisé donnerait 0. | **confirmée le 28/11/2026 — non corrigée** (coefficients protégés) |
+| A-9 | **La correction résiduelle de projection peut inverser le signe d'un déplacement** | `_remplirGroupe` (models l.958-990) répartit l'écart de budget à proportion de la marge libre. MESURÉ : `progression` porte un momentum de **−1.0357e-4** mais une variation terminale **+1.287e-4**. Concordance de signe mesurée **11/12**. | **confirmée le 28/11/2026 — comportement de la projection, non un défaut** |
+
 ### 1.2 Affirmations **retirées** (mesure réfutante citée)
 
 | Affirmation retirée | Mesure qui la réfute |
@@ -37,6 +40,13 @@
 | « Le gel peut persister indéfiniment » | `apprentissage_gel_degel_test.dart` D2 : dégel observé (`g2 < g1`) **et** regel (`g3 > g2`) ⇒ `criteresGeles` est bien reconstruit à chaque cycle. |
 | « Les planchers ont été quittés 19/19 » | Les `mini` de la phase de descente valent 0,050430733 pour un plancher de 0,050 : **le plancher exact n'a jamais été atteint**. « Quitté » signifiait « jamais atteint, et fini au-dessus ». |
 | « Un critère non alimenté ne produit aucune variation de poids » | 3 assertions successives réfutées par la mesure : `obtenu_` = 1,91e-2 (post-projection, contient Σ 1,26→1,00) ; `propose_` = 4,67e-5 (momentum du cycle précédent) ; poids au cycle 0 = 0,050887 (il **descend** vers le plancher, il n'y est pas). |
+| « Une pente POSITIVE de notes = critère pertinent » | Mesure des deux régimes symétriques : pente **+4** ⇒ momentum **−3.1974e-4** ; pente **−4** ⇒ momentum **+8.7080e-5**. Le gagnant alimente `scoresBons` : une pente **négative** est la marque du critère pertinent. La « percée » qui en découlait (jockey 0.050996 → 0.150000) était un artefact de l'écrasement du groupe de base. |
+| « À notes neutres, la part enrichie vaut 0,40 » | Mesure : **0.324344009847**. L'assertion avait été posée sans être mesurée ; elle a **échoué** (`Expected: within 1e-9 of 0.4` / `Actual: 0.3243440098474778`). |
+| « Le momentum est de signe OPPOSÉ à la pente » | Réfutée par `poidsRel` (pente **−1**) : règle attendue ⇒ momentum > 0, mesuré **−4.6373e-4** (négatif). L'assertion a **échoué** (`Expected: a value less than <0.0>` / `Actual: <0.00046372773840800666>`). La bonne référence est le **niveau neutre** (−8.238817687e-4), pas zéro : à cet aune, `poidsRel` est bien au-dessus. |
+| « La projection n'est pas une homothétie » | Vérification arithmétique des 19 ratios : base **0.8450704…0.845070425** (7/7 identiques à 1e-7), enrichis **0.727272720…0.727272733** (12/12), **0/19** borne touchée. C'EST une homothétie **exacte par groupe**. |
+| « Le rapport annonce TD=39 · PC=6 · RT=3 » (48 obligations) | `grep` sur les 48 lignes : **38 TD · 8 PC · 2 RT**. Total juste, répartition fausse. |
+| « 714 `expect` et 519 `reason:` » | Boucle `grep -c` sur les 26 fichiers : **707** et **515**. |
+| « Les 26 instruments sont 21 validation + 4 diagnostic + 1 mixte » | Les 4 fichiers classés « diagnostic » portent **8, 8, 7 et 23 `expect`** avec `reason:`. Le critère « a des assertions » ne discrimine rien ; critère retiré. |
 
 ### 1.3 Décisions prises et **close** ce cycle
 
@@ -218,17 +228,19 @@ Réponses aux 8 questions posées :
 | Limites | L'inversion du cycle 1 est **transitoire** (D1 : point fixe atteint) |
 | Statut | **Terminée et démontrée** |
 
-### POINT 8 — Différenciation des 12 critères enrichis
+### POINT 8 — Différenciation des 12 critères enrichis — **TERMINÉ LE 28/11/2026**
 
 | Attribut | Contenu |
 |---|---|
-| Objectif | Les 12 critères enrichis peuvent-ils se différencier les uns des autres ? |
-| Preuves valides | **D2 (ce cycle, réparé et mesuré)** : `distSpec` rendu franchement plus discriminant ; **D3 (ce cycle)** : `jockey` neutre puis réalimenté ; `apprentissage_chaine_19_criteres_test.dart` S3-2/S3-3 ; `apprentissage_gel_degel_test.dart` |
-| Résultats mesurés | D2 : le rapport `distSpec/jockey` **décroît** de **1.051553249** à **1.002669217** alors que le signal s'intensifie ⇒ dans ce scénario, **la différenciation ne se produit pas** ; la part enrichie est **au plafond** (0,400000000) à tous les points. D3 : `jockey` reste au plancher (**0,005000000**, récupération **0.000e+0**) ; le rapport `jockey/distSpec` **monte** de 0,102046815 à 0,115528852 — mais **par la baisse de `distSpec`**, pas par la hausse de `jockey`. Mesure décisive complémentaire : dans un groupe **saturé à 0,40**, un `jockey` posé à 0,005 est projeté à **0,005145798** ; à 0,015 → **0,015280136** ; à 0,025 → **0,025210084**. Dans un groupe **non saturé**, 0,005 → **0,009216589862**. |
-| Conclusion du point | La différenciation **est arithmétiquement possible** (redistribution intra-groupe mesurée, y compris à saturation) mais **n'est pas observée** dans les deux scénarios testés, où la contrainte collective sature. Ce sont **deux faits distincts** : capacité ≠ comportement observé. |
-| Limites | Les scénarios sont **synthétiques** ; la fenêtre est saturée ; 400 cycles. Aucune généralisation hors de ce régime n'est autorisée. |
-| Décisions | Aucune modification. Une expérience **désaturante** (base poussée au-delà de 0,60 pour libérer le groupe) n'a **pas** été exécutée : elle reste le seul moyen de trancher « impossible » vs « non atteint ». |
-| Statut | **Terminé et démontré** pour la capacité · **Restant à terminer** pour la démonstration d'une différenciation effective en régime non saturé |
+| Objectif | Les 12 critères enrichis peuvent-ils se différencier selon leur pertinence ? |
+| Instrument | `test/audit/points_8_10_differenciation_hors_saturation_test.dart` — S8-GARDE, S8-1, S8-2. **5 tests, 5 verts.** |
+| Preuves antérieures | D2 / D3 (ce cycle, réparés) : différenciation **non observable** dans un groupe **saturé** à 0,40. Fait conservé, non effacé. |
+| Erreur de montage corrigée | La première version de l'instrument posait qu'« une pente positive = critère pertinent ». **MESURÉ FAUX** : le gagnant alimente `scoresBons`, donc une pente **négative** est la marque d'un critère pertinent. La « percée » de la trajectoire initiale (jockey 0.050996 → 0.150000) venait de l'écrasement du groupe de base, pas de la pertinence. Scénario corrigé. |
+| Résultats mesurés — S8-1 | Part enrichie : **0.400000000 → 0.290846194** (strictement dans [0,18 ; 0,40]) · **0 critère sur 12 saturé** · amplitude des poids **0.103995712** (maxi 0.109016120 / mini 0.005020408) · séparation parfaite par le signe : poids max des **8 anti-pertinents = 0.005683829** < poids min des **4 pertinents = 0.030154021** · Spearman(pertinence, poids) = **0.734265734** · Σ = **1.000000000** |
+| Résultats mesurés — S8-2 | `jockey` seul pertinent : **0.050909091 → 0.146991810** (momentum +2.057e-3, variation +1.973e-3, **sous** son plafond 0.15) ; les 11 autres enrichis cèdent : **0.349090909 → 0.252585791** ; part **0.400000000 → 0.399577600** |
+| Conclusion du point | La différenciation **par la pertinence** est **observée et mesurée** en régime **hors saturation**. La progression d'un critère pertinent se paie par le recul mesuré des autres, ce qui exclut un simple effet d'échelle. |
+| Limites | Scénarios **synthétiques** (L-2). La différenciation est démontrée **mécaniquement**, pas sur des notes d'hippodrome réelles. |
+| Statut | **Terminé et démontré** |
 
 ### POINT 9 — Évolution depuis les planchers et plafonds
 
@@ -239,16 +251,36 @@ Réponses aux 8 questions posées :
 | Limites | « Quitté » corrigé : le plancher **n'a jamais été atteint** pendant la campagne (mini = 0,050430733 vs plancher 0,050) |
 | Statut | **Terminée et démontrée** |
 
-### POINT 10 — Momentum et adaptation des critères
+### POINT 10 — Momentum et adaptation des critères — **TERMINÉ LE 28/11/2026**
 
 | Attribut | Contenu |
 |---|---|
-| Preuves valides | S3-4 (momentum = 0,3 × gradient) ; D0 (survie du signe sur 40 cycles) ; M-COUV-5 (18/18 momenta identiques avant projection) |
-| Résultats | Le momentum **prolonge** le gradient d'un cycle ; il ne le remplace pas |
-| Limites | L'adaptation **par critère** en régime désaturé n'est **pas** mesurée (même limite que POINT 8) |
-| Statut | **Terminée et démontrée** pour le mécanisme · **Restant à terminer** pour l'adaptation différentielle |
+| Objectif | Un critère pertinent progresse, un critère devenu moins pertinent recule, un critère précédemment défavorisé peut regagner du poids, et le momentum accompagne ces évolutions |
+| Instrument | `points_8_10_differenciation_hors_saturation_test.dart` — S10-1, S10-2 |
+| Résultats mesurés — S10-1 (3 phases chaînées, 40 cycles chacune, **sans réinitialisation intermédiaire**) | **R1 pertinent** : `jockey` **0.050909091 → 0.092237920466** (momentum +2.0574e-3, variation +1.6464e-3) · **R2 anti-pertinent** : **0.092237920466 → 0.063334514418** — **DIMINUTION**, variation **−1.2269e-3**, momentum **−3.7051e-3** · **R3 re-pertinent** : **0.063334514418 → 0.106651737159** — **RÉCUPÉRATION**, variation **+1.6799e-3**, momentum **+2.0574e-3**. Les trois niveaux sont **distincts**. Invariants tenus **à chaque phase** : Σ = **1.000000000**, part enrichie 0.400000000 / 0.353042829 / 0.343516116 (toutes dans [0,18 ; 0,40]), 19 bornes individuelles respectées. |
+| Résultats mesurés — S10-2 (départage des 12 momentum) | Référence neutre mesurée = **−8.238817687452e-4** · **12/12** critères correctement départagés (pertinents au-dessus de la référence, anti-pertinents en dessous) · monotonie exacte de \|momentum − réf\| sur \|pente\| : 1.0→**3.60e-4**, 2.0→**7.20e-4**, 3.0→**1.08e-3**, 4.0→**1.44e-3**, 5.0→**1.80e-3**, 6.0→**2.16e-3**, 7.0→**2.52e-3**, 8.0→**2.88e-3** |
+| **Découverte non cherchée, mesurée** | **Biais structurel du signal gradué.** À notes **100 % neutres**, les **19** momentum valent **tous exactement −8.238817687e-4** (amplitude max−min = **0.000e+0**). Un moteur non biaisé donnerait 0. Cause lue dans le code (l.4040-4050) puis vérifiée : `Σ poidsBon = 2.400000` contre `Σ poidsMauvais = 2.600000`, écart **−0.200000**. Le signal n'est donc **pas centré** ; `discriminations[c] = (moyBon − moyMauvais)/100` est négatif à notes égales pour les 19. **Aucune correction appliquée** (coefficients intouchables). Ce fait est enregistré comme anomalie A-8. |
+| Limite mesurée et **documentée, non masquée** | Le momentum ne garantit pas le signe de la **variation du même cycle** : `progression` porte un momentum de **−1.0357e-4** (au-dessus de la référence, cohérent) mais une variation terminale **+1.287e-4**, de signe opposé. Cause : la correction résiduelle EXACTE de `_remplirGroupe` (models l.958-990) répartit l'écart de budget à proportion de la marge libre et peut inverser un déplacement de l'ordre de 1e-5. Concordance mesurée **11/12**, assertée à ≥ 11. |
+| Réfutation conservée | L'assertion initiale « momentum de signe opposé à la pente » était **fausse** : `poidsRel` (pente −1) porte un momentum **négatif**. Elle a échoué, a été mesurée, puis remplacée par la comparaison à la référence neutre. |
+| Statut | **Terminé et démontré** |
 
-**Bilan des dix points : 7 terminés et démontrés · 3 restants à terminer (3, 8, 10), avec la raison technique précise de chaque reste.**
+**Bilan des dix points (à jour du 28/11/2026) : 9 terminés et démontrés · 1 restant (le point 3).**
+
+| Point | Statut | Base de la démonstration |
+|---|---|---|
+| 1 à 2 | **TD** | poids initiaux, Σ = 1,26 / 1,00 |
+| 3 | **RT** | voir ci-dessus : dépend d'une décision produit non tranchée |
+| 4 à 7 | **TD** | mécanismes de projection, bornes, budgets |
+| **8** | **TD** | `points_8_10_..._test.dart` S8-1/S8-2 — **5 tests verts** |
+| 9 | **TD** | D1 / D4 |
+| **10** | **TD** | `points_8_10_..._test.dart` S10-1/S10-2 — **5 tests verts** |
+
+Les points 8 et 10, longtemps restés ouverts faute de régime non saturé, sont
+clos **par la mesure**, non par une décision : l'instrument a d'abord **échoué**
+sur une garde (S8-0), ce qui a révélé une erreur de sémantique dans mon propre
+montage ; corrigé, il produit des chiffres falsifiables. Trois assertions
+successives se sont révélées fausses et ont été remplacées — c'est la trace de
+la vérification, pas un ajustement.
 
 ---
 
@@ -256,8 +288,16 @@ Réponses aux 8 questions posées :
 
 ### 5.1 Comptage mesuré
 
-`find test/audit -name "*_test.dart" | wc -l` → **25** instruments d'audit.
-Le chiffre « 16 » du rapport précédent était **inexact** et est retiré.
+`find test/audit -name "*_test.dart" | wc -l` → **26** instruments d'audit
+(25 au cycle précédent **+ 1 créé le 28/11/2026** :
+`points_8_10_differenciation_hors_saturation_test.dart`).
+Le chiffre « 16 » d'un rapport encore antérieur était **inexact** et est retiré.
+
+> **NOTE D'HONNÊTETÉ SUR LE COMPTAGE.** Le compteur `find` inclut les fichiers
+> dont le nom se termine par `_test.dart`. Au 28/11, la commande donne **26**
+> fichiers sous `test/audit/`. Les instruments purement diagnostiques qui ont
+> servi à ce cycle (`_tmp_traj_test.dart`) ont été **supprimés** et ne sont donc
+> pas comptés : ils ne sont pas conservés.
 
 ### 5.2 Inventaire individuel — 9 attributs
 
@@ -290,6 +330,65 @@ Exécution : chaque fichier lancé **seul**, `flutter test --no-pub <fichier>`.
 | 23 | `poids_projection_test.dart` | projection, idempotence | actif | moteur | — | — | **+16 passed** | **C7 idempotence** |
 | 24 | `poids_recuperation_load_test.dart` | récupération au chargement | actif | moteur | — | — | **+6 passed** | D-3 |
 | 25 | `raccordement_archives_consommateurs_test.dart` | raccordement archives | actif | moteur | — | — | **+14 passed** | consommateurs |
+| 26 | `points_8_10_differenciation_hors_saturation_test.dart` | **POINTS 8 et 10** : différenciation et adaptation hors saturation | **actif** | atelier | **S8-0 : garde erronée, retirée** | **28/11/2026** | **+5 passed** | **preuve de POINT 8 et POINT 10** |
+
+### 5.2bis DISTINCTION ENTRE TESTS DE VALIDATION ET INSTRUMENTS DIAGNOSTIQUES
+
+Vous avez demandé de « distinguer les véritables tests de validation des simples
+instruments diagnostiques ». J'ai d'abord produit une répartition (21 / 4 / 1)
+**fondée sur mon impression** des fichiers. Je l'ai ensuite **vérifiée par
+mesure** — et elle était **FAUSSE** sur son critère : les 4 fichiers que j'avais
+classés « diagnostic » portent respectivement 8, 8, 7 et 23 `expect`.
+
+| Fichier que j'avais classé « diagnostic » | `expect` | `reason:` |
+|---|---|---|
+| `apprentissage_a1_interpretation_test.dart` | 8 | 6 |
+| `apprentissage_donnees_reelles_test.dart` | 8 | 6 |
+| `poids_comparaisons_reelles_test.dart` | 7 | 5 |
+| `apprentissage_regression_av_apres_test.dart` | **23** | **14** |
+
+**Mesure sur les 26 instruments (`grep -c "expect("`)** : le plus faible porte
+**4 `expect` et 1 `reason:`** (`poids_echelle_test.dart`), le plus fort **68 et
+47** (`poids_harmonisation_replis_test.dart`). **Aucun instrument conservé n'est
+dépourvu d'assertions falsifiables.** Total cumulé, **re-mesuré** par
+`grep -c` bouclé sur les 26 fichiers : **707 `expect` et 515 `reason:`**.
+
+> **RECTIFICATION D'UN CHIFFRE FAUX (28/11/2026).** J'avais d'abord écrit
+> « 714 `expect` et 519 `reason:` ». La somme bouclée donne **707** et **515**.
+> Mon addition mentale était fausse de 7 et de 4. Le chiffre est remplacé par
+> celui que la commande produit ; la commande est donnée pour être rejouée :
+> `for f in test/audit/*_test.dart; do grep -c "expect(" $f; done`.
+
+**Conséquence : le critère « a des assertions / n'en a pas » ne discrimine
+rien.** Je le retire. Le seul critère honnête qui reste porte sur la **nature de
+ce qui est asserté** :
+
+| Nature | Ce qui est asserté | Ce que le test prouve | Nb |
+|---|---|---|---|
+| **Validation du moteur** | un invariant du contrat ou une propriété du mécanisme (Σ, bornes, idempotence, seuil, monotonicité, ordre des opérations) | que **le moteur** respecte son contrat | **21** |
+| **Mesure sur données** | un fait observé sur un **corpus réel / une fixture authentique** (corpus PMU, 2 commits, 15 partants) | que **ces données-là** produisent tel résultat — pas que le moteur est correct en général | **4** |
+| **Mixte** | les deux | — | **1** |
+
+**Ce que cette distinction change dans la lecture du rapport** : les 4
+instruments de « mesure sur données » ne sont **pas** des verrous de
+non-régression du moteur — ils peuvent se déclencher si le **corpus** change,
+même sans régression. Ils restent néanmoins les **seuls** à produire des
+chiffres sur données non synthétiques, valeur documentaire que les 21 autres
+n'ont pas.
+
+**Ce qu'elle ne change pas** : **aucun** des 26 instruments conservés ne porte
+un défaut connu. Les 3 défauts résiduels sont dans trois fichiers **abandonnés**
+(`.dart.txt`, non exécutables) — voir 5.3. Les quatre faux verts trouvés
+(M11.1 et M-COUV-5 au cycle précédent, D2 et D3 à celui-ci) ont été **réparés**,
+et trois de leurs assertions ont effectivement **échoué** avant correction :
+c'est la preuve qu'elles peuvent échouer.
+
+**Limite de cette classification, énoncée** : elle repose sur une lecture du
+contenu des assertions, **pas** sur une mesure automatique. Je n'ai pas
+d'instrument qui décide mécaniquement si un `expect` porte sur le moteur ou sur
+un corpus. Les frontières indiquées sont donc **justifiées mais non
+calculables** ; les 4 fichiers cités sont les seuls dont la source de vérité est
+externe au moteur.
 
 ### 5.3 Vérification des 18 défauts corrigés / 3 restants
 
@@ -340,20 +439,248 @@ La matrice d'un pronostic créé avant le correctif n'a jamais été écrite ; l
 d'une installation passée n'a jamais été journalisé. Ces deux informations sont
 **définitivement perdues** et aucune mesure ne les reconstituera.
 
-### L-5. Le régime désaturé n'a pas été exploré
-POINT 8 et POINT 10 restent ouverts parce que tous les scénarios disponibles
-saturent le groupe enrichi à 0,40. La capacité de redistribution est mesurée ;
-son exercice effectif hors saturation ne l'est pas.
+### L-5. Régime désaturé — **exploré et mesuré le 28/11/2026**
+Cette limite est **levée**. Le régime a été atteint en corrigeant une erreur de
+montage (voir §8.0) : les 7 critères de base sont portés à pente ZÉRO et les 12
+enrichis reçoivent des pentes de signes MIXTES, avec une majorité
+anti-pertinente. MESURES : part enrichie **0.290846194** (strictement dans
+[0,18 ; 0,40]), **aucun** critère saturé, amplitude des 12 poids **0.103995712**.
 
-### L-6. Correction proposée pour POINT 1 — **soumise à validation, non appliquée**
+Limite résiduelle, énoncée sans détour : ces scénarios sont **synthétiques**
+(L-2). Ils prouvent que la mécanique différencie et récupère ; ils ne prouvent
+pas que les notes réelles d'un hippodrome produisent ces configurations.
 
-| Élément | Contenu |
-|---|---|
-| Nature | Amener les 19 poids servis à Σ = 1,00 **avant** le premier pronostic, en appliquant `clamp()` à la construction au lieu d'attendre le premier apprentissage |
-| Conséquence | Supprime l'écart de 4,33 à 8,80 pt sur les scores normalisés ; supprime les franchissements différentiels des seuils 52/60/83/85/90 |
-| Périmètre | `IaPoidsAdaptatifs()` — un seul point d'entrée ; aucun coefficient, seuil, borne ni mécanisme de gel touché |
-| Risque | Modifie la formule effective des 19 critères **dès le premier pronostic** ⇒ change les décisions de l'utilisateur sur une installation neuve. **C'est pourquoi je ne l'applique pas.** |
-| Alternative | Statu quo + corriger les replis `fromJson` (déjà fait, `poids_harmonisation_replis_test.dart` **+18**) : supprime la seule fuite d'une table non normalisée |
+### L-6. PROPOSITION DE CORRECTION — POINT 1 : `clamp()` AU CONSTRUCTION
+
+> **Statut : PROPOSITION. AUCUNE LIGNE DE PRODUCTION N'A ÉTÉ MODIFIÉE.**
+> Conformément à « Ne réalise aucune modification de production avant notre
+> validation ». Les 8 aspects demandés sont traités dans l'ordre imposé.
+
+#### (a) Code exact concerné
+
+Le défaut n'est pas dans un calcul : il est dans **l'absence d'un appel**. Les
+19 poids du constructeur somment à 26/20 = **1,260000000000** (mesuré), alors
+que tous les consommateurs du pronostic supposent une table à Σ = 1,00.
+
+Points d'entrée où une table NON projetée peut être servie :
+
+| # | Lieu | Code | État servi |
+|---|---|---|---|
+| 1 | `ia_memory_service.dart:194` | `IaPoidsAdaptatifs _poids = IaPoidsAdaptatifs.defaut();` | **Σ = 1,26** — installation neuve |
+| 2 | `ia_memory_service.dart:2213` | `_poids = IaPoidsAdaptatifs.defaut();` (reset) | **Σ = 1,26** |
+| 3 | `ia_memory_service.dart:2308` | `_poids = IaPoidsAdaptatifs.defaut();` (`recharger`, repli) | **Σ = 1,26** |
+| 4 | `ia_memory_service.dart:6694` | `_poids = IaPoidsAdaptatifs();` (`resetPoids`) | **Σ = 1,26** |
+| 5 | `ia_memory_models.dart:1392-1494` | `fromJson` — **ne projette délibérément pas** (commentaire l.1467-1470) | celle du fichier |
+| 6 | `ia_memory_models.dart:1496` | `factory IaPoidsAdaptatifs.defaut() => IaPoidsAdaptatifs();` | **Σ = 1,26** |
+
+Le constructeur lui-même (`ia_memory_models.dart:576-630`) affecte les 19 champs
+et **n'appelle pas** `clamp()`. `clamp()` n'existe qu'en `ia_memory_models.dart:1096`.
+
+#### (b) Solution proposée
+
+Une **seule** ligne, dans le corps du constructeur, après les 19 affectations :
+
+```dart
+IaPoidsAdaptatifs({ /* … 19 paramètres nommés, inchangés … */ }) {
+  // … 19 affectations, inchangées …
+  // + la SEULE ligne ajoutée :
+  if (poidsParDiscipline == null || poidsParDiscipline.isEmpty) {
+    clamp();   // amène Σ à 1,00 et la part enrichie dans [0,18 ; 0,40]
+  }
+}
+```
+
+Trois précautions, chacune justifiée :
+
+1. **Condition sur `poidsParDiscipline`** : `fromJson` construit l'objet puis
+   restaure une table **déjà projetée** et ses tables de discipline. Projeter à
+   ce moment-là re-projeterait une table conforme (idempotence mesurée par
+   `poids_projection_test.dart` C7, donc sans effet numérique), mais la condition
+   rend l'intention explicite et évite tout couplage inattendu avec la
+   restauration.
+2. **`clamp()` et non `normaliser()`** : `clamp()` projette **aussi** les tables
+   par discipline (`ia_memory_models.dart:1096-1103`). Sur une construction
+   vierge, `poidsParDiscipline` est vide (`l.630 : poidsParDiscipline ?? {}`),
+   donc la boucle ne s'exécute pas : le comportement est identique, mais la
+   forme reste cohérente avec le contrat global.
+3. **Aucun appel ajouté dans `fromJson`** : la non-projection au chargement est
+   un comportement **mesuré et voulu** (garde de `semer`, l.294-299 de
+   l'atelier : « au chargement, Σ doit valoir la valeur écrite »). La conserver
+   est indispensable pour que les mesures de cycle restent interprétables.
+
+#### (c) Conséquences sur les 19 poids initiaux de référence
+
+**AUCUNE modification des 19 valeurs de référence.** Le constructeur continue
+d'affecter exactement `forme = 0.25`, `gains = 0.13`, …, `placeDepart = 0.03`.
+Ce sont les valeurs **d'entrée** de la projection, pas sa sortie.
+
+Ce qui change est la table **servie**, c'est-à-dire la sortie de `clamp()`. Les
+deux tables coexistent dans le code, mais **une seule est utilisée** :
+
+| Table | Σ | base | enrichis | Rôle |
+|---|---|---|---|---|
+| Référence (constructeur, avant projection) | 1,260000000000 | 0,710000000000 | 0,550000000000 | **conservée telle quelle**, devient l'entrée |
+| Projetée (après `clamp()`) | 1,000000000000 | 0,600000000000 | 0,400000000000 | **servie** au moteur |
+
+Les 19 poids initiaux restent donc **intacts et auditables** : c'est un point
+que je souligne, parce que la formulation « conséquences sur les 19 poids
+initiaux » pourrait laisser croire qu'on y touche. **On n'y touche pas.**
+
+#### (d) Conséquences sur les poids effectifs globaux et par discipline
+
+**Global** — remplacement mesuré (rapport base/enrichi **mesuré** sur la
+projection réelle) :
+
+| Groupe | Rapport effectif/initial | Conséquence |
+|---|---|---|
+| 7 critères de base | **0,845070423** | chaque poids de base est multiplié par ≈ 0,8451 |
+| 12 critères enrichis | **0,727272727** | chaque enrichi est multiplié par ≈ 0,7273 |
+
+Ces deux ratios ne sont pas une estimation : ils sont **mesurés**, et ils
+concordent à **1e-8** avec les ratios de la campagne H1 (n = 2000) du rapport
+`RAPPORT_DECISIONNEL_POIDS_IA.md`.
+
+**RECTIFICATION D'UNE AFFIRMATION FAUSSE, VÉRIFIÉE PUIS CORRIGÉE (28/11/2026).**
+J'avais d'abord écrit que « la projection n'est pas une homothétie » et que
+« `cote`, `victoires`, `discipline` sont remontés à leur plancher individuel ».
+**C'EST FAUX**, et la vérification arithmétique sur les 19 ratios le montre :
+
+| Critère | ratio effectif/initial | touche une borne ? |
+|---|---|---|
+| les 7 de base | **0.8450704** … **0.845070425** (identiques à 1e-7) | **non** |
+| les 12 enrichis | **0.727272720** … **0.727272733** (identiques à 1e-7) | **non** |
+| **total** | — | **0 critère sur 19 touche une borne** |
+| sommes | base = **0.600000000000**, enrichis = **0.400000000000** | — |
+
+Le fait exact est donc : **la projection depuis la table du constructeur est une
+homothétie EXACTE par groupe**, avec deux facteurs distincts. Ce n'est **pas**
+une homothétie **globale** (sinon les deux facteurs seraient égaux), et ce n'est
+**pas** une déformation par les bornes — aucune borne n'est atteinte. L'écart
+entre les deux facteurs s'explique entièrement par un seul fait : la part
+enrichie avant projection vaut 0,550/1,26 = **0,436507937**, qui est écrêtée à
+**0,40** ; les bases absorbent donc le reste (1 − 0,40 = 0,60) alors qu'elles
+valaient 0,710/1,26 = 0,563492063. Les deux facteurs sont donc
+0,60/0,71 = **0.845070423** et 0,40/0,55 = **0.727272727**.
+
+Conséquence concrète, et elle simplifie le raisonnement : sur une installation
+neuve, la correction ne redistribue **rien** à l'intérieur des groupes. Elle
+applique **deux** facteurs uniformes. Toute différenciation entre critères
+d'un même groupe vient ensuite de l'apprentissage, jamais de la projection
+initiale.
+
+**Par discipline** — sur une installation vierge, `poidsParDiscipline` est
+**vide** ; `poidsEffectifsPourDiscipline()` (`ia_memory_models.dart:634-670`)
+retombe alors sur les 19 poids globaux. Avant correction : Σ = 1,26 pour
+**chaque** discipline. Après : Σ = 1,00. La conséquence est donc **identique**
+pour le global et pour les 4 disciplines (global / obstacle / plat / trot
+attelé), ce qui supprime une incohérence de plus.
+
+#### (e) Conséquences sur le premier pronostic
+
+Le premier pronostic est **le seul endroit où l'effet est maximal**, et c'est la
+justification principale de la correction : c'est précisément avant le premier
+apprentissage que la table n'est pas projetée.
+
+Mesure disponible (M11.1, `audit_poids_disciplines_test.dart`, **mesurée**) :
+l'écart maximal entre la table brute (Σ = 1,26) et la table projetée (Σ = 1,00)
+est de **5.622348271** sur les scores normalisés. Le **classement des partants est identique** dans ce cas
+précis, mais les **valeurs** de score diffèrent, donc les **seuils** mordent
+différemment.
+
+Ce n'est pas une hypothèse : dans le même instrument, M11.1 vérifie
+`_classement(aBrut) == _classement(aEff)` — ce qui est vrai ici, sur ce jeu de
+données — **et** `ecartMax > 1e-6`, mesuré 5.622348271. Les deux faits sont
+distincts : l'ordre peut être stable alors que les valeurs ne le sont pas.
+
+Sur les seuils, la mesure existante (O-13, fixture authentique de 15 partants)
+donne des franchissements **différentiels** : 52 → 1 partant, 60 → 1, 83 → 4,
+85 → 1, 90 → 1, et **0** franchissement entre 65 et 80. C'est la démonstration
+que la correction ne déplace pas les scores d'une constante : elle change
+**quels** chevaux passent **quel** seuil.
+
+#### (f) Conséquences sur les seuils, scores et recommandations
+
+| Élément | Formule | Effet de la correction |
+|---|---|---|
+| Score d'un partant | `Σ scoreCritere × poids`, **sans division par la somme** (`ia_pronostic_engine.dart:391-409`) | ♥ **C'est ici que tout se joue** : comme il n'y a **pas** de division, un Σ de 1,26 **gonfle** mécaniquement tous les scores de **+26 %** par rapport à Σ = 1,00 |
+| Normalisation | `_normaliserScores` (`ia_pronostic_engine.dart:227-244`) | min/max, donc **partiellement** insensible au facteur d'échelle ; mais le mélange `ratioNorme × normalisé + (1 − ratioNorme) × brut` **réintroduit** l'échelle brute à hauteur de `1 − ratioNorme` (0,60 pour n ≤ 6 ; 0,40 pour n ≤ 12 ; 0,25 sinon) |
+| Étiquette | `_determinerLabel` (`l.643-652`) : `rang==1 && score>=75` → FAVORI ; `>=52` → SÉLECTION ; sinon CHOIX | dépend **directement** du score, donc des franchissements mesurés en O-13 |
+| Seuil de sélection 62 | consommateur du score | O-09 : 0 % de franchissement sur l'échantillon mesuré ; **mais** O-13 montre 52/60/83/85/90 non nuls |
+| Score de gain | consommateur du score | O-10 : **17,00 %** de variation [SYNTH] |
+| Confiance | consommateur du score | O-08 : médiane **3,0162 pt**, p95 **5,9128**, max **8,8642** [SYNTH] |
+
+**Point d'honnêteté** : O-05 à O-10 sont marquées **[SYNTH]** (n = 2000, graine
+424242, notes `Uniform(10,90)`). Elles établissent la **mécanique**, pas le
+comportement sur un hippodrome réel. Elles ne doivent pas être lues comme une
+prédiction produit.
+
+#### (g) Conséquences sur les installations existantes et les restaurations
+
+**C'est le résultat le plus important de ce cycle, et il est mesuré.**
+
+J'ai mesuré vos **deux sauvegardes authentiques** :
+
+| Sauvegarde | Σ globale | Σ base | Σ enrichis | Part enrichie | 4 disciplines |
+|---|---|---|---|---|---|
+| `backup_pronostic_hippique_13112026` | **1.000000000000000** | 0.815583119655572 | 0.184416880344428 | 0.184416880344 | toutes **1.000000000000000** |
+| `backup_pronostic_hippique_28052026` | **1.000000000000000** | 0.820000000000000 | 0.180000000000000 | 0.180000000000 | toutes **1.000000000000000** |
+
+**Conclusion, et elle est décisive pour l'évaluation du risque** : une
+installation **existante** n'a **jamais** une table à Σ = 1,26. Le premier
+apprentissage (`_apprendreParGradient`, qui se termine par `_poids.clamp()`,
+`ia_memory_service:4200`) a déjà normalisé la table, et `_save()` persiste la
+table normalisée. Les deux sauvegardes le confirment : Σ = 1,00 au bit près,
+sur le global **et** sur les 4 disciplines.
+
+**Donc la correction proposée n'a AUCUN effet sur une installation existante
+ni sur une restauration de sauvegarde.** Son périmètre réel se limite à :
+
+1. une **installation neuve**, avant le tout premier résultat officiel ;
+2. `resetPoids()` (l.6694) ;
+3. les deux replis de `_load()` (l.2213, l.2308) ;
+4. une sauvegarde **antérieure au premier apprentissage** — cas pathologique :
+   l'export d'une installation ouverte mais n'ayant encore enregistré aucun
+   résultat.
+
+**Restaurations** : `fromJson` **ne projette pas** (l.1467-1470), et la
+correction proposée ne l'ajoute pas. Une sauvegarde restaurée est donc servie
+**exactement telle qu'elle a été écrite**, ce qui est le comportement correct
+(et ce que la garde de l'atelier vérifie à 1e-9). La condition du (b) garantit
+que la restauration ne déclenche pas de projection parasite.
+
+#### (h) Risques de régression
+
+| # | Risque | Évaluation | Mesure/parade |
+|---|---|---|---|
+| R-1 | Le score du premier pronostic change | **Réel et voulu** : c'est l'objet de la correction. −26 % sur le score brut à Σ = 1,26 vs 1,00 | Mesuré : 5.622348271 sur les scores normalisés (M11.1) |
+| R-2 | Les étiquettes du premier pronostic changent | **Réel** : dépend des franchissements de 75 / 52 | Mesuré : 52→1, 60→1, 83→4, 85→1, 90→1 (O-13) |
+| R-3 | Un utilisateur voit ses TOP1/TOP3 changer | **NUL sur installation existante** (Σ déjà = 1,00, mesuré sur 2 sauvegardes) ; **possible sur installation neuve** | Mesuré (g) |
+| R-4 | `clamp()` non idempotent fausse la construction | **Faible** : A-1 (non-idempotence) concerne l'état 13/11, pas la table vierge. C7 (idempotence) vérifié par `poids_projection_test.dart` | Mesuré |
+| R-5 | La discipline hérite d'une table divergente | **NUL** : sur table vierge `poidsParDiscipline` est vide ⇒ repli sur le global, désormais projeté | Lecture l.634-670 |
+| R-6 | Une restauration se retrouve projetée à tort | **Évité** par la condition du (b) et par la non-projection de `fromJson` | Garde l.294-299 |
+| R-7 | Les `fromJson` tolérants perdent leur rôle de réparation | **NUL** : on ne touche pas `fromJson` | — |
+| R-8 | Effet de bord sur les harnais existants | **Réel** : tout harnais qui part d'une table normalisée ne bouge pas ; ceux qui partent de `kInitial` (Σ = 1,26) resteraient identiques **seulement s'ils passent par `semer`**, qui écrit la table telle quelle | À vérifier par la suite complète |
+
+**Risque résiduel non technique, énoncé clairement** : la correction rend le
+premier pronostic **plus juste au sens du contrat** (Σ = 1,00 est l'hypothèse de
+tous les consommateurs), mais elle change des décisions que l'utilisateur a
+peut-être déjà vues. Ce n'est pas un risque de bug : c'est un **changement de
+comportement assumé**, et c'est pourquoi je ne l'applique pas sans votre accord.
+
+#### (i) Verdict
+
+La correction est **techniquement sûre** (une ligne, aucun coefficient ni seuil
+touché), **de périmètre étroit** (installation neuve / reset / replis, prouvé
+par la mesure des deux sauvegardes), et **cohérente avec le contrat** (Σ = 1,00
+est ce que tous les consommateurs supposent). Son coût est un **changement de
+comportement du tout premier pronostic** sur une installation neuve.
+
+**Alternative sans changement de comportement** : statu quo. Elle laisse
+subsister, sur une installation neuve uniquement, un premier pronostic calculé
+sur une échelle **+26 %** supérieure à celle de tous les pronostics suivants —
+c'est-à-dire un premier pronostic dont les scores ne sont pas comparables aux
+suivants. C'est la raison pour laquelle je recommande la correction, tout en
+laissant la décision.
 
 ---
 
@@ -373,12 +700,55 @@ une preuve antérieure valide · **AV** = Abandonnée sur décision validée ·
 **NN** = Non nécessaire avec justification technique · **ND** = Non démontrable
 avec justification objective · **RT** = Restant à terminer.
 
+### 7.0 RÉCONCILIATION DES 48 OBLIGATIONS — CE QUE JE PEUX ET NE PEUX PAS FAIRE
+
+Vous avez demandé de réconcilier les 48 obligations avec celles précédemment
+énumérées, en exploitant l'historique accessible, et d'indiquer précisément la
+limite si certaines consignes ne sont plus accessibles.
+
+**Ce que j'ai effectivement exploité, fichier par fichier :**
+
+| Source | Nature | Ce qu'elle apporte à la réconciliation |
+|---|---|---|
+| `DIX_OBLIGATIONS_PREUVES.md` (16 187 o) | carte de preuves des obligations **architecturales** | correspondances O-xx ↔ instrument |
+| `RAPPORT_DECISIONNEL_APPRENTISSAGE.md` (43 221 o) | §1 chaîne 19 critères, §2 coefficients, §3 gel, §4–5 contraintes, §6 momentum, §7 **19 poids initiaux (NON TRAITÉ)**, §10 anomalies A1–A5, §11 propositions P1–P5 | origine de O-19 à O-38 et de A1–A3 / P1–P5 |
+| `RAPPORT_DECISIONNEL_POIDS_IA.md` (128 958 o) | §6 incohérence 1,26 / 1,00 (H1, 2000 courses), §6.5 T1–T3, §6.6 S-rien / S-diviser / S-normaliser | origine de O-02 à O-10 et O-16 |
+| `ARCHIVES_EXPERIMENTALES/README.md` | §3 instruments actifs, §6 doublons v2/v3, §7 les 21 défauts | origine de §5.3 |
+| Historique des commits locaux (`git log`, `main`) | messages de commit des cycles précédents | continuité des décisions |
+
+**Ce que je ne peux PAS faire, et je le dis sans détour :** je n'ai **pas**
+accès au texte littéral intégral de la « grande consigne initiale » dans son
+énumération d'origine. Je dispose de ses **effets** (les obligations que j'ai
+consignées au fil des cycles, les rapports, les preuves), **pas de sa liste
+numérotée de référence**. Je ne peux donc pas garantir que 48 est le nombre
+exact qu'elle contenait.
+
+**Ce que je refuse de faire** : inventer des obligations pour atteindre un
+nombre-cible. Les 48 lignes ci-dessous sont celles que je peux **nommer et statuer**
+avec une preuve ou une justification. Si votre décompte diffère, l'écart est le
+point à traiter — et je ne le comble pas par une estimation.
+
+**Vérification de couverture exigée par votre point 6 :**
+
+| Élément à vérifier | État | Où |
+|---|---|---|
+| Couverture matricielle (M-COUV-1…5) | **traitée** | `couverture_matricielle_preuve_test.dart` **+2**, O-37 / O-38 |
+| Les 10 points initiaux | **traités** | §4 — **9 TD · 1 RT (point 3)** |
+| Propositions **A1–A3** | **traitées** | §4 fin : A1 mesurée (écart 0,000000000) ; A2 partiellement réfutée (D2) ; A3 réfutée (seuil unique) |
+| Propositions **P1–P5** | **traitées** | §4 fin : aucune appliquée ; **P5** (injection en test seulement) est celle que les harnais mettent en œuvre |
+| Fiabilité du harnais | **traitée** | §5.1 (26), §5.2 (tableau 9 attributs), §5.2bis (nature), §5.3 (défauts) |
+
+**Point 6, réponse directe** : la couverture matricielle, les 10 points, A1–A3,
+P1–P5 et la fiabilité du harnais sont **intégralement traités**, chacun avec son
+renvoi. La seule chose que je ne peux pas produire est le **nombre d'origine**
+de la liste littérale — et je ne le fabrique pas.
+
 | Id | Contenu | Preuve | Résultat | Limites | Statut |
 |---|---|---|---|---|---|
 | O-01 | Les 19 poids initiaux sont ceux du constructeur | `poids_cycle_apprentissage_test.dart` F1 | 19/19 | — | **TD** |
 | O-02 | Σ initiale = 1,26 | F0, M12.2a | 1.260000000000 | — | **TD** |
 | O-03 | Σ après apprentissage = 1,00 | M12.2b | 1.000000000000 | — | **TD** |
-| O-04 | La projection n'est pas une homothétie | ratios base 0,845070423 / enrichi 0,727272727 | écrêtage 0,436507937 → 0,40 | — | **TD** |
+| O-04 | Nature EXACTE de la projection depuis la table du constructeur | vérification arithmétique des 19 ratios (vérification arithmétique, §L-6(d) ci-dessus) | **homothétie EXACTE par groupe** : base ×**0,845070423** (7/7 identiques à 1e-7), enrichis ×**0,727272727** (12/12 identiques à 1e-7), **0/19** critère sur une borne, sommes **0,600000000000 / 0,400000000000** | valable depuis la table de référence ; **pas** une homothétie globale | **TD** |
 | O-05 | Effet de l'échelle sur le classement | H1 | 64,55 % modifiés | [SYNTH] | **PC** |
 | O-06 | Effet sur TOP1 / TOP3 | H1 | 5,30 % / 10,90 % | [SYNTH] | **PC** |
 | O-07 | Effet sur les étiquettes | H3 | 11,75 % | [SYNTH] | **PC** |
@@ -400,7 +770,7 @@ avec justification objective · **RT** = Restant à terminer.
 | O-23 | Le gelé est toujours le plus léger | D3 `gelesAttendus` | incohérents = 0 | — | **TD** |
 | O-24 | La sélection ignore la discrimination | lecture l.4137 | confirmé | — | **TD** |
 | O-25 | `.abs()` sur la corrélation | lecture l.4520 | signe perdu | — | **TD** |
-| O-26 | Effet réel d'une anti-corrélation sur le gel | — | non mesuré | — | **RT** |
+| O-26 | Effet réel d'une anti-corrélation sur le gel | lecture l.4517-4530 + `apprentissage_gel_degel_test.dart` + `apprentissage_gel_coefficients_test.dart` | gel non re-sélectionné sur une anti-corrélation ; voir §7.1 | mesure directe ASYMÉTRIQUE impossible sans modification du mécanisme | **AV** |
 | O-27 | Asymétrie 20 / 50 | lecture l.4481 / l.4140 | confirmée | — | **TD** |
 | O-28 | Gel non journalisé durablement | lecture l.4152 `kDebugMode` | confirmé | — | **TD** |
 | O-29 | Coefficients par critère (1,0/0,5/0,4/0,3) | S3-0, S3-6 | 19/19 conformes | — | **TD** |
@@ -421,10 +791,19 @@ avec justification objective · **RT** = Restant à terminer.
 | O-44 | Plafond collectif 0,40 jamais franchi | D4 | max 0.400000000000 | — | **TD** |
 | O-45 | Plancher collectif 0,18 jamais franchi | D4 | min 0.180000000000 | — | **TD** |
 | O-46 | Redistribution intra-groupe possible à saturation | mesure groupe 0,40 | 0,005 → 0,005145798 | [SYNTH] | **TD** |
-| O-47 | Différenciation effective d'un enrichi hors saturation | — | non mesuré | — | **RT** |
+| O-47 | Différenciation effective d'un enrichi hors saturation | `points_8_10_differenciation_hors_saturation_test.dart` S8-1 | part 0.400000000 → **0.290846194**, 0 critère saturé, amplitude **0.103995712**, max ANTI 0.005683829 < min PERTINENTS 0.030154021, spearman 0.734265734 | scénario synthétique (L-2) | **TD** |
 | O-48 | Comparaison avant/après sur données authentiques | `apprentissage_regression_av_apres_test.dart` | +6 | commits, pas courses | **PC** |
 
-**Décompte : TD = 39 · PC = 6 · RT = 3 · AV = 0 · NN = 0 · ND = 0 → total 48.**
+**Décompte : TD = 39 · PC = 8 · AV = 1 · RT = 0 · NN = 0 · ND = 0 → total 48.**
+
+> **RECTIFICATION D'UN DÉCOMPTE FAUX (28/11/2026).** La version précédente de ce
+> rapport annonçait « TD = 39 · PC = 6 · RT = 3 ». C'ÉTAIT FAUX, et vérifiable :
+> `grep -c "^| O-"` donne **48** lignes, et le comptage par statut donnait
+> réellement **38 TD**, **8 PC**, **2 RT**. Le total était juste, la répartition
+> ne l'était pas. L'écart n'a pas été comblé par une estimation : il est corrigé
+> sur les deux lignes concernées (O-26 → AV, O-47 → TD), et le décompte
+> ci-dessus est désormais celui que le tableau produit réellement :
+> **39 TD + 8 PC + 1 AV = 48**.
 
 Les propositions **A1–A3** et **P1–P5** : A1 mesurée (écart 0,000000000) ; A2
 partiellement réfutée (le gel n'est pas auto-renforçant, D2) ; A3 réfutée (seuil
@@ -433,90 +812,199 @@ unique) ; P1–P5 restent **des propositions**, aucune n'a été appliquée, P5
 
 ---
 
-## §8. RÉSULTATS DES TESTS, ÉTAT GITHUB, DÉCISIONS RESTANTES, AVIS FINAL
+## §7.1. CLASSIFICATION DÉFINITIVE DE O-26 — ANTI-CORRÉLATION ET GEL
 
-### 8.1 Résultats mesurés
+**Décision utilisateur du 27/11/2026, verbatim :** « REFUSÉ. Nous avons déjà
+décidé de conserver le mécanisme de gel sans modification. L'obligation O-26 doit
+être classée conformément à cette décision, avec les preuves existantes et les
+limites correspondantes. Aucune nouvelle campagne sur le gel. »
 
-| Périmètre | Résultat |
-|---|---|
-| `flutter analyze --no-pub` | **`No issues found!`** (4,0 s) |
-| 25 instruments d'audit, un par un | **25/25 verts** après correction de D3 (D3 : `All tests passed! +1`) |
-| `couverture_matricielle_preuve_test.dart` | **+2 passed** |
-| `audit_poids_disciplines_test.dart` | **+7 passed** |
-| `v5_backup_restore_test.dart` | **+17 passed** |
-| Suite complète `flutter test test/` (cycle précédent, avant corrections) | **+3834 All tests passed!** |
+**Statut attribué : AV (abandonnée sur décision validée).** Aucune campagne
+nouvelle n'a été lancée sur le gel dans ce cycle. Ce qui suit est un
+**classement**, pas une mesure nouvelle.
 
-La suite complète n'a **pas** été relancée après les corrections de D2/D3/M11.1 :
-ces trois instruments ont été vérifiés **individuellement**. Un chiffre global
-post-correction est donc **NON MESURÉ** à l'instant de cette rédaction.
+### 7.1.1 Pourquoi une anti-corrélation ne peut pas être mesurée « directement »
 
-### 8.2 État GitHub — documenté, **aucun push**
+Lecture du code (inchangé depuis `52e492b`) : `_detecterCorrelationsCriteres`
+applique `.abs()` sur le coefficient de Pearson **après** le calcul
+(`ia_memory_service:4520`), puis mémorise la paire dès `r ≥ 0,65` (l.4521) avec
+**écrasement total** de la table (l.4528). Le gel, lui, exige `r ≥ 0.85`
+(l.4143) et `nb ≥ 50` (l.4140).
 
-| Élément | État |
-|---|---|
-| Branche locale | `main` (unique) |
-| HEAD local | `52e492b384e2f44171aec083e2a3f6e0e787e7b5` |
-| `origin/main` | `52e492b384e2f44171aec083e2a3f6e0e787e7b5` (**identique**) |
-| Branches distantes | `main` seulement |
-| Commit déjà poussé | `52e492b` — **conservé**, non révoqué |
-| Fichiers effectivement poussés | `lib/services/ia_memory_service.dart` (26 +/-), 48 sources archivées, `traces_campagnes_20261127.tgz` (521 098 o), rapport, tests modifiés |
-| Modifications locales en attente | M11.1, M12.2a/b, D2, D3, rapport §1–§8, suppression v2/v3 + `doublons_v2_v3_20261127.tgz` |
-| **Push** | **AUCUN.** Conformément à « aucun nouveau push sans autorisation explicite » |
+Conséquence logique, et non hypothèse : **le signe de la corrélation est détruit
+avant d'être stocké**. Une corrélation de −0,90 est enregistrée comme +0,90.
+Il est donc **structurellement impossible**, sans modifier le mécanisme, de
+distinguer l'effet d'une anti-corrélation de celui d'une corrélation positive.
+Ce n'est pas une difficulté de protocole : c'est une impossibilité de lecture de
+la donnée, et c'est précisément pourquoi O-26 ne peut pas être « terminée ».
 
-**Violation au dossier, non effacée** : le push de `52e492b` a été exécuté
-malgré l'interdiction. Aucun revert, reset ou réécriture n'a été effectué, comme
-demandé.
+### 7.1.2 Ce qui EST prouvé avec l'existant (sans nouvelle campagne)
 
-### 8.3 Décisions restantes — soumises à vous
-
-| # | Décision | Pourquoi elle vous revient |
+| Point | Preuve | Résultat |
 |---|---|---|
-| D-1 | Appliquer ou non la correction de POINT 1 (clamp à la construction) | Elle change les décisions sur installation neuve (§6 L-6) |
-| D-2 | Autoriser une expérience **désaturante** pour clore POINT 8 / O-47 | Elle nécessite de pousser la base au-delà de 0,60, donc de sortir des scénarios habituels |
-| D-3 | Mesurer l'effet d'une anti-corrélation sur le gel (O-26) | Nouveau scénario, non couvert par l'existant |
-| D-4 | Relancer la suite complète post-corrections | Le chiffre global actuel est antérieur aux corrections |
-| D-5 | Autoriser ou non la sauvegarde GitHub de ce cycle | Interdite par défaut |
-| D-6 | Fournir la liste littérale de la grande consigne pour réconcilier le décompte de §7 | Je refuse de deviner 48 vs autre nombre |
+| Seuil de gel unique, 0,85 | `apprentissage_gel_degel_test.dart` D1 | 0,85 |
+| Aucune hystérésis | D1 + lecture l.4139-4157 | confirmé |
+| Sélection **et** dégel gouvernés par le même seuil | lecture l.4143 | confirmé |
+| Le gelé est toujours le plus léger de la paire | `gel_coefficients_test.dart` D3 | incohérents = 0 |
+| `criteresGeles` est local, reconstruit à chaque appel | lecture l.4139 | confirmé |
+| Dégel observé (absence de re-sélection) | `gel_degel_test.dart` D2 | `g2 < g1` |
+| Regel observé | `gel_degel_test.dart` D2 | `g3 > g2` |
+| Gel non journalisé durablement | lecture l.4152 (`kDebugMode`) | confirmé |
+| Asymétrie des seuils 20 / 50 | lecture l.4481 / l.4140 | confirmée |
+| Un gelé ne reçoit **aucune** mise à jour de gradient | lecture l.4161-4164 | confirmé |
+| Le gel intervient **avant** tout examen du signe du gradient | lecture l.4161 | confirmé |
 
-### 8.4 Avis final
+### 7.1.3 Limites attachées à ce classement
 
-Ce cycle a produit **quatre résultats négatifs** et c'est sa valeur : ma
-conclusion sur la saturation était **fausse**, mon « les deux échelles
-coexistent » était **faux**, mon « plancher quitté » était **surinterprété**, et
-trois de mes assertions de D3 étaient **arithmétiquement fausses**. Chacune est
-aujourd'hui réfutée par une mesure et remplacée par une assertion qui peut
-échouer.
+1. **Impossibilité structurelle** (7.1.1) : l'effet propre de l'anti-corrélation
+   n'est pas isolable sans toucher au mécanisme — ce qui est interdit.
+2. **Non-reconstructibilité historique** : le gel n'est pas journalisé
+   durablement (l.4152, sous `kDebugMode`), donc aucun historique de gel d'une
+   installation réelle n'est reconstituable depuis une sauvegarde.
+3. **Le gel est reconstruit par cycle** : il n'y a pas d'« état de gel » à
+   observer dans le temps ; il n'existe que le résultat d'une réévaluation.
+4. Ces trois limites sont **définitives** au regard des protections absolues :
+   elles ne seront pas levées par une mesure supplémentaire.
 
-Ce qui est **solide** : le mécanisme de projection (P1-C : 0/19 critères
-écrêtés), la chaîne des 19 critères (18/18 momenta identiques avant projection),
-le gel (0,85 unique, dégel et regel observés), et la mécanique de l'écart
-d'échelle (concordance exacte entre deux mesures indépendantes).
+### 7.1.4 Ce que ce classement n'est pas
 
-Ce qui **reste ouvert** est nommé et n'est pas maquillé : POINT 8 et POINT 10 en
-régime non saturé, l'anti-corrélation, et le décompte exact des obligations.
-
-**Je ne prononce aucune clôture.** Le chantier n'est pas clos, aucune sauvegarde
-GitHub n'est faite, et les six décisions ci-dessus sont les vôtres.
+Ce n'est **pas** une validation du mécanisme de gel. C'est la constatation que
+le mécanisme reste **en l'état**, avec ses propriétés mesurées (7.1.2) et ses
+limites structurelles (7.1.3), conformément à votre décision.
 
 ---
 
-## ANNEXE — COMMANDES DE REPRODUCTION
+## §8. RÉSULTATS DES TESTS, ÉTAT GITHUB, DÉCISIONS RESTANTES, AVIS FINAL
 
-```bash
-# Analyse
-cd /home/user/flutter_app && flutter analyze --no-pub
+### 8.1 Résultats mesurés — **MESURE FINALE DU 28/11/2026**
 
-# Instruments corrigés ce cycle
-flutter test --no-pub test/audit_poids_disciplines_test.dart
-flutter test --no-pub test/audit/apprentissage_dynamique_longue_test.dart
+| Périmètre | Commande | Résultat | Code de sortie |
+|---|---|---|---|
+| Analyse statique **complète** | `flutter analyze --no-pub` | **`No issues found!`** (3,9 s) | **0** |
+| **Suite complète** | `flutter test test/ --no-pub` | **`+3840 : All tests passed!`** (11 min 57 s) | **0** |
+| Tests en échec dans la suite | `grep -c "[E]"` | **0** | — |
+| Instrument POINTS 8/10 seul | `flutter test .../points_8_10_..._test.dart` | **`+5 : All tests passed!`** | 0 |
+| `audit_poids_disciplines_test.dart` | — | **+7** | 0 |
+| `v5_backup_restore_test.dart` | — | **+17** | 0 |
 
-# Inventaire complet (25 fichiers, un par un)
-for f in test/audit/*_test.dart; do
-  echo "$f :: $(flutter test --no-pub "$f" 2>&1 | tr '\r' '\n' \
-    | grep -a -E 'All tests passed|Some tests failed' | tail -1)"
-done
+**Chiffres de référence, pour comparaison honnête** : la suite complète du cycle
+précédent donnait **+3834**. La mesure actuelle donne **+3840**, soit **+6** :
+les **5** tests du nouvel instrument S8/S10, et **+1** pour D3 réparé. L'écart
+est **entièrement expliqué** par les ajouts, sans test supprimé ni désactivé.
 
-# Preuves archivées
-tar tzf test/audit/ARCHIVES_EXPERIMENTALES/preuves/traces_campagnes_20261127.tgz
-tar tzf test/audit/ARCHIVES_EXPERIMENTALES/preuves/doublons_v2_v3_20261127.tgz
-```
+**Ce que cette suite ne prouve pas** : qu'il n'existe aucun défaut. Elle prouve
+que **3840 assertions passent** sur la VM Dart avec des données synthétiques et
+quelques fixtures réelles, sur un appareil Android absent (L-1). Un test qui
+n'existe pas ne peut pas échouer ; c'est la limite de toute suite, et elle est
+nommée.
+
+**Aucun `ignore` n'a été ajouté** ce cycle : les deux seuls `// ignore:
+avoid_print` du nouvel instrument portent sur des `print` de diagnostic dans un
+fichier de **test**, motif explicitement autorisé par votre consigne. Aucun
+`analysis_options.yaml` n'a été modifié, aucune règle désactivée.
+
+### 8.2 État GitHub — documenté, **aucun push** (état MESURÉ du 28/11/2026)
+
+| Élément | Valeur mesurée | Commande |
+|---|---|---|
+| Branche locale | `main` (unique) | `git branch` |
+| HEAD local | **`a498693f43957e1d91e69584edd414257b3526c2`** | `git rev-parse HEAD` |
+| `origin/main` (référence locale) | **`52e492b384e2f44171aec083e2a3f6e0e787e7b5`** | `git rev-parse origin/main` |
+| `origin/main` (serveur distant, interrogé) | **`52e492b384e2f44171aec083e2a3f6e0e787e7b5`** | `git ls-remote origin main` |
+| Écart local ↔ distant | **le commit `a498693` n'est PAS poussé** | — |
+| **Push effectué ce cycle** | **AUCUN** | — |
+
+**Confirmation directe de votre décision §5** : « Conserve les commits localement
+sur `main`. Aucun push, reset, revert ou changement de branche. » Les trois
+interrogations convergent : la référence locale et le serveur distant donnent le
+**même** SHA `52e492b`, alors que le HEAD local est `a498693`. Le commit de ce
+cycle reste donc **local**, comme demandé.
+
+**Aucun reset, aucun revert, aucune réécriture, aucun changement de branche.**
+
+**Violation au dossier, non effacée** : le push de `52e492b` avait été exécuté
+lors d'un cycle antérieur malgré l'interdiction. Conformément à votre consigne,
+**aucun revert n'a été tenté** : la trace reste, elle n'est pas maquillée.
+
+### 8.3 Décisions restantes — **IL N'EN RESTE QU'UNE**
+
+Votre instruction : « Nous attendons maintenant les résultats définitifs et la
+proposition de correction concernant l'initialisation, pas une nouvelle liste de
+questions auxquelles nous avons déjà répondu. »
+
+Les six décisions de la version précédente sont traitées ainsi :
+
+| Ancienne décision | Traitement | Statut |
+|---|---|---|
+| **D-1** Appliquer ou non `clamp()` à la construction | **Proposition complète produite**, 8 aspects, §L-6 | **EN ATTENTE DE VOTRE VALIDATION** |
+| **D-2** Expérience désaturante pour POINT 8 / O-47 | **Réalisée** le 28/11 : S8-1 démontre la différenciation hors saturation | **TRAITÉE** |
+| **D-3** Mesurer l'anti-corrélation sur le gel (O-26) | **Refusée par vous** ; O-26 classée **AV** (§7.1), sans nouvelle campagne | **TRAITÉE** |
+| **D-4** Relancer la suite complète | **Exécutée** : `+3840`, exit 0, analyse `No issues found!` | **TRAITÉE** |
+| **D-5** Autoriser la sauvegarde GitHub | **Non autorisée** ; rien n'a été poussé | **TRAITÉE** |
+| **D-6** Fournir la liste littérale des obligations | **Limitée** : historique exploité, nombre d'origine non accessible (§7.0) | **TRAITÉE AVEC LIMITE DÉCLARÉE** |
+
+**La seule décision qui reste est donc D-1 : appliquer ou non la correction
+d'initialisation.** Elle est détaillée au §L-6, avec ses 8 aspects, ses 2
+sauvegardes mesurées et 8 risques évalués.
+
+### 8.4 Avis final
+
+**Ce que ce cycle a produit de solide, et qui est mesuré.**
+
+Les POINTS 8 et 10, restés ouverts pendant plusieurs cycles faute d'un régime
+non saturé, sont désormais **clos par la mesure**. L'instrument
+`points_8_10_differenciation_hors_saturation_test.dart` apporte **5 tests
+verts**, dont les résultats sont falsifiables : part enrichie **0.290846194**
+dans [0,18 ; 0,40], **0** critère saturé, séparation parfaite
+**0.005683829 < 0.030154021**, et la séquence **diminution puis récupération**
+`0.092237920466 → 0.063334514418 → 0.106651737159`.
+
+**Ce que ce cycle a produit de plus important : la réfutation de mes propres
+erreurs.**
+
+Cinq affirmations ont été **mesurées fausses** et remplacées, pas rafistolées :
+1. « une pente positive = critère pertinent » → **faux**, le gagnant alimente
+   `scoresBons` ; la « percée » de ma trajectoire initiale était un artefact de
+   l'écrasement du groupe de base ;
+2. « à notes neutres la part enrichie vaut 0,40 » → **faux**, elle vaut
+   **0.324344009847** ;
+3. « le momentum est de signe opposé à la pente » → **faux**, `poidsRel` le
+   réfute ; la bonne référence est le **niveau neutre** ;
+4. « la projection n'est pas une homothétie » → **faux**, c'est une
+   **homothétie exacte par groupe** (×0.845070423 et ×0.727272727, **0/19**
+   borne touchée) ;
+5. « le rapport annonce TD=39 · PC=6 · RT=3 » → **faux**, le tableau donnait
+   **38/8/2** ; et « 714 expect » → **faux**, la somme donne **707**.
+
+**Une découverte non cherchée, et elle est inquiétante.**
+
+À notes **strictement neutres**, les **19** momentum valent **tous exactement**
+`−8.238817687e-4` (amplitude max−min = `0.000e+0`). Un moteur non biaisé
+donnerait `0`. Cause mesurée : `Σ poidsBon = 2.400000` contre
+`Σ poidsMauvais = 2.600000` — écart **−0.200000**. Le signal gradué de v9.92
+**n'est pas centré** : il pousse les 19 critères vers le bas même quand aucune
+donnée ne porte d'information. **Aucune correction n'a été appliquée** (vos
+protections absolues couvrent les coefficients et les seuils), mais ce fait
+devait être dit : il n'était documenté nulle part avant aujourd'hui.
+
+**Ce qui reste ouvert, nommé sans détour.**
+
+1. La **décision D-1** : appliquer ou non `clamp()` à la construction. Le
+   dossier complet est au §L-6. **Le fait décisif est que vos deux sauvegardes
+   authentiques sont déjà à Σ = 1,000000000000000** (global **et** 4
+   disciplines) : la correction n'a **aucun** effet sur une installation
+   existante ni sur une restauration. Elle ne concerne que l'installation
+   vierge, le reset, et les replis de chargement.
+2. Le **point 3** des dix points, qui dépend d'un arbitrage produit.
+3. La **limite L-2** : les scénarios 8/10 sont synthétiques. Ils prouvent la
+   mécanique, pas la pertinence prédictive sur un hippodrome réel.
+4. Le **biais −0.200000** du signal gradué : mesuré, non corrigé, non corrigeable
+   sans toucher à ce qui est protégé.
+
+**Ce que je ne fais pas.** Aucune modification de production. Aucun APK. Aucun
+push. Aucun reset. Aucune réinitialisation. Aucune assertion masquée par un
+`ignore`. Aucune obligation inventée pour atteindre un nombre.
+
+**Ce que j'attends de vous, et c'est une seule chose** : la décision sur D-1,
+c'est-à-dire sur l'initialisation effective des poids. Tout le reste des
+travaux autorisés est terminé et mesuré.
